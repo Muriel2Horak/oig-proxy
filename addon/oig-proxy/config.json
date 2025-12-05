@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": ["amd64", "aarch64"],
@@ -32,6 +32,5 @@
   "ports": {
     "5710/tcp": 5710
   },
-  "map": ["data:rw"],
-  "image": "ghcr.io/muriel2horak/oig-proxy-{arch}"
+  "map": ["data:rw"]
 }
