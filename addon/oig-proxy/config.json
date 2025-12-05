@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": ["amd64", "aarch64"],
@@ -9,6 +9,7 @@
   "init": false,
   "hassio_api": false,
   "homeassistant_api": false,
+  "host_network": true,
   "options": {
     "target_server": "oigservis.cz",
     "target_port": 5710,
@@ -27,10 +28,14 @@
     "mqtt_port": "int",
     "mqtt_username": "str",
     "mqtt_password": "str",
-    "map_reload_seconds": "int"
+    "map_reload_seconds": "int",
+    "ha_ip": "str?",
+    "dns_upstream": "[str]?"
   },
   "ports": {
-    "5710/tcp": 5710
+    "5710/tcp": 5710,
+    "53/udp": 53,
+    "53/tcp": 53
   },
   "map": ["data:rw"]
 }

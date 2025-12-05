@@ -10,4 +10,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY main.py /app/main.py
 COPY sensor_map.json /app/sensor_map.json
 
-CMD ["python", "-u", "main.py"]
+COPY run /run.sh
+RUN chmod +x /run.sh
+
+CMD ["/run.sh"]
