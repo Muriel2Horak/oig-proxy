@@ -16,7 +16,12 @@ else
 fi
 
 UPSTREAM=$(bashio::config 'dns_upstream' | tr -d '[]"' | xargs)
-[ -z "$UPSTREAM" ] && UPSTREAM="8.8.8.8"
+if [ -z "$UPSTREAM" ] || [ "$UPSTREAM" = "null" ]; then
+  UPSTREAM="8.8.8.8"
+fi
+if ! echo "$UPSTREAM" | grep -Eq '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
+  UPSTREAM="8.8.8.8"
+fi
 
 echo "server=$UPSTREAM" > /etc/dnsmasq.d/upstream.conf
 echo "address=/oigservis.cz/$HA_IP" > /etc/dnsmasq.d/oig.conf
