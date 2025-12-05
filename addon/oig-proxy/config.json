@@ -30,7 +30,7 @@
     "mqtt_password": "str",
     "map_reload_seconds": "int",
     "ha_ip": "str?",
-    "dns_upstream": "[str]?"
+    "dns_upstream": "str?"
   },
   "ports": {
     "5710/tcp": 5710,
