@@ -1,10 +1,14 @@
-FROM python:3.11-slim
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
 
 WORKDIR /app
 
-# Závislosti
+# Základní balíčky: python3, pip, dnsmasq
+RUN apk add --no-cache python3 py3-pip dnsmasq
+
+# Závislosti Pythonu
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
 # Kód proxy a výchozí mapování
 COPY main.py /app/main.py
