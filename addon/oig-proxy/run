@@ -9,7 +9,7 @@ if [ -z "$HA_IP_RAW" ]; then
   HA_IP_RAW=$(hostname -I 2>/dev/null | awk '{print $1}')
 fi
 # valid IPv4 check; otherwise fallback
-if echo "$HA_IP_RAW" | grep -Eq '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
+if echo "$HA_IP_RAW" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
   HA_IP="$HA_IP_RAW"
 else
   HA_IP="127.0.0.1"
@@ -19,7 +19,7 @@ UPSTREAM=$(bashio::config 'dns_upstream' | tr -d '[]"' | xargs)
 if [ -z "$UPSTREAM" ] || [ "$UPSTREAM" = "null" ]; then
   UPSTREAM="8.8.8.8"
 fi
-if ! echo "$UPSTREAM" | grep -Eq '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
+if ! echo "$UPSTREAM" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
   UPSTREAM="8.8.8.8"
 fi
 
