@@ -1,0 +1,12 @@
+#!/usr/bin/with-contenv bashio
+export TARGET_SERVER=$(bashio::config 'target_server')
+export TARGET_PORT=$(bashio::config 'target_port')
+export PROXY_PORT=$(bashio::config 'proxy_port')
+export MQTT_HOST=$(bashio::config 'mqtt_host')
+export MQTT_PORT=$(bashio::config 'mqtt_port')
+export MQTT_USERNAME=$(bashio::config 'mqtt_username')
+export MQTT_PASSWORD=$(bashio::config 'mqtt_password')
+export MAP_RELOAD_SECONDS=$(bashio::config 'map_reload_seconds')
+export SENSOR_MAP_PATH=/data/sensor_map.json
+export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
+python -u /app/main.py
