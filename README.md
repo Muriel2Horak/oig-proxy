@@ -15,6 +15,20 @@ TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA a
 - Dekóduje bitové warningy `ERR_*` podle Excelu (list „warining 3F“) a přidává `<ERR_X>_warnings` (seznam textů).
 - Mapu lze reloadovat za běhu (`MAP_RELOAD_SECONDS` > 0).
 
+## Tok komunikace
+```
+OIG Box  --DNS override-->  HA host (addon OIG Proxy, port 5710)  --TCP-->  oigservis.cz (cloud)
+   |                             |
+   |  XML frame                  |  Parse + map + warnings decode
+   |---------------------------->|  Publish state to MQTT: oig_box/<device_id>/state
+                                 |  Send HA discovery: homeassistant/sensor/.../config
+                                 |  Availability: oig_box/<device_id>/availability
+MQTT Broker (mosquitto addon) <--+
+   |
+   v
+Home Assistant (entities vytvářené z discovery)
+```
+
 ## Požadavky na uživatele
 1) **MQTT broker** (např. HA add-on Mosquitto), vytvořit účet/heslo a znát host/port.
 2) **DNS/route přepis**: zajistit, aby `oigservis.cz` (target) směřoval na IP HA s proxy (router DNS, HA DNS, nebo vlastní dnsmasq z `dnsmasq.conf`). Box musí volat na HA port 5710.
