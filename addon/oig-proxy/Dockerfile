@@ -8,7 +8,7 @@ RUN apk add --no-cache python3 py3-pip dnsmasq
 
 # Závislosti Pythonu
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -r /app/requirements.txt
 
 # Kód proxy a výchozí mapování
 COPY main.py /app/main.py
