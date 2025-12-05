@@ -1,21 +1,30 @@
 #!/usr/bin/with-contenv bashio
 
-# DNS override: oigservis.cz -> HA IP
+# DNS override: oigservis.cz -> HA IP (robust fallback chain)
 HA_IP=$(bashio::config 'ha_ip')
 if [ -z "$HA_IP" ]; then
-  # Fallback: first host IP
-  HA_IP=$(hostname -I | awk '{print $1}')
+  HA_IP=$(ip -4 route get 8.8.8.8 2>/dev/null | awk '{print $7; exit}')
 fi
+if [ -z "$HA_IP" ]; then
+  HA_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [ -z "$HA_IP" ]; then
+  HA_IP="127.0.0.1"
+fi
+
 UPSTREAM=$(bashio::config 'dns_upstream' | tr -d '[]"' | xargs)
-if [ -z "$UPSTREAM" ]; then
-  UPSTREAM="8.8.8.8"
-fi
+[ -z "$UPSTREAM" ] && UPSTREAM="8.8.8.8"
 
 echo "server=$UPSTREAM" > /etc/dnsmasq.d/upstream.conf
 echo "address=/oigservis.cz/$HA_IP" > /etc/dnsmasq.d/oig.conf
 
 # spustit dnsmasq (foreground &)
 /usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &
+
+# Připravit JSON mapu: pokud chybí v /data, zkopíruj default z /app
+if [ ! -f /data/sensor_map.json ] && [ -f /app/sensor_map.json ]; then
+  cp /app/sensor_map.json /data/sensor_map.json
+fi
 
 # Env pro proxy
 export TARGET_SERVER=$(bashio::config 'target_server')
