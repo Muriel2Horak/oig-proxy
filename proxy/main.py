@@ -437,16 +437,18 @@ class OIGProxy:
                         self.device_id = device_id
                         self.mqtt_publisher = MQTTPublisher(device_id)
                         self.mqtt_publisher.connect()
-                    for key, value in parsed.items():
-                        if not key.startswith("_"):
-                            self.current_state[key] = value
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"[#{conn_id}] PARSED {table}: {json.dumps(parsed, ensure_ascii=False)}")
-                    # Pokud jde o event-like payload (obsahuje Type/Content/Result/Confirm/ToDo), publikujeme zvlášť
+                    # Eventy nechceme registrovat jako trvalé senzory
                     event_keys = {"Type", "Content", "Result", "Confirm", "ToDo"}
-                    if any(k in parsed for k in event_keys) and self.mqtt_publisher:
-                        self.mqtt_publisher.publish_event(parsed)
+                    if any(k in parsed for k in event_keys):
+                        if self.mqtt_publisher:
+                            self.mqtt_publisher.publish_event(parsed)
+                        return
+                    for key, value in parsed.items():
+                        if not key.startswith("_"):
+                            self.current_state[key] = value
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():
                         if key in WARNING_MAP:
