@@ -7,13 +7,13 @@ Senzory definovány podle oficiální OIG dokumentace.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import os
 import re
 import sys
 import time
-import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,7 +59,7 @@ _last_map_load = 0.0
 
 
 def _iso_now() -> str:
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def load_unknown_registry() -> None:
@@ -124,7 +124,7 @@ def decode_warnings(key: str, value: Any) -> list[str]:
     texts: list[str] = []
     for item in WARNING_MAP.get(key, []):
         bit = item.get("bit")
-        remark = item.get("remark")
+        remark = item.get("remark_cs") or item.get("remark")
         if bit is None:
             continue
         if val_int & int(bit):
@@ -149,25 +149,27 @@ def load_sensor_map() -> None:
         sensors = mapping.get("sensors", {})
         added = 0
         for sid, meta in sensors.items():
-            if sid in SENSORS:
-                continue
-            name = meta.get("description") or _friendly_name(sid)
-            unit = meta.get("unit") or ""
-            SENSORS[sid] = SensorConfig(name, unit)
+            name = meta.get("name_cs") or meta.get("name") or _friendly_name(sid)
+            unit = meta.get("unit_of_measurement") or ""
+            device_class = meta.get("device_class")
+            state_class = meta.get("state_class")
+            icon = meta.get("icon")
+            SENSORS[sid] = SensorConfig(name, unit, device_class, state_class, icon)
             added += 1
         if added:
-            logger.info(f"Doplněno {added} senzorů z JSON mappingu")
+            logger.info(f"Doplněno/aktualizováno {added} senzorů z JSON mappingu")
         # warningy pro dekódování bitů chyb (např. ERR_PV)
         WARNING_MAP = {}
         for w in mapping.get("warnings_3f", []):
             key = w.get("table_key") or w.get("key")
             bit = w.get("bit")
             remark = w.get("remark")
+            remark_cs = w.get("remark_cs")
             code = w.get("warning_code")
             if not key or bit is None:
                 continue
             WARNING_MAP.setdefault(key, []).append(
-                {"bit": int(bit), "remark": remark, "code": code}
+                {"bit": int(bit), "remark": remark, "remark_cs": remark_cs, "code": code}
             )
         _last_map_load = now
     except Exception as e:
@@ -204,7 +206,9 @@ EXTRA_SENSORS: dict[str, SensorConfig] = {
 }
 
 load_sensor_map()
-SENSORS.update(EXTRA_SENSORS)
+for sid, cfg in EXTRA_SENSORS.items():
+    if sid not in SENSORS:
+        SENSORS[sid] = cfg
 
 
 class OIGDataParser:
@@ -331,18 +335,40 @@ class OIGProxy:
         conn_id = self.connection_count
         client_addr = client_writer.get_extra_info("peername")
         logger.info(f"[#{conn_id}] Nové připojení od {client_addr}")
+        tasks: list[asyncio.Task[Any]] = []
+        server_writer: asyncio.StreamWriter | None = None
         try:
-            server_reader, server_writer = await asyncio.open_connection(TARGET_SERVER, TARGET_PORT)
-            logger.info(f"[#{conn_id}] Připojeno k {TARGET_SERVER}:{TARGET_PORT}")
-            await asyncio.gather(
-                self._forward(client_reader, server_writer, conn_id, "BOX→CLOUD"),
-                self._forward(server_reader, client_writer, conn_id, "CLOUD→BOX"),
-                return_exceptions=True,
+            server_reader, server_writer = await asyncio.open_connection(
+                TARGET_SERVER, TARGET_PORT
             )
+            logger.info(f"[#{conn_id}] Připojeno k {TARGET_SERVER}:{TARGET_PORT}")
+            tasks = [
+                asyncio.create_task(
+                    self._forward(client_reader, server_writer, conn_id, "BOX→CLOUD")
+                ),
+                asyncio.create_task(
+                    self._forward(server_reader, client_writer, conn_id, "CLOUD→BOX")
+                ),
+            ]
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            await asyncio.gather(*done, return_exceptions=True)
         except Exception as e:
             logger.error(f"[#{conn_id}] Chyba: {e}")
         finally:
-            client_writer.close()
+            if server_writer:
+                try:
+                    server_writer.close()
+                    await server_writer.wait_closed()
+                except Exception:
+                    pass
+            try:
+                client_writer.close()
+                await client_writer.wait_closed()
+            except Exception:
+                pass
             logger.info(f"[#{conn_id}] Spojení ukončeno")
 
     async def _forward(

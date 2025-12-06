@@ -3,17 +3,16 @@
 TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA autodiscovery), dekóduje warningy a loguje neznámé senzory pro doplnění mapy. Součástí je DNS přepis, aby Box mluvil na lokální proxy místo cloudu.
 
 ## Struktura
-- `proxy/` – hlavní Python proxy (`main.py`), dynamické mapování ze `sensor_map.json`, dekódování warning bitů (`ERR_*`).
-- `proxy/sensor_map.json` – data z Excelu + inventář z logů (239+ klíčů): Modbus registry, warningy 3F, hlášky, FSP parametry. Lze editovat bez rebuildu, reload za běhu (`MAP_RELOAD_SECONDS`).
-- `addon/oig-proxy/` – Home Assistant add-on (config.json, Dockerfile, run).
+- `proxy/` – hlavní Python proxy (`main.py`), načítá mapping ze sdíleného `sensor_map.json`, dekóduje warning bity (`ERR_*`).
+- `addon/oig-proxy/` – Home Assistant add-on (config.json, Dockerfile, run), používá stejný `sensor_map.json`.
 - `dnsmasq.conf`, `Corefile` – ukázka DNS přepisu.
 - `logs/` – prázdné (logy necommitujeme).
 
 ## Co proxy umí
 - Publikuje data do MQTT topicu `oig_box/<device_id>/state`, posílá HA discovery (`homeassistant/sensor/.../config`) a availability `oig_box/<device_id>/availability`.
 - Načítá senzory z JSON mapy; neznámé klíče auto-discovery s generickým názvem a logováním do `/data/unknown_sensors.json`.
-- Dekóduje bitové warningy `ERR_*` podle Excelu (list „warining 3F“) a přidává `<ERR_X>_warnings` (seznam textů).
-- Mapu lze reloadovat za běhu (`MAP_RELOAD_SECONDS` > 0).
+- Dekóduje bitové warningy `ERR_*` přes `warnings_3f` (vč. českých textů) a přidává `<ERR_X>_warnings` se seznamem hlášek.
+- Mapu lze reloadovat za běhu (`MAP_RELOAD_SECONDS` > 0); `unique_id`/entity_id má tvar `oig_local_<device_id>_<sensor_key>`.
 
 ## Tok komunikace
 ```
