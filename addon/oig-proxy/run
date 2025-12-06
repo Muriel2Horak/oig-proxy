@@ -29,10 +29,11 @@ echo "address=/oigservis.cz/$HA_IP" > /etc/dnsmasq.d/oig.conf
 # spustit dnsmasq (foreground &)
 /usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &
 
-# Připravit JSON mapu: pokud chybí v /data, zkopíruj default z /app
-if [ ! -f /data/sensor_map.json ] && [ -f /app/sensor_map.json ]; then
-  cp /app/sensor_map.json /data/sensor_map.json
+# Připravit JSON mapu: vždy použij novou verzi z image (release)
+if [ -f /data/sensor_map.json ]; then
+  cp /data/sensor_map.json /data/sensor_map.json.bak.$(date +%s) || true
 fi
+cp /app/sensor_map.json /data/sensor_map.json
 
 # Env pro proxy
 export TARGET_SERVER=$(bashio::config 'target_server')
