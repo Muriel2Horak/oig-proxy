@@ -47,6 +47,7 @@ export MAP_RELOAD_SECONDS=$(bashio::config 'map_reload_seconds')
 LOG_LEVEL_RAW=$(bashio::config 'log_level' | tr -d '[]\"' | xargs | cut -d',' -f1)
 [ -z "$LOG_LEVEL_RAW" ] && LOG_LEVEL_RAW="INFO"
 export LOG_LEVEL=$LOG_LEVEL_RAW
+export DISCOVERY_SUFFIX=$(bashio::config 'discovery_suffix')
 export SENSOR_MAP_PATH=/data/sensor_map.json
 export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
 

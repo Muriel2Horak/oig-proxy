@@ -237,6 +237,7 @@ class MQTTPublisher:
         self.client: mqtt.Client | None = None
         self.connected = False
         self.discovery_sent: set[str] = set()
+        self.discovery_suffix = os.getenv("DISCOVERY_SUFFIX", "")
 
     def connect(self) -> bool:
         if not MQTT_AVAILABLE:
@@ -277,7 +278,8 @@ class MQTTPublisher:
             return
         if sensor_id in self.discovery_sent:
             return
-        unique_id = f"oig_{self.device_id}_{sensor_id.lower()}"
+        suffix = f"_{self.discovery_suffix}" if self.discovery_suffix else ""
+        unique_id = f"oig_{self.device_id}_{sensor_id.lower()}{suffix}"
         discovery_payload = {
             "name": config.name,
             "unique_id": unique_id,
@@ -310,7 +312,8 @@ class MQTTPublisher:
         sensor_id = "event_last"
         if sensor_id in self.discovery_sent:
             return
-        unique_id = f"oig_{self.device_id}_event_last"
+        suffix = f"_{self.discovery_suffix}" if self.discovery_suffix else ""
+        unique_id = f"oig_{self.device_id}_event_last{suffix}"
         event_topic = f"oig_box/{self.device_id}/event"
         discovery_payload = {
             "name": "Poslední událost",
