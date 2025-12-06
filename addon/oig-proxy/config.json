@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": ["amd64", "aarch64"],
@@ -20,8 +20,7 @@
     "mqtt_password": "",
     "map_reload_seconds": 0,
     "log_level": "INFO",
-    "discovery_suffix": "v2",
-    "discovery_prefix": "oig_local"
+    "capture_payloads": false
   },
   "schema": {
     "target_server": "str",
