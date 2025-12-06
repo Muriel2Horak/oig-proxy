@@ -25,6 +25,7 @@ TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
 PROXY_PORT = int(os.getenv("PROXY_PORT", "5710"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+DISCOVERY_PREFIX = os.getenv("DISCOVERY_PREFIX", "oig_local")
 SENSOR_MAP_PATH = os.getenv(
     "SENSOR_MAP_PATH", os.path.join(os.path.dirname(__file__), "sensor_map.json")
 )
@@ -52,6 +53,15 @@ except ImportError:
 def _friendly_name(sensor_id: str) -> str:
     parts = sensor_id.replace("_", " ").split()
     return " ".join(p.capitalize() for p in parts)
+
+def _humanize(name: str) -> str:
+    replacements = {
+        "Výstupní výkon L1 (W)": "Spotřeba L1 (W)",
+        "Výstupní výkon L2 (W)": "Spotřeba L2 (W)",
+        "Výstupní výkon L3 (W)": "Spotřeba L3 (W)",
+        "Výstupní výkon celkem (W)": "Spotřeba celkem (W)",
+    }
+    return replacements.get(name, name)
 
 
 unknown_registry: dict[str, dict[str, Any]] = {}
@@ -153,7 +163,7 @@ def load_sensor_map() -> None:
                 continue
             name = meta.get("description") or _friendly_name(sid)
             unit = meta.get("unit") or ""
-            SENSORS[sid] = SensorConfig(name, unit)
+            SENSORS[sid] = SensorConfig(_humanize(name), unit)
             added += 1
         if added:
             logger.info(f"Doplněno {added} senzorů z JSON mappingu")
@@ -238,6 +248,7 @@ class MQTTPublisher:
         self.connected = False
         self.discovery_sent: set[str] = set()
         self.discovery_suffix = os.getenv("DISCOVERY_SUFFIX", "")
+        self.discovery_prefix = os.getenv("DISCOVERY_PREFIX", "oig_local")
 
     def connect(self) -> bool:
         if not MQTT_AVAILABLE:
@@ -279,7 +290,7 @@ class MQTTPublisher:
         if sensor_id in self.discovery_sent:
             return
         suffix = f"_{self.discovery_suffix}" if self.discovery_suffix else ""
-        unique_id = f"oig_{self.device_id}_{sensor_id.lower()}{suffix}"
+        unique_id = f"{self.discovery_prefix}_{self.device_id}_{sensor_id.lower()}{suffix}"
         discovery_payload = {
             "name": config.name,
             "unique_id": unique_id,
@@ -313,7 +324,7 @@ class MQTTPublisher:
         if sensor_id in self.discovery_sent:
             return
         suffix = f"_{self.discovery_suffix}" if self.discovery_suffix else ""
-        unique_id = f"oig_{self.device_id}_event_last{suffix}"
+        unique_id = f"{self.discovery_prefix}_{self.device_id}_event_last{suffix}"
         event_topic = f"oig_box/{self.device_id}/event"
         discovery_payload = {
             "name": "Poslední událost",
