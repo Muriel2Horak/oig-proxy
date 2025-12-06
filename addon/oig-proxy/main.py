@@ -62,9 +62,10 @@ def _iso_now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
-def _init_capture_db() -> sqlite3.Connection | None:
+def _init_capture_db() -> tuple[sqlite3.Connection | None, bool]:
+    """Inicializuje SQLite DB pro capture; vrací connection a flag, zda existuje sloupec direction."""
     if not CAPTURE_PAYLOADS:
-        return None
+        return None, False
     try:
         conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
         conn.execute(
@@ -75,27 +76,42 @@ def _init_capture_db() -> sqlite3.Connection | None:
                 device_id TEXT,
                 table_name TEXT,
                 raw TEXT,
-                parsed TEXT
+                parsed TEXT,
+                direction TEXT
             )
             """
         )
-        return conn
+        # pokud vznikla ze starší verze, pokusíme se přidat sloupec direction
+        try:
+            conn.execute("ALTER TABLE frames ADD COLUMN direction TEXT")
+            conn.commit()
+        except Exception:
+            pass
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
+        return conn, "direction" in cols
     except Exception as e:
         logger.warning(f"Init capture DB failed: {e}")
-        return None
+        return None, False
 
 
-_capture_conn = _init_capture_db()
+_capture_conn, _capture_has_direction = _init_capture_db()
 
 
-def capture_payload(device_id: str | None, table: str | None, raw: str, parsed: dict[str, Any]) -> None:
+def capture_payload(device_id: str | None, table: str | None, raw: str, parsed: dict[str, Any], direction: str | None = None) -> None:
     if not CAPTURE_PAYLOADS or not _capture_conn:
         return
     try:
-        _capture_conn.execute(
-            "INSERT INTO frames (ts, device_id, table_name, raw, parsed) VALUES (?, ?, ?, ?, ?)",
-            (_iso_now(), device_id, table, raw, json.dumps(parsed, ensure_ascii=False)),
-        )
+        ts = _iso_now()
+        if _capture_has_direction:
+            _capture_conn.execute(
+                "INSERT INTO frames (ts, device_id, table_name, raw, parsed, direction) VALUES (?, ?, ?, ?, ?, ?)",
+                (ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False), direction),
+            )
+        else:
+            _capture_conn.execute(
+                "INSERT INTO frames (ts, device_id, table_name, raw, parsed) VALUES (?, ?, ?, ?, ?)",
+                (ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False)),
+            )
         _capture_conn.commit()
     except Exception as e:
         logger.debug(f"Capture payload failed: {e}")
@@ -379,6 +395,8 @@ class OIGProxy:
                     break
                 if direction == "BOX→CLOUD":
                     self._process_data(data, conn_id)
+                elif direction == "CLOUD→BOX":
+                    capture_payload(self.device_id, None, data.decode("utf-8", errors="ignore"), {}, direction="proxy_to_box")
                 writer.write(data)
                 await writer.drain()
         except Exception as e:
@@ -404,7 +422,7 @@ class OIGProxy:
                             self.current_state[key] = value
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"[#{conn_id}] PARSED ({table}): {parsed}")
-                    capture_payload(device_id, table, text, parsed)
+                    capture_payload(device_id, table, text, parsed, direction="box_to_proxy")
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():
