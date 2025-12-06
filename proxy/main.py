@@ -304,6 +304,50 @@ class MQTTPublisher:
         self.discovery_sent.add(sensor_id)
         logger.debug(f"Discovery odesláno pro {sensor_id}")
 
+    def send_event_discovery(self) -> None:
+        if not self.client or not self.connected:
+            return
+        sensor_id = "event_last"
+        if sensor_id in self.discovery_sent:
+            return
+        unique_id = f"oig_{self.device_id}_event_last"
+        event_topic = f"oig_box/{self.device_id}/event"
+        discovery_payload = {
+            "name": "Poslední událost",
+            "unique_id": unique_id,
+            "state_topic": event_topic,
+            "value_template": "{{ value_json.state }}",
+            "json_attributes_topic": event_topic,
+            "availability": [{"topic": f"oig_box/{self.device_id}/availability"}],
+            "device": {
+                "identifiers": [f"oig_box_{self.device_id}"],
+                "name": f"OIG BatteryBox {self.device_id}",
+                "manufacturer": "OIG Power",
+                "model": "BatteryBox",
+            },
+        }
+        topic = f"homeassistant/sensor/{unique_id}/config"
+        self.client.publish(topic, json.dumps(discovery_payload), retain=True)
+        self.discovery_sent.add(sensor_id)
+        logger.debug("Discovery odesláno pro event_last")
+
+    def publish_event(self, event: dict[str, Any]) -> None:
+        if not self.client or not self.connected:
+            return
+        self.send_event_discovery()
+        state = (
+            event.get("Content")
+            or event.get("Result")
+            or event.get("Type")
+            or event.get("_table")
+            or "event"
+        )
+        attrs = {k: v for k, v in event.items() if not k.startswith("_")}
+        payload = {"state": state, **attrs}
+        topic = f"oig_box/{self.device_id}/event"
+        self.client.publish(topic, json.dumps(payload, ensure_ascii=False))
+        logger.debug(f"Event publikován: {payload}")
+
     def publish_data(self, data: dict[str, Any]) -> None:
         if not self.client or not self.connected:
             return
@@ -368,9 +412,9 @@ class OIGProxy:
         try:
             load_sensor_map()  # případný reload mapy za běhu
             text = data.decode("utf-8", errors="ignore")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[#{conn_id}] RAW BOX→CLOUD: {text.strip()}")
             if "<Frame>" in text:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[#{conn_id}] RAW BOX→CLOUD: {text.strip()}")
                 parsed = self.parser.parse_xml_frame(text)
                 if parsed:
                     table = parsed.get("_table", "unknown")
@@ -385,6 +429,10 @@ class OIGProxy:
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"[#{conn_id}] PARSED {table}: {json.dumps(parsed, ensure_ascii=False)}")
+                    # Pokud jde o event-like payload (obsahuje Type/Content/Result/Confirm/ToDo), publikujeme zvlášť
+                    event_keys = {"Type", "Content", "Result", "Confirm", "ToDo"}
+                    if any(k in parsed for k in event_keys) and self.mqtt_publisher:
+                        self.mqtt_publisher.publish_event(parsed)
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():
                         if key in WARNING_MAP:
