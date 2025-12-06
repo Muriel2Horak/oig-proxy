@@ -355,6 +355,8 @@ class OIGProxy:
                 data = await reader.read(4096)
                 if not data:
                     break
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"[#{conn_id}] {direction} read {len(data)} bytes")
                 if direction == "BOX→CLOUD":
                     self._process_data(data, conn_id)
                 writer.write(data)
