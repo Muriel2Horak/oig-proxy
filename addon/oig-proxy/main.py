@@ -26,13 +26,11 @@ TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
 PROXY_PORT = int(os.getenv("PROXY_PORT", "5710"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+MQTT_NAMESPACE = os.getenv("MQTT_NAMESPACE", "oig_local")
 SENSOR_MAP_PATH = os.getenv(
     "SENSOR_MAP_PATH", os.path.join(os.path.dirname(__file__), "sensor_map.json")
 )
 MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))  # 0 = vypnuto
-UNKNOWN_SENSORS_PATH = os.getenv(
-    "UNKNOWN_SENSORS_PATH", "/data/unknown_sensors.json"
-)
 WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
 CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
 CAPTURE_DB_PATH = "/data/payloads.db"
@@ -57,7 +55,6 @@ def _friendly_name(sensor_id: str) -> str:
     return " ".join(p.capitalize() for p in parts)
 
 
-unknown_registry: dict[str, dict[str, Any]] = {}
 _last_map_load = 0.0
 
 
@@ -103,54 +100,15 @@ def capture_payload(device_id: str | None, table: str | None, raw: str, parsed: 
     except Exception as e:
         logger.debug(f"Capture payload failed: {e}")
 def load_unknown_registry() -> None:
-    """Načte registry neznámých senzorů z disku."""
-    global unknown_registry
-    if not os.path.exists(UNKNOWN_SENSORS_PATH):
-        unknown_registry = {}
-        return
-    try:
-        with open(UNKNOWN_SENSORS_PATH, "r", encoding="utf-8") as f:
-            unknown_registry = json.load(f)
-    except Exception as e:
-        logger.warning(f"Načtení unknown_sensors selhalo: {e}")
-        unknown_registry = {}
-
-
-def save_unknown_registry() -> None:
-    try:
-        os.makedirs(os.path.dirname(UNKNOWN_SENSORS_PATH), exist_ok=True)
-        with open(UNKNOWN_SENSORS_PATH, "w", encoding="utf-8") as f:
-            json.dump(unknown_registry, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.warning(f"Uložení unknown_sensors selhalo: {e}")
-
-
-def record_unknown(sensor_id: str, table: str | None = None) -> None:
-    """Uloží neznámý senzor do registru pro pozdější mapování."""
-    entry = unknown_registry.get(sensor_id, {})
-    now = _iso_now()
-    entry["count"] = entry.get("count", 0) + 1
-    entry["first_seen"] = entry.get("first_seen") or now
-    entry["last_seen"] = now
-    tables = set(entry.get("tables", []))
-    if table:
-        tables.add(table)
-    entry["tables"] = sorted(tables)
-    unknown_registry[sensor_id] = entry
-    save_unknown_registry()
+    """Deprecated placeholder, unknown sensors se neregistrují."""
+    return
 
 
 def get_sensor_config(sensor_id: str, table: str | None = None) -> SensorConfig | None:
     config = SENSORS.get(sensor_id)
     if config:
         return config
-    if not AUTO_DISCOVER_UNKNOWN:
-        return None
-    record_unknown(sensor_id, table)
-    config = SensorConfig(_friendly_name(sensor_id), "")
-    SENSORS[sensor_id] = config
-    logger.debug(f"Auto-registrace senzoru {sensor_id} (generic)")
-    return config
+    return None
 
 
 def decode_warnings(key: str, value: Any) -> list[str]:
@@ -225,7 +183,7 @@ class SensorConfig:
     icon: str | None = None
 
 
-AUTO_DISCOVER_UNKNOWN = True
+AUTO_DISCOVER_UNKNOWN = False
 
 # Senzory preferujeme načítat z JSON mappingu (SENSOR_MAP_PATH), jen doplňky níže.
 SENSORS: dict[str, SensorConfig] = {}
@@ -286,10 +244,10 @@ class MQTTPublisher:
         if not MQTT_AVAILABLE:
             return False
         try:
-            self.client = mqtt.Client(client_id=f"oig_proxy_{self.device_id}")
+            self.client = mqtt.Client(client_id=f"{MQTT_NAMESPACE}_{self.device_id}")
             if MQTT_USERNAME:
                 self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-            availability_topic = f"oig_box/{self.device_id}/availability"
+            availability_topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
             self.client.will_set(availability_topic, "offline", retain=True)
             self.client.on_connect = self._on_connect
             self.client.on_disconnect = self._on_disconnect
@@ -306,7 +264,8 @@ class MQTTPublisher:
             logger.info("MQTT připojeno")
             self.connected = True
             # Označit zařízení jako online
-            client.publish(f"oig_box/{self.device_id}/availability", "online", retain=True)
+            client.publish(f"{MQTT_NAMESPACE}/{self.device_id}/availability", "online", retain=True)
+            self.discovery_sent.clear()
         else:
             logger.error(f"MQTT připojení selhalo s kódem {rc}")
 
@@ -319,18 +278,18 @@ class MQTTPublisher:
             return
         if sensor_id in self.discovery_sent:
             return
-        unique_id = f"oig_local_{self.device_id}_{sensor_id.lower()}"
+        unique_id = f"{MQTT_NAMESPACE}_{self.device_id}_{sensor_id.lower()}"
         discovery_payload = {
             "name": config.name,
             "unique_id": unique_id,
-            "state_topic": f"oig_box/{self.device_id}/state",
+            "state_topic": f"{MQTT_NAMESPACE}/{self.device_id}/state",
             "value_template": f"{{{{ value_json.{sensor_id} }}}}",
-            "availability": [{"topic": f"oig_box/{self.device_id}/availability"}],
+            "availability": [{"topic": f"{MQTT_NAMESPACE}/{self.device_id}/availability"}],
             "device": {
-                "identifiers": [f"oig_box_{self.device_id}"],
-                "name": f"OIG BatteryBox {self.device_id}",
+                "identifiers": [f"{MQTT_NAMESPACE}_{self.device_id}"],
+                "name": f"{MQTT_NAMESPACE}_{self.device_id}",
                 "manufacturer": "OIG Power",
-                "model": "BatteryBox",
+                "model": "OIG BatteryBox",
             },
         }
         if config.unit:
@@ -355,13 +314,12 @@ class MQTTPublisher:
             cfg = get_sensor_config(key)
             if cfg:
                 self.send_discovery(key, cfg)
-        topic = f"oig_box/{self.device_id}/state"
+        topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
         self.client.publish(topic, json.dumps(data))
 
 
 class OIGProxy:
     def __init__(self) -> None:
-        load_unknown_registry()
         self.parser = OIGDataParser()
         self.mqtt_publisher: MQTTPublisher | None = None
         self.connection_count = 0
