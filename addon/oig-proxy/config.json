@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": ["amd64", "aarch64"],
@@ -19,7 +19,7 @@
     "mqtt_username": "",
     "mqtt_password": "",
     "map_reload_seconds": 0,
-    "log_level": ["INFO"]
+    "log_level": "INFO"
   },
   "schema": {
     "target_server": "str",
