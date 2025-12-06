@@ -263,6 +263,8 @@ class MQTTPublisher:
             self.connected = True
             # Označit zařízení jako online
             client.publish(f"oig_box/{self.device_id}/availability", "online", retain=True)
+            # Po novém připojení chceme poslat discovery znovu (např. při změně popisků)
+            self.discovery_sent.clear()
         else:
             logger.error(f"MQTT připojení selhalo s kódem {rc}")
 
