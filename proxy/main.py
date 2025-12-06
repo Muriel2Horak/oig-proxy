@@ -367,6 +367,8 @@ class OIGProxy:
             load_sensor_map()  # případný reload mapy za běhu
             text = data.decode("utf-8", errors="ignore")
             if "<Frame>" in text:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"[#{conn_id}] RAW BOX→CLOUD: {text.strip()}")
                 parsed = self.parser.parse_xml_frame(text)
                 if parsed:
                     table = parsed.get("_table", "unknown")
@@ -379,6 +381,8 @@ class OIGProxy:
                         if not key.startswith("_"):
                             self.current_state[key] = value
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"[#{conn_id}] PARSED {table}: {json.dumps(parsed, ensure_ascii=False)}")
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():
                         if key in WARNING_MAP:
