@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": ["amd64", "aarch64"],
@@ -33,8 +33,6 @@
     "mqtt_password": "str",
     "map_reload_seconds": "int",
     "log_level": "list(INFO|DEBUG|WARNING|ERROR)",
-    "discovery_suffix": "str",
-    "discovery_prefix": "str",
     "ha_ip": "str?",
     "dns_upstream": "str?"
   },

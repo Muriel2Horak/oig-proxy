@@ -15,12 +15,13 @@
 - `unknown_sensors.json` po migraci nepoužívat jako primární; jednorázově stáhnout aktuální z HA a zkonzumovat do mapy, dál nové neznámé rovnou merge do mapy jako TODO.
 - Nový formát `sensor_map.json` (centrální mapping pro addon, inspirovaný cloudem):
   - `sensors`: klíč → `{name, name_cs, unit_of_measurement, device_class|null, state_class|null, sensor_type_category, device_mapping, todo}`; default `sensor_type_category=measured`, `device_mapping=main`.
-  - `warnings_3f`: seznam bitmask (bit, key, remark, remark_cs, warning_code|null) – jen pro dekódování, neposílá se jako senzory.
-  - Bez metadat ze zdrojového XLS (table/address/scale/dtype/get_cmd/response/in_inventory... odstraněno).
-  - `unique_id`/entity_id: `oig_local_<device_id>_<sensor_key>`; `name`/`name_cs` z mapy použít pro UI název.
+- `warnings_3f`: seznam bitmask (bit, key, remark, remark_cs, warning_code|null) – jen pro dekódování, neposílá se jako senzory.
+- Bez metadat ze zdrojového XLS (table/address/scale/dtype/get_cmd/response/in_inventory... odstraněno).
+- `unique_id`/entity_id: `oig_local_<device_id>_<sensor_key>`; `name`/`name_cs` z mapy použít pro UI název.
 - Logika warningů: dekódovat bity přes `warnings_3f` (vč. `remark_cs`) a posílat do `<key>_warnings`; auto-registrace ERR_*_warnings už nebude potřeba po doplnění klíčů v mapě.
 - Async proxy: ošetřit korektní zavírání spojení (zrušit/awaitnout `_forward` tasky, zavřít client/server writer) – v logu se objevilo `Task was destroyed but it is pending!` po ukončení spojení.
 - Deprecation v addonu: nahradit `datetime.utcnow()` za timezone-aware `datetime.now(datetime.UTC)` (varování v logu).
+- Logging v DEBUG: logovat RAW rámce a PARSED payloady pro ladění.
 
 ## 3) Kroky před implementací
 - Jednorázově stáhnout aktuální `/data/unknown_sensors.json` z HA a doplnit chybějící klíče do `sensor_map.json` jako `TODO …`; tím tento soubor dál opouštíme.

@@ -13,6 +13,7 @@ TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA a
 - Načítá senzory z JSON mapy; neznámé klíče auto-discovery s generickým názvem a logováním do `/data/unknown_sensors.json`.
 - Dekóduje bitové warningy `ERR_*` přes `warnings_3f` (vč. českých textů) a přidává `<ERR_X>_warnings` se seznamem hlášek.
 - Mapu lze reloadovat za běhu (`MAP_RELOAD_SECONDS` > 0); `unique_id`/entity_id má tvar `oig_local_<device_id>_<sensor_key>`.
+- Pokud je `LOG_LEVEL=DEBUG`, loguje RAW rámce i PARSED payload pro ladění.
 
 ## Tok komunikace
 ```

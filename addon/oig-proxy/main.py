@@ -35,7 +35,7 @@ UNKNOWN_SENSORS_PATH = os.getenv(
 WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
 
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
@@ -390,6 +390,8 @@ class OIGProxy:
         try:
             load_sensor_map()  # případný reload mapy za běhu
             text = data.decode("utf-8", errors="ignore")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[#{conn_id}] RAW: {text}")
             if "<Frame>" in text:
                 parsed = self.parser.parse_xml_frame(text)
                 if parsed:
@@ -402,6 +404,8 @@ class OIGProxy:
                     for key, value in parsed.items():
                         if not key.startswith("_"):
                             self.current_state[key] = value
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"[#{conn_id}] PARSED ({table}): {parsed}")
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():
