@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ UNKNOWN_SENSORS_PATH = os.getenv(
     "UNKNOWN_SENSORS_PATH", "/data/unknown_sensors.json"
 )
 WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
+CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
+CAPTURE_DB_PATH = "/data/payloads.db"
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -62,6 +65,43 @@ def _iso_now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
+def _init_capture_db() -> sqlite3.Connection | None:
+    if not CAPTURE_PAYLOADS:
+        return None
+    try:
+        conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS frames (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT,
+                device_id TEXT,
+                table_name TEXT,
+                raw TEXT,
+                parsed TEXT
+            )
+            """
+        )
+        return conn
+    except Exception as e:
+        logger.warning(f"Init capture DB failed: {e}")
+        return None
+
+
+_capture_conn = _init_capture_db()
+
+
+def capture_payload(device_id: str | None, table: str | None, raw: str, parsed: dict[str, Any]) -> None:
+    if not CAPTURE_PAYLOADS or not _capture_conn:
+        return
+    try:
+        _capture_conn.execute(
+            "INSERT INTO frames (ts, device_id, table_name, raw, parsed) VALUES (?, ?, ?, ?, ?)",
+            (_iso_now(), device_id, table, raw, json.dumps(parsed, ensure_ascii=False)),
+        )
+        _capture_conn.commit()
+    except Exception as e:
+        logger.debug(f"Capture payload failed: {e}")
 def load_unknown_registry() -> None:
     """Načte registry neznámých senzorů z disku."""
     global unknown_registry
@@ -406,6 +446,7 @@ class OIGProxy:
                             self.current_state[key] = value
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"[#{conn_id}] PARSED ({table}): {parsed}")
+                    capture_payload(device_id, table, text, parsed)
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():

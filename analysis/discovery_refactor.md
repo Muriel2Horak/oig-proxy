@@ -22,6 +22,7 @@
 - Async proxy: ošetřit korektní zavírání spojení (zrušit/awaitnout `_forward` tasky, zavřít client/server writer) – v logu se objevilo `Task was destroyed but it is pending!` po ukončení spojení.
 - Deprecation v addonu: nahradit `datetime.utcnow()` za timezone-aware `datetime.now(datetime.UTC)` (varování v logu).
 - Logging v DEBUG: logovat RAW rámce a PARSED payloady pro ladění.
+- Volitelný capture pro analýzu: `capture_payloads=true` → ukládat payloady do `/data/payloads.db` (SQLite), perzistentní mezi restarty.
 
 ## 3) Kroky před implementací
 - Jednorázově stáhnout aktuální `/data/unknown_sensors.json` z HA a doplnit chybějící klíče do `sensor_map.json` jako `TODO …`; tím tento soubor dál opouštíme.

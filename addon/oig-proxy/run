@@ -50,5 +50,6 @@ LOG_LEVEL_RAW=$(bashio::config 'log_level' | tr -d '[]\"' | xargs | cut -d',' -f
 export LOG_LEVEL=$LOG_LEVEL_RAW
 export SENSOR_MAP_PATH=/data/sensor_map.json
 export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
+export CAPTURE_PAYLOADS=$(bashio::config 'capture_payloads')
 
 python -u /app/main.py
