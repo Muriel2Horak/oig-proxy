@@ -63,7 +63,7 @@
     "FV_P1": {
       "name": "Výkon string 1",
       "name_cs": "Výkon string 1",
-      "unit_of_measurement": "Wp",
+      "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -93,7 +93,7 @@
     "FV_P2": {
       "name": "Výkon string 2",
       "name_cs": "Výkon string 2",
-      "unit_of_measurement": "Wp",
+      "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -105,7 +105,7 @@
       "name_cs": "Výroba FV dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -115,7 +115,7 @@
       "name_cs": "Výroba FV tento měsíc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -125,7 +125,7 @@
       "name_cs": "Výroba FV tento rok",
       "unit_of_measurement": "MWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -134,7 +134,7 @@
       "name": "Výkon FVE(%)",
       "name_cs": "Výkon FVE(%)",
       "unit_of_measurement": "%",
-      "device_class": null,
+      "device_class": "power_factor",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "main",
@@ -215,7 +215,7 @@
       "name_cs": "Energie AC střídače dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -225,7 +225,7 @@
       "name_cs": "Energie AC střídače tento měsíc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -235,7 +235,7 @@
       "name_cs": "Energie AC střídače tento rok",
       "unit_of_measurement": "MWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -245,7 +245,7 @@
       "name_cs": "Dodávka AC střídače dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -255,7 +255,7 @@
       "name_cs": "Dodávka AC střídače tento měsíc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -265,7 +265,7 @@
       "name_cs": "Dodávka AC střídače tento rok",
       "unit_of_measurement": "MWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -284,8 +284,8 @@
       "name": "Výstupní proud (A)",
       "name_cs": "Výstupní proud (A)",
       "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "voltage",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -395,7 +395,7 @@
       "name_cs": "Denní odběr (loDEnergy 999994)",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -405,7 +405,7 @@
       "name_cs": "Měsíční odběr (loMEnergy 999995)",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -415,7 +415,7 @@
       "name_cs": "Roční odběr (loYEnergy 999996)",
       "unit_of_measurement": "MWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -494,8 +494,8 @@
       "name": "Baterie minimum",
       "name_cs": "Baterie minimum",
       "unit_of_measurement": "%",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "battery",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -594,8 +594,8 @@
       "name": "Baterie kapacita",
       "name_cs": "Baterie kapacita",
       "unit_of_measurement": "%",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "battery",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -624,8 +624,8 @@
       "name": "Baterie kvalita",
       "name_cs": "Baterie kvalita",
       "unit_of_measurement": "%",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "battery",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -635,7 +635,7 @@
       "name_cs": "Nabíjení ze sítě - baterie denní en.",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -645,7 +645,7 @@
       "name_cs": "Nabíjení ze sítě - baterie měsíční en.",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -655,7 +655,7 @@
       "name_cs": "Nabíjení ze sítě - baterie roční en.",
       "unit_of_measurement": "MWh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -664,8 +664,8 @@
       "name": "Dnes nabito",
       "name_cs": "Dnes nabito",
       "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "energy",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -674,8 +674,8 @@
       "name": "Dnes vybito",
       "name_cs": "Dnes vybito",
       "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "energy",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -684,8 +684,8 @@
       "name": "Výkon baterie",
       "name_cs": "Výkon baterie",
       "unit_of_measurement": "W",
-      "device_class": null,
-      "state_class": null,
+      "device_class": "power",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -895,7 +895,7 @@
       "name_cs": "Energie bojler dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -905,7 +905,7 @@
       "name_cs": "Energie bojler tento měsíc",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -915,7 +915,7 @@
       "name_cs": "Energie bojler tento rok",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
-      "state_class": "total",
+      "state_class": "total_increasing",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -1573,7 +1573,7 @@
     "P_FVE": {
       "name": "Výkon FVE",
       "name_cs": "Výkon FVE",
-      "unit_of_measurement": "Wp",
+      "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -1783,9 +1783,9 @@
     "Temp": {
       "name": "Měření teploty v CBB boxu",
       "name_cs": "Měření teploty v CBB boxu",
-      "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
+      "unit_of_measurement": "°C",
+      "device_class": "temperature",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false
@@ -1793,9 +1793,9 @@
     "Humid": {
       "name": "Měření vlhkosti v CBB Boxu",
       "name_cs": "Měření vlhkosti v CBB Boxu",
-      "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
+      "unit_of_measurement": "%",
+      "device_class": "humidity",
+      "state_class": "measurement",
       "sensor_type_category": "measured",
       "device_mapping": "main",
       "todo": false

@@ -1,9 +1,12 @@
 {
   "name": "OIG Proxy",
-  "version": "1.2.10",
+  "version": "1.2.11",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
-  "arch": ["amd64", "aarch64"],
+  "arch": [
+    "amd64",
+    "aarch64"
+  ],
   "startup": "services",
   "boot": "auto",
   "init": false,
@@ -41,5 +44,7 @@
     "53/udp": 53,
     "53/tcp": 53
   },
-  "map": ["data:rw"]
+  "map": [
+    "data:rw"
+  ]
 }
