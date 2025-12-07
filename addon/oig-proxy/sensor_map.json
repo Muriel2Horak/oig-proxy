@@ -423,7 +423,7 @@
     "BAT_N": {
       "name": "Počet baterii",
       "name_cs": "Počet baterii",
-      "unit_of_measurement": "ks",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -473,7 +473,7 @@
     "BAT_HDO": {
       "name": "Nabíjení baterie",
       "name_cs": "Nabíjení baterie",
-      "unit_of_measurement": "signál HDO",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -533,7 +533,7 @@
     "BAL_ON": {
       "name": "Indikace balancování, stav 0 (šedá), stav 1",
       "name_cs": "Indikace balancování, stav 0 (šedá), stav 1",
-      "unit_of_measurement": "zelená",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -543,7 +543,7 @@
     "HDO1_S": {
       "name": "HDO časové pásmo 1",
       "name_cs": "HDO časové pásmo 1",
-      "unit_of_measurement": "00.00: 00.00",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -563,7 +563,7 @@
     "HDO2_S": {
       "name": "HDO časové pásmo 2",
       "name_cs": "HDO časové pásmo 2",
-      "unit_of_measurement": "00.00:00.00",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -683,7 +683,7 @@
     "BAT_P": {
       "name": "Výkon baterie",
       "name_cs": "Výkon baterie",
-      "unit_of_measurement": "-/+W",
+      "unit_of_measurement": "W",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -691,8 +691,8 @@
       "todo": false
     },
     "ISON": {
-      "name": "Zap. / vyp. + signalizace stavu)",
-      "name_cs": "Zap. / vyp. + signalizace stavu)",
+      "name": "Zap. / vyp. + signalizace stavu",
+      "name_cs": "Zap. / vyp. + signalizace stavu",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -723,7 +723,7 @@
     "ZONE1_S": {
       "name": "Pásmo 1 - začátek",
       "name_cs": "Pásmo 1 - začátek",
-      "unit_of_measurement": "varPasmo10.0",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -733,7 +733,7 @@
     "ZONE1_E": {
       "name": "Pásmo 1 - konec",
       "name_cs": "Pásmo 1 - konec",
-      "unit_of_measurement": "varPasmo10.1",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -763,7 +763,7 @@
     "ZONE3_S": {
       "name": "Pásmo 3 - začátek",
       "name_cs": "Pásmo 3 - začátek",
-      "unit_of_measurement": "varPasmo10.0",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -773,7 +773,7 @@
     "ZONE3_E": {
       "name": "Pásmo 3 - konec",
       "name_cs": "Pásmo 3 - konec",
-      "unit_of_measurement": "varPasmo10.1",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -953,7 +953,7 @@
     "Confirm": {
       "name": "Potvrzeni - Kvitace preneseni pozadavku",
       "name_cs": "Potvrzeni - Kvitace preneseni pozadavku",
-      "unit_of_measurement": "New / Pending / Executed",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1083,7 +1083,7 @@
     "FW_UpdateEnabled": {
       "name": "Povoleni aktualizovat FW",
       "name_cs": "Povoleni aktualizovat FW",
-      "unit_of_measurement": "ano / ne",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1093,7 +1093,7 @@
     "ResetEnabled": {
       "name": "Povoleni resetovat pristroj po updatu",
       "name_cs": "Povoleni resetovat pristroj po updatu",
-      "unit_of_measurement": "ano / ne",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1103,7 +1103,7 @@
     "Testing": {
       "name": "Povoleni testovaci procedury komunikace - Pozor !!!",
       "name_cs": "Povoleni testovaci procedury komunikace - Pozor !!!",
-      "unit_of_measurement": "ano / ne",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1113,7 +1113,7 @@
     "SettingEnabled": {
       "name": "Povoleni odesilat nastaveni za Serveru",
       "name_cs": "Povoleni odesilat nastaveni za Serveru",
-      "unit_of_measurement": "ano / ne",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1123,7 +1123,7 @@
     "ReadOutEnabled": {
       "name": "Povoleni vycitat pristroj",
       "name_cs": "Povoleni vycitat pristroj",
-      "unit_of_measurement": "ano / ne",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1193,7 +1193,7 @@
     "T_INN": {
       "name": "Teplota invertoru",
       "name_cs": "Teplota invertoru",
-      "unit_of_measurement": "FSP / Goodwe",
+      "unit_of_measurement": "°C",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1443,7 +1443,7 @@
     "BYPASS_M": {
       "name": "Ruční bypass",
       "name_cs": "Ruční bypass",
-      "unit_of_measurement": "signalizace 0/1",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1683,7 +1683,7 @@
     "ENLOADS": {
       "name": "Zapnutí / vypnutí zátěže",
       "name_cs": "Zapnutí / vypnutí zátěže",
-      "unit_of_measurement": "LOAD",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1713,7 +1713,7 @@
     "ACCON": {
       "name": "Zapnut / vypnut AC coupling",
       "name_cs": "Zapnut / vypnut AC coupling",
-      "unit_of_measurement": "0/1",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1983,7 +1983,7 @@
     "V_NOMIN": {
       "name": "Nominal output voltage",
       "name_cs": "Nominal output voltage",
-      "unit_of_measurement": "240/230/220/208/202",
+      "unit_of_measurement": "V",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -1993,7 +1993,7 @@
     "F_NOMIN": {
       "name": "Nominal output frequency",
       "name_cs": "Nominal output frequency",
-      "unit_of_measurement": "60/50",
+      "unit_of_measurement": "Hz",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2283,7 +2283,7 @@
     "V_CHRG": {
       "name": "Bulk charging voltage",
       "name_cs": "Bulk charging voltage",
-      "unit_of_measurement": "C.V. voltage",
+      "unit_of_measurement": "V",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2553,7 +2553,7 @@
     "CONSUM_LIQ": {
       "name": "Průměrná spotřeba auta benzín / nafta na 100km",
       "name_cs": "Průměrná spotřeba auta benzín / nafta na 100km",
-      "unit_of_measurement": "l",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2583,7 +2583,7 @@
     "PRICE_ET1": {
       "name": "Cena el. energie 1kWh v Kč",
       "name_cs": "Cena el. energie 1kWh v Kč",
-      "unit_of_measurement": "odběr ze sítě",
+      "unit_of_measurement": "Kč/kWh",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2593,7 +2593,7 @@
     "PRICE_ET2": {
       "name": "Cena el. energie 1 kWh v Kč",
       "name_cs": "Cena el. energie 1 kWh v Kč",
-      "unit_of_measurement": "HDO",
+      "unit_of_measurement": "Kč/kWh",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2623,7 +2623,7 @@
     "CHARGING": {
       "name": "Dobíjení aktivní / neaktivní",
       "name_cs": "Dobíjení aktivní / neaktivní",
-      "unit_of_measurement": "0/1",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2641,8 +2641,8 @@
       "todo": false
     },
     "EBATMIN": {
-      "name": "Auto ECO baterie minimum ˇ0-100%)",
-      "name_cs": "Auto ECO baterie minimum ˇ0-100%)",
+      "name": "Auto ECO baterie minimum (0-100%)",
+      "name_cs": "Auto ECO baterie minimum (0-100%)",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2651,8 +2651,8 @@
       "todo": false
     },
     "EPOWMAX": {
-      "name": "Auto ECO maximální odběr ˇ1-10000W)",
-      "name_cs": "Auto ECO maximální odběr ˇ1-10000W)",
+      "name": "Auto ECO maximální odběr (1-10000W)",
+      "name_cs": "Auto ECO maximální odběr (1-10000W)",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2663,7 +2663,7 @@
     "EBATREC": {
       "name": "Auto ECO baterie obnovení",
       "name_cs": "Auto ECO baterie obnovení",
-      "unit_of_measurement": "0-100%",
+      "unit_of_measurement": "%",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2673,7 +2673,7 @@
     "PHSS": {
       "name": "Počet fází nabíječky",
       "name_cs": "Počet fází nabíječky",
-      "unit_of_measurement": "1f nebo 3F",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2683,7 +2683,7 @@
     "EREGREP": {
       "name": "Auto ECO opakování regulace",
       "name_cs": "Auto ECO opakování regulace",
-      "unit_of_measurement": "1-100s",
+      "unit_of_measurement": "s",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2693,7 +2693,7 @@
     "EREGSNS": {
       "name": "Auto ECO citlivost regulace",
       "name_cs": "Auto ECO citlivost regulace",
-      "unit_of_measurement": "1-99A",
+      "unit_of_measurement": "A",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -3053,7 +3053,7 @@
     "Lat": {
       "name": "Latence",
       "name_cs": "Latence",
-      "unit_of_measurement": "ms",
+      "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
       "sensor_type_category": "measured",
