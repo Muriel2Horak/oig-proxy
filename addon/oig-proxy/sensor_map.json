@@ -1271,8 +1271,8 @@
       "todo": false
     },
     "MODE": {
-      "name": "0-Vypnuto/1-volba režimu ECO /2-ruční /3-HDO",
-      "name_cs": "0-Vypnuto/1-volba režimu ECO /2-ruční /3-HDO",
+      "name": "Walllbox - mod",
+      "name_cs": "Walllbox - mod",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,

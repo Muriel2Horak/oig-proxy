@@ -62,10 +62,10 @@ def _iso_now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
-def _init_capture_db() -> tuple[sqlite3.Connection | None, bool]:
-    """Inicializuje SQLite DB pro capture; vrací connection a flag, zda existuje sloupec direction."""
+def _init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
+    """Inicializuje SQLite DB pro capture; vrací connection a sadu dostupných sloupců."""
     if not CAPTURE_PAYLOADS:
-        return None, False
+        return None, set()
     try:
         conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
         conn.execute(
@@ -77,41 +77,66 @@ def _init_capture_db() -> tuple[sqlite3.Connection | None, bool]:
                 table_name TEXT,
                 raw TEXT,
                 parsed TEXT,
-                direction TEXT
+                direction TEXT,
+                conn_id INTEGER,
+                peer TEXT,
+                length INTEGER
             )
             """
         )
-        # pokud vznikla ze starší verze, pokusíme se přidat sloupec direction
-        try:
-            conn.execute("ALTER TABLE frames ADD COLUMN direction TEXT")
-            conn.commit()
-        except Exception:
-            pass
+        # pokud vznikla ze starší verze, pokusíme se přidat chybějící sloupce
+        for col_name, col_type in [
+            ("direction", "TEXT"),
+            ("conn_id", "INTEGER"),
+            ("peer", "TEXT"),
+            ("length", "INTEGER"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE frames ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+            except Exception:
+                pass
         cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
-        return conn, "direction" in cols
+        return conn, cols
     except Exception as e:
         logger.warning(f"Init capture DB failed: {e}")
-        return None, False
+        return None, set()
 
 
-_capture_conn, _capture_has_direction = _init_capture_db()
+_capture_conn, _capture_cols = _init_capture_db()
 
 
-def capture_payload(device_id: str | None, table: str | None, raw: str, parsed: dict[str, Any], direction: str | None = None) -> None:
+def capture_payload(
+    device_id: str | None,
+    table: str | None,
+    raw: str,
+    parsed: dict[str, Any],
+    direction: str | None = None,
+    conn_id: int | None = None,
+    peer: str | None = None,
+    length: int | None = None,
+) -> None:
     if not CAPTURE_PAYLOADS or not _capture_conn:
         return
     try:
         ts = _iso_now()
-        if _capture_has_direction:
-            _capture_conn.execute(
-                "INSERT INTO frames (ts, device_id, table_name, raw, parsed, direction) VALUES (?, ?, ?, ?, ?, ?)",
-                (ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False), direction),
-            )
-        else:
-            _capture_conn.execute(
-                "INSERT INTO frames (ts, device_id, table_name, raw, parsed) VALUES (?, ?, ?, ?, ?)",
-                (ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False)),
-            )
+        fields = ["ts", "device_id", "table_name", "raw", "parsed"]
+        values = [ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False)]
+        if "direction" in _capture_cols:
+            fields.append("direction")
+            values.append(direction)
+        if "conn_id" in _capture_cols:
+            fields.append("conn_id")
+            values.append(conn_id)
+        if "peer" in _capture_cols:
+            fields.append("peer")
+            values.append(peer)
+        if "length" in _capture_cols:
+            fields.append("length")
+            values.append(length)
+        placeholders = ",".join("?" for _ in fields)
+        sql = f"INSERT INTO frames ({','.join(fields)}) VALUES ({placeholders})"
+        _capture_conn.execute(sql, values)
         _capture_conn.commit()
     except Exception as e:
         logger.debug(f"Capture payload failed: {e}")
@@ -358,10 +383,16 @@ class OIGProxy:
             logger.info(f"[#{conn_id}] Připojeno k {TARGET_SERVER}:{TARGET_PORT}")
             tasks = [
                 asyncio.create_task(
-                    self._forward(client_reader, server_writer, conn_id, "BOX→CLOUD")
+                    self._forward(client_reader, server_writer, conn_id, "BOX→CLOUD", peer=str(client_addr))
                 ),
                 asyncio.create_task(
-                    self._forward(server_reader, client_writer, conn_id, "CLOUD→BOX")
+                    self._forward(
+                        server_reader,
+                        client_writer,
+                        conn_id,
+                        "CLOUD→BOX",
+                        peer=str(server_writer.get_extra_info("peername")),
+                    )
                 ),
             ]
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
@@ -386,7 +417,12 @@ class OIGProxy:
             logger.info(f"[#{conn_id}] Spojení ukončeno")
 
     async def _forward(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, conn_id: int, direction: str
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        conn_id: int,
+        direction: str,
+        peer: str | None = None,
     ) -> None:
         try:
             while True:
@@ -394,15 +430,35 @@ class OIGProxy:
                 if not data:
                     break
                 if direction == "BOX→CLOUD":
-                    self._process_data(data, conn_id)
+                    handled = self._process_data(data, conn_id, peer)
+                    if not handled:
+                        capture_payload(
+                            self.device_id,
+                            None,
+                            data.decode("utf-8", errors="ignore"),
+                            {},
+                            direction="box_to_cloud",
+                            conn_id=conn_id,
+                            peer=peer,
+                            length=len(data),
+                        )
                 elif direction == "CLOUD→BOX":
-                    capture_payload(self.device_id, None, data.decode("utf-8", errors="ignore"), {}, direction="proxy_to_box")
+                    capture_payload(
+                        self.device_id,
+                        None,
+                        data.decode("utf-8", errors="ignore"),
+                        {},
+                        direction="proxy_to_box",
+                        conn_id=conn_id,
+                        peer=peer,
+                        length=len(data),
+                    )
                 writer.write(data)
                 await writer.drain()
         except Exception as e:
             logger.debug(f"[#{conn_id}] {direction} forward ukončen: {e}")
 
-    def _process_data(self, data: bytes, conn_id: int) -> None:
+    def _process_data(self, data: bytes, conn_id: int, peer: str | None = None) -> bool:
         try:
             load_sensor_map()  # případný reload mapy za běhu
             text = data.decode("utf-8", errors="ignore")
@@ -434,8 +490,10 @@ class OIGProxy:
                                 get_sensor_config(derived_key)
                     if self.mqtt_publisher:
                         self.mqtt_publisher.publish_data(self.current_state)
+                    return True
         except Exception as e:
             logger.error(f"[#{conn_id}] Chyba parsování: {e}")
+        return False
 
     async def start(self) -> None:
         server = await asyncio.start_server(self.handle_connection, "0.0.0.0", PROXY_PORT)
