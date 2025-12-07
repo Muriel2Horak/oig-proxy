@@ -320,8 +320,10 @@ class MQTTPublisher:
         if sensor_id in self.discovery_sent:
             return
         unique_id = f"{MQTT_NAMESPACE}_{self.device_id}_{sensor_id.lower()}"
+        object_id = f"{self.device_id}_{sensor_id.lower()}"
         discovery_payload = {
             "name": config.name,
+            "object_id": object_id,
             "unique_id": unique_id,
             "state_topic": f"{MQTT_NAMESPACE}/{self.device_id}/state",
             "value_template": f"{{{{ value_json.{sensor_id} }}}}",
