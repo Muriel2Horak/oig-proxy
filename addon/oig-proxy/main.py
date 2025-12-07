@@ -193,7 +193,12 @@ def load_sensor_map() -> None:
             device_class = meta.get("device_class")
             state_class = meta.get("state_class")
             icon = meta.get("icon")
-            SENSORS[sid] = SensorConfig(name, unit, device_class, state_class, icon)
+            device_mapping = meta.get("device_mapping")
+            entity_category = meta.get("entity_category")
+            SENSORS[sid] = SensorConfig(
+                name, unit, device_class, state_class, icon,
+                device_mapping, entity_category
+            )
             added += 1
         if added:
             logger.info(f"Doplněno/aktualizováno {added} senzorů z JSON mappingu")
@@ -222,7 +227,20 @@ class SensorConfig:
     device_class: str | None = None
     state_class: str | None = None
     icon: str | None = None
+    device_mapping: str | None = None
+    entity_category: str | None = None
 
+
+# Mapování device_mapping na názvy zařízení
+DEVICE_NAMES = {
+    "battery": "Baterie",
+    "pv": "FVE",
+    "grid": "Síť",
+    "load": "Spotřeba",
+    "boiler": "Bojler",
+    "wallbox": "Wallbox",
+    "inverter": "Střídač",
+}
 
 AUTO_DISCOVER_UNKNOWN = False
 
@@ -319,22 +337,40 @@ class MQTTPublisher:
             return
         if sensor_id in self.discovery_sent:
             return
+        
+        # Určit device podle device_mapping
+        device_type = config.device_mapping or "inverter"
+        device_suffix = device_type
+        device_name = DEVICE_NAMES.get(device_type, "Střídač")
+        
+        # Identifikátory zařízení
+        device_identifier = f"{MQTT_NAMESPACE}_{self.device_id}_{device_suffix}"
+        full_device_name = f"OIG {device_name} ({self.device_id})"
+        
         unique_id = f"{MQTT_NAMESPACE}_{self.device_id}_{sensor_id.lower()}"
         object_id = f"{MQTT_NAMESPACE}_{self.device_id}_{sensor_id.lower()}"
+        availability_topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
+        
         discovery_payload = {
             "name": config.name,
             "object_id": object_id,
             "unique_id": unique_id,
             "state_topic": f"{MQTT_NAMESPACE}/{self.device_id}/state",
             "value_template": f"{{{{ value_json.{sensor_id} }}}}",
-            "availability": [{"topic": f"{MQTT_NAMESPACE}/{self.device_id}/availability"}],
+            "availability": [{"topic": availability_topic}],
             "device": {
-                "identifiers": [f"{MQTT_NAMESPACE}_{self.device_id}"],
-                "name": f"{MQTT_NAMESPACE}_{self.device_id}",
+                "identifiers": [device_identifier],
+                "name": full_device_name,
                 "manufacturer": "OIG Power",
-                "model": "OIG BatteryBox",
+                "model": f"OIG BatteryBox - {device_name}",
+                "via_device": f"{MQTT_NAMESPACE}_{self.device_id}_inverter",
             },
         }
+        
+        # Hlavní zařízení (inverter) nemá via_device
+        if device_type == "inverter":
+            del discovery_payload["device"]["via_device"]
+        
         if config.unit:
             discovery_payload["unit_of_measurement"] = config.unit
         if config.device_class:
@@ -343,10 +379,13 @@ class MQTTPublisher:
             discovery_payload["state_class"] = config.state_class
         if config.icon:
             discovery_payload["icon"] = config.icon
+        if config.entity_category:
+            discovery_payload["entity_category"] = config.entity_category
+            
         topic = f"homeassistant/sensor/{unique_id}/config"
         self.client.publish(topic, json.dumps(discovery_payload), retain=True)
         self.discovery_sent.add(sensor_id)
-        logger.debug(f"Discovery odesláno pro {sensor_id}")
+        logger.debug(f"Discovery odesláno pro {sensor_id} → {device_name}")
 
     def publish_data(self, data: dict[str, Any]) -> None:
         if not self.client or not self.connected:
