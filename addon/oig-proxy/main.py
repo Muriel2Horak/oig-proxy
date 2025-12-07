@@ -467,7 +467,12 @@ class OIGProxy:
             if "<Frame>" in text:
                 parsed = self.parser.parse_xml_frame(text)
                 if parsed:
-                    table = parsed.get("_table", "unknown")
+                    table = parsed.get("_table")
+                    # Speciální zachycení ACK rámců bez TblName
+                    if not table and parsed.get("Result") == "ACK" and parsed.get("ToDo") == "GetActual":
+                        table = "ack_getactual"
+                    if not table:
+                        table = "unknown"
                     device_id = parsed.get("_device_id")
                     if device_id and not self.mqtt_publisher:
                         self.device_id = device_id
@@ -478,7 +483,16 @@ class OIGProxy:
                             self.current_state[key] = value
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"[#{conn_id}] PARSED ({table}): {parsed}")
-                    capture_payload(device_id, table, text, parsed, direction="box_to_proxy")
+                    capture_payload(
+                        device_id,
+                        table,
+                        text,
+                        parsed,
+                        direction="box_to_proxy",
+                        conn_id=conn_id,
+                        peer=peer,
+                        length=len(data),
+                    )
                     logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
                     # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
                     for key, value in parsed.items():
