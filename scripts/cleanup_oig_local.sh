@@ -44,7 +44,7 @@ fi
 # 1. Zastavit OIG Proxy addon (pokud běží)
 echo ""
 echo "[1/6] Zastavuji OIG Proxy addon..."
-ssh $HA_SSH "ha addons stop local_oig_proxy 2>/dev/null || true"
+ssh $HA_SSH "ha addons stop d7b5d5b1_oig_proxy 2>/dev/null || true"
 sleep 2
 
 # 2. Získat seznam všech retained MQTT topicků s oig_local
@@ -140,4 +140,4 @@ echo ""
 echo "Zálohy registrů: $STORAGE_PATH/*.backup.$BACKUP_SUFFIX"
 echo ""
 echo "Pro spuštění OIG Proxy addon znovu použijte:"
-echo "  ssh $HA_SSH ha addons start local_oig_proxy"
+echo "  ssh $HA_SSH ha addons start d7b5d5b1_oig_proxy"
