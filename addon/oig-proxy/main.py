@@ -145,11 +145,31 @@ def load_unknown_registry() -> None:
     return
 
 
-def get_sensor_config(sensor_id: str, table: str | None = None) -> SensorConfig | None:
+def get_sensor_config(sensor_id: str, table: str | None = None) -> tuple[SensorConfig | None, str]:
+    """Vrátí konfiguraci senzoru a jeho unikátní klíč.
+    
+    Pořadí vyhledávání:
+    1. table:sensor_id (specifické mapování pro tabulku)
+    2. sensor_id (obecné mapování, fallback)
+    
+    Returns:
+        tuple: (SensorConfig nebo None, unikátní klíč pro senzor)
+    """
+    # Nejprve zkusíme specifický klíč s tabulkou
+    if table:
+        table_key = f"{table}:{sensor_id}"
+        config = SENSORS.get(table_key)
+        if config:
+            return config, table_key
+    
+    # Fallback na obecný klíč bez tabulky
     config = SENSORS.get(sensor_id)
     if config:
-        return config
-    return None
+        # Pokud máme tabulku, použijeme ji v klíči pro unikátnost
+        unique_key = f"{table}:{sensor_id}" if table else sensor_id
+        return config, unique_key
+    
+    return None, sensor_id
 
 
 def decode_warnings(key: str, value: Any) -> list[str]:
@@ -240,6 +260,7 @@ DEVICE_NAMES = {
     "boiler": "Bojler",
     "wallbox": "Wallbox",
     "inverter": "Střídač",
+    "batterybox": "BatteryBox",
 }
 
 AUTO_DISCOVER_UNKNOWN = False
@@ -347,16 +368,24 @@ class MQTTPublisher:
         device_identifier = f"{MQTT_NAMESPACE}_{self.device_id}_{device_suffix}"
         full_device_name = f"OIG {device_name} ({self.device_id})"
         
-        unique_id = f"{MQTT_NAMESPACE}_{self.device_id}_{sensor_id.lower()}"
-        object_id = f"{MQTT_NAMESPACE}_{self.device_id}_{sensor_id.lower()}"
+        # Pro unique_id nahradíme dvojtečku podtržítkem (HA kompatibilita)
+        safe_sensor_id = sensor_id.replace(":", "_").lower()
+        unique_id = f"{MQTT_NAMESPACE}_{self.device_id}_{safe_sensor_id}"
+        object_id = f"{MQTT_NAMESPACE}_{self.device_id}_{safe_sensor_id}"
         availability_topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
+        
+        # Value template - klíč s dvojtečkou musí být v hranatých závorkách
+        if ":" in sensor_id:
+            value_template = f"{{{{ value_json['{sensor_id}'] }}}}"
+        else:
+            value_template = f"{{{{ value_json.{sensor_id} }}}}"
         
         discovery_payload = {
             "name": config.name,
             "object_id": object_id,
             "unique_id": unique_id,
             "state_topic": f"{MQTT_NAMESPACE}/{self.device_id}/state",
-            "value_template": f"{{{{ value_json.{sensor_id} }}}}",
+            "value_template": value_template,
             "availability": [{"topic": availability_topic}],
             "device": {
                 "identifiers": [device_identifier],
@@ -390,14 +419,26 @@ class MQTTPublisher:
     def publish_data(self, data: dict[str, Any]) -> None:
         if not self.client or not self.connected:
             return
+        table = data.get("_table")
+        # Připravíme data pro publikování s unikátními klíči
+        publish_data = {}
         for key in data:
             if key.startswith("_"):
                 continue
-            cfg = get_sensor_config(key)
+            cfg, unique_key = get_sensor_config(key, table)
             if cfg:
-                self.send_discovery(key, cfg)
+                self.send_discovery(unique_key, cfg)
+                # Pro publikování použijeme unikátní klíč
+                publish_data[unique_key] = data[key]
+            else:
+                # Senzory bez konfigurace publikujeme s prefixem tabulky
+                if table:
+                    unique_key = f"{table}:{key}"
+                else:
+                    unique_key = key
+                publish_data[unique_key] = data[key]
         topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
-        self.client.publish(topic, json.dumps(data))
+        self.client.publish(topic, json.dumps(publish_data))
 
 
 class OIGProxy:

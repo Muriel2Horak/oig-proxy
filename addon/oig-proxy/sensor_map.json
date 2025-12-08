@@ -1333,16 +1333,38 @@
       "todo": false,
       "entity_category": "config"
     },
-    "MODE": {
-      "name": "Walllbox - mod",
-      "name_cs": "Wallbox - Režim",
+    "tbl_invertor_prms:MODE": {
+      "name": "Inverter Mode",
+      "name_cs": "Střídač - Režim",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
+    },
+    "tbl_box_prms:MODE": {
+      "name": "BatteryBox Mode",
+      "name_cs": "BatteryBox - Režim FMT",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "batterybox",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "MODE": {
+      "name": "Mode",
+      "name_cs": "Režim",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "inverter",
+      "todo": false,
+      "entity_category": "diagnostic"
     },
     "MODEL": {
       "name": "Model",

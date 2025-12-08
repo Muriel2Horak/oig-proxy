@@ -1,0 +1,245 @@
+type: custom:sunsynk-power-flow-card
+cardstyle: lite
+wide: false
+panel_mode: true
+large_font: true
+show_solar: true
+show_battery: true
+show_grid: true
+decimal_places: 2
+three_phase: true
+inverter:
+  modern: false
+  colour: "#008000"
+  autarky: energy
+  auto_scale: true
+  three_phase: true
+  model: ces-battery-box
+battery:
+  energy: 15360
+  shutdown_soc: 20
+  invert_power: true
+  colour: "#0000ff"
+  show_daily: true
+  animation_speed: 6
+  max_power: 10000
+  full_capacity: 100
+  empty_capacity: 15
+  show_absolute: false
+  auto_scale: true
+  dynamic_colour: true
+  linear_gradient: true
+  charge_colour: "#008000"
+  hide_soc: false
+  show_remaining_energy: true
+  shutdown_soc_offgrid: 20
+  animate: true
+  count: 1
+  remaining_energy_to_shutdown: true
+solar:
+  colour: "#ffa500"
+  show_daily: true
+  mppts: 1
+  animation_speed: 9
+  max_power: 5400
+  pv1_name: Strecha
+  pv2_name: Fasáda
+  pv3_name: East
+  pv4_name: West
+  auto_scale: true
+  display_mode: 2
+  dynamic_colour: true
+  efficiency: 3
+  pv1_max_power: 5400
+  invert_flow: false
+load:
+  colour: "#fffb00"
+  show_daily: true
+  show_daily_aux: false
+  show_aux: false
+  invert_aux: false
+  show_absolute_aux: true
+  three_phase: true
+  aux_name: Nazáloha
+  aux_type: mdi:transmission-tower
+  aux_colour: "#008000"
+  aux_off_colour: "#ff0000"
+  aux_loads: 2
+  aux_load1_name: Auto
+  aux_load2_name: Bojler
+  animation_speed: 4
+  additional_loads: 6
+  load1_name: Myčka
+  load2_name: Pračka
+  load1_icon: mdi:dishwasher
+  load2_icon: mdi:washing-machine
+  auto_scale: true
+  essential_name: Záloha
+  dynamic_colour: true
+  dynamic_icon: true
+  load3_icon: mdi:shower-head
+  aux_dynamic_colour: true
+  load4_name: Klima
+  load4_icon: mdi:air-conditioner
+  label_daily_load: Spotřeba
+  load5_name: Sušička
+  load5_icon: mdi:tumble-dryer
+  invert_load: false
+  load6_icon: mdi:pool
+  max_colour: "#8e1010"
+  invert_flow: false
+  load6_name: Bazén
+  load3_name: Bojler
+grid:
+  colour: "#ff8648"
+  show_daily_buy: true
+  show_daily_sell: true
+  no_grid_colour: "#a40013"
+  show_nonessential: true
+  invert_grid: false
+  nonessential_name: Nezáloha
+  nonessential_icon: oven
+  additional_loads: 2
+  load1_name: Auto
+  load2_name: Bojler
+  load1_icon: mdi:ev-station
+  load2_icon: mdi:shower-head
+  animation_speed: 8
+  max_power: 17000
+  auto_scale: true
+  three_phase: true
+  dynamic_colour: true
+entities:
+  # Timery a nastavení - nemáme lokální ekvivalent
+  use_timer_248: none
+  priority_load_243: "no"
+  
+  # Denní energie
+  day_battery_charge_70: sensor.oig_local_2206237016_bat_apd
+  day_battery_discharge_71: sensor.oig_local_2206237016_bat_and
+  day_load_energy_84: sensor.oig_local_2206237016_aco_ad
+  day_grid_import_76: sensor.oig_local_2206237016_aci_ad
+  day_grid_export_77: sensor.oig_local_2206237016_aco_to_grid_day
+  day_pv_energy_108: sensor.oig_local_2206237016_fv_ad
+  day_aux_energy: sensor.oig_local_2206237016_bojler_ad
+  
+  # Napětí a proud střídače
+  inverter_voltage_154: sensor.oig_local_2206237016_aci_vr
+  inverter_voltage_L2: sensor.oig_local_2206237016_aci_vs
+  inverter_voltage_L3: sensor.oig_local_2206237016_aci_vt
+  inverter_current_164: none
+  inverter_power_175: sensor.oig_local_2206237016_p_load
+  
+  # Síť
+  grid_power_169: sensor.oig_local_2206237016_p_grid
+  
+  # FVE
+  pv1_power_186: sensor.oig_local_2206237016_fv_p1
+  pv2_power_187: sensor.oig_local_2206237016_fv_p2
+  pv3_power_188: none
+  pv4_power_189: none
+  pv_total: sensor.oig_local_2206237016_p_fve
+  pv1_voltage_109: sensor.oig_local_2206237016_fv_v1
+  pv1_current_110: sensor.oig_local_2206237016_fv_i1
+  pv2_voltage_111: sensor.oig_local_2206237016_fv_v2
+  pv2_current_112: sensor.oig_local_2206237016_fv_i2
+  pv3_voltage_113: none
+  pv3_current_114: none
+  pv4_voltage_115: none
+  pv4_current_116: none
+  
+  # Baterie
+  battery_soc_184: sensor.oig_local_2206237016_bat_c
+  battery_power_190: sensor.oig_local_2206237016_bat_p
+  battery_voltage_183: sensor.oig_local_2206237016_bat_v
+  battery_current_191: sensor.oig_local_2206237016_bat_i
+  battery_temp_182: sensor.oig_local_2206237016_bat_t
+  
+  # Zátěž
+  essential_power: sensor.oig_local_2206237016_p_load
+  load_power_L1: sensor.oig_local_2206237016_aco_pr
+  load_power_L2: sensor.oig_local_2206237016_aco_ps
+  load_power_L3: sensor.oig_local_2206237016_aco_pt
+  load_frequency_192: sensor.oig_local_2206237016_aci_f
+  
+  # Non-essential loads (nezáloha)
+  non_essential_load1: sensor.wallbox_garaz_nabijeci_vykon
+  non_essential_load2: sensor.oig_local_2206237016_bojler_w
+  non_essential_load1_extra: sensor.auto_denni_cena
+  
+  # Grid CT power
+  grid_ct_power_172: sensor.oig_local_2206237016_aci_pr
+  grid_ct_power_L2: sensor.oig_local_2206237016_aci_ps
+  grid_ct_power_L3: sensor.oig_local_2206237016_aci_pt
+  grid_ct_power_total: sensor.oig_local_2206237016_aci_p
+  
+  # Status a stavy
+  inverter_status_59: none
+  aux_connected_status: none
+  remaining_solar: sensor.energy_production_today_remaining
+  
+  # Teploty
+  radiator_temp_91: sensor.oig_local_2206237016_box_t
+  dc_transformer_temp_90: sensor.garaz_teplota
+  environment_temp: sensor.venku_teplota
+  
+  # Programy - nemáme lokální ekvivalent
+  prog1_time: none
+  prog1_capacity: none
+  prog1_charge: none
+  prog2_time: none
+  prog2_capacity: none
+  prog2_charge: none
+  prog3_time: none
+  prog3_capacity: none
+  prog3_charge: none
+  prog4_time: none
+  prog4_capacity: none
+  prog4_charge: none
+  prog5_time: none
+  prog5_capacity: none
+  prog5_charge: none
+  prog6_time: none
+  prog6_capacity: none
+  prog6_charge: none
+  
+  # Ceny - TODO: doplnit až budou dostupné
+  energy_cost_sell: none
+  energy_cost_buy: none
+  solar_sell_247: none
+  prepaid_units: sensor.sit_hodnota_spotreba_cena
+  
+  # Aux loads
+  aux_load1: sensor.wallbox_garaz_nabijeci_vykon
+  aux_load2: sensor.susicka_vykon_2
+  aux_load1_extra: sensor.auto_denni_cena
+  aux_load2_extra: sensor.susicka_denni_spotreba
+  aux_power_166: sensor.susicka_vykon_2
+  
+  # Essential loads (domácí spotřebiče)
+  essential_load1: sensor.mycka_vykon_2
+  essential_load2: sensor.pracka_vykon_2
+  essential_load3: sensor.oig_local_2206237016_bojler_w
+  essential_load4: sensor.em_klima_vykon
+  essential_load5: sensor.susicka_vykon_2
+  essential_load6: sensor.antela_power_strip_vykon
+  essential_load1_extra: sensor.mycka_denni_spotreba
+  essential_load2_extra: sensor.pracka_denni_spotreba
+  essential_load3_extra: sensor.oig_local_2206237016_bojler_ad
+  essential_load4_extra: sensor.klima_denni_spotreba
+  essential_load5_extra: sensor.susicka_denni_spotreba
+  essential_load6_extra: sensor.bazen_spotrreba
+  
+  # Další parametry
+  total_pv_generation: sensor.oig_local_2206237016_fv_ad
+  battery2_power_190: sensor.wallbox_garaz_nabijeci_vykon
+  battery2_soc_184: sensor.car_battery_percentage_2
+dynamic_line_width: true
+max_line_width: 5
+min_line_width: 1
+battery2:
+  energy: 23
+  shutdown_soc: 0
+  auto_scale: true
+  linear_gradient: true
+decimal_places_energy: 1
