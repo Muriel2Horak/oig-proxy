@@ -585,7 +585,8 @@ class OIGProxy:
                                 self.current_state[derived_key] = texts
                                 get_sensor_config(derived_key)
                     if self.mqtt_publisher:
-                        self.mqtt_publisher.publish_data(self.current_state)
+                        # Publikujeme parsed data (obsahují _table) pro správné mapování
+                        self.mqtt_publisher.publish_data(parsed)
                     return True
         except Exception as e:
             logger.error(f"[#{conn_id}] Chyba parsování: {e}")
