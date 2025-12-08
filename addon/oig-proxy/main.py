@@ -307,12 +307,14 @@ class OIGDataParser:
         dt_match = re.search(r"<DT>([^<]+)</DT>", data)
         if dt_match:
             result["_dt"] = dt_match.group(1)
-        # Kontrola ID_SubD - ignorovat subfragmenty (zpracujeme jen ID_SubD=0)
+        # Kontrola ID_SubD: OIG posílá tbl_batt_prms ve 3 variantách (0,1,2)
+        # pro 3 bateriové banky. Publikujeme jen SubD=0 (aktivní).
+        # Viz: analysis/subd_analysis.md pro detaily o architektuře.
         subframe_match = re.search(r"<ID_SubD>(\d+)</ID_SubD>", data)
         if subframe_match:
             subframe_id = int(subframe_match.group(1))
             if subframe_id > 0:
-                logger.debug(f"Ignorován subfragment ID_SubD={subframe_id}")
+                logger.debug(f"SubD={subframe_id} ignorován (neaktivní banka)")
                 return {}  # Vrátí prázdný dict - nebude publikován
         for match in re.finditer(r"<([A-Za-z_0-9]+)>([^<]*)</\1>", data):
             key, value = match.groups()
