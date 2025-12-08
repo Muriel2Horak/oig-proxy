@@ -34,6 +34,7 @@ MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))  # 0 = vypnuto
 WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
 CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
 CAPTURE_DB_PATH = "/data/payloads.db"
+MODE_STATE_PATH = "/data/mode_state.json"
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -56,10 +57,59 @@ def _friendly_name(sensor_id: str) -> str:
 
 
 _last_map_load = 0.0
+_current_mode: int | None = None  # Aktuální MODE hodnota (0-3)
 
 
 def _iso_now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def _load_mode_state() -> int | None:
+    """Načte uložený MODE stav z perzistentního souboru."""
+    try:
+        if os.path.exists(MODE_STATE_PATH):
+            with open(MODE_STATE_PATH, "r") as f:
+                data = json.load(f)
+                mode_value = data.get("mode")
+                if mode_value is not None:
+                    logger.info(f"MODE: Načten uložený stav: {mode_value}")
+                    return mode_value
+    except Exception as e:
+        logger.warning(f"MODE: Nepodařilo se načíst stav: {e}")
+    return None
+
+
+def _save_mode_state(mode_value: int) -> None:
+    """Uloží MODE stav do perzistentního souboru."""
+    try:
+        os.makedirs(os.path.dirname(MODE_STATE_PATH), exist_ok=True)
+        with open(MODE_STATE_PATH, "w") as f:
+            json.dump({
+                "mode": mode_value,
+                "timestamp": _iso_now()
+            }, f)
+        logger.debug(f"MODE: Stav uložen: {mode_value}")
+    except Exception as e:
+        logger.error(f"MODE: Nepodařilo se uložit stav: {e}")
+
+
+def _parse_mode_from_event(content: str) -> int | None:
+    """Parsuje MODE hodnotu z tbl_events Content fieldu.
+    
+    Očekává formát: 'Remotely : tbl_box_prms / MODE: [old]->[new]'
+    nebo 'Locally : tbl_box_prms / MODE: [old]->[new]'
+    
+    Returns:
+        int: Nová MODE hodnota (0-3) nebo None pokud se nepodařilo parsovat
+    """
+    # Hledáme pattern MODE: [old]->[new]
+    match = re.search(r'MODE:\s*\[(\d+)\]->\[(\d+)\]', content)
+    if match:
+        old_value = int(match.group(1))
+        new_value = int(match.group(2))
+        logger.info(f"MODE: Event detekován: {old_value} → {new_value}")
+        return new_value
+    return None
 
 
 def _init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
@@ -859,6 +909,10 @@ class OIGProxy:
                                 self.current_state[derived_key] = texts
                                 get_sensor_config(derived_key)
                     
+                    # Speciální zpracování tbl_events pro MODE tracking
+                    if table == "tbl_events" and "Content" in parsed:
+                        self._process_mode_event(parsed)
+                    
                     # Publikovat pouze pokud je MQTT ready
                     if self.mqtt_publisher and self.mqtt_publisher.is_ready():
                         self.mqtt_publisher.publish_data(parsed)
@@ -868,13 +922,52 @@ class OIGProxy:
             logger.error(f"[#{conn_id}] Chyba parsování: {e}")
         return False
 
+    def _process_mode_event(self, parsed: dict[str, Any]) -> None:
+        """Zpracuje tbl_events frame a detekuje změnu MODE."""
+        global _current_mode
+        
+        content = parsed.get("Content", "")
+        if "tbl_box_prms" in content and "MODE:" in content:
+            new_mode = _parse_mode_from_event(content)
+            if new_mode is not None and new_mode != _current_mode:
+                _current_mode = new_mode
+                _save_mode_state(new_mode)
+                
+                # Publikovat virtuální senzor tbl_box_prms:MODE
+                if self.mqtt_publisher and self.mqtt_publisher.is_ready():
+                    mode_data = {
+                        "_table": "tbl_box_prms",
+                        "_device_id": parsed.get("_device_id"),
+                        "MODE": new_mode
+                    }
+                    logger.info(f"MODE: Publikuji virtuální senzor: MODE={new_mode}")
+                    self.mqtt_publisher.publish_data(mode_data)
+    
     def _init_mqtt(self, device_id: str) -> None:
         """Inicializuje MQTT publisher a spustí health check."""
+        global _current_mode
+        
         logger.info(f"MQTT: Inicializuji pro device {device_id}")
         self.mqtt_publisher = MQTTPublisher(device_id)
         
+        # Načíst uložený MODE stav
+        _current_mode = _load_mode_state()
+        if _current_mode is not None:
+            logger.info(f"MODE: Obnovuji stav z úložiště: {_current_mode}")
+        
         if self.mqtt_publisher.connect():
             logger.info("MQTT: ✅ Počáteční připojení úspěšné")
+            
+            # Publikovat MODE senzor pokud máme uložený stav
+            if _current_mode is not None:
+                mode_data = {
+                    "_table": "tbl_box_prms",
+                    "_device_id": device_id,
+                    "MODE": _current_mode
+                }
+                logger.info(f"MODE: Publikuji obnovený stav při startu: MODE={_current_mode}")
+                self.mqtt_publisher.publish_data(mode_data)
+            
             self.mqtt_publisher.start_health_check()
         else:
             logger.error(
