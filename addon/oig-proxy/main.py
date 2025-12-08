@@ -358,7 +358,12 @@ class MQTTPublisher:
         timeout = timeout or self.CONNECT_TIMEOUT
         
         try:
-            self.client = mqtt.Client(client_id=f"{MQTT_NAMESPACE}_{self.device_id}")
+            # paho-mqtt 2.x vyžaduje callback_api_version, protokol 3.1.1 pro kompatibilitu
+            self.client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+                client_id=f"{MQTT_NAMESPACE}_{self.device_id}",
+                protocol=mqtt.MQTTv311
+            )
             if MQTT_USERNAME:
                 self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
                 logger.debug(f"MQTT autentizace: user={MQTT_USERNAME}")
@@ -836,8 +841,12 @@ class OIGProxy:
             return
         
         try:
-            # Testovací připojení
-            test_client = mqtt.Client(client_id=f"{MQTT_NAMESPACE}_preflight")
+            # Testovací připojení - paho-mqtt 2.x kompatibilita
+            test_client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+                client_id=f"{MQTT_NAMESPACE}_preflight",
+                protocol=mqtt.MQTTv311
+            )
             if MQTT_USERNAME:
                 test_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
             
