@@ -814,6 +814,9 @@ class OIGProxy:
             self.mqtt_publisher.start_health_check()
 
     async def start(self) -> None:
+        # Pre-flight MQTT check
+        await self._preflight_mqtt_check()
+        
         server = await asyncio.start_server(
             self.handle_connection, "0.0.0.0", PROXY_PORT
         )
@@ -823,6 +826,68 @@ class OIGProxy:
         logger.info(f"   Senzorů: {len(SENSORS)} (JSON mapping + extra)")
         async with server:
             await server.serve_forever()
+
+    async def _preflight_mqtt_check(self) -> None:
+        """Ověří MQTT konektivitu při startu (bez device_id)."""
+        logger.info("MQTT: Pre-flight check...")
+        
+        if not MQTT_AVAILABLE:
+            logger.error("MQTT: ❌ Knihovna paho-mqtt není dostupná!")
+            return
+        
+        try:
+            # Testovací připojení
+            test_client = mqtt.Client(client_id=f"{MQTT_NAMESPACE}_preflight")
+            if MQTT_USERNAME:
+                test_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+            
+            connected = False
+            connect_error = None
+            
+            def on_connect(client, userdata, flags, rc):
+                nonlocal connected, connect_error
+                if rc == 0:
+                    connected = True
+                else:
+                    connect_error = MQTTPublisher.RC_CODES.get(
+                        rc, f"Unknown ({rc})"
+                    )
+            
+            test_client.on_connect = on_connect
+            test_client.connect(MQTT_HOST, MQTT_PORT, 60)
+            test_client.loop_start()
+            
+            # Čekáme max 5s na připojení
+            start = time.time()
+            while not connected and connect_error is None:
+                if time.time() - start > 5:
+                    connect_error = "Timeout (5s)"
+                    break
+                await asyncio.sleep(0.1)
+            
+            test_client.loop_stop()
+            test_client.disconnect()
+            
+            if connected:
+                logger.info(
+                    f"MQTT: ✅ Pre-flight OK - broker {MQTT_HOST}:{MQTT_PORT} "
+                    "je dostupný"
+                )
+            else:
+                logger.error(
+                    f"MQTT: ❌ Pre-flight FAILED - {connect_error}"
+                )
+                logger.warning(
+                    "MQTT: Proxy poběží, ale data se nebudou publikovat "
+                    "dokud nebude MQTT dostupné"
+                )
+                
+        except Exception as e:
+            logger.error(f"MQTT: ❌ Pre-flight exception: {e}")
+            logger.warning(
+                "MQTT: Proxy poběží, ale data se nebudou publikovat "
+                "dokud nebude MQTT dostupné"
+            )
 
 
 async def main() -> None:
