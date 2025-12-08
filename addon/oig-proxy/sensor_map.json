@@ -1355,6 +1355,159 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
+    "tbl_actual:ENBL": {
+      "name": "System Enabled (live)",
+      "name_cs": "Systém - Povoleno (live)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "inverter",
+      "todo": false,
+      "entity_category": "config"
+    },
+    "tbl_actual:VIZ": {
+      "name": "Visualization (live)",
+      "name_cs": "Systém - Vizualizace (live)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "inverter",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_actual:Temp": {
+      "name": "Box Temperature (live)",
+      "name_cs": "Střídač - Teplota v boxu (live)",
+      "unit_of_measurement": "°C",
+      "device_class": "temperature",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "inverter",
+      "todo": false
+    },
+    "tbl_actual:Humid": {
+      "name": "Box Humidity (live)",
+      "name_cs": "Střídač - Vlhkost v boxu (live)",
+      "unit_of_measurement": "%",
+      "device_class": "humidity",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "inverter",
+      "todo": false
+    },
+    "tbl_actual:ACO_P": {
+      "name": "Load Power (live)",
+      "name_cs": "Spotřeba - Výkon domu (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "load",
+      "todo": false
+    },
+    "tbl_actual:FV_P1": {
+      "name": "PV String 1 Power (live)",
+      "name_cs": "FVE - Výkon string 1 (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "pv",
+      "todo": false
+    },
+    "tbl_actual:FV_P2": {
+      "name": "PV String 2 Power (live)",
+      "name_cs": "FVE - Výkon string 2 (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "pv",
+      "todo": false
+    },
+    "tbl_actual:ACI_WR": {
+      "name": "Grid Power L1 (live)",
+      "name_cs": "Síť - Výkon L1 (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "grid",
+      "todo": false
+    },
+    "tbl_actual:ACI_WS": {
+      "name": "Grid Power L2 (live)",
+      "name_cs": "Síť - Výkon L2 (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "grid",
+      "todo": false
+    },
+    "tbl_actual:ACI_WT": {
+      "name": "Grid Power L3 (live)",
+      "name_cs": "Síť - Výkon L3 (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "grid",
+      "todo": false
+    },
+    "tbl_actual:BAT_P": {
+      "name": "Battery Power (live)",
+      "name_cs": "Baterie - Výkon (live)",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false
+    },
+    "tbl_actual:FV_PROC": {
+      "name": "PV Utilization (live)",
+      "name_cs": "FVE - Využití výkonu (live)",
+      "unit_of_measurement": "%",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "pv",
+      "todo": false
+    },
+    "tbl_actual:BAT_C": {
+      "name": "Battery SoC (live)",
+      "name_cs": "Baterie - Stav nabití (live)",
+      "unit_of_measurement": "%",
+      "device_class": "battery",
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false
+    },
+    "tbl_actual:MSC_SELF": {
+      "name": "Self-sufficiency (live)",
+      "name_cs": "Spotřeba - Soběstačnost (live)",
+      "unit_of_measurement": "%",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "measured",
+      "device_mapping": "load",
+      "todo": false
+    },
+    "tbl_actual:STAT": {
+      "name": "Inverter Status (live)",
+      "name_cs": "Střídač - Status (live)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "inverter",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "MODE": {
       "name": "Mode",
       "name_cs": "Režim",
