@@ -314,44 +314,198 @@ class OIGDataParser:
 
 
 class MQTTPublisher:
+    """MQTT publisher s robustním připojením, QoS=1 a health check."""
+    
+    # MQTT return codes
+    RC_CODES = {
+        0: "Connection successful",
+        1: "Incorrect protocol version",
+        2: "Invalid client identifier",
+        3: "Server unavailable",
+        4: "Bad username or password",
+        5: "Not authorized",
+    }
+    
+    # Konfigurace
+    CONNECT_TIMEOUT = 5  # Timeout pro připojení (sekundy)
+    HEALTH_CHECK_INTERVAL = 30  # Interval health check při výpadku (sekundy)
+    PUBLISH_QOS = 1  # QoS level pro publish (0=fire&forget, 1=at least once)
+    PUBLISH_LOG_EVERY = 100  # Logovat každý N-tý úspěšný publish
+    
     def __init__(self, device_id: str) -> None:
         self.device_id = device_id
         self.client: mqtt.Client | None = None
         self.connected = False
         self.discovery_sent: set[str] = set()
+        # Statistiky
+        self.publish_count = 0
+        self.publish_success = 0
+        self.publish_failed = 0
+        self.last_publish_time: float = 0
+        self.last_error_time: float = 0
+        self.last_error_msg: str = ""
+        self.reconnect_attempts = 0
+        # Health check
+        self._health_check_task: asyncio.Task[Any] | None = None
+        self._connect_event: asyncio.Event | None = None
 
-    def connect(self) -> bool:
+    def connect(self, timeout: float | None = None) -> bool:
+        """Připojí k MQTT brokeru s timeoutem. Vrací True pokud úspěšně."""
         if not MQTT_AVAILABLE:
+            logger.error("MQTT knihovna paho-mqtt není nainstalována")
             return False
+        
+        timeout = timeout or self.CONNECT_TIMEOUT
+        
         try:
             self.client = mqtt.Client(client_id=f"{MQTT_NAMESPACE}_{self.device_id}")
             if MQTT_USERNAME:
                 self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+                logger.debug(f"MQTT autentizace: user={MQTT_USERNAME}")
+            
             availability_topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
             self.client.will_set(availability_topic, "offline", retain=True)
+            
+            # Callbacks
             self.client.on_connect = self._on_connect
             self.client.on_disconnect = self._on_disconnect
-            logger.info(f"Připojuji k MQTT {MQTT_HOST}:{MQTT_PORT}")
+            self.client.on_publish = self._on_publish
+            
+            logger.info(f"MQTT: Připojuji k {MQTT_HOST}:{MQTT_PORT} (timeout {timeout}s)")
+            
+            # Synchronní připojení s čekáním
+            self._connect_event = asyncio.Event()
             self.client.connect(MQTT_HOST, MQTT_PORT, 60)
             self.client.loop_start()
-            return True
+            
+            # Čekáme na callback _on_connect
+            start = time.time()
+            while not self.connected and (time.time() - start) < timeout:
+                time.sleep(0.1)
+            
+            if self.connected:
+                logger.info(f"MQTT: ✅ Připojeno k {MQTT_HOST}:{MQTT_PORT}")
+                self.reconnect_attempts = 0
+                return True
+            else:
+                logger.error(f"MQTT: ❌ Timeout připojení po {timeout}s")
+                self._cleanup_client()
+                return False
+                
         except Exception as e:
-            logger.error(f"MQTT připojení selhalo: {e}")
+            logger.error(f"MQTT: ❌ Připojení selhalo: {e}")
+            self._cleanup_client()
             return False
 
+    def _cleanup_client(self) -> None:
+        """Bezpečně uklidí MQTT klienta."""
+        if self.client:
+            try:
+                self.client.loop_stop()
+                self.client.disconnect()
+            except Exception:
+                pass
+            self.client = None
+        self.connected = False
+
     def _on_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
+        rc_msg = self.RC_CODES.get(rc, f"Unknown error ({rc})")
+        
         if rc == 0:
-            logger.info("MQTT připojeno")
+            logger.info(f"MQTT: Připojeno (flags={flags})")
             self.connected = True
+            self.reconnect_attempts = 0
             # Označit zařízení jako online
-            client.publish(f"{MQTT_NAMESPACE}/{self.device_id}/availability", "online", retain=True)
+            result = client.publish(
+                f"{MQTT_NAMESPACE}/{self.device_id}/availability", 
+                "online", 
+                retain=True, 
+                qos=1
+            )
+            logger.debug(f"MQTT: Availability online (mid={result.mid})")
+            # Reset discovery - při reconnectu odeslat znovu
             self.discovery_sent.clear()
+            logger.info(f"MQTT: Discovery cache vyčištěna, připraveno k odesílání")
         else:
-            logger.error(f"MQTT připojení selhalo s kódem {rc}")
+            logger.error(f"MQTT: ❌ Připojení odmítnuto: {rc_msg}")
+            self.connected = False
+            self.last_error_time = time.time()
+            self.last_error_msg = rc_msg
 
     def _on_disconnect(self, client: Any, userdata: Any, rc: int) -> None:
-        logger.warning(f"MQTT odpojeno (rc={rc})")
+        was_connected = self.connected
         self.connected = False
+        
+        if rc == 0:
+            logger.info("MQTT: Odpojeno (čisté odpojení)")
+        else:
+            logger.warning(f"MQTT: ⚠️ Neočekávané odpojení (rc={rc})")
+            self.last_error_time = time.time()
+            self.last_error_msg = f"Unexpected disconnect (rc={rc})"
+            
+        if was_connected:
+            logger.warning("MQTT: 🔴 Zpracování dat pozastaveno do obnovení spojení")
+
+    def _on_publish(self, client: Any, userdata: Any, mid: int) -> None:
+        """Callback při potvrzení publish od brokera (QoS >= 1)."""
+        self.publish_success += 1
+        self.last_publish_time = time.time()
+        
+        # Logovat každý N-tý publish
+        if self.publish_success % self.PUBLISH_LOG_EVERY == 0:
+            logger.info(
+                f"MQTT: 📊 Stats: {self.publish_success} OK, "
+                f"{self.publish_failed} FAIL z {self.publish_count} celkem"
+            )
+
+    def is_ready(self) -> bool:
+        """Vrací True pokud je MQTT připraveno k publikování."""
+        return self.client is not None and self.connected
+
+    def get_status(self) -> dict[str, Any]:
+        """Vrátí status MQTT publisheru pro diagnostiku."""
+        return {
+            "connected": self.connected,
+            "publish_count": self.publish_count,
+            "publish_success": self.publish_success,
+            "publish_failed": self.publish_failed,
+            "success_rate": f"{(self.publish_success / max(1, self.publish_count)) * 100:.1f}%",
+            "last_publish": datetime.datetime.fromtimestamp(self.last_publish_time).isoformat() if self.last_publish_time else None,
+            "last_error": self.last_error_msg if self.last_error_msg else None,
+            "reconnect_attempts": self.reconnect_attempts,
+        }
+
+    async def health_check_loop(self) -> None:
+        """Periodicky kontroluje MQTT spojení a pokouší se o reconnect."""
+        logger.info(f"MQTT: Health check spuštěn (interval {self.HEALTH_CHECK_INTERVAL}s při výpadku)")
+        
+        while True:
+            await asyncio.sleep(self.HEALTH_CHECK_INTERVAL)
+            
+            if not self.connected:
+                self.reconnect_attempts += 1
+                logger.warning(
+                    f"MQTT: 🔄 Health check - pokus o reconnect #{self.reconnect_attempts}"
+                )
+                
+                if self.connect(timeout=self.CONNECT_TIMEOUT):
+                    logger.info(f"MQTT: ✅ Reconnect úspěšný po {self.reconnect_attempts} pokusech")
+                else:
+                    logger.warning(
+                        f"MQTT: ❌ Reconnect selhal, další pokus za {self.HEALTH_CHECK_INTERVAL}s"
+                    )
+            else:
+                # Logovat health status každých 5 minut (10 * 30s)
+                if self.reconnect_attempts == 0 and self.publish_count > 0:
+                    if self.publish_count % (self.PUBLISH_LOG_EVERY * 10) < self.PUBLISH_LOG_EVERY:
+                        status = self.get_status()
+                        logger.debug(f"MQTT: Health OK - {status['success_rate']} success rate")
+
+    def start_health_check(self) -> None:
+        """Spustí health check jako background task."""
+        if self._health_check_task is None or self._health_check_task.done():
+            self._health_check_task = asyncio.create_task(self.health_check_loop())
+            logger.debug("MQTT: Health check task spuštěn")
 
     def send_discovery(self, sensor_id: str, config: SensorConfig) -> None:
         if not self.client or not self.connected:
@@ -412,13 +566,20 @@ class MQTTPublisher:
             discovery_payload["entity_category"] = config.entity_category
             
         topic = f"homeassistant/sensor/{unique_id}/config"
-        self.client.publish(topic, json.dumps(discovery_payload), retain=True)
+        result = self.client.publish(
+            topic, json.dumps(discovery_payload), retain=True, qos=self.PUBLISH_QOS
+        )
         self.discovery_sent.add(sensor_id)
-        logger.debug(f"Discovery odesláno pro {sensor_id} → {device_name}")
+        logger.debug(f"MQTT: Discovery {sensor_id} → {device_name} (mid={result.mid})")
 
-    def publish_data(self, data: dict[str, Any]) -> None:
-        if not self.client or not self.connected:
-            return
+    def publish_data(self, data: dict[str, Any]) -> bool:
+        """Publikuje data na MQTT. Vrací True pokud úspěšně odesláno."""
+        if not self.is_ready():
+            if self.publish_count == 0 or self.publish_failed % 100 == 0:
+                logger.warning("MQTT: Nelze publikovat - není připojeno")
+            self.publish_failed += 1
+            return False
+            
         table = data.get("_table")
         # Připravíme data pro publikování s unikátními klíči
         publish_data = {}
@@ -437,8 +598,30 @@ class MQTTPublisher:
                 else:
                     unique_key = key
                 publish_data[unique_key] = data[key]
+        
         topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
-        self.client.publish(topic, json.dumps(publish_data))
+        self.publish_count += 1
+        
+        try:
+            result = self.client.publish(
+                topic, json.dumps(publish_data), qos=self.PUBLISH_QOS
+            )
+            # rc == 0 znamená že zpráva je ve frontě k odeslání
+            if result.rc == 0:
+                logger.debug(
+                    f"MQTT: Publish {table} ({len(publish_data)} keys, mid={result.mid})"
+                )
+                return True
+            else:
+                self.publish_failed += 1
+                logger.error(f"MQTT: Publish selhal rc={result.rc} pro {table}")
+                return False
+        except Exception as e:
+            self.publish_failed += 1
+            self.last_error_time = time.time()
+            self.last_error_msg = str(e)
+            logger.error(f"MQTT: Publish exception: {e}")
+            return False
 
 
 class OIGProxy:
@@ -448,9 +631,12 @@ class OIGProxy:
         self.connection_count = 0
         self.device_id: str | None = None
         self.current_state: dict[str, Any] = {}
+        self._mqtt_warning_logged = False  # Pro throttling MQTT offline varování
 
     async def handle_connection(
-        self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter
+        self,
+        client_reader: asyncio.StreamReader,
+        client_writer: asyncio.StreamWriter
     ) -> None:
         self.connection_count += 1
         conn_id = self.connection_count
@@ -540,7 +726,10 @@ class OIGProxy:
         except Exception as e:
             logger.debug(f"[#{conn_id}] {direction} forward ukončen: {e}")
 
-    def _process_data(self, data: bytes, conn_id: int, peer: str | None = None) -> bool:
+    def _process_data(
+        self, data: bytes, conn_id: int, peer: str | None = None
+    ) -> bool:
+        """Zpracuje data z boxu. Vrací True pokud byl frame úspěšně zparsován."""
         try:
             load_sensor_map()  # případný reload mapy za běhu
             text = data.decode("utf-8", errors="ignore")
@@ -551,15 +740,18 @@ class OIGProxy:
                 if parsed:
                     table = parsed.get("_table")
                     # Speciální zachycení ACK rámců bez TblName
-                    if not table and parsed.get("Result") == "ACK" and parsed.get("ToDo") == "GetActual":
+                    if (not table and parsed.get("Result") == "ACK"
+                            and parsed.get("ToDo") == "GetActual"):
                         table = "ack_getactual"
                     if not table:
                         table = "unknown"
                     device_id = parsed.get("_device_id")
+                    
+                    # Inicializace MQTT publisheru při prvním device_id
                     if device_id and not self.mqtt_publisher:
                         self.device_id = device_id
-                        self.mqtt_publisher = MQTTPublisher(device_id)
-                        self.mqtt_publisher.connect()
+                        self._init_mqtt(device_id)
+                    
                     for key, value in parsed.items():
                         if not key.startswith("_"):
                             self.current_state[key] = value
@@ -575,8 +767,20 @@ class OIGProxy:
                         peer=peer,
                         length=len(data),
                     )
-                    logger.info(f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot")
-                    # Odvozené texty chyb podle WARNING_MAP (ERR_* bitové masky)
+                    
+                    # Logování - jen pokud MQTT ready nebo každý 10. frame
+                    if self.mqtt_publisher and self.mqtt_publisher.is_ready():
+                        logger.info(
+                            f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot"
+                        )
+                    elif not self._mqtt_warning_logged:
+                        logger.warning(
+                            f"[#{conn_id}] ⚠️ {table}: MQTT offline, "
+                            "data se nepublikují"
+                        )
+                        self._mqtt_warning_logged = True
+                    
+                    # Odvozené texty chyb podle WARNING_MAP
                     for key, value in parsed.items():
                         if key in WARNING_MAP:
                             texts = decode_warnings(key, value)
@@ -584,20 +788,39 @@ class OIGProxy:
                                 derived_key = f"{key}_warnings"
                                 self.current_state[derived_key] = texts
                                 get_sensor_config(derived_key)
-                    if self.mqtt_publisher:
-                        # Publikujeme parsed data (obsahují _table) pro správné mapování
+                    
+                    # Publikovat pouze pokud je MQTT ready
+                    if self.mqtt_publisher and self.mqtt_publisher.is_ready():
                         self.mqtt_publisher.publish_data(parsed)
+                        self._mqtt_warning_logged = False
                     return True
         except Exception as e:
             logger.error(f"[#{conn_id}] Chyba parsování: {e}")
         return False
 
+    def _init_mqtt(self, device_id: str) -> None:
+        """Inicializuje MQTT publisher a spustí health check."""
+        logger.info(f"MQTT: Inicializuji pro device {device_id}")
+        self.mqtt_publisher = MQTTPublisher(device_id)
+        
+        if self.mqtt_publisher.connect():
+            logger.info("MQTT: ✅ Počáteční připojení úspěšné")
+            self.mqtt_publisher.start_health_check()
+        else:
+            logger.error(
+                "MQTT: ❌ Počáteční připojení selhalo, "
+                "spouštím health check pro reconnect"
+            )
+            self.mqtt_publisher.start_health_check()
+
     async def start(self) -> None:
-        server = await asyncio.start_server(self.handle_connection, "0.0.0.0", PROXY_PORT)
+        server = await asyncio.start_server(
+            self.handle_connection, "0.0.0.0", PROXY_PORT
+        )
         logger.info(f"🚀 OIG Proxy naslouchá na portu {PROXY_PORT}")
         logger.info(f"   Cíl: {TARGET_SERVER}:{TARGET_PORT}")
         logger.info(f"   MQTT: {MQTT_HOST}:{MQTT_PORT}")
-        logger.info(f"   Definováno {len(SENSORS)} senzorů (JSON mapping + extra)")
+        logger.info(f"   Senzorů: {len(SENSORS)} (JSON mapping + extra)")
         async with server:
             await server.serve_forever()
 
