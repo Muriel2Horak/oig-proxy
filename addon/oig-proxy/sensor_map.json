@@ -127,7 +127,7 @@
     "FV_AY": {
       "name": "Výroba FV tento rok",
       "name_cs": "FVE - Výroba rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -237,7 +237,7 @@
     "AC_AY": {
       "name": "Energie AC střídače tento rok",
       "name_cs": "Síť - Energie AC rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -674,7 +674,7 @@
     "BAT_AY": {
       "name": "Nabíjení ze sítě - baterie roční en.",
       "name_cs": "Baterie - Ze sítě energie rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -953,7 +953,7 @@
     "BOJ_AY": {
       "name": "Energie bojler tento rok",
       "name_cs": "Bojler - Energie rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
