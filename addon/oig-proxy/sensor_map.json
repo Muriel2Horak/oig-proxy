@@ -1346,14 +1346,14 @@
     },
     "tbl_box_prms:MODE": {
       "name": "BatteryBox Mode",
-      "name_cs": "BatteryBox - Režim FMT",
+      "name_cs": "BatteryBox - Režim",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "enum",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "batterybox",
+      "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "options": ["HOME I", "HOME II", "HOME III", "HOME UPS"]
     },
     "tbl_actual:ENBL": {
       "name": "System Enabled (live)",

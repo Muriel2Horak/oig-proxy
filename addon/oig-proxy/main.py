@@ -215,9 +215,10 @@ def load_sensor_map() -> None:
             icon = meta.get("icon")
             device_mapping = meta.get("device_mapping")
             entity_category = meta.get("entity_category")
+            options = meta.get("options")  # Pro enum
             SENSORS[sid] = SensorConfig(
                 name, unit, device_class, state_class, icon,
-                device_mapping, entity_category
+                device_mapping, entity_category, options
             )
             added += 1
         if added:
@@ -241,6 +242,7 @@ def load_sensor_map() -> None:
 
 
 @dataclass
+@dataclass
 class SensorConfig:
     name: str
     unit: str
@@ -249,6 +251,7 @@ class SensorConfig:
     icon: str | None = None
     device_mapping: str | None = None
     entity_category: str | None = None
+    options: list[str] | None = None  # Pro enum device_class
 
 
 # Mapování device_mapping na názvy zařízení
@@ -569,6 +572,8 @@ class MQTTPublisher:
             discovery_payload["icon"] = config.icon
         if config.entity_category:
             discovery_payload["entity_category"] = config.entity_category
+        if config.options:
+            discovery_payload["options"] = config.options
             
         topic = f"homeassistant/sensor/{unique_id}/config"
         result = self.client.publish(
@@ -594,8 +599,12 @@ class MQTTPublisher:
             cfg, unique_key = get_sensor_config(key, table)
             if cfg:
                 self.send_discovery(unique_key, cfg)
-                # Pro publikování použijeme unikátní klíč
-                publish_data[unique_key] = data[key]
+                value = data[key]
+                # Konverze enum hodnot (číslo → text)
+                if cfg.options and isinstance(value, int):
+                    if 0 <= value < len(cfg.options):
+                        value = cfg.options[value]
+                publish_data[unique_key] = value
             else:
                 # Senzory bez konfigurace publikujeme s prefixem tabulky
                 if table:
@@ -614,12 +623,15 @@ class MQTTPublisher:
             # rc == 0 znamená že zpráva je ve frontě k odeslání
             if result.rc == 0:
                 logger.debug(
-                    f"MQTT: Publish {table} ({len(publish_data)} keys, mid={result.mid})"
+                    f"MQTT: Publish {table} ({len(publish_data)} keys, "
+                    f"mid={result.mid})"
                 )
                 return True
             else:
                 self.publish_failed += 1
-                logger.error(f"MQTT: Publish selhal rc={result.rc} pro {table}")
+                logger.error(
+                    f"MQTT: Publish selhal rc={result.rc} pro {table}"
+                )
                 return False
         except Exception as e:
             self.publish_failed += 1
