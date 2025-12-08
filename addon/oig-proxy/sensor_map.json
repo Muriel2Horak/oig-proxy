@@ -461,12 +461,13 @@
       "name": "Formátování baterie zap. / vyp.",
       "name_cs": "Baterie - Formátování aktivní",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "running",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FMT_PROGRESS": {
       "name": "Formátování baterie stav %",
@@ -548,12 +549,13 @@
       "name": "Indikace balancování, stav 0 (šedá), stav 1",
       "name_cs": "Baterie - Balancování aktivní",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "running",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "HDO1_S": {
       "name": "HDO časové pásmo 1",
@@ -713,11 +715,12 @@
       "name": "Zap. / vyp. + signalizace stavu",
       "name_cs": "Střídač - Zapnuto",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "PRRTY": {
       "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
@@ -833,11 +836,12 @@
       "name": "Signalizace nízkého tarifu HDO",
       "name_cs": "Síť - HDO signál aktivní",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "grid",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "TERMOSTAT": {
       "name": "Termostat",
@@ -869,37 +873,41 @@
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "config",
+      "is_binary": true
     },
     "SSR0": {
       "name": "Zapnutí / vypnutí SSR1",
       "name_cs": "Bojler - SSR relé 1",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "SSR1": {
       "name": "Zapnutí / vypnutí SSR1",
       "name_cs": "Bojler - SSR relé 2",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "SSR2": {
       "name": "Zapnutí / vypnutí SSR1",
       "name_cs": "Bojler - SSR relé 3",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "OFFSET": {
       "name": "OFFSET na přetoky do bojleru",
@@ -956,12 +964,13 @@
       "name": "Vyhodnocení komunikace",
       "name_cs": "Komunikace - Stav",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "connectivity",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "ADDR": {
       "name": "Nastavení IP adresy",
@@ -1263,42 +1272,46 @@
       "name": "Nabíjení baterie DC",
       "name_cs": "Baterie - DC nabíjení aktivní",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "battery_charging",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "battery",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "CHARGE_AC": {
       "name": "Nabíjení baterie AC",
       "name_cs": "Baterie - AC nabíjení aktivní",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "plug",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "battery",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "TO_GRID": {
       "name": "Dodávka do sítě",
       "name_cs": "Síť - Dodávka aktivní",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "grid",
-      "todo": false
+      "todo": false,
+      "is_binary": true
     },
     "LOAD_PV_ON": {
       "name": "Vybíjení baterek do zátěže při dostupné FVE",
       "name_cs": "Spotřeba - Vybíjení s FVE",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "config",
+      "is_binary": true
     },
     "LOAD_PV_OFF": {
       "name": "Vybíjení baterek do zátěže při nedostupné FVE",
@@ -1315,12 +1328,13 @@
       "name": "Vybíjení baterek do sítě při dostupné FVE",
       "name_cs": "Síť - Vybíjení bat. s FVE",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "config",
+      "is_binary": true
     },
     "GRID_PV_OFF": {
       "name": "Vybíjení baterek do sítě při nedostupné FVE",
@@ -1359,12 +1373,13 @@
       "name": "System Enabled (live)",
       "name_cs": "Systém - Povoleno (live)",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "config",
+      "is_binary": true
     },
     "tbl_actual:VIZ": {
       "name": "Visualization (live)",
@@ -1561,7 +1576,8 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "config",
+      "is_binary": true
     },
     "PF_MIN_100": {
       "name": "Minimum PF value when power percentage reaches 100%",
@@ -1589,78 +1605,85 @@
       "name": "Ventilátor 1",
       "name_cs": "Jistič - Vstup síť",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FAOUT": {
       "name": "Ventilátor 2",
       "name_cs": "Jistič - Výstup zátěž",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FAT": {
       "name": "Zátěž",
       "name_cs": "Jistič - Zátěž",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FAT2": {
       "name": "Nezáloha",
       "name_cs": "Jistič - Nezáloha",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FADC1": {
       "name": "1FADC",
       "name_cs": "Jistič - DC 1",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FADC2": {
       "name": "2FADC",
       "name_cs": "Jistič - DC 2",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FADC3": {
       "name": "3FADC",
       "name_cs": "Jistič - DC 3",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "FV1": {
       "name": "1FV/DC",
@@ -3397,12 +3420,13 @@
       "name": "ENBL",
       "name_cs": "Systém - Povoleno",
       "unit_of_measurement": "",
-      "device_class": null,
+      "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "config",
+      "is_binary": true
     },
     "UTC": {
       "name": "UTC",

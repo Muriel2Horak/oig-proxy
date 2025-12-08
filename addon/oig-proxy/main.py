@@ -216,9 +216,10 @@ def load_sensor_map() -> None:
             device_mapping = meta.get("device_mapping")
             entity_category = meta.get("entity_category")
             options = meta.get("options")  # Pro enum
+            is_binary = meta.get("is_binary", False)
             SENSORS[sid] = SensorConfig(
                 name, unit, device_class, state_class, icon,
-                device_mapping, entity_category, options
+                device_mapping, entity_category, options, is_binary
             )
             added += 1
         if added:
@@ -242,7 +243,6 @@ def load_sensor_map() -> None:
 
 
 @dataclass
-@dataclass
 class SensorConfig:
     name: str
     unit: str
@@ -252,6 +252,7 @@ class SensorConfig:
     device_mapping: str | None = None
     entity_category: str | None = None
     options: list[str] | None = None  # Pro enum device_class
+    is_binary: bool = False  # True pro binary_sensor
 
 
 # Mapování device_mapping na názvy zařízení
@@ -515,7 +516,9 @@ class MQTTPublisher:
             self._health_check_task = asyncio.create_task(self.health_check_loop())
             logger.debug("MQTT: Health check task spuštěn")
 
-    def send_discovery(self, sensor_id: str, config: SensorConfig) -> None:
+    def send_discovery(
+        self, sensor_id: str, config: SensorConfig, table: str | None = None
+    ) -> None:
         if not self.client or not self.connected:
             return
         if sensor_id in self.discovery_sent:
@@ -536,17 +539,25 @@ class MQTTPublisher:
         object_id = f"{MQTT_NAMESPACE}_{self.device_id}_{safe_sensor_id}"
         availability_topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
         
-        # Value template - klíč s dvojtečkou musí být v hranatých závorkách
-        if ":" in sensor_id:
-            value_template = f"{{{{ value_json['{sensor_id}'] }}}}"
+        # State topic - oddělený pro každou tabulku
+        if table:
+            state_topic = f"{MQTT_NAMESPACE}/{self.device_id}/{table}/state"
         else:
-            value_template = f"{{{{ value_json.{sensor_id} }}}}"
+            state_topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
+        
+        # Value template - klíč bez prefixu tabulky (data jsou v tabulkovém topic)
+        # Pokud sensor_id obsahuje ":", použijeme jen část za dvojtečkou
+        if ":" in sensor_id:
+            json_key = sensor_id.split(":", 1)[1]
+        else:
+            json_key = sensor_id
+        value_template = f"{{{{ value_json.{json_key} }}}}"
         
         discovery_payload = {
             "name": config.name,
             "object_id": object_id,
             "unique_id": unique_id,
-            "state_topic": f"{MQTT_NAMESPACE}/{self.device_id}/state",
+            "state_topic": state_topic,
             "value_template": value_template,
             "availability": [{"topic": availability_topic}],
             "device": {
@@ -562,25 +573,39 @@ class MQTTPublisher:
         if device_type == "inverter":
             del discovery_payload["device"]["via_device"]
         
-        if config.unit:
+        # Určit typ entity (sensor vs binary_sensor)
+        if config.is_binary:
+            # Binary sensor - hodnoty 0/1
+            component = "binary_sensor"
+            discovery_payload["payload_on"] = 1
+            discovery_payload["payload_off"] = 0
+        else:
+            component = "sensor"
+            # state_class platí pouze pro sensor
+            if config.state_class:
+                discovery_payload["state_class"] = config.state_class
+            # options platí pouze pro sensor (enum)
+            if config.options:
+                discovery_payload["options"] = config.options
+        
+        # Společné volitelné atributy
+        if config.unit and not config.is_binary:
             discovery_payload["unit_of_measurement"] = config.unit
         if config.device_class:
             discovery_payload["device_class"] = config.device_class
-        if config.state_class:
-            discovery_payload["state_class"] = config.state_class
         if config.icon:
             discovery_payload["icon"] = config.icon
         if config.entity_category:
             discovery_payload["entity_category"] = config.entity_category
-        if config.options:
-            discovery_payload["options"] = config.options
             
-        topic = f"homeassistant/sensor/{unique_id}/config"
+        topic = f"homeassistant/{component}/{unique_id}/config"
         result = self.client.publish(
             topic, json.dumps(discovery_payload), retain=True, qos=self.PUBLISH_QOS
         )
         self.discovery_sent.add(sensor_id)
-        logger.debug(f"MQTT: Discovery {sensor_id} → {device_name} (mid={result.mid})")
+        logger.debug(
+            f"MQTT: Discovery {sensor_id} → {component}/{device_name} (mid={result.mid})"
+        )
 
     def publish_data(self, data: dict[str, Any]) -> bool:
         """Publikuje data na MQTT. Vrací True pokud úspěšně odesláno."""
@@ -591,29 +616,30 @@ class MQTTPublisher:
             return False
             
         table = data.get("_table")
-        # Připravíme data pro publikování s unikátními klíči
+        # Připravíme data pro publikování - klíče BEZ prefixu tabulky
         publish_data = {}
         for key in data:
             if key.startswith("_"):
                 continue
             cfg, unique_key = get_sensor_config(key, table)
             if cfg:
-                self.send_discovery(unique_key, cfg)
+                self.send_discovery(unique_key, cfg, table)
                 value = data[key]
                 # Konverze enum hodnot (číslo → text)
                 if cfg.options and isinstance(value, int):
                     if 0 <= value < len(cfg.options):
                         value = cfg.options[value]
-                publish_data[unique_key] = value
+                # Klíč bez prefixu tabulky (tabulka je v topic)
+                publish_data[key] = value
             else:
-                # Senzory bez konfigurace publikujeme s prefixem tabulky
-                if table:
-                    unique_key = f"{table}:{key}"
-                else:
-                    unique_key = key
-                publish_data[unique_key] = data[key]
+                # Senzory bez konfigurace - publikujeme pod původním klíčem
+                publish_data[key] = data[key]
         
-        topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
+        # Topic specifický pro tabulku
+        if table:
+            topic = f"{MQTT_NAMESPACE}/{self.device_id}/{table}/state"
+        else:
+            topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
         self.publish_count += 1
         
         try:
