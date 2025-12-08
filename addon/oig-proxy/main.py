@@ -303,6 +303,10 @@ class OIGDataParser:
         id_match = re.search(r"<ID_Device>(\d+)</ID_Device>", data)
         if id_match:
             result["_device_id"] = id_match.group(1)
+        # Zachytit DT pro měření latence
+        dt_match = re.search(r"<DT>([^<]+)</DT>", data)
+        if dt_match:
+            result["_dt"] = dt_match.group(1)
         for match in re.finditer(r"<([A-Za-z_0-9]+)>([^<]*)</\1>", data):
             key, value = match.groups()
             if key in ("TblName", "ID_Device", "ID_Set", "Reason", "ver", "CRC", "DT"):
@@ -811,10 +815,24 @@ class OIGProxy:
                         length=len(data),
                     )
                     
+                    # Měření latence (DT z OIG vs aktuální čas)
+                    latency_info = ""
+                    if "_dt" in parsed:
+                        try:
+                            dt = datetime.datetime.strptime(
+                                parsed["_dt"], "%Y-%m-%d %H:%M:%S"
+                            )
+                            now = datetime.datetime.now()
+                            latency_sec = (now - dt).total_seconds()
+                            latency_info = f" [latence: {latency_sec:.1f}s]"
+                        except (ValueError, TypeError):
+                            pass
+                    
                     # Logování - jen pokud MQTT ready nebo každý 10. frame
                     if self.mqtt_publisher and self.mqtt_publisher.is_ready():
                         logger.info(
-                            f"[#{conn_id}] 📊 {table}: {len(parsed)-2} hodnot"
+                            f"[#{conn_id}] 📊 {table}: "
+                            f"{len(parsed)-2} hodnot{latency_info}"
                         )
                     elif not self._mqtt_warning_logged:
                         logger.warning(
