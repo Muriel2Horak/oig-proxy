@@ -121,21 +121,22 @@
 
 ## Next Steps
 
-### Immediate (Today)
-1. ✅ Confirm cycling issue is resolved in HA
-2. ✅ Verify BAT_N shows stable value (not flickering 3→0)
-3. Document in code: `# SubD=1,2 are discarded (inactive banks)`
-4. Create GitHub issue/note: "SubD handling for multi-bank support"
+### Immediate (Done ✅)
+1. ✅ Confirmed cycling issue is resolved in HA
+2. ✅ Verified BAT_N shows stable value (not flickering 3→0)
+3. ✅ Documented in code: SubD=1,2 filtering is intentional
+4. ✅ Created documentation for future reference
 
 ### Short-term (This Week)
-- [ ] Add section to README: "Battery Bank Configuration"
-- [ ] Document: "Current single-bank limitation"
-- [ ] Plan: Do you ever foresee needing banks 1,2?
+- [ ] If someone asks why banks 1,2 are missing: Point to analysis/subd_analysis.md
+- [ ] If banks need to be activated: Use Option 2 implementation path
+- [ ] Monitor if any issues arise from filtered banks
 
-### Medium-term (Next Month)
-- [ ] If multi-bank planned: Implement Option 2
-- [ ] If single-bank confirmed: Close as working-as-designed
-- [ ] Either way: Document decision in architecture file
+### Medium-term (If Multi-Bank Needed)
+- [ ] Implement Option 2 (per-bank entity mapping)
+- [ ] Add BAT_N_0, BAT_N_1, BAT_N_2 to sensor_map.json
+- [ ] Create 3 separate battery devices in HA
+- [ ] Test with actual multi-bank data
 
 ---
 

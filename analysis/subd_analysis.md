@@ -332,5 +332,10 @@ Current transmission rate: ~66 messages per 24 hours
 - ✅ Root cause identified and verified
 - ✅ Data analysis complete (66 messages over 24h)
 - ✅ Field variance documented (4 bank-specific, 15 common)
-- ✅ Temporary fix deployed (commit c54dd29)
-- ⏳ Long-term solution design pending user decision
+- ✅ Fix deployed (commit c54dd29)
+- ✅ **Design decision: Filter inactive banks (SubD=1,2) intentionally**
+  - Only SubD=0 (active bank) is published to MQTT
+  - SubD=1,2 are discarded by design (inactive banks have zero values)
+  - This prevents data duplication and cycling in HA
+  - If multiple banks activated in future, code extension needed
+  - See "Solution Design Options" above for multi-bank implementation paths

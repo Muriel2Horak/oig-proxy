@@ -67,15 +67,15 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 
 ## Bateriové banky (SubD architektura)
 
-OIG zařízení CBB podporuje až 3 nezávislé bateriové banky. Proxy publikuje pouze aktivní banku (SubD=0) s reálnými daty. Neaktivní banky (SubD=1,2) jsou ignorovány, aby se zabránilo cyklování hodnot v HA.
+OIG zařízení CBB podporuje až 3 nezávislé bateriové banky. Proxy publikuje pouze aktivní banku (SubD=0) s reálnými daty. Neaktivní banky (SubD=1,2) jsou **úmyslně filtrováním** zahojena, aby se zabránilo cyklování hodnot v HA.
 
 **Aktuální chování**:
 - Tabulka `tbl_batt_prms` je fragmentována do 3 variant (SubD=0,1,2), každá reprezentuje jednu banku.
 - Pouze SubD=0 (aktivní banka) je publikována do MQTT.
-- SubD=1,2 jsou diskretizovány (jsou-li neaktivní, jejich data jsou nulová).
+- SubD=1,2 jsou záměrně ignorovány – mají nulové hodnoty, nejsou potřebné.
 - Pokud budete v budoucnu aktivovat druhou nebo třetí banku, požaduje se rozšíření mappingu v `sensor_map.json` a úprava logiky proxy.
 
-**Více detailů**: Viz `analysis/subd_analysis.md` pro technický popis fragmentace a možné budoucí rozšíření na multi-bank systémy.
+**Technické detaily**: Viz `analysis/subd_analysis.md` pro popis fragmentace, analýzu polí a možné budoucí rozšíření na multi-bank systémy.
 
 ## Repo
 GitHub: https://github.com/Muriel2Horak/oig-proxy
