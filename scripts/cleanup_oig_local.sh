@@ -76,10 +76,22 @@ done
 echo "   ✓ State/availability témata vyčištěna"
 
 # =============================================================================
-# KROK 3: Smazat entity a zařízení z HA registrů
+# KROK 3: Smazat zařízení a entity z HA registrů (devices PRVNÍ!)
 # =============================================================================
 echo ""
-echo "[3/4] Mažu entity a zařízení z HA registrů..."
+echo "[3/4] Mažu zařízení a entity z HA registrů..."
+
+# Device registry PRVNÍ (entity na ně odkazují)
+ssh $HA_SSH 'docker exec homeassistant python3 -c "
+import json
+with open(\"/config/.storage/core.device_registry\") as f:
+    data = json.load(f)
+before = len(data[\"data\"][\"devices\"])
+data[\"data\"][\"devices\"] = [d for d in data[\"data\"][\"devices\"] if not any(\"oig_local\" in str(i) for i in d.get(\"identifiers\", []))]
+after = len(data[\"data\"][\"devices\"])
+with open(\"/config/.storage/core.device_registry\", \"w\") as f:
+    json.dump(data, f, indent=2)
+print(f\"   Devices: {before} -> {after} (smazano {before - after})\")"'
 
 # Entity registry
 ssh $HA_SSH 'docker exec homeassistant python3 -c "
@@ -92,18 +104,6 @@ after = len(data[\"data\"][\"entities\"])
 with open(\"/config/.storage/core.entity_registry\", \"w\") as f:
     json.dump(data, f, indent=2)
 print(f\"   Entity: {before} -> {after} (smazano {before - after})\")"'
-
-# Device registry
-ssh $HA_SSH 'docker exec homeassistant python3 -c "
-import json
-with open(\"/config/.storage/core.device_registry\") as f:
-    data = json.load(f)
-before = len(data[\"data\"][\"devices\"])
-data[\"data\"][\"devices\"] = [d for d in data[\"data\"][\"devices\"] if not any(\"oig_local\" in str(i) for i in d.get(\"identifiers\", []))]
-after = len(data[\"data\"][\"devices\"])
-with open(\"/config/.storage/core.device_registry\", \"w\") as f:
-    json.dump(data, f, indent=2)
-print(f\"   Devices: {before} -> {after} (smazano {before - after})\")"'
 
 echo "   ✓ Registry vyčištěny"
 
