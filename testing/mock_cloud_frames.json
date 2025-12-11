@@ -1,0 +1,15 @@
+{
+  "total_frames": 1,
+  "connections": 4,
+  "tables": {
+    "tbl_actual": 1
+  },
+  "frames": [
+    {
+      "conn_id": 1,
+      "timestamp": "2025-12-11T10:58:19.207303",
+      "table_name": "tbl_actual",
+      "frame": "<Frame><TblName>tbl_actual</TblName><ID_Set>836339341</ID_Set><DT>2025-12-07 20:29:01</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ENBL>1</ENBL><VIZ>8</VIZ><Temp>26.50</Temp><Humid>23.0</Humid><ACO_P>2361</ACO_P><FV_P1>0</FV_P1><FV_P2>0</FV_P2><ACI_WR>24</ACI_WR><ACI_WS>0</ACI_WS><ACI_WT>0</ACI_WT><BAT_P>-2319</BAT_P><FV_PROC>0</FV_PROC><BAT_C>49</BAT_C><MSC_SELF>98</MSC_SELF><STAT>0</STAT><ver>32673</ver><CRC>16833</CRC></Frame>\r\n"
+    }
+  ]
+}

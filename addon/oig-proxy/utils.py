@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""
+Pomocné funkce pro OIG Proxy.
+"""
+
+import datetime
+import json
+import logging
+import os
+import sqlite3
+import time
+from typing import Any
+
+from config import (
+    CAPTURE_DB_PATH,
+    CAPTURE_PAYLOADS,
+    MAP_RELOAD_SECONDS,
+    MODE_STATE_PATH,
+    SENSOR_MAP_PATH,
+)
+from models import SensorConfig, WarningEntry
+
+logger = logging.getLogger(__name__)
+
+# Globální state
+SENSORS: dict[str, SensorConfig] = {}
+WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
+_last_map_load = 0.0
+_capture_conn: sqlite3.Connection | None = None
+_capture_cols: set[str] = set()
+
+
+def iso_now() -> str:
+    """Vrátí aktuální čas v ISO formátu."""
+    return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def friendly_name(sensor_id: str) -> str:
+    """Vytvoří lidsky čitelný název ze sensor_id."""
+    parts = sensor_id.replace("_", " ").split()
+    return " ".join(p.capitalize() for p in parts)
+
+
+def load_mode_state() -> int | None:
+    """Načte uložený MODE stav z perzistentního souboru."""
+    try:
+        if os.path.exists(MODE_STATE_PATH):
+            with open(MODE_STATE_PATH, "r") as f:
+                data = json.load(f)
+                mode_value = data.get("mode")
+                if mode_value is not None:
+                    logger.info(f"MODE: Načten uložený stav: {mode_value}")
+                    return mode_value
+    except Exception as e:
+        logger.warning(f"MODE: Nepodařilo se načíst stav: {e}")
+    return None
+
+
+def save_mode_state(mode_value: int) -> None:
+    """Uloží MODE stav do perzistentního souboru."""
+    try:
+        os.makedirs(os.path.dirname(MODE_STATE_PATH), exist_ok=True)
+        with open(MODE_STATE_PATH, "w") as f:
+            json.dump({
+                "mode": mode_value,
+                "timestamp": iso_now()
+            }, f)
+        logger.debug(f"MODE: Stav uložen: {mode_value}")
+    except Exception as e:
+        logger.error(f"MODE: Nepodařilo se uložit stav: {e}")
+
+
+def get_sensor_config(
+    sensor_id: str,
+    table: str | None = None
+) -> tuple[SensorConfig | None, str]:
+    """Vrátí konfiguraci senzoru a jeho unikátní klíč.
+    
+    Pořadí vyhledávání:
+    1. table:sensor_id (specifické mapování pro tabulku)
+    2. sensor_id (obecné mapování, fallback)
+    
+    Returns:
+        tuple: (SensorConfig nebo None, unikátní klíč pro senzor)
+    """
+    if table:
+        table_key = f"{table}:{sensor_id}"
+        config = SENSORS.get(table_key)
+        if config:
+            return config, table_key
+    
+    config = SENSORS.get(sensor_id)
+    if config:
+        unique_key = f"{table}:{sensor_id}" if table else sensor_id
+        return config, unique_key
+    
+    return None, sensor_id
+
+
+def decode_warnings(key: str, value: Any) -> list[str]:
+    """Dekóduje bitové chyby podle WARNING_MAP a vrací seznam textů."""
+    if key not in WARNING_MAP:
+        return []
+    try:
+        val_int = int(value)
+    except Exception:
+        return []
+    
+    texts: list[str] = []
+    for item in WARNING_MAP.get(key, []):
+        bit = item.get("bit")
+        remark = item.get("remark_cs") or item.get("remark")
+        if bit is None:
+            continue
+        if val_int & int(bit):
+            if remark:
+                texts.append(remark)
+    return texts
+
+
+def load_sensor_map() -> None:
+    """Načte mapping z JSON (vygenerovaný z Excelu) a doplní SENSORS."""
+    global _last_map_load, WARNING_MAP
+    
+    now = time.time()
+    if MAP_RELOAD_SECONDS > 0 and (now - _last_map_load) < MAP_RELOAD_SECONDS:
+        return
+    
+    if not os.path.exists(SENSOR_MAP_PATH):
+        logger.info(
+            f"JSON mapping nenalezen, přeskočeno ({SENSOR_MAP_PATH})"
+        )
+        return
+    
+    try:
+        with open(SENSOR_MAP_PATH, "r", encoding="utf-8") as f:
+            mapping = json.load(f)
+        
+        sensors = mapping.get("sensors", {})
+        added = 0
+        for sid, meta in sensors.items():
+            name = (
+                meta.get("name_cs") or 
+                meta.get("name") or 
+                friendly_name(sid)
+            )
+            unit = meta.get("unit_of_measurement") or ""
+            device_class = meta.get("device_class")
+            state_class = meta.get("state_class")
+            icon = meta.get("icon")
+            device_mapping = meta.get("device_mapping")
+            entity_category = meta.get("entity_category")
+            options = meta.get("options")
+            is_binary = meta.get("is_binary", False)
+            
+            SENSORS[sid] = SensorConfig(
+                name, unit, device_class, state_class, icon,
+                device_mapping, entity_category, options, is_binary
+            )
+            added += 1
+        
+        if added:
+            logger.info(
+                f"Doplněno/aktualizováno {added} senzorů z JSON mappingu"
+            )
+        
+        # Warning map pro dekódování bitů chyb
+        WARNING_MAP = {}
+        for w in mapping.get("warnings_3f", []):
+            key = w.get("table_key") or w.get("key")
+            bit = w.get("bit")
+            remark = w.get("remark")
+            remark_cs = w.get("remark_cs")
+            code = w.get("warning_code")
+            if not key or bit is None:
+                continue
+            WARNING_MAP.setdefault(key, []).append({
+                "bit": int(bit),
+                "remark": remark,
+                "remark_cs": remark_cs,
+                "code": code
+            })
+        
+        _last_map_load = now
+    except Exception as e:
+        logger.warning(f"Načtení mappingu selhalo: {e}")
+
+
+def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
+    """Inicializuje SQLite DB pro capture."""
+    if not CAPTURE_PAYLOADS:
+        return None, set()
+    
+    try:
+        conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS frames (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT,
+                device_id TEXT,
+                table_name TEXT,
+                raw TEXT,
+                parsed TEXT,
+                direction TEXT,
+                conn_id INTEGER,
+                peer TEXT,
+                length INTEGER
+            )
+        """)
+        
+        # Přidat chybějící sloupce (backward compatibility)
+        for col_name, col_type in [
+            ("direction", "TEXT"),
+            ("conn_id", "INTEGER"),
+            ("peer", "TEXT"),
+            ("length", "INTEGER"),
+        ]:
+            try:
+                conn.execute(
+                    f"ALTER TABLE frames ADD COLUMN {col_name} {col_type}"
+                )
+                conn.commit()
+            except Exception:
+                pass
+        
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
+        return conn, cols
+    except Exception as e:
+        logger.warning(f"Init capture DB failed: {e}")
+        return None, set()
+
+
+def capture_payload(
+    device_id: str | None,
+    table: str | None,
+    raw: str,
+    parsed: dict[str, Any],
+    direction: str | None = None,
+    conn_id: int | None = None,
+    peer: str | None = None,
+    length: int | None = None,
+) -> None:
+    """Uloží payload do capture databáze."""
+    global _capture_conn, _capture_cols
+    
+    if not CAPTURE_PAYLOADS or not _capture_conn:
+        return
+    
+    try:
+        ts = iso_now()
+        fields = ["ts", "device_id", "table_name", "raw", "parsed"]
+        values = [ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False)]
+        
+        if "direction" in _capture_cols:
+            fields.append("direction")
+            values.append(direction)
+        if "conn_id" in _capture_cols:
+            fields.append("conn_id")
+            values.append(conn_id)
+        if "peer" in _capture_cols:
+            fields.append("peer")
+            values.append(peer)
+        if "length" in _capture_cols:
+            fields.append("length")
+            values.append(length)
+        
+        placeholders = ",".join("?" for _ in fields)
+        sql = (
+            f"INSERT INTO frames ({','.join(fields)}) "
+            f"VALUES ({placeholders})"
+        )
+        _capture_conn.execute(sql, values)
+        _capture_conn.commit()
+    except Exception as e:
+        logger.debug(f"Capture payload failed: {e}")
+
+
+# Initialize capture DB at module load
+_capture_conn, _capture_cols = init_capture_db()

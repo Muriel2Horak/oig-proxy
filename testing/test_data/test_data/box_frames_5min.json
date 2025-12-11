@@ -1,0 +1,1392 @@
+[
+  {
+    "timestamp": "2025-12-07T19:38:11.548394+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>26213</ver><CRC>24984</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T19:39:20.409287+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836339703</ID_Set><DT>2025-12-07 20:35:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>38536</ver><CRC>29033</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T19:44:38.167243+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836340002</ID_Set><DT>2025-12-07 20:40:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>45390</ver><CRC>13697</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T19:45:35.050082+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836340302</ID_Set><DT>2025-12-07 20:45:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>04583</ver><CRC>31374</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T20:04:17.154735+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836340601</ID_Set><DT>2025-12-07 20:50:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>17601</ver><CRC>05721</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T20:05:06.463211+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836340902</ID_Set><DT>2025-12-07 20:55:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>17632</ver><CRC>38992</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T20:06:17.178497+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836341201</ID_Set><DT>2025-12-07 21:00:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>47857</ver><CRC>10451</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T20:07:47.302186+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836341502</ID_Set><DT>2025-12-07 21:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>55897</ver><CRC>24037</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T20:10:19.515925+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836341801</ID_Set><DT>2025-12-07 21:10:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>61430</ver><CRC>63476</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T20:15:14.729454+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_dc_in",
+    "frame": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>836342100</ID_Set><DT>2025-12-07 21:15:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>0.0</FV_V1><FV_I1>0.0</FV_I1><FV_P1>0</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>2593</FV_AD><FV_AM>10</FV_AM><FV_AY>5398</FV_AY><FV_PROC>0</FV_PROC><ver>08884</ver><CRC>58525</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_dc_in",
+      "_device_id": "2206237016",
+      "FV_V1": 0.0,
+      "FV_I1": 0.0,
+      "FV_P1": 0,
+      "FV_V2": 0.0,
+      "FV_I2": 0.0,
+      "FV_P2": 0,
+      "FV_AD": 2593,
+      "FV_AM": 10,
+      "FV_AY": 5398,
+      "FV_PROC": 0
+    },
+    "length": 365
+  },
+  {
+    "timestamp": "2025-12-07T19:38:16.337839+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>242.1</ACI_VR><ACI_VS>242.9</ACI_VS><ACI_VT>242.1</ACI_VT><ACI_WR>31</ACI_WR><ACI_WS>0</ACI_WS><ACI_WT>0</ACI_WT><ACI_F>49.98</ACI_F><AC_AD>33243</AC_AD><AC_AM>299</AC_AM><AC_AY>9770</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>21187</ver><CRC>54061</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 242.1,
+      "ACI_VS": 242.9,
+      "ACI_VT": 242.1,
+      "ACI_WR": 31,
+      "ACI_WS": 0,
+      "ACI_WT": 0,
+      "ACI_F": 49.98,
+      "AC_AD": 33243,
+      "AC_AM": 299,
+      "AC_AY": 9770,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 435
+  },
+  {
+    "timestamp": "2025-12-07T19:39:24.701598+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836339703</ID_Set><DT>2025-12-07 20:35:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>242.3</ACI_VR><ACI_VS>242.5</ACI_VS><ACI_VT>241.9</ACI_VT><ACI_WR>36</ACI_WR><ACI_WS>0</ACI_WS><ACI_WT>6</ACI_WT><ACI_F>50.01</ACI_F><AC_AD>33247</AC_AD><AC_AM>299</AC_AM><AC_AY>9770</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>27891</ver><CRC>04294</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 242.3,
+      "ACI_VS": 242.5,
+      "ACI_VT": 241.9,
+      "ACI_WR": 36,
+      "ACI_WS": 0,
+      "ACI_WT": 6,
+      "ACI_F": 50.01,
+      "AC_AD": 33247,
+      "AC_AM": 299,
+      "AC_AY": 9770,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 435
+  },
+  {
+    "timestamp": "2025-12-07T19:44:46.316434+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836340002</ID_Set><DT>2025-12-07 20:40:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>242.1</ACI_VR><ACI_VS>242.7</ACI_VS><ACI_VT>242.5</ACI_VT><ACI_WR>33</ACI_WR><ACI_WS>0</ACI_WS><ACI_WT>0</ACI_WT><ACI_F>50.01</ACI_F><AC_AD>33250</AC_AD><AC_AM>299</AC_AM><AC_AY>9770</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>42568</ver><CRC>51132</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 242.1,
+      "ACI_VS": 242.7,
+      "ACI_VT": 242.5,
+      "ACI_WR": 33,
+      "ACI_WS": 0,
+      "ACI_WT": 0,
+      "ACI_F": 50.01,
+      "AC_AD": 33250,
+      "AC_AM": 299,
+      "AC_AY": 9770,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 435
+  },
+  {
+    "timestamp": "2025-12-07T19:45:43.134563+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836340302</ID_Set><DT>2025-12-07 20:45:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>241.9</ACI_VR><ACI_VS>242.5</ACI_VS><ACI_VT>241.9</ACI_VT><ACI_WR>25</ACI_WR><ACI_WS>0</ACI_WS><ACI_WT>0</ACI_WT><ACI_F>50.01</ACI_F><AC_AD>33252</AC_AD><AC_AM>299</AC_AM><AC_AY>9770</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>41977</ver><CRC>28887</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 241.9,
+      "ACI_VS": 242.5,
+      "ACI_VT": 241.9,
+      "ACI_WR": 25,
+      "ACI_WS": 0,
+      "ACI_WT": 0,
+      "ACI_F": 50.01,
+      "AC_AD": 33252,
+      "AC_AM": 299,
+      "AC_AY": 9770,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 435
+  },
+  {
+    "timestamp": "2025-12-07T20:04:21.422541+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836340601</ID_Set><DT>2025-12-07 20:50:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>240.1</ACI_VR><ACI_VS>243.6</ACI_VS><ACI_VT>242.5</ACI_VT><ACI_WR>3711</ACI_WR><ACI_WS>1057</ACI_WS><ACI_WT>1066</ACI_WT><ACI_F>49.95</ACI_F><AC_AD>33465</AC_AD><AC_AM>299</AC_AM><AC_AY>9771</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>47893</ver><CRC>32067</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 240.1,
+      "ACI_VS": 243.6,
+      "ACI_VT": 242.5,
+      "ACI_WR": 3711,
+      "ACI_WS": 1057,
+      "ACI_WT": 1066,
+      "ACI_F": 49.95,
+      "AC_AD": 33465,
+      "AC_AM": 299,
+      "AC_AY": 9771,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 443
+  },
+  {
+    "timestamp": "2025-12-07T20:05:14.296128+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836340902</ID_Set><DT>2025-12-07 20:55:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>240.1</ACI_VR><ACI_VS>242.9</ACI_VS><ACI_VT>242.3</ACI_VT><ACI_WR>1543</ACI_WR><ACI_WS>1126</ACI_WS><ACI_WT>1075</ACI_WT><ACI_F>50.01</ACI_F><AC_AD>33829</AC_AD><AC_AM>300</AC_AM><AC_AY>9771</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>34724</ver><CRC>40770</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 240.1,
+      "ACI_VS": 242.9,
+      "ACI_VT": 242.3,
+      "ACI_WR": 1543,
+      "ACI_WS": 1126,
+      "ACI_WT": 1075,
+      "ACI_F": 50.01,
+      "AC_AD": 33829,
+      "AC_AM": 300,
+      "AC_AY": 9771,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 443
+  },
+  {
+    "timestamp": "2025-12-07T20:06:21.971170+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836341201</ID_Set><DT>2025-12-07 21:00:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>241.6</ACI_VR><ACI_VS>242.1</ACI_VS><ACI_VT>241.9</ACI_VT><ACI_WR>1281</ACI_WR><ACI_WS>1052</ACI_WS><ACI_WT>1070</ACI_WT><ACI_F>50.00</ACI_F><AC_AD>34118</AC_AD><AC_AM>300</AC_AM><AC_AY>9771</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>20866</ver><CRC>36893</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 241.6,
+      "ACI_VS": 242.1,
+      "ACI_VT": 241.9,
+      "ACI_WR": 1281,
+      "ACI_WS": 1052,
+      "ACI_WT": 1070,
+      "ACI_F": 50.0,
+      "AC_AD": 34118,
+      "AC_AM": 300,
+      "AC_AY": 9771,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 443
+  },
+  {
+    "timestamp": "2025-12-07T20:07:55.168098+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836341502</ID_Set><DT>2025-12-07 21:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>241.4</ACI_VR><ACI_VS>242.3</ACI_VS><ACI_VT>241.4</ACI_VT><ACI_WR>1393</ACI_WR><ACI_WS>1043</ACI_WS><ACI_WT>1073</ACI_WT><ACI_F>49.97</ACI_F><AC_AD>34406</AC_AD><AC_AM>300</AC_AM><AC_AY>9771</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>45202</ver><CRC>04003</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 241.4,
+      "ACI_VS": 242.3,
+      "ACI_VT": 241.4,
+      "ACI_WR": 1393,
+      "ACI_WS": 1043,
+      "ACI_WT": 1073,
+      "ACI_F": 49.97,
+      "AC_AD": 34406,
+      "AC_AM": 300,
+      "AC_AY": 9771,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 443
+  },
+  {
+    "timestamp": "2025-12-07T20:10:26.959197+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836341801</ID_Set><DT>2025-12-07 21:10:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>241.4</ACI_VR><ACI_VS>242.7</ACI_VS><ACI_VT>242.1</ACI_VT><ACI_WR>1674</ACI_WR><ACI_WS>1054</ACI_WS><ACI_WT>1071</ACI_WT><ACI_F>49.98</ACI_F><AC_AD>34707</AC_AD><AC_AM>300</AC_AM><AC_AY>9772</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>09758</ver><CRC>35347</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 241.4,
+      "ACI_VS": 242.7,
+      "ACI_VT": 242.1,
+      "ACI_WR": 1674,
+      "ACI_WS": 1054,
+      "ACI_WT": 1071,
+      "ACI_F": 49.98,
+      "AC_AD": 34707,
+      "AC_AM": 300,
+      "AC_AY": 9772,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 443
+  },
+  {
+    "timestamp": "2025-12-07T20:15:20.124616+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_in",
+    "frame": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>836342100</ID_Set><DT>2025-12-07 21:15:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>242.3</ACI_VR><ACI_VS>242.5</ACI_VS><ACI_VT>242.7</ACI_VT><ACI_WR>32</ACI_WR><ACI_WS>0</ACI_WS><ACI_WT>0</ACI_WT><ACI_F>50.00</ACI_F><AC_AD>34721</AC_AD><AC_AM>300</AC_AM><AC_AY>9772</AC_AY><AC_PD>69</AC_PD><AC_PM>0</AC_PM><AC_PY>168</AC_PY><ver>21413</ver><CRC>59672</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_in",
+      "_device_id": "2206237016",
+      "ACI_VR": 242.3,
+      "ACI_VS": 242.5,
+      "ACI_VT": 242.7,
+      "ACI_WR": 32,
+      "ACI_WS": 0,
+      "ACI_WT": 0,
+      "ACI_F": 50.0,
+      "AC_AD": 34721,
+      "AC_AM": 300,
+      "AC_AY": 9772,
+      "AC_PD": 69,
+      "AC_PM": 0,
+      "AC_PY": 168
+    },
+    "length": 435
+  },
+  {
+    "timestamp": "2025-12-07T19:38:23.316518+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>242.5</ACO_VR><ACO_VS>242.9</ACO_VS><ACO_VT>242.1</ACO_VT><ACO_PR>331.0</ACO_PR><ACO_PS>1270.0</ACO_PS><ACO_PT>98.0</ACO_PT><ACO_P>1699</ACO_P><ACO_PAR>411.0</ACO_PAR><ACO_PAS>1308.0</ACO_PAS><ACO_PAT>168.0</ACO_PAT><ACO_PA>1887.0</ACO_PA><ACO_F>49.98</ACO_F><EN_DAY>14992</EN_DAY><EN_MONT>111</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>38328</ver><CRC>43633</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 242.5,
+      "ACO_VS": 242.9,
+      "ACO_VT": 242.1,
+      "ACO_PR": 331.0,
+      "ACO_PS": 1270.0,
+      "ACO_PT": 98.0,
+      "ACO_P": 1699,
+      "ACO_PAR": 411.0,
+      "ACO_PAS": 1308.0,
+      "ACO_PAT": 168.0,
+      "ACO_PA": 1887.0,
+      "ACO_F": 49.98,
+      "EN_DAY": 14992,
+      "EN_MONT": 111,
+      "EN_YEAR": 6008
+    },
+    "length": 521
+  },
+  {
+    "timestamp": "2025-12-07T19:43:49.262178+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836339703</ID_Set><DT>2025-12-07 20:35:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>242.3</ACO_VR><ACO_VS>242.5</ACO_VS><ACO_VT>241.9</ACO_VT><ACO_PR>356.0</ACO_PR><ACO_PS>163.0</ACO_PS><ACO_PT>99.0</ACO_PT><ACO_P>618</ACO_P><ACO_PAR>508.0</ACO_PAR><ACO_PAS>364.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>1041.0</ACO_PA><ACO_F>50.01</ACO_F><EN_DAY>15055</EN_DAY><EN_MONT>111</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>22602</ver><CRC>36395</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 242.3,
+      "ACO_VS": 242.5,
+      "ACO_VT": 241.9,
+      "ACO_PR": 356.0,
+      "ACO_PS": 163.0,
+      "ACO_PT": 99.0,
+      "ACO_P": 618,
+      "ACO_PAR": 508.0,
+      "ACO_PAS": 364.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 1041.0,
+      "ACO_F": 50.01,
+      "EN_DAY": 15055,
+      "EN_MONT": 111,
+      "EN_YEAR": 6008
+    },
+    "length": 518
+  },
+  {
+    "timestamp": "2025-12-07T19:44:50.476528+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836340002</ID_Set><DT>2025-12-07 20:40:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>242.1</ACO_VR><ACO_VS>242.9</ACO_VS><ACO_VT>242.5</ACO_VT><ACO_PR>631.0</ACO_PR><ACO_PS>159.0</ACO_PS><ACO_PT>98.0</ACO_PT><ACO_P>888</ACO_P><ACO_PAR>798.0</ACO_PAR><ACO_PAS>364.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>1331.0</ACO_PA><ACO_F>50.01</ACO_F><EN_DAY>15111</EN_DAY><EN_MONT>111</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>57541</ver><CRC>61786</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 242.1,
+      "ACO_VS": 242.9,
+      "ACO_VT": 242.5,
+      "ACO_PR": 631.0,
+      "ACO_PS": 159.0,
+      "ACO_PT": 98.0,
+      "ACO_P": 888,
+      "ACO_PAR": 798.0,
+      "ACO_PAS": 364.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 1331.0,
+      "ACO_F": 50.01,
+      "EN_DAY": 15111,
+      "EN_MONT": 111,
+      "EN_YEAR": 6008
+    },
+    "length": 518
+  },
+  {
+    "timestamp": "2025-12-07T19:45:47.196501+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836340302</ID_Set><DT>2025-12-07 20:45:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>241.9</ACO_VR><ACO_VS>242.5</ACO_VS><ACO_VT>241.9</ACO_VT><ACO_PR>639.0</ACO_PR><ACO_PS>160.0</ACO_PS><ACO_PT>99.0</ACO_PT><ACO_P>898</ACO_P><ACO_PAR>775.0</ACO_PAR><ACO_PAS>364.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>1308.0</ACO_PA><ACO_F>50.01</ACO_F><EN_DAY>15181</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>51390</ver><CRC>29378</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 241.9,
+      "ACO_VS": 242.5,
+      "ACO_VT": 241.9,
+      "ACO_PR": 639.0,
+      "ACO_PS": 160.0,
+      "ACO_PT": 99.0,
+      "ACO_P": 898,
+      "ACO_PAR": 775.0,
+      "ACO_PAS": 364.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 1308.0,
+      "ACO_F": 50.01,
+      "EN_DAY": 15181,
+      "EN_MONT": 112,
+      "EN_YEAR": 6008
+    },
+    "length": 518
+  },
+  {
+    "timestamp": "2025-12-07T20:04:25.874198+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836340601</ID_Set><DT>2025-12-07 20:50:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>239.7</ACO_VR><ACO_VS>243.4</ACO_VS><ACO_VT>242.5</ACO_VT><ACO_PR>2712.0</ACO_PR><ACO_PS>118.0</ACO_PS><ACO_PT>98.0</ACO_PT><ACO_P>2928</ACO_P><ACO_PAR>2732.0</ACO_PAR><ACO_PAS>267.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>3168.0</ACO_PA><ACO_F>49.95</ACO_F><EN_DAY>15293</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>21134</ver><CRC>64281</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 239.7,
+      "ACO_VS": 243.4,
+      "ACO_VT": 242.5,
+      "ACO_PR": 2712.0,
+      "ACO_PS": 118.0,
+      "ACO_PT": 98.0,
+      "ACO_P": 2928,
+      "ACO_PAR": 2732.0,
+      "ACO_PAS": 267.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 3168.0,
+      "ACO_F": 49.95,
+      "EN_DAY": 15293,
+      "EN_MONT": 112,
+      "EN_YEAR": 6008
+    },
+    "length": 521
+  },
+  {
+    "timestamp": "2025-12-07T20:05:22.048149+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836340902</ID_Set><DT>2025-12-07 20:55:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>240.1</ACO_VR><ACO_VS>242.9</ACO_VS><ACO_VT>242.3</ACO_VT><ACO_PR>2635.0</ACO_PR><ACO_PS>173.0</ACO_PS><ACO_PT>95.0</ACO_PT><ACO_P>2903</ACO_P><ACO_PAR>2662.0</ACO_PAR><ACO_PAS>339.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>3170.0</ACO_PA><ACO_F>50.01</ACO_F><EN_DAY>15405</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>34994</ver><CRC>35568</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 240.1,
+      "ACO_VS": 242.9,
+      "ACO_VT": 242.3,
+      "ACO_PR": 2635.0,
+      "ACO_PS": 173.0,
+      "ACO_PT": 95.0,
+      "ACO_P": 2903,
+      "ACO_PAR": 2662.0,
+      "ACO_PAS": 339.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 3170.0,
+      "ACO_F": 50.01,
+      "EN_DAY": 15405,
+      "EN_MONT": 112,
+      "EN_YEAR": 6008
+    },
+    "length": 521
+  },
+  {
+    "timestamp": "2025-12-07T20:06:29.849991+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836341201</ID_Set><DT>2025-12-07 21:00:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>241.6</ACO_VR><ACO_VS>242.3</ACO_VS><ACO_VT>241.9</ACO_VT><ACO_PR>251.0</ACO_PR><ACO_PS>93.0</ACO_PS><ACO_PT>96.0</ACO_PT><ACO_P>454</ACO_P><ACO_PAR>410.0</ACO_PAR><ACO_PAS>241.0</ACO_PAS><ACO_PAT>168.0</ACO_PAT><ACO_PA>819.0</ACO_PA><ACO_F>50.00</ACO_F><EN_DAY>15465</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6008</EN_YEAR><ver>40740</ver><CRC>06749</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 241.6,
+      "ACO_VS": 242.3,
+      "ACO_VT": 241.9,
+      "ACO_PR": 251.0,
+      "ACO_PS": 93.0,
+      "ACO_PT": 96.0,
+      "ACO_P": 454,
+      "ACO_PAR": 410.0,
+      "ACO_PAS": 241.0,
+      "ACO_PAT": 168.0,
+      "ACO_PA": 819.0,
+      "ACO_F": 50.0,
+      "EN_DAY": 15465,
+      "EN_MONT": 112,
+      "EN_YEAR": 6008
+    },
+    "length": 516
+  },
+  {
+    "timestamp": "2025-12-07T20:08:02.143003+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836341502</ID_Set><DT>2025-12-07 21:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>241.4</ACO_VR><ACO_VS>242.1</ACO_VS><ACO_VT>241.4</ACO_VT><ACO_PR>340.0</ACO_PR><ACO_PS>91.0</ACO_PS><ACO_PT>96.0</ACO_PT><ACO_P>527</ACO_P><ACO_PAR>459.0</ACO_PAR><ACO_PAS>242.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>870.0</ACO_PA><ACO_F>49.97</ACO_F><EN_DAY>15505</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6009</EN_YEAR><ver>11997</ver><CRC>06718</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 241.4,
+      "ACO_VS": 242.1,
+      "ACO_VT": 241.4,
+      "ACO_PR": 340.0,
+      "ACO_PS": 91.0,
+      "ACO_PT": 96.0,
+      "ACO_P": 527,
+      "ACO_PAR": 459.0,
+      "ACO_PAS": 242.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 870.0,
+      "ACO_F": 49.97,
+      "EN_DAY": 15505,
+      "EN_MONT": 112,
+      "EN_YEAR": 6009
+    },
+    "length": 516
+  },
+  {
+    "timestamp": "2025-12-07T20:10:31.844561+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836341801</ID_Set><DT>2025-12-07 21:10:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>241.0</ACO_VR><ACO_VS>242.5</ACO_VS><ACO_VT>242.1</ACO_VT><ACO_PR>659.0</ACO_PR><ACO_PS>94.0</ACO_PS><ACO_PT>98.0</ACO_PT><ACO_P>851</ACO_P><ACO_PAR>748.0</ACO_PAR><ACO_PAS>242.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>1159.0</ACO_PA><ACO_F>49.98</ACO_F><EN_DAY>15561</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6009</EN_YEAR><ver>23847</ver><CRC>06706</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 241.0,
+      "ACO_VS": 242.5,
+      "ACO_VT": 242.1,
+      "ACO_PR": 659.0,
+      "ACO_PS": 94.0,
+      "ACO_PT": 98.0,
+      "ACO_P": 851,
+      "ACO_PAR": 748.0,
+      "ACO_PAS": 242.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 1159.0,
+      "ACO_F": 49.98,
+      "EN_DAY": 15561,
+      "EN_MONT": 112,
+      "EN_YEAR": 6009
+    },
+    "length": 517
+  },
+  {
+    "timestamp": "2025-12-07T20:15:27.131808+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_ac_out",
+    "frame": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>836342100</ID_Set><DT>2025-12-07 21:15:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>242.3</ACO_VR><ACO_VS>242.5</ACO_VS><ACO_VT>242.3</ACO_VT><ACO_PR>707.0</ACO_PR><ACO_PS>152.0</ACO_PS><ACO_PT>98.0</ACO_PT><ACO_P>961</ACO_P><ACO_PAR>799.0</ACO_PAR><ACO_PAS>315.0</ACO_PAS><ACO_PAT>169.0</ACO_PAT><ACO_PA>1307.0</ACO_PA><ACO_F>50.00</ACO_F><EN_DAY>15636</EN_DAY><EN_MONT>112</EN_MONT><EN_YEAR>6009</EN_YEAR><ver>09542</ver><CRC>59288</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_ac_out",
+      "_device_id": "2206237016",
+      "ACO_VR": 242.3,
+      "ACO_VS": 242.5,
+      "ACO_VT": 242.3,
+      "ACO_PR": 707.0,
+      "ACO_PS": 152.0,
+      "ACO_PT": 98.0,
+      "ACO_P": 961,
+      "ACO_PAR": 799.0,
+      "ACO_PAS": 315.0,
+      "ACO_PAT": 169.0,
+      "ACO_PA": 1307.0,
+      "ACO_F": 50.0,
+      "EN_DAY": 15636,
+      "EN_MONT": 112,
+      "EN_YEAR": 6009
+    },
+    "length": 518
+  },
+  {
+    "timestamp": "2025-12-07T19:38:31.444647+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>52.140</BAT_V><BAT_C>49</BAT_C><BAT_I>-36.800</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>13471</BAT_AD><BAT_AM>98</BAT_AM><BAT_AY>1974</BAT_AY><BAT_P>-1918</BAT_P><BAT_APD>13668</BAT_APD><BAT_AND>12066</BAT_AND><ID_SubD>0</ID_SubD><ver>32684</ver><CRC>30506</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 52.14,
+      "BAT_C": 49,
+      "BAT_I": -36.8,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 13471,
+      "BAT_AM": 98,
+      "BAT_AY": 1974,
+      "BAT_P": -1918,
+      "BAT_APD": 13668,
+      "BAT_AND": 12066,
+      "ID_SubD": 0
+    },
+    "length": 432
+  },
+  {
+    "timestamp": "2025-12-07T19:43:55.062069+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836339703</ID_Set><DT>2025-12-07 20:35:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>52.290</BAT_V><BAT_C>48</BAT_C><BAT_I>-15.300</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>13471</BAT_AD><BAT_AM>98</BAT_AM><BAT_AY>1974</BAT_AY><BAT_P>-831</BAT_P><BAT_APD>13668</BAT_APD><BAT_AND>12147</BAT_AND><ID_SubD>0</ID_SubD><ver>34547</ver><CRC>54651</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 52.29,
+      "BAT_C": 48,
+      "BAT_I": -15.3,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 13471,
+      "BAT_AM": 98,
+      "BAT_AY": 1974,
+      "BAT_P": -831,
+      "BAT_APD": 13668,
+      "BAT_AND": 12147,
+      "ID_SubD": 0
+    },
+    "length": 431
+  },
+  {
+    "timestamp": "2025-12-07T19:44:56.494593+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836340002</ID_Set><DT>2025-12-07 20:40:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>52.250</BAT_V><BAT_C>48</BAT_C><BAT_I>-19.300</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>13471</BAT_AD><BAT_AM>98</BAT_AM><BAT_AY>1974</BAT_AY><BAT_P>-1008</BAT_P><BAT_APD>13668</BAT_APD><BAT_AND>12221</BAT_AND><ID_SubD>0</ID_SubD><ver>37526</ver><CRC>20303</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 52.25,
+      "BAT_C": 48,
+      "BAT_I": -19.3,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 13471,
+      "BAT_AM": 98,
+      "BAT_AY": 1974,
+      "BAT_P": -1008,
+      "BAT_APD": 13668,
+      "BAT_AND": 12221,
+      "ID_SubD": 0
+    },
+    "length": 432
+  },
+  {
+    "timestamp": "2025-12-07T19:45:56.159529+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836340302</ID_Set><DT>2025-12-07 20:45:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>52.190</BAT_V><BAT_C>47</BAT_C><BAT_I>-21.300</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>13471</BAT_AD><BAT_AM>98</BAT_AM><BAT_AY>1974</BAT_AY><BAT_P>-1111</BAT_P><BAT_APD>13668</BAT_APD><BAT_AND>12308</BAT_AND><ID_SubD>0</ID_SubD><ver>13458</ver><CRC>27774</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 52.19,
+      "BAT_C": 47,
+      "BAT_I": -21.3,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 13471,
+      "BAT_AM": 98,
+      "BAT_AY": 1974,
+      "BAT_P": -1111,
+      "BAT_APD": 13668,
+      "BAT_AND": 12308,
+      "ID_SubD": 0
+    },
+    "length": 432
+  },
+  {
+    "timestamp": "2025-12-07T20:04:33.631521+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836340601</ID_Set><DT>2025-12-07 20:50:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>53.020</BAT_V><BAT_C>47</BAT_C><BAT_I>49.300</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>13565</BAT_AD><BAT_AM>98</BAT_AM><BAT_AY>1974</BAT_AY><BAT_P>2612</BAT_P><BAT_APD>13762</BAT_APD><BAT_AND>12357</BAT_AND><ID_SubD>0</ID_SubD><ver>19164</ver><CRC>53873</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 53.02,
+      "BAT_C": 47,
+      "BAT_I": 49.3,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 13565,
+      "BAT_AM": 98,
+      "BAT_AY": 1974,
+      "BAT_P": 2612,
+      "BAT_APD": 13762,
+      "BAT_AND": 12357,
+      "ID_SubD": 0
+    },
+    "length": 430
+  },
+  {
+    "timestamp": "2025-12-07T20:05:26.971636+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836340902</ID_Set><DT>2025-12-07 20:55:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>53.260</BAT_V><BAT_C>49</BAT_C><BAT_I>49.500</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>13783</BAT_AD><BAT_AM>98</BAT_AM><BAT_AY>1975</BAT_AY><BAT_P>2636</BAT_P><BAT_APD>13980</BAT_APD><BAT_AND>12357</BAT_AND><ID_SubD>0</ID_SubD><ver>23236</ver><CRC>59815</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 53.26,
+      "BAT_C": 49,
+      "BAT_I": 49.5,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 13783,
+      "BAT_AM": 98,
+      "BAT_AY": 1975,
+      "BAT_P": 2636,
+      "BAT_APD": 13980,
+      "BAT_AND": 12357,
+      "ID_SubD": 0
+    },
+    "length": 430
+  },
+  {
+    "timestamp": "2025-12-07T20:06:37.548622+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836341201</ID_Set><DT>2025-12-07 21:00:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>53.330</BAT_V><BAT_C>50</BAT_C><BAT_I>49.300</BAT_I><BAT_T>19.0</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>14001</BAT_AD><BAT_AM>99</BAT_AM><BAT_AY>1975</BAT_AY><BAT_P>2623</BAT_P><BAT_APD>14198</BAT_APD><BAT_AND>12357</BAT_AND><ID_SubD>0</ID_SubD><ver>39154</ver><CRC>60998</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 53.33,
+      "BAT_C": 50,
+      "BAT_I": 49.3,
+      "BAT_T": 19.0,
+      "BAT_Q": 100,
+      "BAT_AD": 14001,
+      "BAT_AM": 99,
+      "BAT_AY": 1975,
+      "BAT_P": 2623,
+      "BAT_APD": 14198,
+      "BAT_AND": 12357,
+      "ID_SubD": 0
+    },
+    "length": 430
+  },
+  {
+    "timestamp": "2025-12-07T20:08:07.880334+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836341502</ID_Set><DT>2025-12-07 21:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>53.350</BAT_V><BAT_C>51</BAT_C><BAT_I>49.200</BAT_I><BAT_T>19.2</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>14222</BAT_AD><BAT_AM>99</BAT_AM><BAT_AY>1975</BAT_AY><BAT_P>2624</BAT_P><BAT_APD>14419</BAT_APD><BAT_AND>12357</BAT_AND><ID_SubD>0</ID_SubD><ver>32056</ver><CRC>05296</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 53.35,
+      "BAT_C": 51,
+      "BAT_I": 49.2,
+      "BAT_T": 19.2,
+      "BAT_Q": 100,
+      "BAT_AD": 14222,
+      "BAT_AM": 99,
+      "BAT_AY": 1975,
+      "BAT_P": 2624,
+      "BAT_APD": 14419,
+      "BAT_AND": 12357,
+      "ID_SubD": 0
+    },
+    "length": 430
+  },
+  {
+    "timestamp": "2025-12-07T20:10:35.884262+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836341801</ID_Set><DT>2025-12-07 21:10:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>53.360</BAT_V><BAT_C>53</BAT_C><BAT_I>49.200</BAT_I><BAT_T>19.4</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>14413</BAT_AD><BAT_AM>99</BAT_AM><BAT_AY>1975</BAT_AY><BAT_P>2625</BAT_P><BAT_APD>14634</BAT_APD><BAT_AND>12357</BAT_AND><ID_SubD>0</ID_SubD><ver>62692</ver><CRC>10420</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 53.36,
+      "BAT_C": 53,
+      "BAT_I": 49.2,
+      "BAT_T": 19.4,
+      "BAT_Q": 100,
+      "BAT_AD": 14413,
+      "BAT_AM": 99,
+      "BAT_AY": 1975,
+      "BAT_P": 2625,
+      "BAT_APD": 14634,
+      "BAT_AND": 12357,
+      "ID_SubD": 0
+    },
+    "length": 430
+  },
+  {
+    "timestamp": "2025-12-07T20:15:35.237998+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_batt",
+    "frame": "<Frame><TblName>tbl_batt</TblName><ID_Set>836342100</ID_Set><DT>2025-12-07 21:15:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>52.680</BAT_V><BAT_C>52</BAT_C><BAT_I>-22.000</BAT_I><BAT_T>19.5</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>14413</BAT_AD><BAT_AM>99</BAT_AM><BAT_AY>1975</BAT_AY><BAT_P>-1159</BAT_P><BAT_APD>14648</BAT_APD><BAT_AND>12441</BAT_AND><ID_SubD>0</ID_SubD><ver>29703</ver><CRC>01901</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_batt",
+      "_device_id": "2206237016",
+      "BAT_V": 52.68,
+      "BAT_C": 52,
+      "BAT_I": -22.0,
+      "BAT_T": 19.5,
+      "BAT_Q": 100,
+      "BAT_AD": 14413,
+      "BAT_AM": 99,
+      "BAT_AY": 1975,
+      "BAT_P": -1159,
+      "BAT_APD": 14648,
+      "BAT_AND": 12441,
+      "ID_SubD": 0
+    },
+    "length": 432
+  },
+  {
+    "timestamp": "2025-12-07T19:38:35.429975+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>31584</ver><CRC>15550</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T19:44:01.994959+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836339703</ID_Set><DT>2025-12-07 20:35:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>32375</ver><CRC>26507</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T19:45:03.985200+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836340002</ID_Set><DT>2025-12-07 20:40:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>38356</ver><CRC>36067</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T19:45:59.902598+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836340302</ID_Set><DT>2025-12-07 20:45:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>56314</ver><CRC>59672</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T20:04:41.020508+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836340601</ID_Set><DT>2025-12-07 20:50:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>09537</ver><CRC>49550</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T20:05:34.971537+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836340902</ID_Set><DT>2025-12-07 20:55:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>64797</ver><CRC>14606</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T20:06:45.206982+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836341201</ID_Set><DT>2025-12-07 21:00:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>03125</ver><CRC>04897</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T20:08:12.179852+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836341502</ID_Set><DT>2025-12-07 21:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>33306</ver><CRC>01314</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T20:10:42.888836+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836341801</ID_Set><DT>2025-12-07 21:10:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>10962</ver><CRC>11133</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T20:15:39.124943+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_boiler",
+    "frame": "<Frame><TblName>tbl_boiler</TblName><ID_Set>836342100</ID_Set><DT>2025-12-07 21:15:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><P>0</P><W>44</W><BOJ_AM>0</BOJ_AM><BOJ_AY>2153</BOJ_AY><ver>29667</ver><CRC>51229</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_boiler",
+      "_device_id": "2206237016",
+      "P": 0,
+      "W": 44,
+      "BOJ_AM": 0,
+      "BOJ_AY": 2153
+    },
+    "length": 243
+  },
+  {
+    "timestamp": "2025-12-07T19:38:47.994633+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.50</Temp><Humid>23.0</Humid><MSC_SELF>94</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>164</TMLASTCALL><ver>57943</ver><CRC>18123</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.5,
+      "Humid": 23.0,
+      "MSC_SELF": 94,
+      "STRNGHT": -46,
+      "TMLASTCALL": 164
+    },
+    "length": 294
+  },
+  {
+    "timestamp": "2025-12-07T19:44:14.207250+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836339703</ID_Set><DT>2025-12-07 20:35:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.50</Temp><Humid>23.0</Humid><MSC_SELF>93</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>170</TMLASTCALL><ver>63909</ver><CRC>60229</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.5,
+      "Humid": 23.0,
+      "MSC_SELF": 93,
+      "STRNGHT": -46,
+      "TMLASTCALL": 170
+    },
+    "length": 294
+  },
+  {
+    "timestamp": "2025-12-07T19:45:14.668904+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836340002</ID_Set><DT>2025-12-07 20:40:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.50</Temp><Humid>23.0</Humid><MSC_SELF>96</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>174</TMLASTCALL><ver>61249</ver><CRC>51097</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.5,
+      "Humid": 23.0,
+      "MSC_SELF": 96,
+      "STRNGHT": -46,
+      "TMLASTCALL": 174
+    },
+    "length": 294
+  },
+  {
+    "timestamp": "2025-12-07T19:46:11.549670+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836340302</ID_Set><DT>2025-12-07 20:45:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.40</Temp><Humid>23.0</Humid><MSC_SELF>97</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>179</TMLASTCALL><ver>07850</ver><CRC>38911</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.4,
+      "Humid": 23.0,
+      "MSC_SELF": 97,
+      "STRNGHT": -46,
+      "TMLASTCALL": 179
+    },
+    "length": 294
+  },
+  {
+    "timestamp": "2025-12-07T20:04:51.100633+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836340601</ID_Set><DT>2025-12-07 20:50:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.30</Temp><Humid>23.1</Humid><MSC_SELF>0</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>184</TMLASTCALL><ver>14472</ver><CRC>43143</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.3,
+      "Humid": 23.1,
+      "MSC_SELF": 0,
+      "STRNGHT": -46,
+      "TMLASTCALL": 184
+    },
+    "length": 293
+  },
+  {
+    "timestamp": "2025-12-07T20:05:54.800997+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836340902</ID_Set><DT>2025-12-07 20:55:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.30</Temp><Humid>23.1</Humid><MSC_SELF>0</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>189</TMLASTCALL><ver>07397</ver><CRC>56843</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.3,
+      "Humid": 23.1,
+      "MSC_SELF": 0,
+      "STRNGHT": -46,
+      "TMLASTCALL": 189
+    },
+    "length": 293
+  },
+  {
+    "timestamp": "2025-12-07T20:06:57.127319+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836341201</ID_Set><DT>2025-12-07 21:00:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.40</Temp><Humid>23.0</Humid><MSC_SELF>0</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>194</TMLASTCALL><ver>43143</ver><CRC>34553</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.4,
+      "Humid": 23.0,
+      "MSC_SELF": 0,
+      "STRNGHT": -46,
+      "TMLASTCALL": 194
+    },
+    "length": 293
+  },
+  {
+    "timestamp": "2025-12-07T20:08:24.933908+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836341502</ID_Set><DT>2025-12-07 21:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.40</Temp><Humid>23.0</Humid><MSC_SELF>0</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>199</TMLASTCALL><ver>00013</ver><CRC>45881</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.4,
+      "Humid": 23.0,
+      "MSC_SELF": 0,
+      "STRNGHT": -46,
+      "TMLASTCALL": 199
+    },
+    "length": 293
+  },
+  {
+    "timestamp": "2025-12-07T20:10:58.418840+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836341801</ID_Set><DT>2025-12-07 21:10:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.50</Temp><Humid>22.9</Humid><MSC_SELF>0</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>204</TMLASTCALL><ver>37847</ver><CRC>33734</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.5,
+      "Humid": 22.9,
+      "MSC_SELF": 0,
+      "STRNGHT": -46,
+      "TMLASTCALL": 204
+    },
+    "length": 293
+  },
+  {
+    "timestamp": "2025-12-07T20:16:00.305942+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_box",
+    "frame": "<Frame><TblName>tbl_box</TblName><ID_Set>836342100</ID_Set><DT>2025-12-07 21:15:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>26.60</Temp><Humid>22.9</Humid><MSC_SELF>96</MSC_SELF><STRNGHT>-46</STRNGHT><TMLASTCALL>209</TMLASTCALL><ver>54772</ver><CRC>53099</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_box",
+      "_device_id": "2206237016",
+      "Temp": 26.6,
+      "Humid": 22.9,
+      "MSC_SELF": 96,
+      "STRNGHT": -46,
+      "TMLASTCALL": 209
+    },
+    "length": 294
+  },
+  {
+    "timestamp": "2025-12-07T19:39:14.414215+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836339400</ID_Set><DT>2025-12-07 20:30:00</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>Modem Reset : 11,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,</Content><ver>62999</ver><CRC>55625</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "Modem Reset : 11,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,"
+    },
+    "length": 385
+  },
+  {
+    "timestamp": "2025-12-07T19:45:27.691483+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340025</ID_Set><DT>2025-12-07 20:40:25</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>Modem Reset : 11,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,6,6,5,5,10,92</Content><ver>13037</ver><CRC>57054</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "Modem Reset : 11,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,5,5,61,6,6,5,5,10,92"
+    },
+    "length": 417
+  },
+  {
+    "timestamp": "2025-12-07T19:47:20.495060+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340412</ID_Set><DT>2025-12-07 20:46:52</DT><Type>Setting</Type><Confirm>NoNeed</Confirm><Content>Remotely : tbl_box_prms / MODE: [0]->[0]</Content><ver>04812</ver><CRC>14100</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Setting",
+      "Confirm": "NoNeed",
+      "Content": "Remotely : tbl_box_prms / MODE: [0]->[0]"
+    },
+    "length": 291
+  },
+  {
+    "timestamp": "2025-12-07T19:47:27.851559+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340413</ID_Set><DT>2025-12-07 20:46:52</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>HG I (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)</Content><ver>33251</ver><CRC>27436</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "HG I (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)"
+    },
+    "length": 326
+  },
+  {
+    "timestamp": "2025-12-07T19:47:32.909542+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340414</ID_Set><DT>2025-12-07 20:46:52</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>FMT off [0-Standard (OFF)] (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)</Content><ver>04270</ver><CRC>37161</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "FMT off [0-Standard (OFF)] (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)"
+    },
+    "length": 348
+  },
+  {
+    "timestamp": "2025-12-07T20:02:22.341350+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340417</ID_Set><DT>2025-12-07 20:46:57</DT><Type>Setting</Type><Confirm>NoNeed</Confirm><Content>Remotely : tbl_box_prms / MODE: [0]->[3]</Content><ver>36813</ver><CRC>22698</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Setting",
+      "Confirm": "NoNeed",
+      "Content": "Remotely : tbl_box_prms / MODE: [0]->[3]"
+    },
+    "length": 291
+  },
+  {
+    "timestamp": "2025-12-07T20:02:26.608108+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340422</ID_Set><DT>2025-12-07 20:47:02</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>HG IV-UPS  Start (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)</Content><ver>25581</ver><CRC>28146</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "HG IV-UPS  Start (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)"
+    },
+    "length": 338
+  },
+  {
+    "timestamp": "2025-12-07T20:02:34.224123+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340423</ID_Set><DT>2025-12-07 20:47:02</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>FMT on [3-No Limit] Start (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)</Content><ver>20177</ver><CRC>39479</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "FMT on [3-No Limit] Start (Load:793W, PV:0W, BC:47%, BV:52.190V, BA:-19.100A, DAC:80%, GMin:20%)"
+    },
+    "length": 347
+  },
+  {
+    "timestamp": "2025-12-07T20:02:38.223733+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340426</ID_Set><DT>2025-12-07 20:47:06</DT><Type>Setting</Type><Confirm>NoNeed</Confirm><Content>Remotely : tbl_box_prms / MODE: [3]->[3]</Content><ver>36818</ver><CRC>11975</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Setting",
+      "Confirm": "NoNeed",
+      "Content": "Remotely : tbl_box_prms / MODE: [3]->[3]"
+    },
+    "length": 291
+  },
+  {
+    "timestamp": "2025-12-07T20:02:53.047555+00:00",
+    "device_id": "2206237016",
+    "table_name": "tbl_events",
+    "frame": "<Frame><TblName>tbl_events</TblName><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ID_Set>836340431</ID_Set><DT>2025-12-07 20:47:11</DT><Type>Factory</Type><Confirm>NoNeed</Confirm><Content>Invertor ACK : ^S006SEP01</Content><ver>63155</ver><CRC>53905</CRC></Frame>\r\n",
+    "parsed": {
+      "_table": "tbl_events",
+      "_device_id": "2206237016",
+      "Type": "Factory",
+      "Confirm": "NoNeed",
+      "Content": "Invertor ACK : ^S006SEP01"
+    },
+    "length": 276
+  }
+]

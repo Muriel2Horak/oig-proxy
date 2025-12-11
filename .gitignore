@@ -7,3 +7,17 @@ __pycache__/
 .pytest_cache/
 proxy/.mypy_cache/
 logs/
+
+# Databáze s reálnými daty (obsahují ID_Device a komunikaci)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Testovací data (extrakt z reálné komunikace)
+testing/test_data/*.json
+
+# Dočasné a runtime soubory
+/tmp/
+*.log
+.vscode/
