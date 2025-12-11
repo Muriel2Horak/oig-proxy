@@ -319,6 +319,12 @@ class OIGProxy:
                     await cloud_writer.drain()
                     self.stats["frames_forwarded"] += 1
                     
+                    # Capture frame poslaný na cloud
+                    capture_payload(
+                        device_id, table_name, frame, parsed or {},
+                        direction="proxy_to_cloud", length=len(frame)
+                    )
+                    
                     # Čekej na ACK od cloudu
                     ack_data = await asyncio.wait_for(
                         cloud_reader.read(4096),
@@ -353,6 +359,12 @@ class OIGProxy:
                     box_writer.write(ack_data)
                     await box_writer.drain()
                     self.stats["acks_cloud"] += 1
+                    
+                    # Capture ACK poslaný na BOX
+                    capture_payload(
+                        None, table_name, ack_str, {},
+                        direction="proxy_to_box", length=len(ack_data)
+                    )
                     
                 except asyncio.TimeoutError:
                     logger.warning(

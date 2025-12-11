@@ -60,6 +60,15 @@ LOG_LEVEL_RAW=$(bashio::config 'log_level' | tr -d '[]\"' | xargs | cut -d',' -f
 export LOG_LEVEL=$LOG_LEVEL_RAW
 export SENSOR_MAP_PATH=/data/sensor_map.json
 export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
-export CAPTURE_PAYLOADS=$(bashio::config 'capture_payloads')
+
+# CAPTURE_PAYLOADS - boolean z config
+CAPTURE_RAW=$(bashio::config 'capture_payloads')
+if [ "$CAPTURE_RAW" = "true" ] || [ "$CAPTURE_RAW" = "1" ]; then
+  export CAPTURE_PAYLOADS="true"
+  bashio::log.info "📋 Capture payloads: ENABLED"
+else
+  export CAPTURE_PAYLOADS="false"
+  bashio::log.info "📋 Capture payloads: DISABLED"
+fi
 
 python -u /app/main.py
