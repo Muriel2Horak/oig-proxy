@@ -231,55 +231,146 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter
     ):
         """
-        ONLINE režim - persistent connection s transparentním forwardem.
-        Když cloud není dostupný, fallback do offline pro tento session.
-        Když během session cloud nebo BOX ukončí spojení, celá session končí.
+        ONLINE režim s reconnect logikou:
+        - Drží BOX spojení aktivní
+        - Pro každý frame se pokusí forward na cloud
+        - Pokud cloud selže/ukončí, vytvoří nové cloud spojení
+        - Pokud cloud nedostupný, offline mode pro daný frame
+        - Timeout 15 min na BOX idle (detekce mrtvého BOXu)
         """
+        BOX_IDLE_TIMEOUT = 900  # 15 minut
+        CLOUD_CONNECT_TIMEOUT = 5.0
+        CLOUD_ACK_TIMEOUT = 10.0
+        
+        cloud_reader = None
         cloud_writer = None
+        
         try:
-            # Připoj na cloud
-            cloud_reader, cloud_writer = await asyncio.wait_for(
-                asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
-                timeout=5.0
-            )
-            logger.debug(
-                f"☁️  Připojeno k {TARGET_SERVER}:{TARGET_PORT}"
-            )
-            
-            # Paralelní forward BOX→Cloud a Cloud→BOX
-            # Když jeden skončí, zrušíme druhý (jako v původním kódu)
-            tasks = [
-                asyncio.create_task(
-                    self._forward_box_to_cloud(box_reader, cloud_writer)
-                ),
-                asyncio.create_task(
-                    self._forward_cloud_to_box(cloud_reader, box_writer)
-                ),
-            ]
-            
-            # Čekej až první task skončí
-            done, pending = await asyncio.wait(
-                tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-            
-            # Zruš zbývající task
-            for task in pending:
-                task.cancel()
-            
-            # Počkej na dokončení všech tasků
-            await asyncio.gather(*pending, return_exceptions=True)
-            await asyncio.gather(*done, return_exceptions=True)
-            
+            while True:
+                # Čti frame od BOX s timeoutem (detekce mrtvého BOXu)
+                try:
+                    data = await asyncio.wait_for(
+                        box_reader.read(8192),
+                        timeout=BOX_IDLE_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ BOX idle timeout (15 min) - closing session"
+                    )
+                    break
+                
+                if not data:
+                    logger.debug("🔌 BOX ukončil spojení (EOF)")
+                    break
+                
+                # Zpracuj frame
+                frame = data.decode('utf-8')
+                self.stats["frames_received"] += 1
+                
+                # Parse & capture
+                parsed = self.parser.parse_xml_frame(frame)
+                device_id = parsed.get("ID_Dev") if parsed else None
+                table_name = parsed.get("_table") if parsed else None
+                
+                capture_payload(
+                    device_id, table_name, frame, parsed or {},
+                    direction="box_to_proxy", length=len(frame)
+                )
+                
+                # MQTT publish (vždy, nezávisle na cloud)
+                if parsed:
+                    await self.mqtt_publisher.publish_data(parsed)
+                
+                # Pokud nemáme cloud spojení, vytvoř nové
+                if cloud_writer is None or cloud_writer.is_closing():
+                    try:
+                        cloud_reader, cloud_writer = await asyncio.wait_for(
+                            asyncio.open_connection(
+                                TARGET_SERVER, TARGET_PORT
+                            ),
+                            timeout=CLOUD_CONNECT_TIMEOUT
+                        )
+                        logger.debug(
+                            f"☁️ Připojeno k {TARGET_SERVER}:{TARGET_PORT}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Cloud nedostupný: {e} - offline mode"
+                        )
+                        # Cloud nedostupný → offline mode pro tento frame
+                        await self._process_frame_offline(
+                            frame, table_name, device_id, box_writer
+                        )
+                        continue
+                
+                # Forward na cloud
+                try:
+                    cloud_writer.write(data)
+                    await cloud_writer.drain()
+                    self.stats["frames_forwarded"] += 1
+                    
+                    # Čekej na ACK od cloudu
+                    ack_data = await asyncio.wait_for(
+                        cloud_reader.read(4096),
+                        timeout=CLOUD_ACK_TIMEOUT
+                    )
+                    
+                    if not ack_data:
+                        # Cloud ukončil spojení (EOF)
+                        logger.warning(
+                            "⚠️ Cloud ukončil spojení - reconnect next frame"
+                        )
+                        cloud_writer.close()
+                        cloud_writer = None
+                        # Tento frame musíme zpracovat offline
+                        await self._process_frame_offline(
+                            frame, table_name, device_id, box_writer
+                        )
+                        continue
+                    
+                    # Capture cloud response
+                    ack_str = ack_data.decode('utf-8')
+                    capture_payload(
+                        None, table_name, ack_str, {},
+                        direction="cloud_to_proxy", length=len(ack_data)
+                    )
+                    
+                    # ACK Learning
+                    if table_name:
+                        self.ack_learner.learn_from_cloud(ack_str, table_name)
+                    
+                    # Forward ACK na BOX
+                    box_writer.write(ack_data)
+                    await box_writer.drain()
+                    self.stats["acks_cloud"] += 1
+                    
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ Cloud ACK timeout - offline mode for this frame"
+                    )
+                    if cloud_writer:
+                        cloud_writer.close()
+                    cloud_writer = None
+                    await self._process_frame_offline(
+                        frame, table_name, device_id, box_writer
+                    )
+                    
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Cloud error: {e} - offline mode for this frame"
+                    )
+                    if cloud_writer:
+                        try:
+                            cloud_writer.close()
+                        except Exception:
+                            pass
+                    cloud_writer = None
+                    await self._process_frame_offline(
+                        frame, table_name, device_id, box_writer
+                    )
+                    
         except Exception as e:
-            # Cloud connection failed na začátku - fallback do offline
-            logger.warning(
-                f"⚠️  Cloud connection failed: {e} - "
-                "fallback to offline mode for this session"
-            )
-            # Pokračuj s offline mode pro zbytek tohoto BOX spojení
-            await self._handle_offline_mode_connection(
-                box_reader, box_writer
-            )
+            logger.error(f"❌ Online mode error: {e}")
         finally:
             if cloud_writer:
                 try:
@@ -288,77 +379,24 @@ class OIGProxy:
                 except Exception:
                     pass
     
-    async def _forward_box_to_cloud(
+    async def _process_frame_offline(
         self,
-        box_reader: asyncio.StreamReader,
-        cloud_writer: asyncio.StreamWriter
-    ):
-        """Forward data z BOXu na cloud + capture & MQTT."""
-        try:
-            while True:
-                data = await box_reader.read(8192)
-                if not data:
-                    break
-                
-                frame = data.decode('utf-8')
-                self.stats["frames_received"] += 1
-                
-                # Parse & capture
-                parsed = self.parser.parse_xml_frame(frame)
-                device_id = parsed.get("ID_Dev") if parsed else None
-                table_name = parsed.get("_table") if parsed else None
-                
-                capture_payload(
-                    device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame)
-                )
-                
-                # Forward na cloud
-                cloud_writer.write(data)
-                await cloud_writer.drain()
-                self.stats["frames_forwarded"] += 1
-                
-                # MQTT publish
-                if parsed:
-                    await self.mqtt_publisher.publish_data(parsed)
-                    
-        except Exception as e:
-            logger.debug(f"BOX→Cloud forward ukončen: {e}")
-    
-    async def _forward_cloud_to_box(
-        self,
-        cloud_reader: asyncio.StreamReader,
+        frame: str,
+        table_name: str | None,
+        device_id: str | None,
         box_writer: asyncio.StreamWriter
     ):
-        """Forward ACK z cloudu zpět na BOX + ACK learning."""
-        last_table_name = None
-        try:
-            while True:
-                data = await cloud_reader.read(8192)
-                if not data:
-                    break
-                
-                response = data.decode('utf-8')
-                
-                # Capture cloud response
-                capture_payload(
-                    None, last_table_name, response, {},
-                    direction="cloud_to_proxy", length=len(data)
-                )
-                
-                # ACK Learning
-                if last_table_name:
-                    self.ack_learner.learn_from_cloud(
-                        response, last_table_name
-                    )
-                
-                # Forward zpět na BOX
-                box_writer.write(data)
-                await box_writer.drain()
-                self.stats["acks_cloud"] += 1
-                
-        except Exception as e:
-            logger.debug(f"Cloud→BOX forward ukončen: {e}")
+        """Zpracuj frame v offline režimu - lokální ACK + queue."""
+        # Generuj lokální ACK
+        ack_response = self.ack_learner.generate_ack(table_name)
+        box_writer.write(ack_response.encode('utf-8'))
+        await box_writer.drain()
+        self.stats["acks_local"] += 1
+        
+        # Queue frame pro replay (kromě handshake)
+        if table_name and table_name != "tbl_handshake":
+            await self.cloud_queue.add(frame, table_name, device_id)
+            self.stats["frames_queued"] += 1
     
     async def _handle_offline_mode_connection(
         self,
@@ -367,11 +405,26 @@ class OIGProxy:
     ):
         """
         OFFLINE/REPLAY režim - persistent connection s lokálním ACK.
+        Timeout 15 min na BOX idle (detekce mrtvého BOXu).
         """
+        BOX_IDLE_TIMEOUT = 900  # 15 minut
+        
         try:
             while True:
-                data = await box_reader.read(8192)
+                # Čti frame od BOX s timeoutem
+                try:
+                    data = await asyncio.wait_for(
+                        box_reader.read(8192),
+                        timeout=BOX_IDLE_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ BOX idle timeout (15 min) - closing session"
+                    )
+                    break
+                
                 if not data:
+                    logger.debug("🔌 BOX ukončil spojení (EOF)")
                     break
                 
                 frame = data.decode('utf-8')
@@ -387,22 +440,14 @@ class OIGProxy:
                     direction="box_to_proxy", length=len(frame)
                 )
                 
-                # Lokální ACK
-                ack_response = self.ack_learner.generate_ack(table_name)
-                box_writer.write(ack_response.encode('utf-8'))
-                await box_writer.drain()
-                self.stats["acks_local"] += 1
-                
-                # Queue frame pro replay
-                if table_name and table_name != "tbl_handshake":
-                    await self.cloud_queue.add(
-                        frame, table_name, device_id
-                    )
-                    self.stats["frames_queued"] += 1
-                
                 # MQTT publish
                 if parsed:
                     await self.mqtt_publisher.publish_data(parsed)
+                
+                # Lokální ACK + queue
+                await self._process_frame_offline(
+                    frame, table_name, device_id, box_writer
+                )
                 
                 # Log každých 10 frames
                 if self.stats["frames_queued"] % 10 == 0:
