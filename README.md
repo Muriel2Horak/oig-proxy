@@ -1,6 +1,15 @@
 # OIG Proxy for Home Assistant
 
+**Verze 1.3.0** - Modulární architektura s podporou ONLINE/OFFLINE/REPLAY režimů.
+
 TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA autodiscovery), dekóduje warningy a loguje neznámé senzory pro doplnění mapy. Součástí je DNS přepis, aby Box mluvil na lokální proxy místo cloudu.
+
+## Klíčové funkce v1.3.0
+- 🔄 **Multi-mode proxy**: ONLINE (forward) / OFFLINE (local ACK) / REPLAY (queue drain)
+- 💾 **Persistentní fronty**: SQLite queue pro cloud i MQTT data
+- 🔌 **Odolnost vůči výpadkům**: Automatická detekce cloud outage, lokální ACK generování
+- 📡 **Auto-discovery**: Automatická detekce DEVICE_ID z BOX komunikace
+- ♻️ **Replay mechanismus**: Automatické odeslání zafrontovaných dat po obnovení cloudu
 
 ## Struktura
 - `proxy/` – hlavní Python proxy (`main.py`), načítá mapping ze sdíleného `sensor_map.json`, dekóduje warning bity (`ERR_*`).

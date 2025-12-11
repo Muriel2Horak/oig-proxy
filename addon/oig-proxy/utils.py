@@ -161,8 +161,11 @@ def load_sensor_map() -> None:
         
         if added:
             logger.info(
-                f"Doplněno/aktualizováno {added} senzorů z JSON mappingu"
+                f"Sensor map: Načteno {added} senzorů z {SENSOR_MAP_PATH}"
             )
+            # Ukázka prvních 5 senzorů
+            sample = list(SENSORS.keys())[:5]
+            logger.debug(f"Sensor map sample: {sample}")
         
         # Warning map pro dekódování bitů chyb
         WARNING_MAP = {}

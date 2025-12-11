@@ -269,8 +269,18 @@ class OIGProxy:
                 
                 # Parse & capture
                 parsed = self.parser.parse_xml_frame(frame)
-                device_id = parsed.get("ID_Dev") if parsed else None
+                device_id = parsed.get("_device_id") if parsed else None
                 table_name = parsed.get("_table") if parsed else None
+                
+                # Auto-detect device_id from BOX frames
+                if device_id and self.device_id == "AUTO":
+                    self.device_id = device_id
+                    self.mqtt_publisher.device_id = device_id
+                    # Clear discovery cache to re-send with correct device_id
+                    self.mqtt_publisher.discovery_sent.clear()
+                    # Re-publish availability with correct device_id
+                    self.mqtt_publisher.publish_availability()
+                    logger.info(f"🔑 Device ID detected: {device_id}")
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},
@@ -432,7 +442,7 @@ class OIGProxy:
                 
                 # Parse & capture
                 parsed = self.parser.parse_xml_frame(frame)
-                device_id = parsed.get("ID_Dev") if parsed else None
+                device_id = parsed.get("_device_id") if parsed else None
                 table_name = parsed.get("_table") if parsed else None
                 
                 capture_payload(

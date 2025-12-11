@@ -409,6 +409,14 @@ class MQTTPublisher:
                         f"{self.HEALTH_CHECK_INTERVAL}s"
                     )
     
+    def publish_availability(self) -> None:
+        """Publikuje availability status na MQTT."""
+        if not self.client or not self.connected:
+            return
+        topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
+        self.client.publish(topic, "online", retain=True, qos=1)
+        logger.info(f"MQTT: Availability published to {topic}")
+    
     async def start_health_check(self) -> None:
         """Spustí health check jako background task."""
         if self._health_check_task is None or self._health_check_task.done():
@@ -424,6 +432,7 @@ class MQTTPublisher:
     ) -> None:
         """Odešle MQTT discovery pro senzor."""
         if not self.client or not self.connected:
+            logger.debug(f"MQTT: Discovery {sensor_id} skipped - not connected (client={bool(self.client)}, connected={self.connected})")
             return
         if sensor_id in self.discovery_sent:
             return
@@ -512,12 +521,14 @@ class MQTTPublisher:
         
         # Připravíme data
         publish_data = {}
+        mapped_count = 0
         for key in data:
             if key.startswith("_"):
                 continue
             cfg, unique_key = get_sensor_config(key, table)
             if cfg:
                 self.send_discovery(unique_key, cfg, table)
+                mapped_count += 1
                 value = data[key]
                 # Enum konverze
                 if cfg.options and isinstance(value, int):
@@ -550,9 +561,12 @@ class MQTTPublisher:
         try:
             result = self.client.publish(topic, payload, qos=MQTT_PUBLISH_QOS)
             if result.rc == 0:
+                # Detailní log - topic, keys, mapped count
+                keys_list = sorted(publish_data.keys())
                 logger.debug(
-                    f"MQTT: Publish {table} ({len(publish_data)} keys, "
-                    f"mid={result.mid})"
+                    f"MQTT: → {topic} | "
+                    f"{mapped_count}/{len(publish_data)} mapped | "
+                    f"keys: {keys_list}"
                 )
                 return True
             else:
