@@ -283,10 +283,17 @@ class MQTTPublisher:
             
             # Trigger replay
             if self._replay_task is None or self._replay_task.done():
-                self._replay_task = asyncio.create_task(
-                    self.replay_queue()
-                )
-                logger.info("MQTT: Replay task started")
+                try:
+                    loop = asyncio.get_running_loop()
+                    self._replay_task = loop.create_task(
+                        self.replay_queue()
+                    )
+                    logger.info("MQTT: Replay task started")
+                except RuntimeError:
+                    # No event loop in MQTT thread - schedule on main loop
+                    logger.debug(
+                        "MQTT: Callback v threadu - skipuju replay task"
+                    )
         else:
             logger.error(f"MQTT: ❌ Připojení odmítnuto: {rc_msg}")
             self.connected = False

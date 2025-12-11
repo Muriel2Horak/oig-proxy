@@ -201,42 +201,21 @@ class OIGProxy:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter
     ):
-        """Handle jednoho BOX připojení."""
+        """Handle jednoho BOX připojení - persistent connection."""
         addr = writer.get_extra_info('peername')
         logger.debug(f"🔌 BOX připojen: {addr}")
         
         try:
-            # Přečti frame od BOX
-            data = await asyncio.wait_for(reader.read(8192), timeout=10.0)
-            if not data:
-                return
-            
-            frame = data.decode('utf-8')
-            self.stats["frames_received"] += 1
-            
-            # Parse frame pro capture
-            parsed = self.parser.parse_xml_frame(frame)
-            device_id = parsed.get("ID_Dev") if parsed else None
-            table_name = parsed.get("_table") if parsed else None
-            
-            # Capture frame do DB
-            capture_payload(
-                device_id, table_name, frame, parsed or {},
-                direction="box_to_proxy", length=len(frame)
-            )
-            
             # Zpracuj podle aktuálního režimu
             async with self.mode_lock:
                 current_mode = self.mode
             
             if current_mode == ProxyMode.ONLINE:
-                await self._handle_online_mode(frame, writer)
+                await self._handle_online_mode_connection(reader, writer)
             else:
                 # OFFLINE nebo REPLAY → lokální ACK + queue
-                await self._handle_offline_or_replay_mode(frame, writer)
+                await self._handle_offline_mode_connection(reader, writer)
             
-        except asyncio.TimeoutError:
-            logger.warning(f"⏱️ Timeout při čtení od {addr}")
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
@@ -246,101 +225,196 @@ class OIGProxy:
             except Exception:
                 pass
     
-    async def _handle_online_mode(
+    async def _handle_online_mode_connection(
         self,
-        frame: str,
+        box_reader: asyncio.StreamReader,
         box_writer: asyncio.StreamWriter
     ):
-        """ONLINE režim - transparentní forward na cloud."""
+        """
+        ONLINE režim - persistent connection s transparentním forwardem.
+        Když cloud není dostupný, fallback do offline pro tento session.
+        Když během session cloud nebo BOX ukončí spojení, celá session končí.
+        """
+        cloud_writer = None
         try:
             # Připoj na cloud
             cloud_reader, cloud_writer = await asyncio.wait_for(
                 asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
                 timeout=5.0
             )
-            
-            # Forward frame na cloud
-            cloud_writer.write(frame.encode('utf-8'))
-            await cloud_writer.drain()
-            self.stats["frames_forwarded"] += 1
-            
-            # Čekej na ACK od cloudu
-            cloud_response = await asyncio.wait_for(
-                cloud_reader.read(4096),
-                timeout=5.0
+            logger.debug(
+                f"☁️  Připojeno k {TARGET_SERVER}:{TARGET_PORT}"
             )
             
-            cloud_writer.close()
-            await cloud_writer.wait_closed()
+            # Paralelní forward BOX→Cloud a Cloud→BOX
+            # Když jeden skončí, zrušíme druhý (jako v původním kódu)
+            tasks = [
+                asyncio.create_task(
+                    self._forward_box_to_cloud(box_reader, cloud_writer)
+                ),
+                asyncio.create_task(
+                    self._forward_cloud_to_box(cloud_reader, box_writer)
+                ),
+            ]
             
-            # Capture cloud response
-            response_str = cloud_response.decode('utf-8')
-            capture_payload(
-                None, None, response_str, {},
-                direction="cloud_to_proxy", length=len(response_str)
+            # Čekej až první task skončí
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
             )
             
-            # Parse table name pro učení ACK patterns
-            parsed = self.parser.parse_xml_frame(frame)
-            if parsed:
-                table_name = parsed.get("_table")
-                self.ack_learner.learn_from_cloud(response_str, table_name)
+            # Zruš zbývající task
+            for task in pending:
+                task.cancel()
             
-            # Forward ACK zpět na BOX
-            box_writer.write(cloud_response)
-            await box_writer.drain()
-            self.stats["acks_cloud"] += 1
-            
-            # Parse a publish na MQTT
-            if parsed:
-                await self.mqtt_publisher.publish_data(parsed)
+            # Počkej na dokončení všech tasků
+            await asyncio.gather(*pending, return_exceptions=True)
+            await asyncio.gather(*done, return_exceptions=True)
             
         except Exception as e:
-            logger.error(f"❌ ONLINE mode forward failed: {e}")
-            # Fallback → lokální ACK
-            ack = self.ack_learner.generate_ack(None)
-            box_writer.write(ack.encode('utf-8'))
-            await box_writer.drain()
-            self.stats["acks_local"] += 1
+            # Cloud connection failed na začátku - fallback do offline
+            logger.warning(
+                f"⚠️  Cloud connection failed: {e} - "
+                "fallback to offline mode for this session"
+            )
+            # Pokračuj s offline mode pro zbytek tohoto BOX spojení
+            await self._handle_offline_mode_connection(
+                box_reader, box_writer
+            )
+        finally:
+            if cloud_writer:
+                try:
+                    cloud_writer.close()
+                    await cloud_writer.wait_closed()
+                except Exception:
+                    pass
     
-    async def _handle_offline_or_replay_mode(
+    async def _forward_box_to_cloud(
         self,
-        frame: str,
+        box_reader: asyncio.StreamReader,
+        cloud_writer: asyncio.StreamWriter
+    ):
+        """Forward data z BOXu na cloud + capture & MQTT."""
+        try:
+            while True:
+                data = await box_reader.read(8192)
+                if not data:
+                    break
+                
+                frame = data.decode('utf-8')
+                self.stats["frames_received"] += 1
+                
+                # Parse & capture
+                parsed = self.parser.parse_xml_frame(frame)
+                device_id = parsed.get("ID_Dev") if parsed else None
+                table_name = parsed.get("_table") if parsed else None
+                
+                capture_payload(
+                    device_id, table_name, frame, parsed or {},
+                    direction="box_to_proxy", length=len(frame)
+                )
+                
+                # Forward na cloud
+                cloud_writer.write(data)
+                await cloud_writer.drain()
+                self.stats["frames_forwarded"] += 1
+                
+                # MQTT publish
+                if parsed:
+                    await self.mqtt_publisher.publish_data(parsed)
+                    
+        except Exception as e:
+            logger.debug(f"BOX→Cloud forward ukončen: {e}")
+    
+    async def _forward_cloud_to_box(
+        self,
+        cloud_reader: asyncio.StreamReader,
         box_writer: asyncio.StreamWriter
     ):
-        """OFFLINE/REPLAY režim - lokální ACK + queue frame."""
-        # Parse frame
-        parsed = self.parser.parse_xml_frame(frame)
-        table_name = parsed.get("_table") if parsed else None
-        
-        # Generuj lokální ACK
-        ack = self.ack_learner.generate_ack(table_name)
-        box_writer.write(ack.encode('utf-8'))
-        await box_writer.drain()
-        self.stats["acks_local"] += 1
-        
-        # Capture ACK
-        capture_payload(
-            None, table_name, ack, {},
-            direction="proxy_to_box", length=len(ack)
-        )
-        
-        # Přidej frame do cloud fronty (FIFO - append na konec)
-        device_id = parsed.get("ID_Dev") if parsed else None
-        await self.cloud_queue.add(frame, table_name or "unknown", device_id)
-        self.stats["frames_queued"] += 1
-        
-        # Publish na MQTT (pokud je připojeno)
-        if parsed:
-            await self.mqtt_publisher.publish_data(parsed)
-        
-        # Log každých 10 frames
-        if self.stats["frames_queued"] % 10 == 0:
-            queue_size = self.cloud_queue.size()
-            logger.info(
-                f"📦 {self.mode.value}: {self.stats['frames_queued']} "
-                f"frames queued ({queue_size} ve frontě)"
-            )
+        """Forward ACK z cloudu zpět na BOX + ACK learning."""
+        last_table_name = None
+        try:
+            while True:
+                data = await cloud_reader.read(8192)
+                if not data:
+                    break
+                
+                response = data.decode('utf-8')
+                
+                # Capture cloud response
+                capture_payload(
+                    None, last_table_name, response, {},
+                    direction="cloud_to_proxy", length=len(data)
+                )
+                
+                # ACK Learning
+                if last_table_name:
+                    self.ack_learner.learn_from_cloud(
+                        response, last_table_name
+                    )
+                
+                # Forward zpět na BOX
+                box_writer.write(data)
+                await box_writer.drain()
+                self.stats["acks_cloud"] += 1
+                
+        except Exception as e:
+            logger.debug(f"Cloud→BOX forward ukončen: {e}")
+    
+    async def _handle_offline_mode_connection(
+        self,
+        box_reader: asyncio.StreamReader,
+        box_writer: asyncio.StreamWriter
+    ):
+        """
+        OFFLINE/REPLAY režim - persistent connection s lokálním ACK.
+        """
+        try:
+            while True:
+                data = await box_reader.read(8192)
+                if not data:
+                    break
+                
+                frame = data.decode('utf-8')
+                self.stats["frames_received"] += 1
+                
+                # Parse & capture
+                parsed = self.parser.parse_xml_frame(frame)
+                device_id = parsed.get("ID_Dev") if parsed else None
+                table_name = parsed.get("_table") if parsed else None
+                
+                capture_payload(
+                    device_id, table_name, frame, parsed or {},
+                    direction="box_to_proxy", length=len(frame)
+                )
+                
+                # Lokální ACK
+                ack_response = self.ack_learner.generate_ack(table_name)
+                box_writer.write(ack_response.encode('utf-8'))
+                await box_writer.drain()
+                self.stats["acks_local"] += 1
+                
+                # Queue frame pro replay
+                if table_name and table_name != "tbl_handshake":
+                    await self.cloud_queue.add(
+                        frame, table_name, device_id
+                    )
+                    self.stats["frames_queued"] += 1
+                
+                # MQTT publish
+                if parsed:
+                    await self.mqtt_publisher.publish_data(parsed)
+                
+                # Log každých 10 frames
+                if self.stats["frames_queued"] % 10 == 0:
+                    queue_size = self.cloud_queue.size()
+                    logger.info(
+                        f"📦 {self.mode.value}: "
+                        f"{self.stats['frames_queued']} frames queued "
+                        f"({queue_size} ve frontě)"
+                    )
+                    
+        except Exception as e:
+            logger.debug(f"Offline mode ukončen: {e}")
     
     def get_stats(self) -> dict[str, Any]:
         """Vrátí statistiky proxy."""
