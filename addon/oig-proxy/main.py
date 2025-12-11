@@ -9,14 +9,15 @@ import os
 import sys
 
 from config import (
-    DEVICE_ID,
     LOG_LEVEL,
     MQTT_AVAILABLE,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
     TARGET_PORT,
     TARGET_SERVER,
+    DATA_DIR,
 )
+from utils import load_sensor_map
 from proxy import OIGProxy
 
 # Logging setup
@@ -36,12 +37,6 @@ def check_requirements():
             "⚠️ MQTT knihovna paho-mqtt není nainstalována. "
             "MQTT funkcionalita nebude dostupná."
         )
-    
-    if not DEVICE_ID:
-        logger.error("❌ DEVICE_ID není nastaveno v proměnných prostředí")
-        sys.exit(1)
-    
-    logger.info("✅ Základní požadavky splněny")
 
 
 async def main():
@@ -53,16 +48,29 @@ async def main():
     # Check requirements
     check_requirements()
     
+    # Načti sensor mapu (DŮLEŽITÉ pro MQTT entity)
+    load_sensor_map()
+    logger.info("✅ Sensor map loaded")
+    
+    # DEVICE_ID je optional - detekuje se z komunikace
+    device_id = os.getenv('DEVICE_ID')
+    if device_id:
+        logger.info(f"Using configured DEVICE_ID: {device_id}")
+    else:
+        logger.info("DEVICE_ID not set - will be detected from communication")
+        device_id = "AUTO"  # Placeholder - bude aktualizováno z prvního framu
+    
     # Konfigurace
-    logger.info(f"📋 Konfigurace:")
-    logger.info(f"   Device ID: {DEVICE_ID}")
+    logger.info("📋 Konfigurace:")
+    logger.info(f"   Device ID: {device_id}")
     logger.info(f"   Listen: {PROXY_LISTEN_HOST}:{PROXY_LISTEN_PORT}")
     logger.info(f"   Cloud target: {TARGET_SERVER}:{TARGET_PORT}")
+    logger.info(f"   Data directory: {DATA_DIR}")
     logger.info(f"   Log level: {LOG_LEVEL}")
     logger.info(f"   MQTT: {'Enabled' if MQTT_AVAILABLE else 'Disabled'}")
     
     # Vytvoř a spusť proxy
-    proxy = OIGProxy(DEVICE_ID)
+    proxy = OIGProxy(device_id)
     
     try:
         await proxy.start()
