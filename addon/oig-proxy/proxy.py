@@ -8,8 +8,8 @@ import logging
 import time
 from typing import Any
 
-from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
-from cloud_session import CloudSessionManager
+from cloud_manager import ACKLearner, CloudQueue
+from cloud_session import CloudSessionManager, CloudStats
 from config import (
     CLOUD_REPLAY_RATE,
     PROXY_LISTEN_HOST,
@@ -37,8 +37,7 @@ class OIGProxy:
         
         # Komponenty
         self.cloud_queue = CloudQueue()
-        self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
-        self.cloud_session = CloudSessionManager(TARGET_SERVER, TARGET_PORT)
+        self.cloud_stats = CloudStats()
         self.ack_learner = ACKLearner()
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
@@ -53,6 +52,10 @@ class OIGProxy:
         self._last_status_publish = 0.0
         self._box_conn_count = 0
         self._box_conn_lock = asyncio.Lock()
+        self._active_box_writer: asyncio.StreamWriter | None = None
+        self._active_cloud_session: CloudSessionManager | None = None
+        self._active_conn_id: int | None = None
+        self._session_seq = 0
 
         # IsNewSet telemetry (BOX → Cloud poll)
         self.isnewset_polls = 0
@@ -63,10 +66,9 @@ class OIGProxy:
         self._pending_isnewset_start: float | None = None
         
         # Background tasks
-        self._replay_task: asyncio.Task[Any] | None = None
         self._status_task: asyncio.Task[Any] | None = None
-        self._cloud_forward_task: asyncio.Task[Any] | None = None
-        self._cloud_forward_queue: asyncio.Queue[tuple[bytes, str | None, str | None, str]] | None = None
+        self._cloud_reconnect_task: asyncio.Task[Any] | None = None
+        self._cloud_reconnect_conn_id: int | None = None
         
         # Statistiky
         self.stats = {
@@ -102,16 +104,21 @@ class OIGProxy:
         box_data_recent = int(
             self._last_data_epoch is not None and (now - self._last_data_epoch) <= 90
         )
+        cloud_connected = int(
+            self._active_cloud_session.is_connected()
+            if self._active_cloud_session
+            else 0
+        )
         payload = {
             "status": status,
             # mode ponecháme v EN, status je už česky
             "mode": self.mode.value,
-            "cloud_online": int(self.cloud_health.is_online),
-            "cloud_session_connected": int(self.cloud_session.is_connected()),
-            "cloud_connects": self.cloud_session.stats.connects,
-            "cloud_disconnects": self.cloud_session.stats.disconnects,
-            "cloud_timeouts": self.cloud_session.stats.timeouts,
-            "cloud_errors": self.cloud_session.stats.errors,
+            "cloud_online": cloud_connected,
+            "cloud_session_connected": cloud_connected,
+            "cloud_connects": self.cloud_stats.connects,
+            "cloud_disconnects": self.cloud_stats.disconnects,
+            "cloud_timeouts": self.cloud_stats.timeouts,
+            "cloud_errors": self.cloud_stats.errors,
             "cloud_queue": self.cloud_queue.size(),
             "mqtt_queue": self.mqtt_publisher.queue.size(),
             # BOX připojení (TCP) a "data tečou" jsou dvě různé věci
@@ -129,12 +136,6 @@ class OIGProxy:
     
     async def start(self):
         """Spustí proxy server."""
-        # Nastavíme callback pro cloud health změny
-        self.cloud_health.set_mode_callback(self._on_cloud_state_change)
-        
-        # Spustíme background tasky
-        await self.cloud_health.start()
-        
         # MQTT connect
         if self.mqtt_publisher.connect():
             await self.mqtt_publisher.start_health_check()
@@ -147,15 +148,6 @@ class OIGProxy:
         # Periodický heartbeat stavového senzoru
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._status_loop())
-
-        # Cloud forward worker (odděleně od BOX session)
-        if self._cloud_forward_queue is None:
-            # Bounded: když cloud nestíhá, padáme do persistent cloud_queue
-            self._cloud_forward_queue = asyncio.Queue(maxsize=500)
-        if self._cloud_forward_task is None or self._cloud_forward_task.done():
-            self._cloud_forward_task = asyncio.create_task(
-                self._cloud_forward_loop()
-            )
         
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -171,165 +163,127 @@ class OIGProxy:
         
         async with server:
             await server.serve_forever()
-    
-    async def _on_cloud_state_change(self, event: str):
-        """Callback při změně stavu cloudu."""
-        async with self.mode_lock:
-            old_mode = self.mode
-            
-            if event == "cloud_down":
-                # Zavřeme persistent cloud spojení, ať se resetuje
-                await self.cloud_session.close()
-                # Cloud vypadl → OFFLINE režim
-                self.mode = ProxyMode.OFFLINE
-                logger.warning(
-                    f"🔴 Režim změněn: {old_mode.value} → {self.mode.value}"
-                )
-                self.stats["mode_changes"] += 1
-                
-            elif event == "cloud_recovered":
-                # Cloud se vrátil
-                queue_size = self.cloud_queue.size()
-                
-                if queue_size > 0:
-                    # Máme frontu → REPLAY režim
-                    self.mode = ProxyMode.REPLAY
-                    logger.info(
-                        f"🟡 Režim změněn: {old_mode.value} → {self.mode.value} "
-                        f"({queue_size} frames ve frontě)"
-                    )
-                    self.stats["mode_changes"] += 1
-                    
-                    # Spustíme replay task
-                    if self._replay_task is None or self._replay_task.done():
-                        self._replay_task = asyncio.create_task(
-                            self._replay_cloud_queue()
-                        )
-                else:
-                    # Fronta prázdná → rovnou ONLINE
-                    self.mode = ProxyMode.ONLINE
-                    logger.info(
-                        f"🟢 Režim změněn: {old_mode.value} → {self.mode.value}"
-                    )
-                    self.stats["mode_changes"] += 1
-            
-        await self.publish_proxy_status(force=True)
 
-    async def _replay_cloud_queue(self):
-        """Background task pro replay cloud fronty (rate limited)."""
-        logger.info("🔄 Začínám replay cloud fronty...")
+    async def _refresh_mode(self) -> None:
+        """Odvodí ProxyMode z aktuálního stavu cloudu a fronty."""
+        async with self.mode_lock:
+            old = self.mode
+            cloud_connected = (
+                self._active_cloud_session.is_connected()
+                if self._active_cloud_session
+                else False
+            )
+            if not cloud_connected:
+                self.mode = ProxyMode.OFFLINE
+            elif self.cloud_queue.size() > 0:
+                self.mode = ProxyMode.REPLAY
+            else:
+                self.mode = ProxyMode.ONLINE
+
+            changed = self.mode != old
+            if changed:
+                self.stats["mode_changes"] += 1
+
+        if changed:
+            await self.publish_proxy_status(force=True)
+
+    async def _replay_cloud_queue_some(
+        self,
+        cloud_session: CloudSessionManager,
+        *,
+        max_frames: int = 1,
+        ack_timeout_s: float = 3.0,
+    ) -> int:
+        """Pošle max. N frames z CloudQueue na cloud (best-effort)."""
+        if max_frames <= 0:
+            return 0
+
         replayed = 0
-        interval = 1.0 / CLOUD_REPLAY_RATE  # ~1s pro 1 frame/s
-        
-        while True:
-            # Check zda cloud je stále online
-            if not self.cloud_health.is_online:
-                logger.warning("⚠️ Replay přerušeno - cloud offline")
-                async with self.mode_lock:
-                    self.mode = ProxyMode.OFFLINE
-                await self.publish_proxy_status(force=True)
-                break
-            
-            # Vezmi další frame z fronty
+        for _ in range(max_frames):
             item = await self.cloud_queue.get_next()
             if not item:
-                # Fronta prázdná → přepni na ONLINE
-                logger.info(
-                    f"✅ Replay dokončen ({replayed} frames), "
-                    "přepínám na ONLINE režim"
-                )
-                async with self.mode_lock:
-                    self.mode = ProxyMode.ONLINE
-                    self.stats["mode_changes"] += 1
-                await self.publish_proxy_status(force=True)
                 break
-            
+
             frame_id, table_name, frame_data = item
-            
-            # Pošli na cloud
             try:
-                ack = await self.cloud_session.send_and_read_ack(
+                ack_data = await cloud_session.send_and_read_ack(
                     frame_data.encode("utf-8"),
-                    ack_timeout_s=3.0,
-                    ack_max_bytes=4096,
-                )
-                
-                # Úspěch → odstraň z fronty
-                await self.cloud_queue.remove(frame_id)
-                replayed += 1
-                
-                # Log progress
-                if replayed % 10 == 0:
-                    remaining = self.cloud_queue.size()
-                    logger.info(
-                        f"🔄 Replay progress: {replayed} odesláno, "
-                        f"{remaining} zbývá"
-                    )
-                
-            except Exception as e:
-                logger.error(f"❌ Replay failed pro frame {frame_id}: {e}")
-                # Necháme frame ve frontě, zkusíme další
-            
-            # Rate limiting
-            await asyncio.sleep(interval)
-        
-        logger.info(f"🏁 Replay task ukončen (replayed={replayed})")
-
-    async def _cloud_forward_loop(self) -> None:
-        """Background worker, který forwarduje queued frames na cloud."""
-        assert self._cloud_forward_queue is not None
-        while True:
-            data, table_name, device_id, frame_str = await self._cloud_forward_queue.get()
-            try:
-                if not self.cloud_health.is_online:
-                    # Cloud offline → persist do fronty pro replay
-                    if table_name and table_name != "tbl_handshake":
-                        await self.cloud_queue.add(frame_str, table_name, device_id)
-                        self.stats["frames_queued"] += 1
-                    continue
-
-                ack_data = await self.cloud_session.send_and_read_ack(
-                    data,
-                    ack_timeout_s=10.0,
+                    ack_timeout_s=ack_timeout_s,
                     ack_max_bytes=4096,
                 )
                 ack_str = ack_data.decode("utf-8", errors="replace")
-                # Capture cloud response (pro analýzu)
                 capture_payload(
-                    None, table_name, ack_str, {},
-                    direction="cloud_to_proxy", length=len(ack_data)
+                    None,
+                    table_name,
+                    ack_str,
+                    {},
+                    direction="cloud_to_proxy",
+                    length=len(ack_data),
                 )
                 if table_name:
                     self.ack_learner.learn_from_cloud(ack_str, table_name)
-            except Exception as e:
-                logger.debug(f"Cloud forward failed: {e}")
-                if table_name and table_name != "tbl_handshake":
-                    try:
-                        await self.cloud_queue.add(frame_str, table_name, device_id)
-                        self.stats["frames_queued"] += 1
-                    except Exception:
-                        pass
-            finally:
-                self._cloud_forward_queue.task_done()
+                await self.cloud_queue.remove(frame_id)
+                replayed += 1
+            except Exception:
+                # Cloud znovu selhal - necháme frame ve frontě.
+                await self._refresh_mode()
+                break
 
-    def _try_queue_cloud_forward(
+            # Rate limiting (jen pokud posíláme víc než 1 frame)
+            if max_frames > 1 and CLOUD_REPLAY_RATE > 0:
+                await asyncio.sleep(1.0 / CLOUD_REPLAY_RATE)
+
+        return replayed
+
+    def _ensure_cloud_reconnect_task(
         self,
-        data: bytes,
-        table_name: str | None,
-        device_id: str | None,
-        frame_str: str,
+        cloud_session: CloudSessionManager,
+        *,
+        conn_id: int,
     ) -> None:
-        """Zkusí zařadit frame do in-memory cloud forward fronty."""
-        if self._cloud_forward_queue is None:
-            return
+        """Spustí background reconnect, aby OFFLINE nezdržoval ACKy BOXu."""
+        task = self._cloud_reconnect_task
+        if task is not None and not task.done():
+            if self._cloud_reconnect_conn_id == conn_id:
+                return
+            task.cancel()
+
+        self._cloud_reconnect_conn_id = conn_id
+        self._cloud_reconnect_task = asyncio.create_task(
+            self._cloud_reconnect_loop(cloud_session, conn_id),
+        )
+
+    async def _cloud_reconnect_loop(
+        self,
+        cloud_session: CloudSessionManager,
+        conn_id: int,
+    ) -> None:
+        """Opakovaně zkouší obnovit cloud session pro aktivní BOX spojení."""
         try:
-            self._cloud_forward_queue.put_nowait((data, table_name, device_id, frame_str))
-        except asyncio.QueueFull:
-            # Cloud nestíhá: fallback na persistent queue (best effort, async)
-            logger.warning("⚠️ Cloud forward queue full - falling back to persistent queue")
-            if table_name and table_name != "tbl_handshake":
-                asyncio.create_task(self.cloud_queue.add(frame_str, table_name, device_id))
-                self.stats["frames_queued"] += 1
+            while True:
+                async with self._box_conn_lock:
+                    still_active = (
+                        self._active_cloud_session is cloud_session
+                        and self._active_box_writer is not None
+                        and self._cloud_reconnect_conn_id == conn_id
+                    )
+                if not still_active:
+                    return
+
+                try:
+                    await cloud_session.ensure_connected()
+                    await self._refresh_mode()
+                    await self.publish_proxy_status(force=True)
+                    return
+                except Exception:
+                    await self._refresh_mode()
+                    # ensure_connected má vlastní backoff; zde jen zabráníme těsnému loopu
+                    await asyncio.sleep(1.0)
+        finally:
+            # Uklidit jen pokud stále ukazujeme na tento task
+            if self._cloud_reconnect_conn_id == conn_id:
+                self._cloud_reconnect_task = None
+                self._cloud_reconnect_conn_id = None
 
     async def _send_local_ack(
         self,
@@ -363,53 +317,111 @@ class OIGProxy:
         addr = writer.get_extra_info('peername')
         logger.debug(f"🔌 BOX připojen: {addr}")
         self._ever_seen_box = True
+        previous_writer: asyncio.StreamWriter | None = None
+        previous_cloud: CloudSessionManager | None = None
+        previous_reconnect_task: asyncio.Task[Any] | None = None
         async with self._box_conn_lock:
             self._box_conn_count += 1
             self.box_tcp_connected = self._box_conn_count > 0
+
+            # Standardní session logika:
+            # - při novém BOX spojení ukončit staré BOX + CLOUD spojení
+            previous_writer = self._active_box_writer
+            previous_cloud = self._active_cloud_session
+            previous_reconnect_task = self._cloud_reconnect_task
+            self._cloud_reconnect_task = None
+            self._cloud_reconnect_conn_id = None
+
+            self._session_seq += 1
+            conn_id = self._session_seq
+            self._active_conn_id = conn_id
+
+            self._active_box_writer = writer
+            cloud_session = CloudSessionManager(
+                TARGET_SERVER,
+                TARGET_PORT,
+                stats=self.cloud_stats,
+                connect_timeout_s=2.0,
+            )
+            self._active_cloud_session = cloud_session
+
+        # Zavři předchozí spojení mimo lock (best-effort)
+        if previous_reconnect_task is not None and not previous_reconnect_task.done():
+            previous_reconnect_task.cancel()
+        if previous_writer is not None and previous_writer is not writer:
+            try:
+                previous_writer.close()
+            except Exception:
+                pass
+        if previous_cloud is not None and previous_cloud is not cloud_session:
+            try:
+                await previous_cloud.close(count_disconnect=True)
+            except Exception:
+                pass
+
+        # Nové BOX spojení → reset cloud session; připojení řeší background reconnect (neblokuje BOX).
+        self._ensure_cloud_reconnect_task(cloud_session, conn_id=conn_id)
+        await self._refresh_mode()
         await self.publish_proxy_status(force=True)
         
         try:
-            # Zpracuj podle aktuálního režimu
-            async with self.mode_lock:
-                current_mode = self.mode
-            
-            if current_mode == ProxyMode.ONLINE:
-                await self._handle_online_mode_connection(reader, writer)
-            else:
-                # OFFLINE nebo REPLAY → lokální ACK + queue
-                await self._handle_offline_mode_connection(reader, writer)
+            await self._handle_box_session(reader, writer, cloud_session, conn_id, addr)
             
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
+            try:
+                await cloud_session.close(count_disconnect=True)
+            except Exception:
+                pass
+
             async with self._box_conn_lock:
+                reconnect_task = self._cloud_reconnect_task
+                reconnect_id = self._cloud_reconnect_conn_id
+                if reconnect_task is not None and not reconnect_task.done() and reconnect_id == conn_id:
+                    reconnect_task.cancel()
                 self._box_conn_count = max(0, self._box_conn_count - 1)
                 self.box_tcp_connected = self._box_conn_count > 0
+                if self._active_box_writer is writer:
+                    self._active_box_writer = None
+                if self._active_cloud_session is cloud_session:
+                    self._active_cloud_session = None
+                if self._active_conn_id == conn_id:
+                    self._active_conn_id = None
+
+            await self._refresh_mode()
             await self.publish_proxy_status(force=True)
             try:
                 writer.close()
                 await writer.wait_closed()
             except Exception:
                 pass
-    
-    async def _handle_online_mode_connection(
+
+    async def _handle_box_session(
         self,
         box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter
+        box_writer: asyncio.StreamWriter,
+        cloud_session: CloudSessionManager,
+        conn_id: int,
+        peer: Any,
     ):
         """
-        ONLINE režim s reconnect logikou:
-        - Drží BOX spojení aktivní
-        - Pro každý frame se pokusí forward na cloud
-        - Pokud cloud selže/ukončí, vytvoří nové cloud spojení
-        - Pokud cloud nedostupný, offline mode pro daný frame
-        - Timeout 15 min na BOX idle (detekce mrtvého BOXu)
+        Standardní BOX ↔ Cloud proxy session:
+        - Jedno BOX spojení má jednu cloud session (vytvořeno na connectu).
+        - V ONLINE: frame se pošle na cloud a cloud ACK se vrátí BOXu.
+        - Když cloud spadne/ukončí session, BOX držíme a další frame zkusí nový cloud connect.
+        - V OFFLINE: posíláme lokální ACK a frame ukládáme do CloudQueue pro pozdější replay.
         """
         BOX_IDLE_TIMEOUT = 900  # 15 minut
         CLOUD_ACK_TIMEOUT = 3.0
         
         try:
             while True:
+                # Pokud nás mezitím nahradilo nové BOX spojení, ukonči tuto session.
+                async with self._box_conn_lock:
+                    if self._active_conn_id != conn_id:
+                        return
+
                 # Čti frame od BOX s timeoutem (detekce mrtvého BOXu)
                 try:
                     data = await asyncio.wait_for(
@@ -427,7 +439,7 @@ class OIGProxy:
                     break
                 
                 # Zpracuj frame
-                frame = data.decode('utf-8')
+                frame = data.decode('utf-8', errors='replace')
                 self.stats["frames_received"] += 1
                 
                 # Parse & capture
@@ -453,7 +465,7 @@ class OIGProxy:
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame)
+                    direction="box_to_proxy", conn_id=conn_id, peer=str(peer), length=len(data)
                 )
                 
                 # MQTT publish (vždy, nezávisle na cloud)
@@ -470,34 +482,47 @@ class OIGProxy:
                         self.isnewset_last_rtt_ms = None
                     await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
-                
-                # Pro běžné telemetry: odpověz BOXu ihned lokálním ACK a cloud řeš async.
-                if not isnewset_request:
-                    await self._send_local_ack(table_name, None, box_writer)
-                    self.stats["frames_forwarded"] += 1
-                    capture_payload(
-                        device_id, table_name, frame, parsed or {},
-                        direction="proxy_to_cloud", length=len(frame)
+
+                # Cloud OFFLINE: neblokujeme BOX čekáním na reconnect, jen ACK + queue.
+                if not cloud_session.is_connected():
+                    if self._pending_isnewset_start is not None:
+                        self.isnewset_last_response = "Bez odpovědi (offline)"
+                        self.isnewset_last_response_iso = iso_now()
+                        self.isnewset_last_rtt_ms = None
+                        self._pending_isnewset_start = None
+                        await self.publish_proxy_status(force=True)
+
+                    await self._send_local_ack(
+                        table_name,
+                        isnewset_key if isnewset_request else None,
+                        box_writer,
                     )
-                    self._try_queue_cloud_forward(data, table_name, device_id, frame)
+                    if table_name and table_name != "tbl_handshake":
+                        await self.cloud_queue.add(frame, table_name, device_id)
+                        self.stats["frames_queued"] += 1
+                        await self._refresh_mode()
+
+                    self._ensure_cloud_reconnect_task(cloud_session, conn_id=conn_id)
                     continue
 
-                # IsNewSet: musí dostat odpověď z cloudu (může nést nastavení)
+                # Forward do cloudu (nebo offline fallback)
                 try:
                     self.stats["frames_forwarded"] += 1
                     capture_payload(
                         device_id, table_name, frame, parsed or {},
-                        direction="proxy_to_cloud", length=len(frame)
+                        direction="proxy_to_cloud", conn_id=conn_id, peer=str(peer), length=len(data)
                     )
-                    ack_data = await self.cloud_session.send_and_read_ack(
+                    ack_data = await cloud_session.send_and_read_ack(
                         data,
                         ack_timeout_s=CLOUD_ACK_TIMEOUT,
                         ack_max_bytes=4096,
                     )
+                    await self._refresh_mode()
+
                     ack_str = ack_data.decode("utf-8", errors="replace")
                     capture_payload(
                         None, table_name, ack_str, {},
-                        direction="cloud_to_proxy", length=len(ack_data)
+                        direction="cloud_to_proxy", conn_id=conn_id, peer=str(peer), length=len(ack_data)
                     )
 
                     if self._pending_isnewset_start is not None:
@@ -527,134 +552,58 @@ class OIGProxy:
                         pass
                     capture_payload(
                         None, table_name, ack_str, {},
-                        direction="proxy_to_box", length=len(ack_data)
+                        direction="proxy_to_box", conn_id=conn_id, peer=str(peer), length=len(ack_data)
                     )
-                except asyncio.TimeoutError:
-                    logger.warning("⏱️ Cloud ACK timeout - offline mode for this frame")
+
+                    # Replay backlog až po odeslání ACK BOXu (abychom nezdržovali odpovědi BOXu).
+                    if self.cloud_queue.size() > 0:
+                        await self._replay_cloud_queue_some(
+                            cloud_session,
+                            max_frames=1,
+                            ack_timeout_s=CLOUD_ACK_TIMEOUT,
+                        )
+                        await self._refresh_mode()
+                except Exception:
+                    # Cloud není dostupný / spadlo spojení → OFFLINE fallback pro tento frame
+                    await self._refresh_mode()
+
                     if self._pending_isnewset_start is not None:
                         self.isnewset_last_response = "Bez odpovědi"
                         self.isnewset_last_response_iso = iso_now()
                         self.isnewset_last_rtt_ms = None
                         self._pending_isnewset_start = None
                         await self.publish_proxy_status(force=True)
-                    # Odpověz END rychle (IsNewSet) a persist do fronty
-                    await self._send_local_ack(table_name, isnewset_key, box_writer)
-                    if isnewset_key and table_name and table_name != "tbl_handshake":
-                        await self.cloud_queue.add(frame, table_name, device_id)
-                        self.stats["frames_queued"] += 1
-                except Exception as e:
-                    logger.warning(f"⚠️ Cloud error: {e} - offline mode for this frame")
-                    if self._pending_isnewset_start is not None:
-                        self.isnewset_last_response = "Bez odpovědi"
-                        self.isnewset_last_response_iso = iso_now()
-                        self.isnewset_last_rtt_ms = None
-                        self._pending_isnewset_start = None
-                        await self.publish_proxy_status(force=True)
-                    await self._send_local_ack(table_name, isnewset_key, box_writer)
+
+                    # Lokální ACK: pro IsNewSet použij END pattern
+                    await self._send_local_ack(
+                        table_name,
+                        isnewset_key if isnewset_request else None,
+                        box_writer,
+                    )
+
+                    # Persist do fronty pro replay (kromě handshake)
                     if table_name and table_name != "tbl_handshake":
                         await self.cloud_queue.add(frame, table_name, device_id)
                         self.stats["frames_queued"] += 1
+                        await self._refresh_mode()
+
+                    self._ensure_cloud_reconnect_task(cloud_session, conn_id=conn_id)
                     
         except Exception as e:
             logger.error(f"❌ Online mode error: {e}")
         finally:
-            # Cloud session je globální (nezávislá na BOX session) → nezavírat zde.
+            # Cloud session je svázaná s BOX session - ukončí se v handle_connection().
             pass
-    
-    async def _process_frame_offline(
-        self,
-        frame: str,
-        table_name: str | None,
-        device_id: str | None,
-        box_writer: asyncio.StreamWriter
-    ):
-        """Zpracuj frame v offline režimu - lokální ACK + queue."""
-        # Generuj lokální ACK
-        await self._send_local_ack(table_name, None, box_writer)
-        
-        # Queue frame pro replay (kromě handshake)
-        if table_name and table_name != "tbl_handshake":
-            await self.cloud_queue.add(frame, table_name, device_id)
-            self.stats["frames_queued"] += 1
-    
-    async def _handle_offline_mode_connection(
-        self,
-        box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter
-    ):
-        """
-        OFFLINE/REPLAY režim - persistent connection s lokálním ACK.
-        Timeout 15 min na BOX idle (detekce mrtvého BOXu).
-        """
-        BOX_IDLE_TIMEOUT = 900  # 15 minut
-        
-        try:
-            while True:
-                # Čti frame od BOX s timeoutem
-                try:
-                    data = await asyncio.wait_for(
-                        box_reader.read(8192),
-                        timeout=BOX_IDLE_TIMEOUT
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "⏱️ BOX idle timeout (15 min) - closing session"
-                    )
-                    break
-                
-                if not data:
-                    logger.debug("🔌 BOX ukončil spojení (EOF)")
-                    break
-                
-                frame = data.decode('utf-8')
-                self.stats["frames_received"] += 1
-                
-                # Parse & capture
-                parsed = self.parser.parse_xml_frame(frame)
-                device_id = parsed.get("_device_id") if parsed else None
-                table_name = parsed.get("_table") if parsed else None
-                
-                capture_payload(
-                    device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame)
-                )
-                
-                # MQTT publish
-                if parsed:
-                    self.last_data_iso = iso_now()
-                    self._last_data_epoch = time.time()
-                    if isnewset_request:
-                        self.isnewset_polls += 1
-                        self.isnewset_last_poll_iso = self.last_data_iso
-                        self.isnewset_last_response = "Bez odpovědi (offline)"
-                        self.isnewset_last_response_iso = self.last_data_iso
-                        self.isnewset_last_rtt_ms = None
-                        self._pending_isnewset_start = None
-                    await self.publish_proxy_status(force=True)
-                    await self.mqtt_publisher.publish_data(parsed)
-                
-                # Lokální ACK + queue
-                await self._process_frame_offline(
-                    frame, table_name, device_id, box_writer
-                )
-                
-                # Log každých 10 frames
-                if self.stats["frames_queued"] % 10 == 0:
-                    queue_size = self.cloud_queue.size()
-                    logger.info(
-                        f"📦 {self.mode.value}: "
-                        f"{self.stats['frames_queued']} frames queued "
-                        f"({queue_size} ve frontě)"
-                    )
-                    
-        except Exception as e:
-            logger.debug(f"Offline mode ukončen: {e}")
     
     def get_stats(self) -> dict[str, Any]:
         """Vrátí statistiky proxy."""
         return {
             "mode": self.mode.value,
-            "cloud_online": self.cloud_health.is_online,
+            "cloud_online": (
+                self._active_cloud_session.is_connected()
+                if self._active_cloud_session
+                else False
+            ),
             "cloud_queue_size": self.cloud_queue.size(),
             "mqtt_queue_size": self.mqtt_publisher.queue.size(),
             "mqtt_connected": self.mqtt_publisher.connected,

@@ -34,12 +34,14 @@ class CloudSessionManager:
         self,
         host: str,
         port: int,
+        stats: CloudStats | None = None,
         connect_timeout_s: float = 5.0,
         min_reconnect_s: float = 0.5,
         max_reconnect_s: float = 10.0,
     ) -> None:
         self.host = host
         self.port = port
+        self.stats = stats or CloudStats()
         self.connect_timeout_s = connect_timeout_s
         self.min_reconnect_s = min_reconnect_s
         self.max_reconnect_s = max_reconnect_s
@@ -50,19 +52,20 @@ class CloudSessionManager:
         self._io_lock = asyncio.Lock()
         self._backoff_s = min_reconnect_s
         self._last_connect_attempt = 0.0
-        self.stats = CloudStats()
         self._last_warn_ts = 0.0
 
     def is_connected(self) -> bool:
         w = self._writer
         return bool(w) and not w.is_closing()
 
-    async def close(self) -> None:
+    async def close(self, *, count_disconnect: bool = False) -> None:
         async with self._conn_lock:
-            await self._close_locked()
+            await self._close_locked(count_disconnect=count_disconnect)
 
-    async def _close_locked(self) -> None:
+    async def _close_locked(self, *, count_disconnect: bool = False) -> None:
         if self._writer is not None:
+            if count_disconnect and not self._writer.is_closing():
+                self.stats.disconnects += 1
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
