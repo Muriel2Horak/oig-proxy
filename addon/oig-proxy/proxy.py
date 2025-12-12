@@ -44,8 +44,9 @@ class OIGProxy:
         # Režim
         self.mode = ProxyMode.ONLINE
         self.mode_lock = asyncio.Lock()
-        self.connection_state = "waiting_box"  # waiting_box | waiting_data | active
-        self.box_connected = False
+        self.last_data_iso: str | None = None
+        self._last_data_epoch: float | None = None
+        self._ever_seen_box = False
         self.last_data_iso: str | None = None
         self._last_status_publish = 0.0
         
@@ -65,9 +66,10 @@ class OIGProxy:
 
     def _compute_status(self) -> str:
         """Odvodí čitelný stav proxy pro MQTT status senzor."""
-        if self.connection_state == "waiting_box":
+        now = time.time()
+        if not self._ever_seen_box:
             return "Čeká na BOX"
-        if self.connection_state == "waiting_data":
+        if self._last_data_epoch is None or (now - self._last_data_epoch) > 90:
             return "Čeká na data"
         if self.mode == ProxyMode.REPLAY:
             return "Vyprazňování fronty"
@@ -82,6 +84,10 @@ class OIGProxy:
             return
         
         status = self._compute_status()
+        now = time.time()
+        box_connected = int(
+            self._last_data_epoch is not None and (now - self._last_data_epoch) <= 90
+        )
         payload = {
             "status": status,
             # mode ponecháme v EN, status je už česky
@@ -89,7 +95,7 @@ class OIGProxy:
             "cloud_online": int(self.cloud_health.is_online),
             "cloud_queue": self.cloud_queue.size(),
             "mqtt_queue": self.mqtt_publisher.queue.size(),
-            "box_connected": int(self.box_connected),
+            "box_connected": box_connected,
             "last_data": self.last_data_iso,
         }
         await self.mqtt_publisher.publish_proxy_status(payload)
@@ -261,8 +267,7 @@ class OIGProxy:
         """Handle jednoho BOX připojení - persistent connection."""
         addr = writer.get_extra_info('peername')
         logger.debug(f"🔌 BOX připojen: {addr}")
-        self.box_connected = True
-        self.connection_state = "waiting_data"
+        self._ever_seen_box = True
         await self.publish_proxy_status(force=True)
         
         try:
@@ -279,8 +284,6 @@ class OIGProxy:
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
-            self.box_connected = False
-            self.connection_state = "waiting_box"
             await self.publish_proxy_status(force=True)
             try:
                 writer.close()
@@ -354,11 +357,8 @@ class OIGProxy:
                 # MQTT publish (vždy, nezávisle na cloud)
                 if parsed:
                     self.last_data_iso = iso_now()
-                    if self.connection_state == "waiting_data":
-                        self.connection_state = "active"
-                        await self.publish_proxy_status(force=True)
-                    else:
-                        await self.publish_proxy_status()
+                    self._last_data_epoch = time.time()
+                    await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
                 
                 # Pokud nemáme cloud spojení, vytvoř nové
@@ -535,11 +535,8 @@ class OIGProxy:
                 # MQTT publish
                 if parsed:
                     self.last_data_iso = iso_now()
-                    if self.connection_state == "waiting_data":
-                        self.connection_state = "active"
-                        await self.publish_proxy_status(force=True)
-                    else:
-                        await self.publish_proxy_status()
+                    self._last_data_epoch = time.time()
+                    await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
                 
                 # Lokální ACK + queue
