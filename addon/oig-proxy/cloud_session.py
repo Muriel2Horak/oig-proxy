@@ -51,6 +51,7 @@ class CloudSessionManager:
         self._backoff_s = min_reconnect_s
         self._last_connect_attempt = 0.0
         self.stats = CloudStats()
+        self._last_warn_ts = 0.0
 
     def is_connected(self) -> bool:
         w = self._writer
@@ -90,11 +91,24 @@ class CloudSessionManager:
                 )
                 self.stats.connects += 1
                 self._backoff_s = self.min_reconnect_s
-                logger.debug(f"☁️ Připojeno k {self.host}:{self.port}")
+                logger.debug(
+                    f"☁️ Připojeno k {self.host}:{self.port} "
+                    f"(connects={self.stats.connects}, "
+                    f"timeouts={self.stats.timeouts}, "
+                    f"errors={self.stats.errors}, "
+                    f"disconnects={self.stats.disconnects})"
+                )
             except Exception as e:
                 self.stats.errors += 1
                 await self._close_locked()
                 self._backoff_s = min(self.max_reconnect_s, self._backoff_s * 2.0)
+                now = time.time()
+                if (now - self._last_warn_ts) >= 30:
+                    logger.warning(
+                        f"☁️ Cloud connect failed: {e} "
+                        f"(backoff={self._backoff_s:.1f}s)"
+                    )
+                    self._last_warn_ts = now
                 raise e
 
     async def send_and_read_ack(
@@ -122,15 +136,26 @@ class CloudSessionManager:
                 if not ack:
                     # Cloud ukončil spojení (EOF)
                     self.stats.disconnects += 1
+                    now = time.time()
+                    if (now - self._last_warn_ts) >= 30:
+                        logger.warning("☁️ Cloud connection closed (EOF)")
+                        self._last_warn_ts = now
                     await self.close()
                     raise ConnectionError("Cloud connection closed (EOF)")
                 return ack
             except asyncio.TimeoutError:
                 self.stats.timeouts += 1
+                now = time.time()
+                if (now - self._last_warn_ts) >= 30:
+                    logger.warning("☁️ Cloud ACK timeout")
+                    self._last_warn_ts = now
                 await self.close()
                 raise
             except Exception:
                 self.stats.errors += 1
+                now = time.time()
+                if (now - self._last_warn_ts) >= 30:
+                    logger.warning("☁️ Cloud error (connection reset)")
+                    self._last_warn_ts = now
                 await self.close()
                 raise
-

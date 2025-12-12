@@ -185,6 +185,21 @@ def load_sensor_map() -> None:
             "proxy_status:cloud_online": SensorConfig(
                 "Cloud připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
             ),
+            "proxy_status:cloud_session_connected": SensorConfig(
+                "Cloud TCP připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+            ),
+            "proxy_status:cloud_connects": SensorConfig(
+                "Cloud - připojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+            "proxy_status:cloud_disconnects": SensorConfig(
+                "Cloud - odpojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+            "proxy_status:cloud_timeouts": SensorConfig(
+                "Cloud - timeouts (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+            "proxy_status:cloud_errors": SensorConfig(
+                "Cloud - chyby (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
             "proxy_status:box_connected": SensorConfig(
                 "BOX připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
             ),

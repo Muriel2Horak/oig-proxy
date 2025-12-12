@@ -107,6 +107,11 @@ class OIGProxy:
             # mode ponecháme v EN, status je už česky
             "mode": self.mode.value,
             "cloud_online": int(self.cloud_health.is_online),
+            "cloud_session_connected": int(self.cloud_session.is_connected()),
+            "cloud_connects": self.cloud_session.stats.connects,
+            "cloud_disconnects": self.cloud_session.stats.disconnects,
+            "cloud_timeouts": self.cloud_session.stats.timeouts,
+            "cloud_errors": self.cloud_session.stats.errors,
             "cloud_queue": self.cloud_queue.size(),
             "mqtt_queue": self.mqtt_publisher.queue.size(),
             # BOX připojení (TCP) a "data tečou" jsou dvě různé věci
