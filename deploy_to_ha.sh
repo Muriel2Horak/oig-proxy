@@ -34,6 +34,7 @@ scp $LOCAL_SOURCE/cloud_manager.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/mqtt_publisher.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/proxy.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/main.py $HA_HOST:/tmp/oig-proxy-new/
+scp $LOCAL_SOURCE/sensor_map.json $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/README_MODULAR.md $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || true
 
 echo "✅ Soubory zkopírovány na HA server"
