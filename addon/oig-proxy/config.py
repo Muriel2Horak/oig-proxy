@@ -102,3 +102,6 @@ DEVICE_NAMES = {
     "load": "Spotřeba",
     "proxy": "Proxy",
 }
+
+# Pevný device_id pro proxy/status/event senzory
+PROXY_DEVICE_ID = os.getenv("PROXY_DEVICE_ID", "oig_proxy")

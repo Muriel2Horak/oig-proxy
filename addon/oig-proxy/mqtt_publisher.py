@@ -174,7 +174,9 @@ class MQTTPublisher:
     PUBLISH_LOG_EVERY = 100
     
     def __init__(self, device_id: str):
+        from config import PROXY_DEVICE_ID  # avoid circular import on module load
         self.device_id = device_id
+        self.proxy_device_id = PROXY_DEVICE_ID or device_id
         self.client: mqtt.Client | None = None
         self.connected = False
         self.discovery_sent: set[str] = set()
@@ -277,6 +279,13 @@ class MQTTPublisher:
                 retain=True,
                 qos=1
             )
+            if self.proxy_device_id != self.device_id:
+                client.publish(
+                    f"{MQTT_NAMESPACE}/{self.proxy_device_id}/availability",
+                    "online",
+                    retain=True,
+                    qos=1
+                )
             
             # Reset discovery
             self.discovery_sent.clear()
@@ -409,11 +418,12 @@ class MQTTPublisher:
                         f"{self.HEALTH_CHECK_INTERVAL}s"
                     )
     
-    def publish_availability(self) -> None:
+    def publish_availability(self, device_id: str | None = None) -> None:
         """Publikuje availability status na MQTT."""
         if not self.client or not self.connected:
             return
-        topic = f"{MQTT_NAMESPACE}/{self.device_id}/availability"
+        dev_id = device_id or self.device_id
+        topic = f"{MQTT_NAMESPACE}/{dev_id}/availability"
         self.client.publish(topic, "online", retain=True, qos=1)
         logger.info(f"MQTT: Availability published to {topic}")
     
@@ -428,7 +438,8 @@ class MQTTPublisher:
         self,
         sensor_id: str,
         config: SensorConfig,
-        table: str | None = None
+        table: str | None = None,
+        device_id: str | None = None
     ) -> None:
         """Odešle MQTT discovery pro senzor."""
         if not self.client or not self.connected:
@@ -436,27 +447,29 @@ class MQTTPublisher:
             return
         if sensor_id in self.discovery_sent:
             return
+
+        dev_id = device_id or self.device_id
         
         device_type = config.device_mapping or "inverter"
         device_suffix = device_type
         device_name = DEVICE_NAMES.get(device_type, "Střídač")
         
         device_identifier = (
-            f"{MQTT_NAMESPACE}_{self.device_id}_{device_suffix}"
+            f"{MQTT_NAMESPACE}_{dev_id}_{device_suffix}"
         )
-        full_device_name = f"OIG {device_name} ({self.device_id})"
+        full_device_name = f"OIG {device_name} ({dev_id})"
         
         safe_sensor_id = sensor_id.replace(":", "_").lower()
-        unique_id = f"{MQTT_NAMESPACE}_{self.device_id}_{safe_sensor_id}"
-        object_id = f"{MQTT_NAMESPACE}_{self.device_id}_{safe_sensor_id}"
+        unique_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
+        object_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
         availability_topic = (
-            f"{MQTT_NAMESPACE}/{self.device_id}/availability"
+            f"{MQTT_NAMESPACE}/{dev_id}/availability"
         )
         
         if table:
-            state_topic = f"{MQTT_NAMESPACE}/{self.device_id}/{table}/state"
+            state_topic = f"{MQTT_NAMESPACE}/{dev_id}/{table}/state"
         else:
-            state_topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
+            state_topic = f"{MQTT_NAMESPACE}/{dev_id}/state"
         
         if ":" in sensor_id:
             json_key = sensor_id.split(":", 1)[1]
@@ -519,6 +532,12 @@ class MQTTPublisher:
     async def publish_data(self, data: dict[str, Any]) -> bool:
         """Publikuje data na MQTT."""
         table = data.get("_table")
+        # Proxy a eventy jdou na pevný proxy device_id
+        target_device_id = (
+            self.proxy_device_id
+            if table in ("proxy_status", "tbl_events")
+            else self.device_id
+        )
         
         # Připravíme data
         publish_data = {}
@@ -528,7 +547,7 @@ class MQTTPublisher:
                 continue
             cfg, unique_key = get_sensor_config(key, table)
             if cfg:
-                self.send_discovery(unique_key, cfg, table)
+                self.send_discovery(unique_key, cfg, table, device_id=target_device_id)
                 mapped_count += 1
                 value = data[key]
                 # Enum konverze
@@ -540,9 +559,9 @@ class MQTTPublisher:
                 publish_data[key] = data[key]
         
         if table:
-            topic = f"{MQTT_NAMESPACE}/{self.device_id}/{table}/state"
+            topic = f"{MQTT_NAMESPACE}/{target_device_id}/{table}/state"
         else:
-            topic = f"{MQTT_NAMESPACE}/{self.device_id}/state"
+            topic = f"{MQTT_NAMESPACE}/{target_device_id}/state"
         
         payload = json.dumps(publish_data)
         

@@ -343,6 +343,7 @@ class OIGProxy:
                     # Re-publish availability with correct device_id
                     self.mqtt_publisher.publish_availability()
                     logger.info(f"🔑 Device ID detected: {device_id}")
+                    await self.publish_proxy_status(force=True)
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},

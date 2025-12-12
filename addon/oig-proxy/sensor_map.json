@@ -45,41 +45,41 @@
       "entity_category": "diagnostic"
     },
     "tbl_events:Type": {
-      "name": "Event type",
-      "name_cs": "Událost - typ",
+      "name": "Typ události",
+      "name_cs": "Typ události",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "diagnostic",
-      "device_mapping": "inverter",
+      "device_mapping": "proxy",
       "todo": false,
       "entity_category": "diagnostic"
     },
     "tbl_events:Confirm": {
-      "name": "Event confirm",
-      "name_cs": "Událost - potvrzení",
+      "name": "Potvrzení události",
+      "name_cs": "Potvrzení události",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "diagnostic",
-      "device_mapping": "inverter",
+      "device_mapping": "proxy",
       "todo": false,
       "entity_category": "diagnostic"
     },
     "tbl_events:Content": {
-      "name": "Event content",
-      "name_cs": "Událost - obsah",
+      "name": "Text události",
+      "name_cs": "Text události",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "diagnostic",
-      "device_mapping": "inverter",
+      "device_mapping": "proxy",
       "todo": false,
       "entity_category": "diagnostic"
     },
     "proxy_status:status": {
-      "name": "Proxy status",
-      "name_cs": "Proxy - stav",
+      "name": "Stav komunikace",
+      "name_cs": "Stav komunikace",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -89,8 +89,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:mode": {
-      "name": "Proxy mode",
-      "name_cs": "Proxy - režim",
+      "name": "Režim komunikace",
+      "name_cs": "Režim komunikace",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -100,7 +100,7 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:last_data": {
-      "name": "Last data",
+      "name": "Poslední data",
       "name_cs": "Poslední data",
       "unit_of_measurement": "",
       "device_class": "timestamp",
@@ -111,8 +111,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:cloud_online": {
-      "name": "Cloud online",
-      "name_cs": "Cloud - online",
+      "name": "Cloud připojen",
+      "name_cs": "Cloud připojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -123,8 +123,8 @@
       "is_binary": true
     },
     "proxy_status:box_connected": {
-      "name": "BOX connected",
-      "name_cs": "BOX - připojen",
+      "name": "BOX připojen",
+      "name_cs": "BOX připojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -135,8 +135,8 @@
       "is_binary": true
     },
     "proxy_status:cloud_queue": {
-      "name": "Cloud queue size",
-      "name_cs": "Cloud fronta - velikost",
+      "name": "Cloud fronta",
+      "name_cs": "Cloud fronta",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -146,8 +146,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:mqtt_queue": {
-      "name": "MQTT queue size",
-      "name_cs": "MQTT fronta - velikost",
+      "name": "MQTT fronta",
+      "name_cs": "MQTT fronta",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
