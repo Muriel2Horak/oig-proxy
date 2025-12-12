@@ -6,7 +6,7 @@ Nová modulární implementace s podporou ONLINE/OFFLINE/REPLAY režimů.
 
 ```
 addon/oig-proxy/
-├── main_new.py          # Entry point (80 lines)
+├── main.py              # Entry point
 ├── config.py            # Konfigurace a env vars (95 lines)
 ├── models.py            # Data modely a enums (75 lines)
 ├── utils.py             # Helper funkce (291 lines)
@@ -14,7 +14,7 @@ addon/oig-proxy/
 ├── cloud_manager.py     # CloudQueue, CloudHealthChecker, ACKLearner (360 lines)
 ├── mqtt_publisher.py    # MQTTPublisher s frontou (568 lines)
 ├── proxy.py             # OIGProxy orchestrace (300 lines)
-└── main.py              # Original (1601 lines) - deprecated
+└── main_old.py          # Legacy monolit (deprecated)
 ```
 
 **Celkem:** ~1869 lines (vs. original 1601 lines)
@@ -98,9 +98,10 @@ mv main_new.py main.py
 ## Environment variables
 
 Nové/změněné:
-- `DEVICE_ID` - **Povinné!** ID zařízení
-- `PROXY_LISTEN_HOST` - Default: `0.0.0.0`
-- `PROXY_LISTEN_PORT` - Default: `5710` (dříve `PROXY_PORT`)
+- `DEVICE_ID` - volitelné (pokud není, detekuje se z BOX komunikace)
+- `PROXY_LISTEN_HOST` - default `0.0.0.0`
+- `PROXY_LISTEN_PORT` - default `5710`
+- `PROXY_DEVICE_ID` - default `oig_proxy` (proxy/status/event senzory jdou sem)
 - `CLOUD_REPLAY_RATE` - Default: `1.0` (frames/s)
 - `MQTT_REPLAY_RATE` - Default: `10.0` (msg/s)
 - `CLOUD_QUEUE_MAX_SIZE` - Default: `10000`

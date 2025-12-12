@@ -1,15 +1,14 @@
-# OIG Proxy for Home Assistant
-
-**Verze 1.3.0** - Modulární architektura s podporou ONLINE/OFFLINE/REPLAY režimů.
+# OIG Proxy pro Home Assistant
 
 TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA autodiscovery), dekóduje warningy a loguje neznámé senzory pro doplnění mapy. Součástí je DNS přepis, aby Box mluvil na lokální proxy místo cloudu.
 
-## Klíčové funkce v1.3.0
-- 🔄 **Multi-mode proxy**: ONLINE (forward) / OFFLINE (local ACK) / REPLAY (queue drain)
-- 💾 **Persistentní fronty**: SQLite queue pro cloud i MQTT data
-- 🔌 **Odolnost vůči výpadkům**: Automatická detekce cloud outage, lokální ACK generování
-- 📡 **Auto-discovery**: Automatická detekce DEVICE_ID z BOX komunikace
-- ♻️ **Replay mechanismus**: Automatické odeslání zafrontovaných dat po obnovení cloudu
+## Klíčové funkce
+- 🔄 **Multi‑mode proxy**: ONLINE (forward) / OFFLINE (lokální ACK + queue) / REPLAY (vyprazdňování fronty)
+- 💾 **Persistentní fronty**: SQLite fronta pro cloud (frames) i MQTT (messages)
+- 🔌 **Odolnost vůči výpadkům**: automatická detekce výpadku cloudu, lokální ACK generování
+- 📡 **MQTT autodiscovery**: entity se zakládají přes `homeassistant/.../config` (retain)
+- 🧭 **Diagnostika komunikace**: samostatné zařízení „OIG Proxy“ se stavovými senzory (stav, fronty, poslední data, IsNewSet telemetrie)
+- 🧾 **Eventy**: `tbl_events` se publikuje a mapuje do HA (Type/Confirm/Content)
 
 ## Struktura
 - `proxy/` – hlavní Python proxy (`main.py`), načítá mapping ze sdíleného `sensor_map.json`, dekóduje warning bity (`ERR_*`).
@@ -18,26 +17,48 @@ TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA a
 - `logs/` – prázdné (logy necommitujeme).
 
 ## Co proxy umí
-- Publikuje data do MQTT topicu `oig_box/<device_id>/state`, posílá HA discovery (`homeassistant/sensor/.../config`) a availability `oig_box/<device_id>/availability`.
-- Načítá senzory z JSON mapy; neznámé klíče auto-discovery s generickým názvem a logováním do `/data/unknown_sensors.json`.
-- Dekóduje bitové warningy `ERR_*` přes `warnings_3f` (vč. českých textů) a přidává `<ERR_X>_warnings` se seznamem hlášek.
-- Mapu lze reloadovat za běhu (`MAP_RELOAD_SECONDS` > 0); `unique_id`/entity_id má tvar `oig_local_<device_id>_<sensor_key>`.
-- Pokud je `LOG_LEVEL=DEBUG`, loguje RAW rámce i PARSED payload pro ladění.
-- Volitelně může ukládat payloady do SQLite (`/data/payloads.db`) při zapnuté volbě `capture_payloads`.
+- **Publikuje tabulky do MQTT**: `oig_local/<device_id>/<tbl_name>/state` (payload JSON).
+- **Zakládá entity v HA** přes MQTT discovery (`homeassistant/sensor/.../config`, `homeassistant/binary_sensor/.../config`).
+- **Načítá mapu senzorů** z `/data/sensor_map.json`; neznámé klíče loguje do `/data/unknown_sensors.json`.
+- **Dekóduje warningy** z bitových polí `ERR_*` (warnings_3f) a přidává `<ERR_X>_warnings` se seznamem hlášek.
+- **Udržuje režimy komunikace** a fronty:
+  - ONLINE: forward BOX ↔ cloud, ACK z cloudu, učení ACK patternů
+  - OFFLINE: lokální ACK, ukládání frame do `cloud_queue.db`
+  - REPLAY: vyprazdňování `cloud_queue.db` po obnovení cloudu
+- **Publikuje diagnostiku proxy** do samostatného zařízení:
+  - Topic: `oig_local/oig_proxy/proxy_status/state` (default)
+  - Entity zakládá z `proxy_status:*` v mapě (stav, fronty, poslední data, IsNewSet)
+- **Publikuje eventy** do proxy zařízení:
+  - Topic: `oig_local/oig_proxy/tbl_events/state` (default)
+  - Entity: `tbl_events:Type`, `tbl_events:Confirm`, `tbl_events:Content`
+- **Volitelně ukládá capture** všech frames do `/data/payloads.db` (pokud `capture_payloads=true`).
 
 ## Tok komunikace
 ```
 OIG Box  --DNS override-->  HA host (addon OIG Proxy, port 5710)  --TCP-->  oigservis.cz (cloud)
    |                             |
    |  XML frame                  |  Parse + map + warnings decode
-   |---------------------------->|  Publish state to MQTT: oig_box/<device_id>/state
+   |---------------------------->|  Publish state to MQTT: oig_local/<device_id>/<table>/state
                                  |  Send HA discovery: homeassistant/sensor/.../config
-                                 |  Availability: oig_box/<device_id>/availability
+                                 |  Availability: oig_local/<device_id>/availability
 MQTT Broker (mosquitto addon) <--+
    |
    v
 Home Assistant (entities vytvářené z discovery)
 ```
+
+## Zařízení a entity v HA (MQTT discovery)
+
+Proxy typicky vytvoří dvě „větve“ zařízení:
+
+1) **OIG Proxy (`oig_proxy`)** – diagnostika komunikace (stálé zařízení, bez vazby na box ID)
+   - `proxy_status:*` (stav, fronty, poslední data, IsNewSet)
+   - `tbl_events:*` (Type/Confirm/Content)
+
+2) **OIG zařízení podle `device_id`** (autodetekce z komunikace)
+   - skupiny podle `device_mapping` (např. Střídač/Baterie/Síť/FVE/Spotřeba…) – jeden `device_id`, více zařízení
+
+Poznámka: změny typu entity (sensor ↔ binary_sensor) vyžadují vymazat staré retained discovery config topics, jinak HA drží původní component.
 
 ## Požadavky na uživatele
 1) **MQTT broker** (např. HA add-on Mosquitto), vytvořit účet/heslo a znát host/port.
@@ -70,6 +91,8 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 - `TARGET_SERVER` (default `oigservis.cz`), `TARGET_PORT` (5710) – cíl, kam proxy přeposílá.
 - `PROXY_PORT` (5710) – lokální port pro Box.
 - `MQTT_HOST/PORT/USERNAME/PASSWORD` – broker.
+- `MQTT_NAMESPACE` (default `oig_local`) – prefix topiců.
+- `PROXY_DEVICE_ID` (default `oig_proxy`) – pevné `device_id` pro proxy/status/event senzory.
 - `SENSOR_MAP_PATH` (default `/data/sensor_map.json` v add-onu).
 - `MAP_RELOAD_SECONDS` (0 = vypnuto) – periodický reload mapy.
 - `UNKNOWN_SENSORS_PATH` (default `/data/unknown_sensors.json`).
