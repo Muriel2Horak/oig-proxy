@@ -66,14 +66,14 @@ class OIGProxy:
     def _compute_status(self) -> str:
         """Odvodí čitelný stav proxy pro MQTT status senzor."""
         if self.connection_state == "waiting_box":
-            return "čeká_na_box"
+            return "Čeká na BOX"
         if self.connection_state == "waiting_data":
-            return "čeká_na_data"
+            return "Čeká na data"
         if self.mode == ProxyMode.REPLAY:
-            return "přehrává_frontu"
+            return "Vyprazňování fronty"
         if self.mode == ProxyMode.OFFLINE:
-            return "offline"
-        return "online"
+            return "Offline"
+        return "Online"
 
     async def publish_proxy_status(self, force: bool = False) -> None:
         """Publikuje stav proxy (stav + telemetrie front) na MQTT."""
