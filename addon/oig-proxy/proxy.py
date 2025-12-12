@@ -49,6 +49,14 @@ class OIGProxy:
         self._ever_seen_box = False
         self.last_data_iso: str | None = None
         self._last_status_publish = 0.0
+
+        # IsNewSet telemetry (BOX → Cloud poll)
+        self.isnewset_polls = 0
+        self.isnewset_last_poll_iso: str | None = None
+        self.isnewset_last_response: str | None = None
+        self.isnewset_last_response_iso: str | None = None
+        self.isnewset_last_rtt_ms: int | None = None
+        self._pending_isnewset_start: float | None = None
         
         # Background tasks
         self._replay_task: asyncio.Task[Any] | None = None
@@ -97,6 +105,10 @@ class OIGProxy:
             "mqtt_queue": self.mqtt_publisher.queue.size(),
             "box_connected": box_connected,
             "last_data": self.last_data_iso,
+            "isnewset_polls": self.isnewset_polls,
+            "isnewset_last_poll": self.isnewset_last_poll_iso,
+            "isnewset_last_response": self.isnewset_last_response,
+            "isnewset_last_rtt_ms": self.isnewset_last_rtt_ms,
         }
         await self.mqtt_publisher.publish_proxy_status(payload)
         self._last_status_publish = now
@@ -337,6 +349,14 @@ class OIGProxy:
                 parsed = self.parser.parse_xml_frame(frame)
                 device_id = parsed.get("_device_id") if parsed else None
                 table_name = parsed.get("_table") if parsed else None
+                isnewset_request = (
+                    "<Result>IsNewSet</Result>" in frame
+                    or (parsed and parsed.get("Result") == "IsNewSet")
+                )
+                isnewset_request = (
+                    "<Result>IsNewSet</Result>" in frame
+                    or (parsed and parsed.get("Result") == "IsNewSet")
+                )
                 
                 # Auto-detect device_id from BOX frames
                 if device_id and self.device_id == "AUTO":
@@ -358,6 +378,14 @@ class OIGProxy:
                 if parsed:
                     self.last_data_iso = iso_now()
                     self._last_data_epoch = time.time()
+                    if isnewset_request:
+                        self.isnewset_polls += 1
+                        self.isnewset_last_poll_iso = self.last_data_iso
+                        self._pending_isnewset_start = self._last_data_epoch
+                        # Default until we see cloud response
+                        self.isnewset_last_response = None
+                        self.isnewset_last_response_iso = None
+                        self.isnewset_last_rtt_ms = None
                     await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
                 
@@ -420,6 +448,23 @@ class OIGProxy:
                         None, table_name, ack_str, {},
                         direction="cloud_to_proxy", length=len(ack_data)
                     )
+
+                    # IsNewSet telemetry - classify cloud response
+                    if isnewset_request and self._pending_isnewset_start is not None:
+                        response = "Neznámá"
+                        if "<TblName>" in ack_str:
+                            response = "Nastavení"
+                        if "<Result>END</Result>" in ack_str and response != "Nastavení":
+                            response = "END"
+                        if "<Result>ACK</Result>" in ack_str and response == "Neznámá":
+                            response = "ACK"
+                        self.isnewset_last_response = response
+                        self.isnewset_last_response_iso = iso_now()
+                        self.isnewset_last_rtt_ms = int(
+                            max(0.0, (time.time() - self._pending_isnewset_start) * 1000)
+                        )
+                        self._pending_isnewset_start = None
+                        await self.publish_proxy_status(force=True)
                     
                     # ACK Learning
                     if table_name:
@@ -443,6 +488,12 @@ class OIGProxy:
                     if cloud_writer:
                         cloud_writer.close()
                     cloud_writer = None
+                    if isnewset_request:
+                        self.isnewset_last_response = "Bez odpovědi"
+                        self.isnewset_last_response_iso = iso_now()
+                        self.isnewset_last_rtt_ms = None
+                        self._pending_isnewset_start = None
+                        await self.publish_proxy_status(force=True)
                     await self._process_frame_offline(
                         frame, table_name, device_id, box_writer
                     )
@@ -457,6 +508,12 @@ class OIGProxy:
                         except Exception:
                             pass
                     cloud_writer = None
+                    if isnewset_request:
+                        self.isnewset_last_response = "Bez odpovědi"
+                        self.isnewset_last_response_iso = iso_now()
+                        self.isnewset_last_rtt_ms = None
+                        self._pending_isnewset_start = None
+                        await self.publish_proxy_status(force=True)
                     await self._process_frame_offline(
                         frame, table_name, device_id, box_writer
                     )
@@ -536,6 +593,13 @@ class OIGProxy:
                 if parsed:
                     self.last_data_iso = iso_now()
                     self._last_data_epoch = time.time()
+                    if isnewset_request:
+                        self.isnewset_polls += 1
+                        self.isnewset_last_poll_iso = self.last_data_iso
+                        self.isnewset_last_response = "Bez odpovědi (offline)"
+                        self.isnewset_last_response_iso = self.last_data_iso
+                        self.isnewset_last_rtt_ms = None
+                        self._pending_isnewset_start = None
                     await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
                 

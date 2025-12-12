@@ -156,6 +156,50 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
+    "proxy_status:isnewset_polls": {
+      "name": "IsNewSet - počet",
+      "name_cs": "IsNewSet - počet",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:isnewset_last_poll": {
+      "name": "IsNewSet - poslední dotaz",
+      "name_cs": "IsNewSet - poslední dotaz",
+      "unit_of_measurement": "",
+      "device_class": "timestamp",
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:isnewset_last_response": {
+      "name": "IsNewSet - poslední odpověď",
+      "name_cs": "IsNewSet - poslední odpověď",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:isnewset_last_rtt_ms": {
+      "name": "IsNewSet - RTT",
+      "name_cs": "IsNewSet - RTT",
+      "unit_of_measurement": "ms",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "FV_V1": {
       "name": "Napětí string 1",
       "name_cs": "FVE - Napětí string 1",

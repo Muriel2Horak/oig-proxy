@@ -191,6 +191,18 @@ def load_sensor_map() -> None:
             "proxy_status:mqtt_queue": SensorConfig(
                 "MQTT fronta", "", None, "measurement", None, "proxy", "diagnostic"
             ),
+            "proxy_status:isnewset_polls": SensorConfig(
+                "IsNewSet - počet", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+            "proxy_status:isnewset_last_poll": SensorConfig(
+                "IsNewSet - poslední dotaz", "", "timestamp", None, None, "proxy", "diagnostic"
+            ),
+            "proxy_status:isnewset_last_response": SensorConfig(
+                "IsNewSet - poslední odpověď", "", None, None, None, "proxy", "diagnostic"
+            ),
+            "proxy_status:isnewset_last_rtt_ms": SensorConfig(
+                "IsNewSet - RTT", "ms", None, "measurement", None, "proxy", "diagnostic"
+            ),
         }
         for sid, cfg in builtin.items():
             if sid not in SENSORS:
