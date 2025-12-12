@@ -35,6 +35,9 @@ scp $LOCAL_SOURCE/cloud_session.py $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || t
 scp $LOCAL_SOURCE/mqtt_publisher.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/proxy.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/main.py $HA_HOST:/tmp/oig-proxy-new/
+scp $LOCAL_SOURCE/Dockerfile $HA_HOST:/tmp/oig-proxy-new/
+scp $LOCAL_SOURCE/requirements.txt $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || true
+scp $LOCAL_SOURCE/run $HA_HOST:/tmp/oig-proxy-new/run 2>/dev/null || true
 scp $LOCAL_SOURCE/sensor_map.json $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/README_MODULAR.md $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || true
 
