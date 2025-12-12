@@ -1501,7 +1501,8 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "GRID_PV_ON": {
       "name": "Vybíjení baterek do sítě při dostupné FVE",
@@ -1524,7 +1525,8 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "tbl_invertor_prms:MODE": {
       "name": "Inverter Mode",
@@ -1738,7 +1740,8 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "P_ADJ_STRT": {
       "name": "Auto-adjustment starts when power rate reaches",
@@ -3785,7 +3788,8 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "diagnostic"
+      "entity_category": "diagnostic",
+      "is_binary": true
     },
     "SSID": {
       "name": "SSID",
