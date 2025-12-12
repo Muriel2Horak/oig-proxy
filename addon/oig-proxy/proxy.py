@@ -5,6 +5,7 @@ OIG Proxy - hlavní orchestrace s ONLINE/OFFLINE/REPLAY režimy.
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
@@ -18,7 +19,7 @@ from config import (
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from parser import OIGDataParser
-from utils import capture_payload
+from utils import capture_payload, iso_now
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,10 @@ class OIGProxy:
         # Režim
         self.mode = ProxyMode.ONLINE
         self.mode_lock = asyncio.Lock()
+        self.connection_state = "waiting_box"  # waiting_box | waiting_data | active
+        self.box_connected = False
+        self.last_data_iso: str | None = None
+        self._last_status_publish = 0.0
         
         # Background tasks
         self._replay_task: asyncio.Task[Any] | None = None
@@ -56,6 +61,37 @@ class OIGProxy:
             "acks_cloud": 0,
             "mode_changes": 0,
         }
+
+    def _compute_status(self) -> str:
+        """Odvodí čitelný stav proxy pro MQTT status senzor."""
+        if self.connection_state == "waiting_box":
+            return "waiting_box"
+        if self.connection_state == "waiting_data":
+            return "waiting_data"
+        if self.mode == ProxyMode.REPLAY:
+            return "replay_queue"
+        if self.mode == ProxyMode.OFFLINE:
+            return "offline"
+        return "online"
+
+    async def publish_proxy_status(self, force: bool = False) -> None:
+        """Publikuje stav proxy (stav + telemetrie front) na MQTT."""
+        now = time.time()
+        if not force and (now - self._last_status_publish) < 30:
+            return
+        
+        status = self._compute_status()
+        payload = {
+            "status": status,
+            "mode": self.mode.value,
+            "cloud_online": int(self.cloud_health.is_online),
+            "cloud_queue": self.cloud_queue.size(),
+            "mqtt_queue": self.mqtt_publisher.queue.size(),
+            "box_connected": int(self.box_connected),
+            "last_data": self.last_data_iso,
+        }
+        await self.mqtt_publisher.publish_proxy_status(payload)
+        self._last_status_publish = now
     
     async def start(self):
         """Spustí proxy server."""
@@ -71,6 +107,9 @@ class OIGProxy:
         else:
             logger.warning("MQTT: Initial connect failed, health check se pokusí reconnect")
             await self.mqtt_publisher.start_health_check()
+        
+        # Initial status publish
+        await self.publish_proxy_status(force=True)
         
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -125,7 +164,9 @@ class OIGProxy:
                         f"🟢 Režim změněn: {old_mode.value} → {self.mode.value}"
                     )
                     self.stats["mode_changes"] += 1
-    
+            
+        await self.publish_proxy_status(force=True)
+
     async def _replay_cloud_queue(self):
         """Background task pro replay cloud fronty (rate limited)."""
         logger.info("🔄 Začínám replay cloud fronty...")
@@ -138,6 +179,7 @@ class OIGProxy:
                 logger.warning("⚠️ Replay přerušeno - cloud offline")
                 async with self.mode_lock:
                     self.mode = ProxyMode.OFFLINE
+                await self.publish_proxy_status(force=True)
                 break
             
             # Vezmi další frame z fronty
@@ -151,6 +193,7 @@ class OIGProxy:
                 async with self.mode_lock:
                     self.mode = ProxyMode.ONLINE
                     self.stats["mode_changes"] += 1
+                await self.publish_proxy_status(force=True)
                 break
             
             frame_id, table_name, frame_data = item
@@ -204,6 +247,9 @@ class OIGProxy:
         """Handle jednoho BOX připojení - persistent connection."""
         addr = writer.get_extra_info('peername')
         logger.debug(f"🔌 BOX připojen: {addr}")
+        self.box_connected = True
+        self.connection_state = "waiting_data"
+        await self.publish_proxy_status(force=True)
         
         try:
             # Zpracuj podle aktuálního režimu
@@ -219,6 +265,9 @@ class OIGProxy:
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
+            self.box_connected = False
+            self.connection_state = "waiting_box"
+            await self.publish_proxy_status(force=True)
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -289,6 +338,12 @@ class OIGProxy:
                 
                 # MQTT publish (vždy, nezávisle na cloud)
                 if parsed:
+                    self.last_data_iso = iso_now()
+                    if self.connection_state == "waiting_data":
+                        self.connection_state = "active"
+                        await self.publish_proxy_status(force=True)
+                    else:
+                        await self.publish_proxy_status()
                     await self.mqtt_publisher.publish_data(parsed)
                 
                 # Pokud nemáme cloud spojení, vytvoř nové
@@ -464,6 +519,12 @@ class OIGProxy:
                 
                 # MQTT publish
                 if parsed:
+                    self.last_data_iso = iso_now()
+                    if self.connection_state == "waiting_data":
+                        self.connection_state = "active"
+                        await self.publish_proxy_status(force=True)
+                    else:
+                        await self.publish_proxy_status()
                     await self.mqtt_publisher.publish_data(parsed)
                 
                 # Lokální ACK + queue

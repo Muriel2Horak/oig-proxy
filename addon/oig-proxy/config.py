@@ -100,4 +100,5 @@ DEVICE_NAMES = {
     "pv": "FVE",
     "grid": "Síť",
     "load": "Spotřeba",
+    "proxy": "Proxy",
 }

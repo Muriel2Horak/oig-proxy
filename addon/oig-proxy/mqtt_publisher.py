@@ -582,3 +582,9 @@ class MQTTPublisher:
             self.last_error_msg = str(e)
             logger.error(f"MQTT: Publish exception: {e}")
             return False
+
+    async def publish_proxy_status(self, status_payload: dict[str, Any]) -> bool:
+        """Publikuje stav proxy jako samostatnou tabulku proxy_status."""
+        data = {"_table": "proxy_status"}
+        data.update(status_payload)
+        return await self.publish_data(data)
