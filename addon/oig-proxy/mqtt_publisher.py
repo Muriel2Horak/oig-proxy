@@ -501,8 +501,8 @@ class MQTTPublisher:
         
         if config.is_binary:
             component = "binary_sensor"
-            discovery_payload["payload_on"] = 1
-            discovery_payload["payload_off"] = 0
+            discovery_payload["payload_on"] = "1"
+            discovery_payload["payload_off"] = "0"
         else:
             component = "sensor"
             if config.state_class:
