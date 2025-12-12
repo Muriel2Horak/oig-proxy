@@ -134,6 +134,18 @@
       "entity_category": "diagnostic",
       "is_binary": true
     },
+    "proxy_status:box_data_recent": {
+      "name": "Data z BOXu tečou",
+      "name_cs": "Data z BOXu tečou",
+      "unit_of_measurement": "",
+      "device_class": "connectivity",
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic",
+      "is_binary": true
+    },
     "proxy_status:cloud_queue": {
       "name": "Cloud fronta",
       "name_cs": "Cloud fronta",

@@ -47,7 +47,7 @@ class OIGProxy:
         self.last_data_iso: str | None = None
         self._last_data_epoch: float | None = None
         self._ever_seen_box = False
-        self.last_data_iso: str | None = None
+        self.box_tcp_connected = False
         self._last_status_publish = 0.0
 
         # IsNewSet telemetry (BOX → Cloud poll)
@@ -93,7 +93,7 @@ class OIGProxy:
         
         status = self._compute_status()
         now = time.time()
-        box_connected = int(
+        box_data_recent = int(
             self._last_data_epoch is not None and (now - self._last_data_epoch) <= 90
         )
         payload = {
@@ -103,7 +103,9 @@ class OIGProxy:
             "cloud_online": int(self.cloud_health.is_online),
             "cloud_queue": self.cloud_queue.size(),
             "mqtt_queue": self.mqtt_publisher.queue.size(),
-            "box_connected": box_connected,
+            # BOX připojení (TCP) a "data tečou" jsou dvě různé věci
+            "box_connected": int(self.box_tcp_connected),
+            "box_data_recent": box_data_recent,
             "last_data": self.last_data_iso,
             "isnewset_polls": self.isnewset_polls,
             "isnewset_last_poll": self.isnewset_last_poll_iso,
@@ -280,6 +282,7 @@ class OIGProxy:
         addr = writer.get_extra_info('peername')
         logger.debug(f"🔌 BOX připojen: {addr}")
         self._ever_seen_box = True
+        self.box_tcp_connected = True
         await self.publish_proxy_status(force=True)
         
         try:
@@ -296,6 +299,7 @@ class OIGProxy:
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
+            self.box_tcp_connected = False
             await self.publish_proxy_status(force=True)
             try:
                 writer.close()
