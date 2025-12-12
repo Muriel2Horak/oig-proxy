@@ -51,6 +51,7 @@ class OIGProxy:
         
         # Background tasks
         self._replay_task: asyncio.Task[Any] | None = None
+        self._status_task: asyncio.Task[Any] | None = None
         
         # Statistiky
         self.stats = {
@@ -110,6 +111,9 @@ class OIGProxy:
         
         # Initial status publish
         await self.publish_proxy_status(force=True)
+        # Periodický heartbeat stavového senzoru
+        if self._status_task is None or self._status_task.done():
+            self._status_task = asyncio.create_task(self._status_loop())
         
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -238,6 +242,15 @@ class OIGProxy:
             await asyncio.sleep(interval)
         
         logger.info(f"🏁 Replay task ukončen (replayed={replayed})")
+
+    async def _status_loop(self):
+        """Heartbeat pro stavový senzor, aby se discovery/stav poslaly i bez dat z BOXu."""
+        while True:
+            try:
+                await self.publish_proxy_status(force=True)
+            except Exception as e:
+                logger.debug(f"Status loop error: {e}")
+            await asyncio.sleep(30)
     
     async def handle_connection(
         self,
