@@ -65,6 +65,8 @@ class OIGProxy:
         # Background tasks
         self._replay_task: asyncio.Task[Any] | None = None
         self._status_task: asyncio.Task[Any] | None = None
+        self._cloud_forward_task: asyncio.Task[Any] | None = None
+        self._cloud_forward_queue: asyncio.Queue[tuple[bytes, str | None, str | None, str]] | None = None
         
         # Statistiky
         self.stats = {
@@ -140,6 +142,15 @@ class OIGProxy:
         # Periodický heartbeat stavového senzoru
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._status_loop())
+
+        # Cloud forward worker (odděleně od BOX session)
+        if self._cloud_forward_queue is None:
+            # Bounded: když cloud nestíhá, padáme do persistent cloud_queue
+            self._cloud_forward_queue = asyncio.Queue(maxsize=500)
+        if self._cloud_forward_task is None or self._cloud_forward_task.done():
+            self._cloud_forward_task = asyncio.create_task(
+                self._cloud_forward_loop()
+            )
         
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -259,6 +270,76 @@ class OIGProxy:
         
         logger.info(f"🏁 Replay task ukončen (replayed={replayed})")
 
+    async def _cloud_forward_loop(self) -> None:
+        """Background worker, který forwarduje queued frames na cloud."""
+        assert self._cloud_forward_queue is not None
+        while True:
+            data, table_name, device_id, frame_str = await self._cloud_forward_queue.get()
+            try:
+                if not self.cloud_health.is_online:
+                    # Cloud offline → persist do fronty pro replay
+                    if table_name and table_name != "tbl_handshake":
+                        await self.cloud_queue.add(frame_str, table_name, device_id)
+                        self.stats["frames_queued"] += 1
+                    continue
+
+                ack_data = await self.cloud_session.send_and_read_ack(
+                    data,
+                    ack_timeout_s=10.0,
+                    ack_max_bytes=4096,
+                )
+                ack_str = ack_data.decode("utf-8", errors="replace")
+                # Capture cloud response (pro analýzu)
+                capture_payload(
+                    None, table_name, ack_str, {},
+                    direction="cloud_to_proxy", length=len(ack_data)
+                )
+                if table_name:
+                    self.ack_learner.learn_from_cloud(ack_str, table_name)
+            except Exception as e:
+                logger.debug(f"Cloud forward failed: {e}")
+                if table_name and table_name != "tbl_handshake":
+                    try:
+                        await self.cloud_queue.add(frame_str, table_name, device_id)
+                        self.stats["frames_queued"] += 1
+                    except Exception:
+                        pass
+            finally:
+                self._cloud_forward_queue.task_done()
+
+    def _try_queue_cloud_forward(
+        self,
+        data: bytes,
+        table_name: str | None,
+        device_id: str | None,
+        frame_str: str,
+    ) -> None:
+        """Zkusí zařadit frame do in-memory cloud forward fronty."""
+        if self._cloud_forward_queue is None:
+            return
+        try:
+            self._cloud_forward_queue.put_nowait((data, table_name, device_id, frame_str))
+        except asyncio.QueueFull:
+            # Cloud nestíhá: fallback na persistent queue (best effort, async)
+            logger.warning("⚠️ Cloud forward queue full - falling back to persistent queue")
+            if table_name and table_name != "tbl_handshake":
+                asyncio.create_task(self.cloud_queue.add(frame_str, table_name, device_id))
+                self.stats["frames_queued"] += 1
+
+    async def _send_local_ack(
+        self,
+        table_name: str | None,
+        ack_key: str | None,
+        box_writer: asyncio.StreamWriter,
+    ) -> None:
+        ack = self.ack_learner.generate_ack(ack_key or table_name)
+        try:
+            box_writer.write(ack.encode("utf-8"))
+            await box_writer.drain()
+            self.stats["acks_local"] += 1
+        except Exception:
+            pass
+
     async def _status_loop(self):
         """Heartbeat pro stavový senzor, aby se discovery/stav poslaly i bez dat z BOXu."""
         while True:
@@ -320,7 +401,7 @@ class OIGProxy:
         - Timeout 15 min na BOX idle (detekce mrtvého BOXu)
         """
         BOX_IDLE_TIMEOUT = 900  # 15 minut
-        CLOUD_ACK_TIMEOUT = 10.0
+        CLOUD_ACK_TIMEOUT = 3.0
         
         try:
             while True:
@@ -352,10 +433,7 @@ class OIGProxy:
                     "<Result>IsNewSet</Result>" in frame
                     or (parsed and parsed.get("Result") == "IsNewSet")
                 )
-                isnewset_request = (
-                    "<Result>IsNewSet</Result>" in frame
-                    or (parsed and parsed.get("Result") == "IsNewSet")
-                )
+                isnewset_key = parsed.get("Result") if parsed else None
                 
                 # Auto-detect device_id from BOX frames
                 if device_id and self.device_id == "AUTO":
@@ -388,32 +466,36 @@ class OIGProxy:
                     await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
                 
-                # Forward na cloud
-                try:
+                # Pro běžné telemetry: odpověz BOXu ihned lokálním ACK a cloud řeš async.
+                if not isnewset_request:
+                    await self._send_local_ack(table_name, None, box_writer)
                     self.stats["frames_forwarded"] += 1
-                    
-                    # Capture frame poslaný na cloud
                     capture_payload(
                         device_id, table_name, frame, parsed or {},
                         direction="proxy_to_cloud", length=len(frame)
                     )
-                    
-                    # Čekej na ACK od cloudu
+                    self._try_queue_cloud_forward(data, table_name, device_id, frame)
+                    continue
+
+                # IsNewSet: musí dostat odpověď z cloudu (může nést nastavení)
+                try:
+                    self.stats["frames_forwarded"] += 1
+                    capture_payload(
+                        device_id, table_name, frame, parsed or {},
+                        direction="proxy_to_cloud", length=len(frame)
+                    )
                     ack_data = await self.cloud_session.send_and_read_ack(
                         data,
                         ack_timeout_s=CLOUD_ACK_TIMEOUT,
                         ack_max_bytes=4096,
                     )
-                    
-                    # Capture cloud response
-                    ack_str = ack_data.decode('utf-8')
+                    ack_str = ack_data.decode("utf-8", errors="replace")
                     capture_payload(
                         None, table_name, ack_str, {},
                         direction="cloud_to_proxy", length=len(ack_data)
                     )
 
-                    # IsNewSet telemetry - classify cloud response
-                    if isnewset_request and self._pending_isnewset_start is not None:
+                    if self._pending_isnewset_start is not None:
                         response = "Neznámá"
                         if "<TblName>" in ack_str:
                             response = "Nastavení"
@@ -428,49 +510,45 @@ class OIGProxy:
                         )
                         self._pending_isnewset_start = None
                         await self.publish_proxy_status(force=True)
-                    
-                    # ACK Learning
+
                     if table_name:
                         self.ack_learner.learn_from_cloud(ack_str, table_name)
-                    
-                    # Forward ACK na BOX
-                    box_writer.write(ack_data)
-                    await box_writer.drain()
-                    self.stats["acks_cloud"] += 1
-                    
-                    # Capture ACK poslaný na BOX
+
+                    try:
+                        box_writer.write(ack_data)
+                        await box_writer.drain()
+                        self.stats["acks_cloud"] += 1
+                    except Exception:
+                        pass
                     capture_payload(
                         None, table_name, ack_str, {},
                         direction="proxy_to_box", length=len(ack_data)
                     )
-                    
                 except asyncio.TimeoutError:
-                    logger.warning(
-                        "⏱️ Cloud ACK timeout - offline mode for this frame"
-                    )
-                    if isnewset_request:
+                    logger.warning("⏱️ Cloud ACK timeout - offline mode for this frame")
+                    if self._pending_isnewset_start is not None:
                         self.isnewset_last_response = "Bez odpovědi"
                         self.isnewset_last_response_iso = iso_now()
                         self.isnewset_last_rtt_ms = None
                         self._pending_isnewset_start = None
                         await self.publish_proxy_status(force=True)
-                    await self._process_frame_offline(
-                        frame, table_name, device_id, box_writer
-                    )
-                    
+                    # Odpověz END rychle (IsNewSet) a persist do fronty
+                    await self._send_local_ack(table_name, isnewset_key, box_writer)
+                    if isnewset_key and table_name and table_name != "tbl_handshake":
+                        await self.cloud_queue.add(frame, table_name, device_id)
+                        self.stats["frames_queued"] += 1
                 except Exception as e:
-                    logger.warning(
-                        f"⚠️ Cloud error: {e} - offline mode for this frame"
-                    )
-                    if isnewset_request:
+                    logger.warning(f"⚠️ Cloud error: {e} - offline mode for this frame")
+                    if self._pending_isnewset_start is not None:
                         self.isnewset_last_response = "Bez odpovědi"
                         self.isnewset_last_response_iso = iso_now()
                         self.isnewset_last_rtt_ms = None
                         self._pending_isnewset_start = None
                         await self.publish_proxy_status(force=True)
-                    await self._process_frame_offline(
-                        frame, table_name, device_id, box_writer
-                    )
+                    await self._send_local_ack(table_name, isnewset_key, box_writer)
+                    if table_name and table_name != "tbl_handshake":
+                        await self.cloud_queue.add(frame, table_name, device_id)
+                        self.stats["frames_queued"] += 1
                     
         except Exception as e:
             logger.error(f"❌ Online mode error: {e}")
@@ -487,10 +565,7 @@ class OIGProxy:
     ):
         """Zpracuj frame v offline režimu - lokální ACK + queue."""
         # Generuj lokální ACK
-        ack_response = self.ack_learner.generate_ack(table_name)
-        box_writer.write(ack_response.encode('utf-8'))
-        await box_writer.drain()
-        self.stats["acks_local"] += 1
+        await self._send_local_ack(table_name, None, box_writer)
         
         # Queue frame pro replay (kromě handshake)
         if table_name and table_name != "tbl_handshake":
