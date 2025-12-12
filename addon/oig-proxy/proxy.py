@@ -66,11 +66,11 @@ class OIGProxy:
     def _compute_status(self) -> str:
         """Odvodí čitelný stav proxy pro MQTT status senzor."""
         if self.connection_state == "waiting_box":
-            return "waiting_box"
+            return "čeká_na_box"
         if self.connection_state == "waiting_data":
-            return "waiting_data"
+            return "čeká_na_data"
         if self.mode == ProxyMode.REPLAY:
-            return "replay_queue"
+            return "přehrává_frontu"
         if self.mode == ProxyMode.OFFLINE:
             return "offline"
         return "online"
@@ -84,6 +84,7 @@ class OIGProxy:
         status = self._compute_status()
         payload = {
             "status": status,
+            # mode ponecháme v EN, status je už česky
             "mode": self.mode.value,
             "cloud_online": int(self.cloud_health.is_online),
             "cloud_queue": self.cloud_queue.size(),
