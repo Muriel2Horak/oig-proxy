@@ -49,6 +49,8 @@ class OIGProxy:
         self._ever_seen_box = False
         self.box_tcp_connected = False
         self._last_status_publish = 0.0
+        self._box_conn_count = 0
+        self._box_conn_lock = asyncio.Lock()
 
         # IsNewSet telemetry (BOX → Cloud poll)
         self.isnewset_polls = 0
@@ -105,6 +107,7 @@ class OIGProxy:
             "mqtt_queue": self.mqtt_publisher.queue.size(),
             # BOX připojení (TCP) a "data tečou" jsou dvě různé věci
             "box_connected": int(self.box_tcp_connected),
+            "box_connections": self._box_conn_count,
             "box_data_recent": box_data_recent,
             "last_data": self.last_data_iso,
             "isnewset_polls": self.isnewset_polls,
@@ -282,7 +285,9 @@ class OIGProxy:
         addr = writer.get_extra_info('peername')
         logger.debug(f"🔌 BOX připojen: {addr}")
         self._ever_seen_box = True
-        self.box_tcp_connected = True
+        async with self._box_conn_lock:
+            self._box_conn_count += 1
+            self.box_tcp_connected = self._box_conn_count > 0
         await self.publish_proxy_status(force=True)
         
         try:
@@ -299,7 +304,9 @@ class OIGProxy:
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
-            self.box_tcp_connected = False
+            async with self._box_conn_lock:
+                self._box_conn_count = max(0, self._box_conn_count - 1)
+                self.box_tcp_connected = self._box_conn_count > 0
             await self.publish_proxy_status(force=True)
             try:
                 writer.close()

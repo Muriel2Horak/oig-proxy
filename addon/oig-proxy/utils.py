@@ -188,6 +188,9 @@ def load_sensor_map() -> None:
             "proxy_status:box_data_recent": SensorConfig(
                 "Data z BOXu tečou", "", "connectivity", None, None, "proxy", "diagnostic", None, True
             ),
+            "proxy_status:box_connections": SensorConfig(
+                "BOX spojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
             "proxy_status:cloud_queue": SensorConfig(
                 "Cloud fronta", "", None, "measurement", None, "proxy", "diagnostic"
             ),
