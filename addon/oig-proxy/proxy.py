@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
+from cloud_session import CloudSessionManager
 from config import (
     CLOUD_REPLAY_RATE,
     PROXY_LISTEN_HOST,
@@ -37,6 +38,7 @@ class OIGProxy:
         # Komponenty
         self.cloud_queue = CloudQueue()
         self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
+        self.cloud_session = CloudSessionManager(TARGET_SERVER, TARGET_PORT)
         self.ack_learner = ACKLearner()
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
@@ -160,6 +162,8 @@ class OIGProxy:
             old_mode = self.mode
             
             if event == "cloud_down":
+                # Zavřeme persistent cloud spojení, ať se resetuje
+                await self.cloud_session.close()
                 # Cloud vypadl → OFFLINE režim
                 self.mode = ProxyMode.OFFLINE
                 logger.warning(
@@ -228,23 +232,11 @@ class OIGProxy:
             
             # Pošli na cloud
             try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
-                    timeout=5.0
+                ack = await self.cloud_session.send_and_read_ack(
+                    frame_data.encode("utf-8"),
+                    ack_timeout_s=3.0,
+                    ack_max_bytes=4096,
                 )
-                
-                # Pošli frame
-                writer.write(frame_data.encode('utf-8'))
-                await writer.drain()
-                
-                # Čekej na ACK (timeout 3s)
-                await asyncio.wait_for(
-                    reader.read(4096),
-                    timeout=3.0
-                )
-                
-                writer.close()
-                await writer.wait_closed()
                 
                 # Úspěch → odstraň z fronty
                 await self.cloud_queue.remove(frame_id)
@@ -328,11 +320,7 @@ class OIGProxy:
         - Timeout 15 min na BOX idle (detekce mrtvého BOXu)
         """
         BOX_IDLE_TIMEOUT = 900  # 15 minut
-        CLOUD_CONNECT_TIMEOUT = 5.0
         CLOUD_ACK_TIMEOUT = 10.0
-        
-        cloud_reader = None
-        cloud_writer = None
         
         try:
             while True:
@@ -400,32 +388,8 @@ class OIGProxy:
                     await self.publish_proxy_status(force=True)
                     await self.mqtt_publisher.publish_data(parsed)
                 
-                # Pokud nemáme cloud spojení, vytvoř nové
-                if cloud_writer is None or cloud_writer.is_closing():
-                    try:
-                        cloud_reader, cloud_writer = await asyncio.wait_for(
-                            asyncio.open_connection(
-                                TARGET_SERVER, TARGET_PORT
-                            ),
-                            timeout=CLOUD_CONNECT_TIMEOUT
-                        )
-                        logger.debug(
-                            f"☁️ Připojeno k {TARGET_SERVER}:{TARGET_PORT}"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"⚠️ Cloud nedostupný: {e} - offline mode"
-                        )
-                        # Cloud nedostupný → offline mode pro tento frame
-                        await self._process_frame_offline(
-                            frame, table_name, device_id, box_writer
-                        )
-                        continue
-                
                 # Forward na cloud
                 try:
-                    cloud_writer.write(data)
-                    await cloud_writer.drain()
                     self.stats["frames_forwarded"] += 1
                     
                     # Capture frame poslaný na cloud
@@ -435,23 +399,11 @@ class OIGProxy:
                     )
                     
                     # Čekej na ACK od cloudu
-                    ack_data = await asyncio.wait_for(
-                        cloud_reader.read(4096),
-                        timeout=CLOUD_ACK_TIMEOUT
+                    ack_data = await self.cloud_session.send_and_read_ack(
+                        data,
+                        ack_timeout_s=CLOUD_ACK_TIMEOUT,
+                        ack_max_bytes=4096,
                     )
-                    
-                    if not ack_data:
-                        # Cloud ukončil spojení (EOF)
-                        logger.warning(
-                            "⚠️ Cloud ukončil spojení - reconnect next frame"
-                        )
-                        cloud_writer.close()
-                        cloud_writer = None
-                        # Tento frame musíme zpracovat offline
-                        await self._process_frame_offline(
-                            frame, table_name, device_id, box_writer
-                        )
-                        continue
                     
                     # Capture cloud response
                     ack_str = ack_data.decode('utf-8')
@@ -496,9 +448,6 @@ class OIGProxy:
                     logger.warning(
                         "⏱️ Cloud ACK timeout - offline mode for this frame"
                     )
-                    if cloud_writer:
-                        cloud_writer.close()
-                    cloud_writer = None
                     if isnewset_request:
                         self.isnewset_last_response = "Bez odpovědi"
                         self.isnewset_last_response_iso = iso_now()
@@ -513,12 +462,6 @@ class OIGProxy:
                     logger.warning(
                         f"⚠️ Cloud error: {e} - offline mode for this frame"
                     )
-                    if cloud_writer:
-                        try:
-                            cloud_writer.close()
-                        except Exception:
-                            pass
-                    cloud_writer = None
                     if isnewset_request:
                         self.isnewset_last_response = "Bez odpovědi"
                         self.isnewset_last_response_iso = iso_now()
@@ -532,12 +475,8 @@ class OIGProxy:
         except Exception as e:
             logger.error(f"❌ Online mode error: {e}")
         finally:
-            if cloud_writer:
-                try:
-                    cloud_writer.close()
-                    await cloud_writer.wait_closed()
-                except Exception:
-                    pass
+            # Cloud session je globální (nezávislá na BOX session) → nezavírat zde.
+            pass
     
     async def _process_frame_offline(
         self,

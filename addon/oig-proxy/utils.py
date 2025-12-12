@@ -7,7 +7,9 @@ import datetime
 import json
 import logging
 import os
+import queue
 import sqlite3
+import threading
 import time
 from typing import Any
 
@@ -26,7 +28,8 @@ logger = logging.getLogger(__name__)
 SENSORS: dict[str, SensorConfig] = {}
 WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
 _last_map_load = 0.0
-_capture_conn: sqlite3.Connection | None = None
+_capture_queue: queue.Queue[tuple[Any, ...]] | None = None
+_capture_thread: threading.Thread | None = None
 _capture_cols: set[str] = set()
 
 
@@ -252,6 +255,14 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
     
     try:
         conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
+        # PRAGMA pro lepší výkon a menší blokování (writer poběží v background threadu)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA busy_timeout=2000")
+        except Exception:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS frames (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,6 +299,66 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
         logger.warning(f"Init capture DB failed: {e}")
         return None, set()
 
+def _capture_worker(db_path: str) -> None:
+    """Background writer pro payload capture (neblokuje asyncio event loop)."""
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA busy_timeout=2000")
+        except Exception:
+            pass
+
+        sql = (
+            "INSERT INTO frames "
+            "(ts, device_id, table_name, raw, parsed, direction, conn_id, peer, length) "
+            "VALUES (?,?,?,?,?,?,?,?,?)"
+        )
+
+        assert _capture_queue is not None
+        batch: list[tuple[Any, ...]] = []
+        last_commit = time.time()
+        while True:
+            try:
+                item = _capture_queue.get(timeout=1.0)
+            except queue.Empty:
+                item = None
+
+            if item is None:
+                # flush
+                if batch:
+                    try:
+                        conn.executemany(sql, batch)
+                        conn.commit()
+                    except Exception:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                    batch.clear()
+                last_commit = time.time()
+                continue
+
+            batch.append(item)
+            # batch commit
+            if len(batch) >= 200 or (time.time() - last_commit) >= 0.5:
+                try:
+                    conn.executemany(sql, batch)
+                    conn.commit()
+                except Exception as e:
+                    # Nezdržujeme proxy - při problému zápis zahodíme.
+                    logger.debug(f"Capture worker write failed (dropping batch): {e}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                batch.clear()
+                last_commit = time.time()
+    except Exception as e:
+        logger.warning(f"Capture worker crashed: {e}")
+
 
 def capture_payload(
     device_id: str | None,
@@ -300,39 +371,57 @@ def capture_payload(
     length: int | None = None,
 ) -> None:
     """Uloží payload do capture databáze."""
-    global _capture_conn, _capture_cols
+    global _capture_queue, _capture_thread, _capture_cols
     
-    if not CAPTURE_PAYLOADS or not _capture_conn:
+    if not CAPTURE_PAYLOADS:
         return
+
+    # Lazy init thread/queue (po startu procesu)
+    if _capture_queue is None or _capture_thread is None or not _capture_thread.is_alive():
+        # Zajistíme schema + sloupce (backward compatibility)
+        conn, cols = init_capture_db()
+        if conn is None:
+            return
+        _capture_cols = cols
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _capture_queue = queue.Queue(maxsize=5000)
+        _capture_thread = threading.Thread(
+            target=_capture_worker,
+            args=(CAPTURE_DB_PATH,),
+            daemon=True,
+            name="capture-writer",
+        )
+        _capture_thread.start()
     
     try:
         ts = iso_now()
-        fields = ["ts", "device_id", "table_name", "raw", "parsed"]
-        values = [ts, device_id, table, raw, json.dumps(parsed, ensure_ascii=False)]
-        
-        if "direction" in _capture_cols:
-            fields.append("direction")
-            values.append(direction)
-        if "conn_id" in _capture_cols:
-            fields.append("conn_id")
-            values.append(conn_id)
-        if "peer" in _capture_cols:
-            fields.append("peer")
-            values.append(peer)
-        if "length" in _capture_cols:
-            fields.append("length")
-            values.append(length)
-        
-        placeholders = ",".join("?" for _ in fields)
-        sql = (
-            f"INSERT INTO frames ({','.join(fields)}) "
-            f"VALUES ({placeholders})"
+        values = (
+            ts,
+            device_id,
+            table,
+            raw,
+            json.dumps(parsed, ensure_ascii=False),
+            direction,
+            conn_id,
+            peer,
+            length,
         )
-        _capture_conn.execute(sql, values)
-        _capture_conn.commit()
+        assert _capture_queue is not None
+        try:
+            _capture_queue.put_nowait(values)
+        except queue.Full:
+            logger.debug("Capture queue full - dropping payload")
     except Exception as e:
         logger.debug(f"Capture payload failed: {e}")
 
 
 # Initialize capture DB at module load
-_capture_conn, _capture_cols = init_capture_db()
+_conn, _capture_cols = init_capture_db()
+try:
+    if _conn is not None:
+        _conn.close()
+except Exception:
+    pass
