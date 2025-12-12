@@ -159,6 +159,44 @@ def load_sensor_map() -> None:
             )
             added += 1
         
+        # Vestavene senzory, pokud chybi v mapovani
+        builtin = {
+            "tbl_events:Type": SensorConfig(
+                "Event type", "", None, None, None, "inverter", "diagnostic"
+            ),
+            "tbl_events:Confirm": SensorConfig(
+                "Event confirm", "", None, None, None, "inverter", "diagnostic"
+            ),
+            "tbl_events:Content": SensorConfig(
+                "Event content", "", None, None, None, "inverter", "diagnostic"
+            ),
+            "proxy_status:status": SensorConfig(
+                "Proxy status", "", None, None, None, "proxy", "diagnostic"
+            ),
+            "proxy_status:mode": SensorConfig(
+                "Proxy mode", "", None, None, None, "proxy", "diagnostic"
+            ),
+            "proxy_status:last_data": SensorConfig(
+                "Last data", "", "timestamp", None, None, "proxy", "diagnostic"
+            ),
+            "proxy_status:cloud_online": SensorConfig(
+                "Cloud online", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+            ),
+            "proxy_status:box_connected": SensorConfig(
+                "BOX connected", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+            ),
+            "proxy_status:cloud_queue": SensorConfig(
+                "Cloud queue size", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+            "proxy_status:mqtt_queue": SensorConfig(
+                "MQTT queue size", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+        }
+        for sid, cfg in builtin.items():
+            if sid not in SENSORS:
+                SENSORS[sid] = cfg
+                added += 1
+        
         if added:
             logger.info(
                 f"Sensor map: Načteno {added} senzorů z {SENSOR_MAP_PATH}"
