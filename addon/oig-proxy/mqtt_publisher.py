@@ -482,7 +482,8 @@ class MQTTPublisher:
             },
         }
         
-        if device_type == "inverter":
+        # Proxy i inverter jsou root zařízení, bez via_device
+        if device_type in ("inverter", "proxy"):
             del discovery_payload["device"]["via_device"]
         
         if config.is_binary:
