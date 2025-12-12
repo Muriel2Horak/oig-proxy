@@ -31,6 +31,7 @@ scp $LOCAL_SOURCE/models.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/utils.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/parser.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/cloud_manager.py $HA_HOST:/tmp/oig-proxy-new/
+scp $LOCAL_SOURCE/cloud_session.py $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || true
 scp $LOCAL_SOURCE/mqtt_publisher.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/proxy.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/main.py $HA_HOST:/tmp/oig-proxy-new/
