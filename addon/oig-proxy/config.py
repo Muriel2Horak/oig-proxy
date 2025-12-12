@@ -97,4 +97,7 @@ DEVICE_NAMES = {
     "battery": "Baterie",
     "boiler": "Bojler",
     "box": "OIG Box",
+    "pv": "FVE",
+    "grid": "Síť",
+    "load": "Spotřeba",
 }

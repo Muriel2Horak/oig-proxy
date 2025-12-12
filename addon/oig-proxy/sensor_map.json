@@ -267,7 +267,7 @@
     "AC_PY": {
       "name": "Dodávka AC střídače tento rok",
       "name_cs": "Síť - Dodávka rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -417,7 +417,7 @@
     "EN_YEAR": {
       "name": "Roční odběr (loYEnergy 999996)",
       "name_cs": "Spotřeba - Odběr rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -444,7 +444,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BAT_CU": {
       "name": "Maximální nabíjecí napětí",
@@ -455,7 +455,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "FMT_ON": {
       "name": "Formátování baterie zap. / vyp.",
@@ -489,7 +489,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BAT_AA": {
       "name": "Nabíjení ze sítě - aktuální výkon",
@@ -510,7 +510,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BAT_GL_MIN": {
       "name": "Backup min",
@@ -521,7 +521,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BAT_AG_MIN": {
       "name": "Agregat min",
@@ -532,7 +532,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "LO_DAY": {
       "name": "Počet dnů k začátku balancování",
@@ -566,7 +566,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "HDO1_E": {
       "name": "End",
@@ -577,7 +577,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "HDO2_S": {
       "name": "HDO časové pásmo 2",
@@ -588,7 +588,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "HDO2_E": {
       "name": "End",
@@ -599,7 +599,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BAT_V": {
       "name": "Baterie napětí",
@@ -731,7 +731,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_SET": {
       "name": "Nastavený výkonu",
@@ -742,7 +742,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE1_S": {
       "name": "Pásmo 1 - začátek",
@@ -753,7 +753,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE1_E": {
       "name": "Pásmo 1 - konec",
@@ -764,7 +764,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE2_S": {
       "name": "Pásmo 2 -začátek",
@@ -775,7 +775,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE2_E": {
       "name": "Pásmo 2 - konec",
@@ -786,7 +786,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE3_S": {
       "name": "Pásmo 3 - začátek",
@@ -797,7 +797,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE3_E": {
       "name": "Pásmo 3 - konec",
@@ -808,7 +808,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE4_S": {
       "name": "Pásmo 4 -začátek",
@@ -819,7 +819,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ZONE4_E": {
       "name": "Pásmo 4 - konec",
@@ -830,7 +830,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "HDO": {
       "name": "Signalizace nízkého tarifu HDO",
@@ -862,7 +862,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "MANUAL": {
       "name": "Bojler manual",
@@ -873,7 +873,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
       "todo": false,
-      "entity_category": "config",
+      "entity_category": "diagnostic",
       "is_binary": true
     },
     "SSR0": {
@@ -918,7 +918,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P": {
       "name": "Bohjler - aktuální výkon",
@@ -981,7 +981,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Type": {
       "name": "Identifikator Typu Zarizeni",
@@ -1146,7 +1146,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ResetEnabled": {
       "name": "Povoleni resetovat pristroj po updatu",
@@ -1157,7 +1157,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Testing": {
       "name": "Povoleni testovaci procedury komunikace - Pozor !!!",
@@ -1168,7 +1168,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SettingEnabled": {
       "name": "Povoleni odesilat nastaveni za Serveru",
@@ -1179,7 +1179,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ReadOutEnabled": {
       "name": "Povoleni vycitat pristroj",
@@ -1190,7 +1190,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Record": {
       "name": "Changed / Accepted",
@@ -1310,7 +1310,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config",
+      "entity_category": "diagnostic",
       "is_binary": true
     },
     "LOAD_PV_OFF": {
@@ -1322,7 +1322,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "GRID_PV_ON": {
       "name": "Vybíjení baterek do sítě při dostupné FVE",
@@ -1333,7 +1333,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config",
+      "entity_category": "diagnostic",
       "is_binary": true
     },
     "GRID_PV_OFF": {
@@ -1345,7 +1345,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "tbl_invertor_prms:MODE": {
       "name": "Inverter Mode",
@@ -1367,7 +1367,12 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "options": ["HOME I", "HOME II", "HOME III", "HOME UPS"]
+      "options": [
+        "HOME I",
+        "HOME II",
+        "HOME III",
+        "HOME UPS"
+      ]
     },
     "tbl_actual:ENBL": {
       "name": "System Enabled (live)",
@@ -1378,7 +1383,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config",
+      "entity_category": "diagnostic",
       "is_binary": true
     },
     "tbl_actual:VIZ": {
@@ -1554,7 +1559,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_ADJ_STRT": {
       "name": "Auto-adjustment starts when power rate reaches",
@@ -1565,7 +1570,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_ADJ_ENBL": {
       "name": "Auto-adjustment Enable",
@@ -1576,7 +1581,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config",
+      "entity_category": "diagnostic",
       "is_binary": true
     },
     "PF_MIN_100": {
@@ -1588,7 +1593,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "STATUS": {
       "name": "Status",
@@ -1726,7 +1731,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "COMINVERT": {
       "name": "Komunikace invertor - včetně výčet poruch",
@@ -1792,7 +1797,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "S_STOP_ISON": {
       "name": "Centrál stop - zap. /vyp.",
@@ -1803,7 +1808,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "LCD_BRIGH": {
       "name": "Jas LCD",
@@ -1814,7 +1819,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "LED_BRIGH": {
       "name": "Jas LED",
@@ -1825,7 +1830,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "FAN1": {
       "name": "Teplota ventilátor 1",
@@ -1856,7 +1861,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_FVE": {
       "name": "Výkon FVE",
@@ -1908,7 +1913,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "RQRESEE": {
       "name": "Požadavek na RESET LCD EEPROM",
@@ -1919,7 +1924,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SW": {
       "name": "Verze SW",
@@ -1963,7 +1968,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SCNT": {
       "name": "Pocet startu LCD",
@@ -1985,7 +1990,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ACOUPLMT": {
       "name": "Parametr pro dobijeni Baterie v AC-Coupling modu",
@@ -1996,7 +2001,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "HWID": {
       "name": "Hardwarovy identifikator LCD",
@@ -2018,7 +2023,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CRCT": {
       "name": "Indikace krizového ovládání (regulace 0-100%) - relé HDO",
@@ -2040,7 +2045,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CRCTE": {
       "name": "Povoleni indikace krizového ovládání",
@@ -2051,7 +2056,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "RA": {
       "name": "Tlačítko aktivace aktualizace FW v3.42.xxxx",
@@ -2062,7 +2067,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SA": {
       "name": "Požadavek na okamžité odeslání dat",
@@ -2073,7 +2078,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "DateTime": {
       "name": "DatumCas",
@@ -2312,7 +2317,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "F_NOMIN": {
       "name": "Nominal output frequency",
@@ -2323,7 +2328,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CHRG_X": {
       "name": "When float charging current is less than X",
@@ -2334,7 +2339,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CHRG_T": {
       "name": "Continued T",
@@ -2345,7 +2350,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CHRG_Y": {
       "name": "Charger Off, when battery voltage is less than Y",
@@ -2356,7 +2361,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BUZ_MUT_STNB": {
       "name": "Mute the buzzer in the Standby mode",
@@ -2367,7 +2372,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "AL_MUT_BAT": {
       "name": "Mute alarm in battery mode",
@@ -2378,7 +2383,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "IN_AC_WIDE": {
       "name": "Wide AC input range",
@@ -2389,7 +2394,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "OVERFDER": {
       "name": "Over voltage derating",
@@ -2400,7 +2405,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "OVERVDER": {
       "name": "Over frequency derating",
@@ -2411,7 +2416,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "AUTQREA": {
       "name": "Reactive power automatic control",
@@ -2422,7 +2427,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ONGRQREA": {
       "name": "Grid connected reactive power",
@@ -2433,7 +2438,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BTR_TYPE": {
       "name": "Aktive Li-Fe battery white commissioning",
@@ -2455,7 +2460,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "load",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PVMIN": {
       "name": "Nastavení min. urovně na přechod z FMT4 na HOME",
@@ -2466,7 +2471,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "pv",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SERNO": {
       "name": "SN číslo invertoru FSP",
@@ -2488,7 +2493,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_MAX_AC": {
       "name": "Max-grid-connected Voltage",
@@ -2499,7 +2504,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "F_MIN_AC": {
       "name": "Min-grid-connected Frequency",
@@ -2510,7 +2515,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "F_MAX_AC": {
       "name": "Max-grid-connected Frequency",
@@ -2521,7 +2526,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "T_ON_GRID": {
       "name": "The waiting time before grid connection",
@@ -2532,7 +2537,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_MAX_GRID_AV": {
       "name": "Max. grid connected average voltage",
@@ -2543,7 +2548,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_MAX_FEED_GRID": {
       "name": "Max. feed-in grid power",
@@ -2554,7 +2559,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PF_FEED": {
       "name": "Feed-in power factor",
@@ -2565,7 +2570,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_MIN_PV": {
       "name": "Min. PV input voltage",
@@ -2576,7 +2581,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "pv",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_MAX_PV": {
       "name": "Max. PV input voltage",
@@ -2587,7 +2592,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "pv",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_MIN_MPP": {
       "name": "Min MPP votage",
@@ -2598,7 +2603,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "pv",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_MAX_MPP": {
       "name": "Max MPP votage",
@@ -2609,7 +2614,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "pv",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "A_MAX_CHRG": {
       "name": "Max. charging current",
@@ -2620,7 +2625,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "AAC_MAX_CHRG": {
       "name": "Max. AC charging current",
@@ -2631,7 +2636,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_CHRG": {
       "name": "Bulk charging voltage",
@@ -2642,7 +2647,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_CHAR_FLO": {
       "name": "Floating charging voltage",
@@ -2653,7 +2658,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_CUT_GRID": {
       "name": "Battery cut-off discharging voltage when grid is available",
@@ -2664,7 +2669,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_RE_GRID": {
       "name": "Battery re-discharging voltage when grid is available",
@@ -2675,7 +2680,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_CUT_NOGRID": {
       "name": "Battery cut-off discharging voltage when grid is unavailable",
@@ -2686,7 +2691,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "V_RE_NOGRID": {
       "name": "Battery re-discharging voltage when grid is unavailable",
@@ -2697,7 +2702,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "A_MAX_DIS_HYB": {
       "name": "Max. battery discharge current in hybrid mode",
@@ -2708,7 +2713,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_CAL_R": {
       "name": "Feeding grid power calibration R",
@@ -2719,7 +2724,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_CAL_S": {
       "name": "Feeding grid power calibration S",
@@ -2730,7 +2735,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "P_CAL_T": {
       "name": "Feeding grid power calibration T",
@@ -2741,7 +2746,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BUZ_MUT": {
       "name": "Mute buzer alarm",
@@ -2752,7 +2757,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "GEN_AC_SRC": {
       "name": "Generator as AC source",
@@ -2763,7 +2768,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PRUM": {
       "name": "Průměrování",
@@ -2774,7 +2779,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "OPAK_REG": {
       "name": "Opakování regulace",
@@ -2785,7 +2790,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "STRM_REG": {
       "name": "Strmost regulace",
@@ -2796,7 +2801,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "KON_L1": {
       "name": "Konstanata výkonu L1",
@@ -2807,7 +2812,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "KON_L2": {
       "name": "Konstanata výkonu L2",
@@ -2818,7 +2823,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "KON_L3": {
       "name": "Konstanata výkonu L3",
@@ -2829,7 +2834,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "POS_L1": {
       "name": "Posun výkonu L1",
@@ -2840,7 +2845,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "POS_L2": {
       "name": "Posun výkonu L2",
@@ -2851,7 +2856,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "POS_L3": {
       "name": "Posun výkonu L3",
@@ -2862,7 +2867,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "NEC_L1": {
       "name": "Necitlivost výkonu L1",
@@ -2873,7 +2878,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "NEC_L2": {
       "name": "Necitlivost výkonu L2",
@@ -2884,7 +2889,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "NEC_L3": {
       "name": "Necitlivost výkonu L3",
@@ -2895,7 +2900,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SMER_PROUDU": {
       "name": "Směr proudu",
@@ -2906,7 +2911,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "TYP_": {
       "name": "Typ a zapojení invertoru",
@@ -2928,7 +2933,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CONSUM_LIQ": {
       "name": "Průměrná spotřeba auta benzín / nafta na 100km",
@@ -2939,7 +2944,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PRICE_LIQ": {
       "name": "Cena PH 1l v Kč",
@@ -2950,7 +2955,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CONSUM_EL": {
       "name": "Průměrná spotřeba auta na el. na 100km",
@@ -2961,7 +2966,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PRICE_ET1": {
       "name": "Cena el. energie 1kWh v Kč",
@@ -2972,7 +2977,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PRICE_ET2": {
       "name": "Cena el. energie 1 kWh v Kč",
@@ -2983,7 +2988,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CARACUSIZE": {
       "name": "Velikost akumulátoru v automobilu",
@@ -2994,7 +2999,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "ETOCAR": {
       "name": "Dodána el. energie do automobilu",
@@ -3025,7 +3030,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "EBATMIN": {
       "name": "Auto ECO baterie minimum (0-100%)",
@@ -3036,7 +3041,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "EPOWMAX": {
       "name": "Auto ECO maximální odběr (1-10000W)",
@@ -3047,7 +3052,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "EBATREC": {
       "name": "Auto ECO baterie obnovení",
@@ -3058,7 +3063,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PHSS": {
       "name": "Počet fází nabíječky",
@@ -3069,7 +3074,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "EREGREP": {
       "name": "Auto ECO opakování regulace",
@@ -3080,7 +3085,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "EREGSNS": {
       "name": "Auto ECO citlivost regulace",
@@ -3091,7 +3096,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "wallbox",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "IDENT": {
       "name": "Pořadové číslo nabíječky",
@@ -3217,7 +3222,7 @@
     "ETOCAR_Y": {
       "name": "Energie dodána do automobilu - roční",
       "name_cs": "Wallbox - Energie rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -3247,7 +3252,7 @@
     "ETOCAR_PVB_Y": {
       "name": "Energie dodána do automobilu z FVE a baterek - roční",
       "name_cs": "Wallbox - Z FVE/bat. rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -3277,7 +3282,7 @@
     "ETOCAR_G_Y": {
       "name": "Energie dodána do automobilu ze sítě - roční",
       "name_cs": "Wallbox - Ze sítě rok",
-      "unit_of_measurement": "MWh",
+      "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
@@ -3293,7 +3298,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SKOS": {
       "name": "SKOS",
@@ -3304,7 +3309,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "BAT_CH_HI": {
       "name": "BAT_CH_HI",
@@ -3315,7 +3320,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "PVMIN0": {
       "name": "PVMIN0",
@@ -3326,7 +3331,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "pv",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Result": {
       "name": "Výsledek",
@@ -3348,7 +3353,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "W": {
       "name": "Instalovaný výkon bojleru",
@@ -3359,7 +3364,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "boiler",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Rdt": {
       "name": "Čas dat",
@@ -3392,7 +3397,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Tmr": {
       "name": "Tmr",
@@ -3425,7 +3430,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config",
+      "entity_category": "diagnostic",
       "is_binary": true
     },
     "UTC": {
@@ -3448,7 +3453,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "grid",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "CALA": {
       "name": "CALA",
@@ -3459,7 +3464,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "inverter",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "Lat": {
       "name": "Latence",
@@ -3579,7 +3584,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "TYP": {
       "name": "TYP",
@@ -3601,7 +3606,7 @@
       "sensor_type_category": "measured",
       "device_mapping": "battery",
       "todo": false,
-      "entity_category": "config"
+      "entity_category": "diagnostic"
     },
     "SSID": {
       "name": "SSID",
