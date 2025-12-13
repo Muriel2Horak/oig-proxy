@@ -15,6 +15,23 @@ except ImportError:
     MQTT_AVAILABLE = False
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+def _get_int_env(name: str, default: int) -> int:
+    """Vrátí int z env proměnné s bezpečným fallbackem."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if raw == "" or raw.lower() == "null":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+# ============================================================================
 # MQTT Configuration
 # ============================================================================
 MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
@@ -37,6 +54,7 @@ DEVICE_ID = os.getenv("DEVICE_ID", "")  # Povinné!
 PROXY_LISTEN_HOST = os.getenv("PROXY_LISTEN_HOST", "0.0.0.0")
 PROXY_LISTEN_PORT = int(os.getenv("PROXY_PORT", "5710"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+PROXY_STATUS_INTERVAL = _get_int_env("PROXY_STATUS_INTERVAL", 60)
 
 # ============================================================================
 # Sensor Map Configuration

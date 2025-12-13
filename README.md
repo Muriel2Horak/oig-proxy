@@ -93,6 +93,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 - `MQTT_HOST/PORT/USERNAME/PASSWORD` – broker.
 - `MQTT_NAMESPACE` (default `oig_local`) – prefix topiců.
 - `PROXY_DEVICE_ID` (default `oig_proxy`) – pevné `device_id` pro proxy/status/event senzory.
+- `PROXY_STATUS_INTERVAL` (default `60`) – periodické publikování `proxy_status` do MQTT (užitečné po restartu HA).
 - `SENSOR_MAP_PATH` (default `/data/sensor_map.json` v add-onu).
 - `MAP_RELOAD_SECONDS` (0 = vypnuto) – periodický reload mapy.
 - `UNKNOWN_SENSORS_PATH` (default `/data/unknown_sensors.json`).

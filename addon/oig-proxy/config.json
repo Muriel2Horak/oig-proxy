@@ -22,6 +22,7 @@
     "mqtt_username": "",
     "mqtt_password": "",
     "map_reload_seconds": 0,
+    "proxy_status_interval": 60,
     "log_level": "INFO",
     "capture_payloads": false
   },
@@ -34,6 +35,7 @@
     "mqtt_username": "str",
     "mqtt_password": "str",
     "map_reload_seconds": "int",
+    "proxy_status_interval": "int",
     "log_level": "list(INFO|DEBUG|WARNING|ERROR)",
     "capture_payloads": "bool?",
     "ha_ip": "str?",

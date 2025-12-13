@@ -44,31 +44,51 @@ def friendly_name(sensor_id: str) -> str:
     return " ".join(p.capitalize() for p in parts)
 
 
-def load_mode_state() -> int | None:
-    """Načte uložený MODE stav z perzistentního souboru."""
+def load_mode_state() -> tuple[int | None, str | None]:
+    """Načte uložený MODE stav z perzistentního souboru.
+    
+    Returns:
+        (mode_value, device_id) – device_id může být None pokud nebyl uložen.
+    """
     try:
         if os.path.exists(MODE_STATE_PATH):
             with open(MODE_STATE_PATH, "r") as f:
                 data = json.load(f)
                 mode_value = data.get("mode")
+                device_id = data.get("device_id")
                 if mode_value is not None:
-                    logger.info(f"MODE: Načten uložený stav: {mode_value}")
-                    return mode_value
+                    try:
+                        mode_int = int(mode_value)
+                    except Exception:
+                        mode_int = None
+                    if mode_int is None or mode_int < 0 or mode_int > 3:
+                        logger.warning(
+                            f"MODE: Uložená hodnota {mode_value} je mimo rozsah 0-3, ignoruji"
+                        )
+                        return None, device_id
+                    logger.info(
+                        f"MODE: Načten uložený stav: {mode_int} "
+                        f"(device_id={device_id})"
+                    )
+                    return mode_int, device_id
     except Exception as e:
         logger.warning(f"MODE: Nepodařilo se načíst stav: {e}")
-    return None
+    return None, None
 
 
-def save_mode_state(mode_value: int) -> None:
+def save_mode_state(mode_value: int, device_id: str | None) -> None:
     """Uloží MODE stav do perzistentního souboru."""
     try:
         os.makedirs(os.path.dirname(MODE_STATE_PATH), exist_ok=True)
         with open(MODE_STATE_PATH, "w") as f:
             json.dump({
                 "mode": mode_value,
+                "device_id": device_id,
                 "timestamp": iso_now()
             }, f)
-        logger.debug(f"MODE: Stav uložen: {mode_value}")
+        logger.debug(
+            f"MODE: Stav uložen: {mode_value} (device_id={device_id})"
+        )
     except Exception as e:
         logger.error(f"MODE: Nepodařilo se uložit stav: {e}")
 

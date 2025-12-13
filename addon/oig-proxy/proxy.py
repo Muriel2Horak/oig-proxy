@@ -13,13 +13,14 @@ from config import (
     CLOUD_REPLAY_RATE,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
+    PROXY_STATUS_INTERVAL,
     TARGET_PORT,
     TARGET_SERVER,
 )
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from parser import OIGDataParser
-from utils import capture_payload
+from utils import capture_payload, load_mode_state, save_mode_state
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,10 @@ class OIGProxy:
         self.ack_learner = ACKLearner()
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
+        loaded_mode, loaded_dev = load_mode_state()
+        self._mode_value: int | None = loaded_mode
+        self._mode_device_id: str | None = loaded_dev
+        self._mode_pending_publish: bool = self._mode_value is not None
         
         # Režim
         self.mode = ProxyMode.ONLINE
@@ -47,6 +52,11 @@ class OIGProxy:
         
         # Background tasky
         self._replay_task: asyncio.Task[Any] | None = None
+        self._status_task: asyncio.Task[Any] | None = None
+        self._box_conn_lock = asyncio.Lock()
+        self._active_box_writer: asyncio.StreamWriter | None = None
+        self._active_box_peer: str | None = None
+        self._conn_seq: int = 0
         
         # Statistiky
         self.stats = {
@@ -77,8 +87,20 @@ class OIGProxy:
             logger.warning("MQTT: Initial connect failed, health check se pokusí reconnect")
             await self.mqtt_publisher.start_health_check()
 
+        # Pokud máme uložené device_id a aktuální device je AUTO, použij ho
+        if self.device_id == "AUTO" and self._mode_device_id:
+            self.device_id = self._mode_device_id
+            self.mqtt_publisher.device_id = self._mode_device_id
+            logger.info(
+                f"MODE: Obnovuji device_id z uloženého stavu: {self.device_id}"
+            )
+            self.mqtt_publisher.publish_availability()
+
         # Po připojení MQTT publikuj stav (init)
         await self.publish_proxy_status(force=True)
+        await self._publish_mode_if_ready(reason="startup")
+        if self._status_task is None or self._status_task.done():
+            self._status_task = asyncio.create_task(self._proxy_status_loop())
         
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -124,6 +146,115 @@ class OIGProxy:
             await self.mqtt_publisher.publish_proxy_status(payload)
         except Exception as e:
             logger.debug(f"Proxy status publish failed: {e}")
+
+    async def _publish_mode_if_ready(
+        self,
+        device_id: str | None = None,
+        *,
+        reason: str | None = None
+    ) -> None:
+        """Publikuje známý MODE do MQTT (obnova po restartu)."""
+        if self._mode_value is None:
+            return
+        if not self.mqtt_publisher.is_ready():
+            self._mode_pending_publish = True
+            logger.debug("MODE: MQTT není připraveno, publish odkládám")
+            return
+        target_device_id = device_id
+        if not target_device_id:
+            if self.device_id and self.device_id != "AUTO":
+                target_device_id = self.device_id
+            elif self._mode_device_id:
+                target_device_id = self._mode_device_id
+        if not target_device_id:
+            self._mode_pending_publish = True
+            logger.debug("MODE: Nemám device_id, publish odložen")
+            return
+
+        payload: dict[str, Any] = {
+            "_table": "tbl_box_prms",
+            "MODE": int(self._mode_value),
+        }
+        payload["_device_id"] = target_device_id
+
+        try:
+            await self.mqtt_publisher.publish_data(payload)
+            self._mode_pending_publish = False
+            if reason:
+                logger.info(
+                    f"MODE: Publikován stav {self._mode_value} ({reason})"
+                )
+        except Exception as e:
+            logger.debug(f"MODE publish failed: {e}")
+            self._mode_pending_publish = True
+
+    async def _handle_mode_update(
+        self,
+        new_mode: Any,
+        device_id: str | None,
+        source: str
+    ) -> None:
+        """Uloží a publikuje MODE pokud máme nové info."""
+        if new_mode is None:
+            return
+        try:
+            mode_int = int(new_mode)
+        except Exception:
+            return
+        if mode_int < 0 or mode_int > 3:
+            logger.debug(
+                f"MODE: Hodnota {mode_int} mimo rozsah 0-3, zdroj {source}, ignoruji"
+            )
+            return
+
+        if mode_int != self._mode_value:
+            self._mode_value = mode_int
+            save_mode_state(mode_int, device_id or self.device_id or self._mode_device_id)
+            logger.info(f"MODE: {source} → {mode_int}")
+        if device_id:
+            self._mode_device_id = device_id
+
+        await self._publish_mode_if_ready(device_id, reason=source)
+
+    async def _maybe_process_mode(
+        self,
+        parsed: dict[str, Any],
+        table_name: str | None,
+        device_id: str | None
+    ) -> None:
+        """Detekuje MODE ze známých zdrojů a zajistí publish + persist."""
+        if not parsed:
+            return
+
+        if table_name == "tbl_box_prms" and "MODE" in parsed:
+            await self._handle_mode_update(parsed.get("MODE"), device_id, "tbl_box_prms")
+            return
+
+        if table_name == "tbl_events":
+            content = parsed.get("Content")
+            if content:
+                new_mode = self.parser.parse_mode_from_event(str(content))
+                if new_mode is not None:
+                    await self._handle_mode_update(new_mode, device_id, "tbl_events")
+                    return
+
+    async def _proxy_status_loop(self) -> None:
+        """Periodicky publikuje proxy_status do MQTT (pro HA restart)."""
+        if PROXY_STATUS_INTERVAL <= 0:
+            logger.info("Proxy status loop disabled (interval <= 0)")
+            return
+
+        logger.info(
+            f"Proxy status: periodický publish každých "
+            f"{PROXY_STATUS_INTERVAL}s"
+        )
+        while True:
+            await asyncio.sleep(PROXY_STATUS_INTERVAL)
+            try:
+                await self.publish_proxy_status()
+                await self._publish_mode_if_ready(reason="periodic")
+            except Exception as e:
+                logger.debug(f"Proxy status loop publish failed: {e}")
     
     async def _on_cloud_state_change(self, event: str):
         """Callback při změně stavu cloudu."""
@@ -243,7 +374,20 @@ class OIGProxy:
     ):
         """Handle jednoho BOX připojení - persistent connection."""
         addr = writer.get_extra_info('peername')
-        logger.debug(f"🔌 BOX připojen: {addr}")
+        async with self._box_conn_lock:
+            if self._active_box_writer and not self._active_box_writer.is_closing():
+                try:
+                    self._active_box_writer.close()
+                    await self._active_box_writer.wait_closed()
+                    logger.info("BOX: uzavírám předchozí spojení kvůli novému připojení")
+                except Exception:
+                    pass
+            self._conn_seq += 1
+            conn_id = self._conn_seq
+            self._active_box_writer = writer
+            self._active_box_peer = f"{addr[0]}:{addr[1]}" if addr else None
+
+        logger.debug(f"🔌 BOX připojen ({conn_id}): {addr}")
         self.box_connected = True
         self.box_connections += 1
         await self.publish_proxy_status(force=True)
@@ -254,10 +398,10 @@ class OIGProxy:
                 current_mode = self.mode
             
             if current_mode == ProxyMode.ONLINE:
-                await self._handle_online_mode_connection(reader, writer)
+                await self._handle_online_mode_connection(reader, writer, conn_id)
             else:
                 # OFFLINE nebo REPLAY → lokální ACK + queue
-                await self._handle_offline_mode_connection(reader, writer)
+                await self._handle_offline_mode_connection(reader, writer, conn_id)
             
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
@@ -268,12 +412,17 @@ class OIGProxy:
             except Exception:
                 pass
             self.box_connected = False
+            async with self._box_conn_lock:
+                if self._active_box_writer is writer:
+                    self._active_box_writer = None
+                    self._active_box_peer = None
             await self.publish_proxy_status(force=True)
     
     async def _handle_online_mode_connection(
         self,
         box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter
+        box_writer: asyncio.StreamWriter,
+        conn_id: int
     ):
         """
         ONLINE režim s reconnect logikou:
@@ -329,14 +478,17 @@ class OIGProxy:
                     # Re-publish availability with correct device_id
                     self.mqtt_publisher.publish_availability()
                     logger.info(f"🔑 Device ID detected: {device_id}")
+                    await self._publish_mode_if_ready(device_id=device_id, reason="device_autodetect")
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame)
+                    direction="box_to_proxy", length=len(frame),
+                    conn_id=conn_id, peer=self._active_box_peer
                 )
                 
                 # MQTT publish (vždy, nezávisle na cloud)
                 if parsed:
+                    await self._maybe_process_mode(parsed, table_name, device_id)
                     await self.mqtt_publisher.publish_data(parsed)
                 
                 # Pokud nemáme cloud spojení, vytvoř nové
@@ -391,7 +543,8 @@ class OIGProxy:
                     ack_str = ack_data.decode('utf-8')
                     capture_payload(
                         None, table_name, ack_str, {},
-                        direction="cloud_to_proxy", length=len(ack_data)
+                        direction="cloud_to_proxy", length=len(ack_data),
+                        conn_id=conn_id, peer=self._active_box_peer
                     )
                     
                     # ACK Learning
@@ -458,7 +611,8 @@ class OIGProxy:
     async def _handle_offline_mode_connection(
         self,
         box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter
+        box_writer: asyncio.StreamWriter,
+        conn_id: int
     ):
         """
         OFFLINE/REPLAY režim - persistent connection s lokálním ACK.
@@ -496,11 +650,13 @@ class OIGProxy:
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame)
+                    direction="box_to_proxy", length=len(frame),
+                    conn_id=conn_id, peer=self._active_box_peer
                 )
                 
                 # MQTT publish
                 if parsed:
+                    await self._maybe_process_mode(parsed, table_name, device_id)
                     await self.mqtt_publisher.publish_data(parsed)
                 
                 # Lokální ACK + queue
