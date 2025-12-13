@@ -31,8 +31,8 @@
 ### 1.2 HG Režimy (Grid Modes)
 
 ```
-HG I           - MODE 0 (HOME I)   - Standard grid mode
-HG IV-UPS      - MODE 3 (HOME UPS) - UPS mode with battery priority
+HG I           - MODE 0 (Home 1)   - Standard grid mode
+HG IV-UPS      - MODE 3 (Home UPS) - UPS mode with battery priority
 ```
 
 **Formát**: `HG {mode} (Load:XXXw, PV:XXXw, BC:XX%, BV:XX.XXXv, BA:±XX.XXXa, DAC:XX%, GMin:XX%)`

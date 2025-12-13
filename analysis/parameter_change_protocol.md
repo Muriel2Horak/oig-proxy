@@ -5,7 +5,7 @@
 BOX obsahuje několik *_PRMS tabulek s parametry které lze měnit vzdáleně přes Setting frames:
 
 ### TBL_BOX_PRMS (hlavní parametry systému)
-- **MODE** - režim práce: 0=HOME I, 1=HOME II, 2=HOME III, 3=HOME UPS ⭐
+- **MODE** - režim práce: 0=Home 1, 1=Home 2, 2=Home 3, 3=Home UPS ⭐
 - **ISON** - provoz/mimo provoz
 - **BYPASS** / **BYPASS_M** - automatický/ruční bypass
 - **LCD_BRIGH** / **LED_BRIGH** - jas LCD/LED (%)

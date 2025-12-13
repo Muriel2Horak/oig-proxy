@@ -2,7 +2,7 @@
 
 ## Problém
 
-BatteryBox režim (HOME I, HOME II, HOME III, HOME UPS) se v OIG protokolu:
+BatteryBox režim (Home 1, Home 2, Home 3, Home UPS) se v OIG protokolu:
 - **Nastavuje** z cloudu jako `tbl_box_prms:MODE` (Setting frame, hodnoty 0-3)
 - **Nepřichází v běžné telemetrii** (box nikdy neposílá tbl_box_prms jako Reason=Table)
 - **Může se změnit lokálně** na displayi boxu nebo remotely z aplikace
@@ -28,7 +28,7 @@ Pattern: `MODE: [old_value]->[new_value]`
 Proxy emuluje `tbl_box_prms:MODE` senzor:
 - Parsuje změny z tbl_events
 - Publikuje jako běžný MQTT sensor s device_class="enum"
-- Options: ["HOME I", "HOME II", "HOME III", "HOME UPS"]
+- Options: ["Home 1", "Home 2", "Home 3", "Home UPS"]
 
 ### 3. Persistence
 
@@ -111,7 +111,7 @@ def _process_mode_event(self, parsed: dict[str, Any]) -> None:
 
 ### Test změny MODE
 
-1. Změň MODE v OIG aplikaci (např. HOME I → HOME II)
+1. Změň MODE v OIG aplikaci (např. Home 1 → Home 2)
 2. Sleduj logy proxy:
 ```
 MODE: Event detekován: 0 → 1
@@ -121,7 +121,7 @@ MODE: Publikuji virtuální senzor: MODE=1
 
 3. V Home Assistant:
 ```
-sensor.oig_local_2206237016_tbl_box_prms_mode: "HOME II"
+sensor.oig_local_2206237016_tbl_box_prms_mode: "Home 2"
 ```
 
 ### Test persistence
@@ -140,10 +140,10 @@ MODE: Publikuji obnovený stav při startu: MODE=1
 
 | Hodnota | Enum     | Popis                          |
 |---------|----------|--------------------------------|
-| 0       | HOME I   | Standard (FMT/No Limit vypnuto)|
-| 1       | HOME II  | -                              |
-| 2       | HOME III | -                              |
-| 3       | HOME UPS | No Limit (FMT zapnuto)         |
+| 0       | Home 1   | Standard (FMT/No Limit vypnuto)|
+| 1       | Home 2   | -                              |
+| 2       | Home 3   | -                              |
+| 3       | Home UPS | No Limit (FMT zapnuto)         |
 
 ## Známé omezení
 

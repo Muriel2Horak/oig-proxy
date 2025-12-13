@@ -1549,10 +1549,10 @@
       "device_mapping": "inverter",
       "todo": false,
       "options": [
-        "HOME I",
-        "HOME II",
-        "HOME III",
-        "HOME UPS"
+        "Home 1",
+        "Home 2",
+        "Home 3",
+        "Home UPS"
       ]
     },
     "tbl_actual:ENBL": {

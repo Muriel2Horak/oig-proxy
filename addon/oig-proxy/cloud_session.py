@@ -53,6 +53,7 @@ class CloudSessionManager:
         self._backoff_s = min_reconnect_s
         self._last_connect_attempt = 0.0
         self._last_warn_ts = 0.0
+        self._rx_buf = bytearray()
 
     def is_connected(self) -> bool:
         w = self._writer
@@ -73,6 +74,62 @@ class CloudSessionManager:
                 pass
         self._reader = None
         self._writer = None
+        self._rx_buf.clear()
+
+    @staticmethod
+    def _extract_one_xml_frame(buf: bytearray) -> bytes | None:
+        """Vrátí první kompletní `<Frame>...</Frame>` z bufferu, jinak None."""
+        end_tag = b"</Frame>"
+        end_idx = buf.find(end_tag)
+        if end_idx < 0:
+            return None
+
+        frame_end = end_idx + len(end_tag)
+        # Volitelný CRLF za frame (BOX typicky posílá \r\n)
+        if len(buf) > frame_end:
+            if buf[frame_end:frame_end + 2] == b"\r\n":
+                frame_end += 2
+            elif buf[frame_end:frame_end + 1] == b"\n":
+                frame_end += 1
+            elif buf[frame_end:frame_end + 1] == b"\r":
+                # Pokud máme jen '\r' bez dalšího bajtu, počkáme (může být rozseknuté CRLF)
+                if len(buf) < frame_end + 2:
+                    return None
+                frame_end += 1
+
+        frame = bytes(buf[:frame_end])
+        del buf[:frame_end]
+        return frame
+
+    async def _read_one_ack_frame(
+        self,
+        *,
+        ack_timeout_s: float,
+        ack_max_bytes: int,
+    ) -> bytes:
+        assert self._reader is not None
+
+        # Nejprve zkus vyzobnout z interního bufferu.
+        existing = self._extract_one_xml_frame(self._rx_buf)
+        if existing is not None:
+            return existing
+
+        async def _read_until_frame() -> bytes:
+            while True:
+                chunk = await self._reader.read(4096)
+                if not chunk:
+                    return b""
+                self._rx_buf.extend(chunk)
+                frame = self._extract_one_xml_frame(self._rx_buf)
+                if frame is not None:
+                    return frame
+                if len(self._rx_buf) > ack_max_bytes:
+                    # Fallback: vratíme, co máme (pro kompatibilitu), ale nenecháme buffer růst donekonečna.
+                    data = bytes(self._rx_buf)
+                    self._rx_buf.clear()
+                    return data
+
+        return await asyncio.wait_for(_read_until_frame(), timeout=ack_timeout_s)
 
     async def ensure_connected(self) -> None:
         if self.is_connected():
@@ -132,9 +189,9 @@ class CloudSessionManager:
             try:
                 self._writer.write(data)
                 await self._writer.drain()
-                ack = await asyncio.wait_for(
-                    self._reader.read(ack_max_bytes),
-                    timeout=ack_timeout_s,
+                ack = await self._read_one_ack_frame(
+                    ack_timeout_s=ack_timeout_s,
+                    ack_max_bytes=ack_max_bytes,
                 )
                 if not ack:
                     # Cloud ukončil spojení (EOF)

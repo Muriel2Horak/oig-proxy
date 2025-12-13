@@ -39,6 +39,7 @@ class CloudQueue:
     ):
         self.db_path = db_path
         self.max_size = max_size
+        self._has_frame_bytes = False
         self.conn = self._init_db()
         self.lock = asyncio.Lock()
     
@@ -53,6 +54,7 @@ class CloudQueue:
                 timestamp REAL NOT NULL,
                 table_name TEXT NOT NULL,
                 frame_data TEXT NOT NULL,
+                frame_bytes BLOB,
                 device_id TEXT,
                 queued_at TEXT NOT NULL
             )
@@ -61,6 +63,15 @@ class CloudQueue:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_timestamp ON queue(timestamp)"
         )
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(queue)")}
+            if "frame_bytes" not in cols:
+                conn.execute("ALTER TABLE queue ADD COLUMN frame_bytes BLOB")
+                conn.commit()
+                cols = {row[1] for row in conn.execute("PRAGMA table_info(queue)")}
+            self._has_frame_bytes = "frame_bytes" in cols
+        except Exception as e:
+            logger.warning(f"CloudQueue: Schema migration failed: {e}")
         conn.commit()
         
         logger.info(f"CloudQueue: Inicializováno ({self.db_path})")
@@ -68,7 +79,7 @@ class CloudQueue:
     
     async def add(
         self,
-        frame_data: str,
+        frame_data: bytes,
         table_name: str,
         device_id: str | None
     ) -> bool:
@@ -88,28 +99,61 @@ class CloudQueue:
                         "dropped oldest frame"
                     )
                 
-                self.conn.execute(
-                    "INSERT INTO queue "
-                    "(timestamp, table_name, frame_data, device_id, queued_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (time.time(), table_name, frame_data, device_id, iso_now())
-                )
+                frame_text = frame_data.decode("utf-8", errors="replace")
+                if self._has_frame_bytes:
+                    self.conn.execute(
+                        "INSERT INTO queue "
+                        "(timestamp, table_name, frame_data, frame_bytes, device_id, queued_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            time.time(),
+                            table_name,
+                            frame_text,
+                            frame_data,
+                            device_id,
+                            iso_now()
+                        )
+                    )
+                else:
+                    self.conn.execute(
+                        "INSERT INTO queue "
+                        "(timestamp, table_name, frame_data, device_id, queued_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (time.time(), table_name, frame_text, device_id, iso_now())
+                    )
                 self.conn.commit()
                 return True
             except Exception as e:
                 logger.error(f"CloudQueue: Add failed: {e}")
                 return False
     
-    async def get_next(self) -> tuple[int, str, str] | None:
-        """Vrátí další frame (id, table_name, frame_data) nebo None."""
+    async def get_next(self) -> tuple[int, str, bytes] | None:
+        """Vrátí další frame (id, table_name, frame_bytes) nebo None."""
         async with self.lock:
             try:
+                if self._has_frame_bytes:
+                    cursor = self.conn.execute(
+                        "SELECT id, table_name, frame_bytes, frame_data FROM queue "
+                        "ORDER BY id LIMIT 1"
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    frame_id, table_name, frame_bytes, frame_text = row
+                    if frame_bytes is not None:
+                        return int(frame_id), str(table_name), bytes(frame_bytes)
+                    # Fallback: staré záznamy jen s textem
+                    return int(frame_id), str(table_name), str(frame_text).encode("utf-8")
+                
                 cursor = self.conn.execute(
                     "SELECT id, table_name, frame_data FROM queue "
                     "ORDER BY id LIMIT 1"
                 )
                 row = cursor.fetchone()
-                return row if row else None
+                if not row:
+                    return None
+                frame_id, table_name, frame_text = row
+                return int(frame_id), str(table_name), str(frame_text).encode("utf-8")
             except Exception as e:
                 logger.error(f"CloudQueue: Get next failed: {e}")
                 return None
