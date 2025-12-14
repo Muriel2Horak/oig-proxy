@@ -469,12 +469,17 @@ class OIGProxy:
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "⏱️ BOX idle timeout (15 min) - closing session"
+                        f"⏱️ BOX idle timeout (15 min) - closing session (conn={conn_id})"
                     )
                     break
                 
                 if not data:
-                    logger.debug("🔌 BOX ukončil spojení (EOF)")
+                    logger.debug(
+                        f"🔌 BOX ukončil spojení (EOF, conn={conn_id}, "
+                        f"frames_rx={self.stats['frames_received']}, "
+                        f"frames_tx={self.stats['frames_forwarded']}, "
+                        f"queue={self.cloud_queue.size()})"
+                    )
                     await self.publish_proxy_status(force=True)
                     break
                 
@@ -536,7 +541,8 @@ class OIGProxy:
                         )
                     except Exception as e:
                         logger.warning(
-                            f"⚠️ Cloud nedostupný: {e} - offline mode"
+                            f"⚠️ Cloud nedostupný: {e} - offline mode "
+                            f"(conn={conn_id}, table={table_name})"
                         )
                         # Cloud nedostupný → offline mode pro tento frame
                         await self._process_frame_offline(
@@ -560,7 +566,8 @@ class OIGProxy:
                     if not ack_data:
                         # Cloud ukončil spojení (EOF)
                         logger.warning(
-                            "⚠️ Cloud ukončil spojení - reconnect next frame"
+                            f"⚠️ Cloud ukončil spojení - reconnect next frame "
+                            f"(conn={conn_id}, table={table_name})"
                         )
                         self.cloud_disconnects += 1
                         self.cloud_session_connected = False
@@ -597,7 +604,8 @@ class OIGProxy:
                     
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "⏱️ Cloud ACK timeout - offline mode for this frame"
+                        f"⏱️ Cloud ACK timeout - offline mode for this frame "
+                        f"(conn={conn_id}, table={table_name})"
                     )
                     self.cloud_timeouts += 1
                     self.cloud_session_connected = False
@@ -610,7 +618,8 @@ class OIGProxy:
                     
                 except Exception as e:
                     logger.warning(
-                        f"⚠️ Cloud error: {e} - offline mode for this frame"
+                        f"⚠️ Cloud error: {e} - offline mode for this frame "
+                        f"(conn={conn_id}, table={table_name})"
                     )
                     self.cloud_errors += 1
                     self.cloud_session_connected = False
@@ -674,12 +683,16 @@ class OIGProxy:
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "⏱️ BOX idle timeout (15 min) - closing session"
+                        f"⏱️ BOX idle timeout (15 min) - closing session (conn={conn_id})"
                     )
                     break
                 
                 if not data:
-                    logger.debug("🔌 BOX ukončil spojení (EOF)")
+                    logger.debug(
+                        f"🔌 BOX ukončil spojení (EOF, conn={conn_id}, "
+                        f"frames_rx={self.stats['frames_received']}, "
+                        f"queue={self.cloud_queue.size()})"
+                    )
                     break
                 
                 frame = data.decode('utf-8', errors='replace')
