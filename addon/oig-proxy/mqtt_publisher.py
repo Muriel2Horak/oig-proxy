@@ -21,6 +21,7 @@ from config import (
     MQTT_PUBLISH_QOS,
     MQTT_QUEUE_DB_PATH,
     MQTT_QUEUE_MAX_SIZE,
+    MQTT_STATE_RETAIN,
     MQTT_REPLAY_RATE,
     MQTT_USERNAME,
 )
@@ -61,6 +62,7 @@ class MQTTQueue:
                 timestamp REAL NOT NULL,
                 topic TEXT NOT NULL,
                 payload TEXT NOT NULL,
+                retain INTEGER NOT NULL DEFAULT 0,
                 queued_at TEXT NOT NULL
             )
         """)
@@ -69,11 +71,18 @@ class MQTTQueue:
             "CREATE INDEX IF NOT EXISTS idx_timestamp ON queue(timestamp)"
         )
         conn.commit()
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(queue)")}
+            if "retain" not in cols:
+                conn.execute("ALTER TABLE queue ADD COLUMN retain INTEGER NOT NULL DEFAULT 0")
+                conn.commit()
+        except Exception:
+            pass
         
         logger.info(f"MQTTQueue: Inicializováno ({self.db_path})")
         return conn
     
-    async def add(self, topic: str, payload: str) -> bool:
+    async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
         """Přidá MQTT zprávu do fronty (FIFO)."""
         async with self.lock:
             try:
@@ -95,9 +104,9 @@ class MQTTQueue:
                 
                 self.conn.execute(
                     "INSERT INTO queue "
-                    "(timestamp, topic, payload, queued_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (time_module.time(), topic, payload, iso_now())
+                    "(timestamp, topic, payload, retain, queued_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (time_module.time(), topic, payload, int(retain), iso_now())
                 )
                 self.conn.commit()
                 return True
@@ -105,16 +114,19 @@ class MQTTQueue:
                 logger.error(f"MQTTQueue: Add failed: {e}")
                 return False
     
-    async def get_next(self) -> tuple[int, str, str] | None:
-        """Vrátí další zprávu (id, topic, payload) nebo None."""
+    async def get_next(self) -> tuple[int, str, str, bool] | None:
+        """Vrátí další zprávu (id, topic, payload, retain) nebo None."""
         async with self.lock:
             try:
                 cursor = self.conn.execute(
-                    "SELECT id, topic, payload FROM queue "
+                    "SELECT id, topic, payload, retain FROM queue "
                     "ORDER BY id LIMIT 1"
                 )
                 row = cursor.fetchone()
-                return row if row else None
+                if not row:
+                    return None
+                msg_id, topic, payload, retain = row
+                return int(msg_id), str(topic), str(payload), bool(retain)
             except Exception as e:
                 logger.error(f"MQTTQueue: Get next failed: {e}")
                 return None
@@ -362,11 +374,10 @@ class MQTTPublisher:
             item = await self.queue.get_next()
             if not item:
                 break
-            
-            msg_id, topic, payload = item
+            msg_id, topic, payload, retain = item
             
             try:
-                result = self.client.publish(topic, payload, qos=1)
+                result = self.client.publish(topic, payload, qos=1, retain=retain)
                 if result.rc == 0:
                     await self.queue.remove(msg_id)
                     replayed += 1
@@ -567,7 +578,7 @@ class MQTTPublisher:
         
         # Pokud není připojeno, přidej do fronty
         if not self.is_ready():
-            await self.queue.add(topic, payload)
+            await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
             if self.publish_count % 100 == 0:
                 logger.warning(
                     f"MQTT: Offline - data ve frontě "
@@ -579,7 +590,9 @@ class MQTTPublisher:
         self.publish_count += 1
         
         try:
-            result = self.client.publish(topic, payload, qos=MQTT_PUBLISH_QOS)
+            result = self.client.publish(
+                topic, payload, qos=MQTT_PUBLISH_QOS, retain=MQTT_STATE_RETAIN
+            )
             if result.rc == 0:
                 # Detailní log - topic, keys, mapped count
                 keys_list = sorted(publish_data.keys())
@@ -591,12 +604,12 @@ class MQTTPublisher:
                 return True
             else:
                 # Pokud publish selže, přidej do fronty
-                await self.queue.add(topic, payload)
+                await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
                 self.publish_failed += 1
                 logger.error(f"MQTT: Publish selhal rc={result.rc}")
                 return False
         except Exception as e:
-            await self.queue.add(topic, payload)
+            await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
             self.publish_failed += 1
             self.last_error_time = time.time()
             self.last_error_msg = str(e)

@@ -208,6 +208,9 @@ def load_sensor_map() -> None:
             "proxy_status:cloud_session_connected": SensorConfig(
                 "Cloud TCP připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
             ),
+            "proxy_status:cloud_session_active": SensorConfig(
+                "Cloud TCP aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
             "proxy_status:cloud_connects": SensorConfig(
                 "Cloud - připojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
             ),
@@ -228,6 +231,9 @@ def load_sensor_map() -> None:
             ),
             "proxy_status:box_connections": SensorConfig(
                 "BOX spojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+            ),
+            "proxy_status:box_connections_active": SensorConfig(
+                "BOX aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
             ),
             "proxy_status:cloud_queue": SensorConfig(
                 "Cloud fronta", "", None, "measurement", None, "proxy", "diagnostic"

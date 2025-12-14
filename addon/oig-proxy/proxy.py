@@ -71,6 +71,18 @@ class OIGProxy:
         self.box_connections = 0
         self._last_data_iso: str | None = None
         self._last_data_epoch: float | None = None
+        # IsNewSet/Weather/FW telemetry
+        self._isnew_polls = 0
+        self._isnew_last_poll_iso: str | None = None
+        self._isnew_last_response: str | None = None
+        self._isnew_last_rtt_ms: float | None = None
+        self._isnew_last_poll_epoch: float | None = None
+        # Cloud session telemetry
+        self.cloud_connects = 0
+        self.cloud_disconnects = 0
+        self.cloud_timeouts = 0
+        self.cloud_errors = 0
+        self.cloud_session_connected = False
     
     async def start(self):
         """Spustí proxy server."""
@@ -123,19 +135,26 @@ class OIGProxy:
             "status": self.mode.value,
             "mode": self.mode.value,
             "cloud_online": int(self.cloud_health.is_online),
-            "cloud_connects": None,
-            "cloud_disconnects": None,
-            "cloud_timeouts": None,
-            "cloud_errors": None,
+            "cloud_connects": self.cloud_connects,
+            "cloud_disconnects": self.cloud_disconnects,
+            "cloud_timeouts": self.cloud_timeouts,
+            "cloud_errors": self.cloud_errors,
+            "cloud_session_connected": int(self.cloud_session_connected),
+            "cloud_session_active": int(self.cloud_session_connected),
             "cloud_queue": self.cloud_queue.size(),
             "mqtt_queue": self.mqtt_publisher.queue.size(),
             "box_connected": int(self.box_connected),
             "box_connections": self.box_connections,
+            "box_connections_active": int(self.box_connected),
             "box_data_recent": int(
                 self._last_data_epoch is not None
                 and (time.time() - self._last_data_epoch) <= 90
             ),
             "last_data": self._last_data_iso,
+            "isnewset_polls": self._isnew_polls,
+            "isnewset_last_poll": self._isnew_last_poll_iso,
+            "isnewset_last_response": self._isnew_last_response,
+            "isnewset_last_rtt_ms": self._isnew_last_rtt_ms,
         }
         return payload
 
@@ -468,6 +487,10 @@ class OIGProxy:
                 parsed = self.parser.parse_xml_frame(frame)
                 device_id = parsed.get("_device_id") if parsed else None
                 table_name = parsed.get("_table") if parsed else None
+                # IsNew* frames nemají TblName, vezmeme z Result
+                if (not table_name and parsed and parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW")):
+                    table_name = parsed["Result"]
+                    parsed["_table"] = table_name
                 
                 # Auto-detect device_id from BOX frames
                 if device_id and self.device_id == "AUTO":
@@ -488,6 +511,11 @@ class OIGProxy:
                 
                 # MQTT publish (vždy, nezávisle na cloud)
                 if parsed:
+                    # IsNew* telemetry
+                    if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
+                        self._isnew_polls += 1
+                        self._isnew_last_poll_epoch = time.time()
+                        self._isnew_last_poll_iso = self._last_data_iso
                     await self._maybe_process_mode(parsed, table_name, device_id)
                     await self.mqtt_publisher.publish_data(parsed)
                 
@@ -500,6 +528,8 @@ class OIGProxy:
                             ),
                             timeout=CLOUD_CONNECT_TIMEOUT
                         )
+                        self.cloud_connects += 1
+                        self.cloud_session_connected = True
                         logger.debug(
                             f"☁️ Připojeno k {TARGET_SERVER}:{TARGET_PORT}"
                         )
@@ -531,6 +561,8 @@ class OIGProxy:
                         logger.warning(
                             "⚠️ Cloud ukončil spojení - reconnect next frame"
                         )
+                        self.cloud_disconnects += 1
+                        self.cloud_session_connected = False
                         cloud_writer.close()
                         cloud_writer = None
                         # Tento frame musíme zpracovat offline
@@ -546,6 +578,12 @@ class OIGProxy:
                         direction="cloud_to_proxy", length=len(ack_data),
                         conn_id=conn_id, peer=self._active_box_peer
                     )
+                    if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
+                        self._isnew_last_response = self._last_data_iso
+                        if self._isnew_last_poll_epoch:
+                            self._isnew_last_rtt_ms = round(
+                                (time.time() - self._isnew_last_poll_epoch) * 1000, 1
+                            )
                     
                     # ACK Learning
                     if table_name:
@@ -560,6 +598,8 @@ class OIGProxy:
                     logger.warning(
                         "⏱️ Cloud ACK timeout - offline mode for this frame"
                     )
+                    self.cloud_timeouts += 1
+                    self.cloud_session_connected = False
                     if cloud_writer:
                         cloud_writer.close()
                     cloud_writer = None
@@ -571,6 +611,8 @@ class OIGProxy:
                     logger.warning(
                         f"⚠️ Cloud error: {e} - offline mode for this frame"
                     )
+                    self.cloud_errors += 1
+                    self.cloud_session_connected = False
                     if cloud_writer:
                         try:
                             cloud_writer.close()
@@ -590,6 +632,7 @@ class OIGProxy:
                     await cloud_writer.wait_closed()
                 except Exception:
                     pass
+            self.cloud_session_connected = False
     
     async def _process_frame_offline(
         self,

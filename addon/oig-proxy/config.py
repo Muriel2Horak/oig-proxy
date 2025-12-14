@@ -40,6 +40,7 @@ MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_NAMESPACE = os.getenv("MQTT_NAMESPACE", "oig_local")
 MQTT_PUBLISH_QOS = 1  # QoS level (0=fire&forget, 1=at least once)
+MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
 
 # ============================================================================
 # Cloud Configuration

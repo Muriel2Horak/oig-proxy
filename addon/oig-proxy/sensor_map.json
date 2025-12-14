@@ -122,6 +122,29 @@
       "entity_category": "diagnostic",
       "is_binary": true
     },
+    "proxy_status:cloud_session_active": {
+      "name": "Cloud TCP aktivní spojení",
+      "name_cs": "Cloud TCP aktivní spojení",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:cloud_session_connected": {
+      "name": "Cloud TCP připojen",
+      "name_cs": "Cloud TCP připojen",
+      "unit_of_measurement": "",
+      "device_class": "connectivity",
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic",
+      "is_binary": true
+    },
     "proxy_status:box_connected": {
       "name": "BOX připojen",
       "name_cs": "BOX připojen",
@@ -149,6 +172,17 @@
     "proxy_status:box_connections": {
       "name": "BOX spojení (počet)",
       "name_cs": "BOX spojení (počet)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:box_connections_active": {
+      "name": "BOX aktivní spojení",
+      "name_cs": "BOX aktivní spojení",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
