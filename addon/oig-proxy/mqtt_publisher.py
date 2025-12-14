@@ -472,7 +472,6 @@ class MQTTPublisher:
         
         safe_sensor_id = sensor_id.replace(":", "_").lower()
         unique_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
-        object_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
         availability_topic = (
             f"{MQTT_NAMESPACE}/{dev_id}/availability"
         )
@@ -490,7 +489,6 @@ class MQTTPublisher:
         
         discovery_payload = {
             "name": config.name,
-            "object_id": object_id,
             "unique_id": unique_id,
             "state_topic": state_topic,
             "value_template": value_template,
@@ -520,6 +518,10 @@ class MQTTPublisher:
                 discovery_payload["state_class"] = config.state_class
             if config.options:
                 discovery_payload["options"] = config.options
+        
+        # HA 2026.4: object_id je deprecated → nahraď default_entity_id
+        base_object_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
+        discovery_payload["default_entity_id"] = f"{component}.{base_object_id}"
         
         if config.unit and not config.is_binary:
             discovery_payload["unit_of_measurement"] = config.unit
