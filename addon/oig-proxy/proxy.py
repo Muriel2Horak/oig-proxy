@@ -134,6 +134,7 @@ class OIGProxy:
         payload = {
             "status": self.mode.value,
             "mode": self.mode.value,
+            "box_device_id": self.device_id if self.device_id != "AUTO" else None,
             "cloud_online": int(self.cloud_health.is_online),
             "cloud_connects": self.cloud_connects,
             "cloud_disconnects": self.cloud_disconnects,

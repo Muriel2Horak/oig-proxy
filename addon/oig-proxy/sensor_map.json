@@ -202,6 +202,17 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
+    "proxy_status:box_device_id": {
+      "name": "BOX ID",
+      "name_cs": "BOX ID",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "proxy_status:mqtt_queue": {
       "name": "MQTT fronta",
       "name_cs": "MQTT fronta",
