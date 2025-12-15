@@ -53,6 +53,10 @@ addon/oig-proxy/
 - Replay po reconnectu (10 msg/s)
 - Přežije restart proxy
 
+### TableState (`/data/prms_state.json`)
+- Snapshot posledních známých hodnot tabulek (typicky pomalé/konfigurační `tbl_*`)
+- Po startu a MQTT reconnectu se znovu publikuje do MQTT (aby senzory nebyly `unknown`)
+
 ### PayloadsDB (`/data/payloads.db`)
 - Debug capture všech frames
 - BOX rx/tx, Cloud rx/tx

@@ -20,7 +20,13 @@ from config import (
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from parser import OIGDataParser
-from utils import capture_payload, load_mode_state, save_mode_state
+from utils import (
+    capture_payload,
+    load_mode_state,
+    load_prms_state,
+    save_mode_state,
+    save_prms_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,9 @@ class OIGProxy:
         self._mode_value: int | None = loaded_mode
         self._mode_device_id: str | None = loaded_dev
         self._mode_pending_publish: bool = self._mode_value is not None
+        self._prms_tables, self._prms_device_id = load_prms_state()
+        self._prms_pending_publish: bool = bool(self._prms_tables)
+        self._mqtt_was_ready: bool = False
         
         # Režim
         self.mode = ProxyMode.ONLINE
@@ -100,17 +109,21 @@ class OIGProxy:
             await self.mqtt_publisher.start_health_check()
 
         # Pokud máme uložené device_id a aktuální device je AUTO, použij ho
-        if self.device_id == "AUTO" and self._mode_device_id:
-            self.device_id = self._mode_device_id
-            self.mqtt_publisher.device_id = self._mode_device_id
-            logger.info(
-                f"MODE: Obnovuji device_id z uloženého stavu: {self.device_id}"
-            )
-            self.mqtt_publisher.publish_availability()
+        if self.device_id == "AUTO":
+            restored_device_id = self._mode_device_id or self._prms_device_id
+            if restored_device_id:
+                self.device_id = restored_device_id
+                self.mqtt_publisher.device_id = restored_device_id
+                logger.info(
+                    f"🔑 Obnovuji device_id z uloženého stavu: {self.device_id}"
+                )
+                self.mqtt_publisher.publish_availability()
 
         # Po připojení MQTT publikuj stav (init)
         await self.publish_proxy_status(force=True)
         await self._publish_mode_if_ready(reason="startup")
+        await self._publish_prms_if_ready(reason="startup")
+        self._mqtt_was_ready = self.mqtt_publisher.is_ready()
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._proxy_status_loop())
         
@@ -208,6 +221,83 @@ class OIGProxy:
             logger.debug(f"MODE publish failed: {e}")
             self._mode_pending_publish = True
 
+    @staticmethod
+    def _should_persist_table(table_name: str | None) -> bool:
+        """Vrací True pro tabulky, které chceme perzistovat pro obnovu po restartu."""
+        if not table_name or not table_name.startswith("tbl_"):
+            return False
+
+        # tbl_actual chodí typicky každých pár sekund → neperzistujeme (zbytečné zápisy)
+        if table_name == "tbl_actual":
+            return False
+
+        return True
+
+    def _maybe_persist_table_state(
+        self,
+        parsed: dict[str, Any] | None,
+        table_name: str | None,
+        device_id: str | None,
+    ) -> None:
+        """Uloží poslední známé hodnoty pro vybrané tabulky (pro obnovu po restartu)."""
+        if not parsed or not table_name:
+            return
+        if not self._should_persist_table(table_name):
+            return
+
+        values = {k: v for k, v in parsed.items() if not k.startswith("_")}
+        if not values:
+            return
+
+        resolved_device_id = (
+            device_id
+            or (self.device_id if self.device_id != "AUTO" else None)
+            or self._prms_device_id
+        )
+
+        save_prms_state(table_name, values, resolved_device_id)
+
+        existing = self._prms_tables.get(table_name, {})
+        merged: dict[str, Any] = {}
+        if isinstance(existing, dict):
+            merged.update(existing)
+        merged.update(values)
+        self._prms_tables[table_name] = merged
+        if resolved_device_id:
+            self._prms_device_id = resolved_device_id
+
+    async def _publish_prms_if_ready(self, *, reason: str | None = None) -> None:
+        """Publikuje uložené *_prms hodnoty do MQTT (obnova po restartu/reconnectu)."""
+        if not self._prms_tables:
+            return
+
+        if not self.mqtt_publisher.is_ready():
+            self._prms_pending_publish = True
+            return
+
+        if self.device_id == "AUTO":
+            self._prms_pending_publish = True
+            return
+
+        # Publish jen když je potřeba (startup nebo po MQTT reconnectu)
+        if not self._prms_pending_publish and reason not in ("startup", "device_autodetect"):
+            return
+
+        for table_name, values in self._prms_tables.items():
+            if not isinstance(values, dict) or not values:
+                continue
+            payload: dict[str, Any] = {"_table": table_name, **values}
+            try:
+                await self.mqtt_publisher.publish_data(payload)
+            except Exception as e:
+                logger.debug(f"STATE publish failed ({table_name}): {e}")
+                self._prms_pending_publish = True
+                return
+
+        self._prms_pending_publish = False
+        if reason:
+            logger.info(f"STATE: Publikován snapshot ({reason})")
+
     async def _handle_mode_update(
         self,
         new_mode: Any,
@@ -271,8 +361,17 @@ class OIGProxy:
         while True:
             await asyncio.sleep(PROXY_STATUS_INTERVAL)
             try:
+                mqtt_ready = self.mqtt_publisher.is_ready()
+                if mqtt_ready and not self._mqtt_was_ready:
+                    # MQTT reconnect → obnov i perzistované hodnoty, které chodí zřídka
+                    if self._mode_value is not None:
+                        self._mode_pending_publish = True
+                    if self._prms_tables:
+                        self._prms_pending_publish = True
+                self._mqtt_was_ready = mqtt_ready
                 await self.publish_proxy_status()
                 await self._publish_mode_if_ready(reason="periodic")
+                await self._publish_prms_if_ready(reason="periodic")
             except Exception as e:
                 logger.debug(f"Proxy status loop publish failed: {e}")
     
@@ -508,6 +607,10 @@ class OIGProxy:
                     self.mqtt_publisher.publish_availability()
                     logger.info(f"🔑 Device ID detected: {device_id}")
                     await self._publish_mode_if_ready(device_id=device_id, reason="device_autodetect")
+                    await self._publish_prms_if_ready(reason="device_autodetect")
+
+                # Persist *_prms tabulky (chodí zřídka) pro obnovu po restartu
+                self._maybe_persist_table_state(parsed, table_name, device_id)
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},
@@ -704,6 +807,25 @@ class OIGProxy:
                 parsed = self.parser.parse_xml_frame(frame)
                 device_id = parsed.get("_device_id") if parsed else None
                 table_name = parsed.get("_table") if parsed else None
+                # IsNew* frames nemají TblName, vezmeme z Result
+                if (not table_name and parsed and parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW")):
+                    table_name = parsed["Result"]
+                    parsed["_table"] = table_name
+
+                # Auto-detect device_id from BOX frames
+                if device_id and self.device_id == "AUTO":
+                    self.device_id = device_id
+                    self.mqtt_publisher.device_id = device_id
+                    # Clear discovery cache to re-send with correct device_id
+                    self.mqtt_publisher.discovery_sent.clear()
+                    # Re-publish availability with correct device_id
+                    self.mqtt_publisher.publish_availability()
+                    logger.info(f"🔑 Device ID detected: {device_id}")
+                    await self._publish_mode_if_ready(device_id=device_id, reason="device_autodetect")
+                    await self._publish_prms_if_ready(reason="device_autodetect")
+
+                # Persist *_prms tabulky (chodí zřídka) pro obnovu po restartu
+                self._maybe_persist_table_state(parsed, table_name, device_id)
                 
                 capture_payload(
                     device_id, table_name, frame, parsed or {},

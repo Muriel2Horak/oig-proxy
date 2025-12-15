@@ -18,6 +18,7 @@ from config import (
     CAPTURE_PAYLOADS,
     MAP_RELOAD_SECONDS,
     MODE_STATE_PATH,
+    PRMS_STATE_PATH,
     SENSOR_MAP_PATH,
 )
 from models import SensorConfig, WarningEntry
@@ -91,6 +92,108 @@ def save_mode_state(mode_value: int, device_id: str | None) -> None:
         )
     except Exception as e:
         logger.error(f"MODE: Nepodařilo se uložit stav: {e}")
+
+
+def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Načte poslední známé hodnoty tabulek z perzistentního souboru.
+
+    Returns:
+        (tables, device_id) – tables mapuje table_name -> hodnoty (bez _ klíčů).
+    """
+    try:
+        if not os.path.exists(PRMS_STATE_PATH):
+            return {}, None
+        with open(PRMS_STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict):
+            return {}, None
+
+        device_id = data.get("device_id")
+        raw_tables = data.get("tables")
+
+        # Backward compatibility: pokud je soubor přímo dict table->values
+        if raw_tables is None:
+            raw_tables = data
+            device_id = None
+
+        tables: dict[str, dict[str, Any]] = {}
+        if isinstance(raw_tables, dict):
+            for table_name, entry in raw_tables.items():
+                if not isinstance(table_name, str):
+                    continue
+                if isinstance(entry, dict) and "values" in entry:
+                    values = entry.get("values")
+                    if isinstance(values, dict):
+                        tables[table_name] = values
+                elif isinstance(entry, dict):
+                    tables[table_name] = entry
+
+        device_id_str = str(device_id) if device_id else None
+        return tables, device_id_str
+    except Exception as e:
+        logger.warning(f"STATE: Nepodařilo se načíst table state: {e}")
+        return {}, None
+
+
+def save_prms_state(
+    table_name: str,
+    values: dict[str, Any],
+    device_id: str | None,
+) -> None:
+    """Uloží/aktualizuje poslední známé hodnoty pro danou tabulku."""
+    if not table_name:
+        return
+    if not isinstance(values, dict) or not values:
+        return
+
+    try:
+        os.makedirs(os.path.dirname(PRMS_STATE_PATH), exist_ok=True)
+
+        existing: dict[str, Any] = {}
+        if os.path.exists(PRMS_STATE_PATH):
+            try:
+                with open(PRMS_STATE_PATH, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except Exception:
+                existing = {}
+
+        existing_device_id = existing.get("device_id")
+        existing_tables = existing.get("tables")
+
+        # Backward compatibility: pokud je soubor přímo dict table->values
+        if existing_tables is None and any(
+            isinstance(k, str) and k.startswith("tbl_") for k in existing.keys()
+        ):
+            existing_tables = existing
+            existing_device_id = None
+
+        if not isinstance(existing_tables, dict):
+            existing_tables = {}
+
+        prior_entry = existing_tables.get(table_name) if existing_tables else None
+        prior_values: dict[str, Any] = {}
+        if isinstance(prior_entry, dict) and "values" in prior_entry:
+            pv = prior_entry.get("values")
+            if isinstance(pv, dict):
+                prior_values = pv
+        elif isinstance(prior_entry, dict):
+            prior_values = prior_entry
+
+        merged = dict(prior_values)
+        merged.update(values)
+        existing_tables[table_name] = {"ts": iso_now(), "values": merged}
+
+        out = {
+            "device_id": str(device_id) if device_id else existing_device_id,
+            "tables": existing_tables,
+        }
+        with open(PRMS_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False)
+    except Exception as e:
+        logger.debug(f"STATE: Nepodařilo se uložit table state ({table_name}): {e}")
 
 
 def get_sensor_config(

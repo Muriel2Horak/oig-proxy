@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.6] - 2025-12-15
+
+### Added
+- Perzistence snapshotu tabulek (`tbl_*` kromě `tbl_actual`) do `/data/prms_state.json` pro obnovu po restartu
+- Re-publish uloženého snapshotu po startu a po MQTT reconnectu (senzory nečekají desítky minut až hodiny na `*_prms`)
+- Obnova `device_id` při `DEVICE_ID=AUTO` z uloženého stavu (MODE/table snapshot)
+
 ## [1.3.2] - 2025-12-12
 
 ### Fixed

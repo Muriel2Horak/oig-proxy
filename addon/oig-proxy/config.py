@@ -71,6 +71,7 @@ MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))  # 0 = disabled
 # ============================================================================
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 MODE_STATE_PATH = os.path.join(DATA_DIR, "mode_state.json")
+PRMS_STATE_PATH = os.path.join(DATA_DIR, "prms_state.json")
 CLOUD_QUEUE_DB_PATH = os.path.join(DATA_DIR, "cloud_queue.db")
 MQTT_QUEUE_DB_PATH = os.path.join(DATA_DIR, "mqtt_queue.db")
 CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
