@@ -111,6 +111,20 @@ Nejjednodušší je udělat DNS override v lokální síti.
 4. Restartuj BOX (nebo aspoň jeho síť), aby si načetl nový DNS.
 5. Pokud router používá DoH/DoT nebo „DNS proxy“, zkontroluj, že **lokální host override má prioritu** (u některých routerů je potřeba vypnout DoH pro LAN).
 
+#### Varianta B: DHCP rozdává DNS = IP Home Assistanta (nejjednodušší, když běží dnsmasq v add-onu)
+Tento add-on spouští **dnsmasq** (poslouchá na `53/udp` a `53/tcp`) a umí lokálně přepsat `oigservis.cz` na IP HA (viz `ha_ip` + `dns_upstream` v konfiguraci add-onu).
+
+1. V HA v add-onu **OIG Proxy** nastav (Konfigurace):
+   - `ha_ip`: IP Home Assistanta v LAN (nebo ponech prázdné – add-on se ji pokusí autodetekovat)
+   - `dns_upstream`: DNS upstream (default `8.8.8.8`, nebo dej IP tvého routeru/DNS)
+2. Ujisti se, že add-on běží a že port 53 je dostupný z LAN (add-on používá `host_network: true`).
+3. V routeru (DHCP server) nastav jako **DNS server** IP Home Assistanta.
+4. Restartuj BOX (nebo obnov DHCP lease), aby si načetl nový DNS.
+5. Ověř z klienta v LAN: `nslookup oigservis.cz <IP_HA>` → musí vracet IP HA.
+
+Poznámky:
+- Tohle ovlivní **všechny zařízení v LAN**, které používají DNS z DHCP. Pokud nechceš ovlivnit celou síť, nastav DNS jen pro BOX (pokud router umí per‑device DHCP options), nebo použij Variantu A/C.
+
 #### Varianta B: Pi-hole / AdGuard Home / dnsmasq (když router neumí override)
 1. Provozuj lokální DNS server (Pi-hole / AdGuard Home / dnsmasq) v LAN.
 2. Nastav v něm DNS přepis:
