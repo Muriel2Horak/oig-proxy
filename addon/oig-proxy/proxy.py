@@ -447,8 +447,15 @@ class OIGProxy:
             await self.publish_proxy_status()
 
     async def _replay_send_one_frame(
-        self, frame_id: int, frame_bytes: bytes, *, replayed: int
+        self,
+        frame_id: int,
+        table_name: str,
+        frame_bytes: bytes,
+        *,
+        replayed: int,
     ) -> bool:
+        reader: asyncio.StreamReader | None = None
+        writer: asyncio.StreamWriter | None = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
@@ -457,8 +464,6 @@ class OIGProxy:
             writer.write(frame_bytes)
             await writer.drain()
             await asyncio.wait_for(reader.read(4096), timeout=REPLAY_ACK_TIMEOUT)
-            writer.close()
-            await writer.wait_closed()
 
             await self.cloud_queue.remove(frame_id)
 
@@ -468,10 +473,29 @@ class OIGProxy:
                     f"🔄 Replay progress: {replayed} odesláno, {remaining} zbývá"
                 )
             return True
-        except Exception as e:
-            logger.error(f"❌ Replay failed pro frame {frame_id}: {e}")
+        except asyncio.TimeoutError:
+            logger.warning(
+                "⏱️ Replay ACK timeout (%.1fs) pro frame %s (table=%s)",
+                REPLAY_ACK_TIMEOUT,
+                frame_id,
+                table_name,
+            )
             await self.cloud_queue.defer(frame_id, delay_s=60.0)
             return False
+        except Exception as e:
+            logger.exception(
+                "❌ Replay failed pro frame %s (table=%s): %s",
+                frame_id,
+                table_name,
+                repr(e),
+            )
+            await self.cloud_queue.defer(frame_id, delay_s=60.0)
+            return False
+        finally:
+            if writer is not None:
+                writer.close()
+                with suppress(Exception):
+                    await writer.wait_closed()
 
     async def _replay_cloud_queue(self) -> None:
         """Background task pro replay cloud fronty (rate limited)."""
@@ -489,17 +513,23 @@ class OIGProxy:
 
             item = await self.cloud_queue.get_next()
             if item is None:
-                logger.info(
-                    f"✅ Replay dokončen ({replayed} frames), přepínám na ONLINE režim"
-                )
-                old_mode = await self._switch_mode(ProxyMode.ONLINE)
-                if old_mode != ProxyMode.ONLINE:
-                    await self.publish_proxy_status()
-                break
+                if self.cloud_queue.size() <= 0:
+                    logger.info(
+                        "✅ Replay dokončen (%s frames), přepínám na ONLINE režim",
+                        replayed,
+                    )
+                    old_mode = await self._switch_mode(ProxyMode.ONLINE)
+                    if old_mode != ProxyMode.ONLINE:
+                        await self.publish_proxy_status()
+                    break
+
+                delay = await self.cloud_queue.next_ready_in()
+                await asyncio.sleep(min(delay if delay is not None else 1.0, 5.0))
+                continue
 
             frame_id, _table_name, frame_bytes = item
             success = await self._replay_send_one_frame(
-                frame_id, frame_bytes, replayed=replayed + 1
+                frame_id, _table_name, frame_bytes, replayed=replayed + 1
             )
             if success:
                 replayed += 1

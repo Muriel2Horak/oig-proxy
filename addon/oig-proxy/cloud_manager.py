@@ -128,13 +128,20 @@ class CloudQueue:
                 return False
     
     async def get_next(self) -> tuple[int, str, bytes] | None:
-        """Vrátí další frame (id, table_name, frame_bytes) nebo None."""
+        """Vrátí další frame (id, table_name, frame_bytes) nebo None.
+
+        Respektuje `timestamp` jako `not_before` (defer); pokud je ve frontě
+        něco odloženého do budoucna, vrátí `None`.
+        """
         async with self.lock:
             try:
+                now = time.time()
                 if self._has_frame_bytes:
                     cursor = self.conn.execute(
                         "SELECT id, table_name, frame_bytes, frame_data FROM queue "
-                        "ORDER BY timestamp, id LIMIT 1"
+                        "WHERE timestamp <= ? "
+                        "ORDER BY timestamp, id LIMIT 1",
+                        (now,),
                     )
                     row = cursor.fetchone()
                     if not row:
@@ -147,7 +154,9 @@ class CloudQueue:
                 
                 cursor = self.conn.execute(
                     "SELECT id, table_name, frame_data FROM queue "
-                    "ORDER BY timestamp, id LIMIT 1"
+                    "WHERE timestamp <= ? "
+                    "ORDER BY timestamp, id LIMIT 1",
+                    (now,),
                 )
                 row = cursor.fetchone()
                 if not row:
@@ -156,6 +165,18 @@ class CloudQueue:
                 return int(frame_id), str(table_name), str(frame_text).encode("utf-8")
             except Exception as e:
                 logger.error(f"CloudQueue: Get next failed: {e}")
+                return None
+
+    async def next_ready_in(self) -> float | None:
+        """Za jak dlouho je nejbližší frame připravený k replay (sekundy)."""
+        async with self.lock:
+            try:
+                cursor = self.conn.execute("SELECT MIN(timestamp) FROM queue")
+                ts = cursor.fetchone()[0]
+                if ts is None:
+                    return None
+                return max(0.0, float(ts) - time.time())
+            except Exception:
                 return None
 
     async def defer(self, frame_id: int, delay_s: float = 60.0) -> bool:
