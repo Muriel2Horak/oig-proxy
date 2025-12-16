@@ -66,6 +66,7 @@ class OIGProxy:
         
         # Background tasky
         self._replay_task: asyncio.Task[Any] | None = None
+        self._replay_failures: dict[int, int] = {}
         self._status_task: asyncio.Task[Any] | None = None
         self._box_conn_lock = asyncio.Lock()
         self._active_box_writer: asyncio.StreamWriter | None = None
@@ -466,6 +467,7 @@ class OIGProxy:
             await asyncio.wait_for(reader.read(4096), timeout=REPLAY_ACK_TIMEOUT)
 
             await self.cloud_queue.remove(frame_id)
+            self._replay_failures.pop(frame_id, None)
 
             if replayed % 10 == 0:
                 remaining = self.cloud_queue.size()
@@ -480,7 +482,10 @@ class OIGProxy:
                 frame_id,
                 table_name,
             )
-            await self.cloud_queue.defer(frame_id, delay_s=60.0)
+            if self._should_drop_replay_frame(table_name, frame_bytes):
+                await self._drop_replay_frame(frame_id, table_name, reason="timeout")
+                return False
+            await self._defer_or_drop_after_retries(frame_id, table_name, reason="timeout")
             return False
         except Exception as e:
             logger.exception(
@@ -489,13 +494,55 @@ class OIGProxy:
                 table_name,
                 repr(e),
             )
-            await self.cloud_queue.defer(frame_id, delay_s=60.0)
+            if self._should_drop_replay_frame(table_name, frame_bytes):
+                await self._drop_replay_frame(frame_id, table_name, reason="error")
+                return False
+            await self._defer_or_drop_after_retries(frame_id, table_name, reason="error")
             return False
         finally:
             if writer is not None:
                 writer.close()
                 with suppress(Exception):
                     await writer.wait_closed()
+
+    @staticmethod
+    def _looks_like_all_data_sent_end(frame: str) -> bool:
+        return "<Result>END</Result>" in frame and "<Reason>All data sent</Reason>" in frame
+
+    async def _drop_replay_frame(self, frame_id: int, table_name: str, *, reason: str) -> None:
+        logger.warning(
+            "🗑️ Dropping replay frame %s (table=%s, reason=%s)",
+            frame_id,
+            table_name,
+            reason,
+        )
+        self._replay_failures.pop(frame_id, None)
+        await self.cloud_queue.remove(frame_id)
+
+    def _should_drop_replay_frame(self, table_name: str, frame_bytes: bytes) -> bool:
+        if table_name == "END":
+            frame = frame_bytes.decode("utf-8", errors="replace")
+            if self._looks_like_all_data_sent_end(frame):
+                return True
+        return False
+
+    async def _defer_or_drop_after_retries(
+        self,
+        frame_id: int,
+        table_name: str,
+        *,
+        reason: str,
+    ) -> None:
+        failures = self._replay_failures.get(frame_id, 0) + 1
+        self._replay_failures[frame_id] = failures
+        if failures >= 3:
+            await self._drop_replay_frame(
+                frame_id,
+                table_name,
+                reason=f"{reason}_max_retries",
+            )
+            return
+        await self.cloud_queue.defer(frame_id, delay_s=60.0)
 
     async def _replay_cloud_queue(self) -> None:
         """Background task pro replay cloud fronty (rate limited)."""
