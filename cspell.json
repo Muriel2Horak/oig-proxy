@@ -1,0 +1,27 @@
+{
+  "version": "0.2",
+  "language": "en,cs",
+  "words": [
+    "Baterie",
+    "Bojler",
+    "FVE",
+    "Konfigurace",
+    "MQTT",
+    "PRMS",
+    "Pevný",
+    "Povinné",
+    "Spotřeba",
+    "Střídač",
+    "mosquitto",
+    "mqtt",
+    "oigservis",
+    "paho",
+    "proměnné",
+    "senzory",
+    "všechny",
+    "konstanty",
+    "bezpečným",
+    "fallbackem"
+  ]
+}
+

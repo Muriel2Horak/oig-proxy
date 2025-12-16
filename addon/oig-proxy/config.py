@@ -9,7 +9,7 @@ import os
 # MQTT Availability Check
 # ============================================================================
 try:
-    import paho.mqtt.client  # type: ignore[import-untyped,import-not-found]  # noqa: F401,E501
+    import paho.mqtt.client  # noqa: F401
     MQTT_AVAILABLE = True
 except ImportError:
     MQTT_AVAILABLE = False
