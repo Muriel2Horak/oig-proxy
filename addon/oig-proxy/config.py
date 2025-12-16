@@ -47,6 +47,7 @@ MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
 # ============================================================================
 TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
+CLOUD_ACK_TIMEOUT = float(os.getenv("CLOUD_ACK_TIMEOUT", "3.0"))
 
 # ============================================================================
 # Proxy Configuration

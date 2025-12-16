@@ -92,7 +92,7 @@ class CloudQueue:
                     # Drop oldest
                     self.conn.execute(
                         "DELETE FROM queue WHERE id IN "
-                        "(SELECT id FROM queue ORDER BY id LIMIT 1)"
+                        "(SELECT id FROM queue ORDER BY timestamp, id LIMIT 1)"
                     )
                     logger.warning(
                         f"CloudQueue full ({self.max_size}), "
@@ -134,7 +134,7 @@ class CloudQueue:
                 if self._has_frame_bytes:
                     cursor = self.conn.execute(
                         "SELECT id, table_name, frame_bytes, frame_data FROM queue "
-                        "ORDER BY id LIMIT 1"
+                        "ORDER BY timestamp, id LIMIT 1"
                     )
                     row = cursor.fetchone()
                     if not row:
@@ -147,7 +147,7 @@ class CloudQueue:
                 
                 cursor = self.conn.execute(
                     "SELECT id, table_name, frame_data FROM queue "
-                    "ORDER BY id LIMIT 1"
+                    "ORDER BY timestamp, id LIMIT 1"
                 )
                 row = cursor.fetchone()
                 if not row:
@@ -157,6 +157,20 @@ class CloudQueue:
             except Exception as e:
                 logger.error(f"CloudQueue: Get next failed: {e}")
                 return None
+
+    async def defer(self, frame_id: int, delay_s: float = 60.0) -> bool:
+        """Posune frame v queue (aby neblokoval FIFO při opakovaných chybách)."""
+        async with self.lock:
+            try:
+                self.conn.execute(
+                    "UPDATE queue SET timestamp=? WHERE id=?",
+                    (time.time() + float(delay_s), frame_id),
+                )
+                self.conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"CloudQueue: Defer failed: {e}")
+                return False
     
     async def remove(self, frame_id: int) -> bool:
         """Odstraní frame po úspěšném odeslání."""

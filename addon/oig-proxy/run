@@ -38,6 +38,13 @@ cp /app/sensor_map.json /data/sensor_map.json
 # Env pro proxy
 export TARGET_SERVER=$(bashio::config 'target_server')
 export TARGET_PORT=$(bashio::config 'target_port')
+
+CLOUD_ACK_TIMEOUT_RAW=$(bashio::config 'cloud_ack_timeout')
+if [ -z "$CLOUD_ACK_TIMEOUT_RAW" ] || [ "$CLOUD_ACK_TIMEOUT_RAW" = "null" ]; then
+  CLOUD_ACK_TIMEOUT_RAW=3.0
+fi
+export CLOUD_ACK_TIMEOUT=$CLOUD_ACK_TIMEOUT_RAW
+
 export PROXY_PORT=$(bashio::config 'proxy_port')
 export MQTT_HOST=$(bashio::config 'mqtt_host')
 export MQTT_PORT=$(bashio::config 'mqtt_port')

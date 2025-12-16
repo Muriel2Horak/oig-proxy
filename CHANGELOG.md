@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.7] - 2025-12-16
+
+### Added
+- Add-on option `cloud_ack_timeout` (env `CLOUD_ACK_TIMEOUT`) pro max čekání na ACK z cloudu v ONLINE režimu
+
+### Fixed
+- Stabilnější BOX ↔ proxy spojení: rychlý fallback na lokální ACK + queue při zpomalení/timeoutu cloudu (méně reconnectů BOXu)
+- REPLAY se spouští i když vznikne fronta v ONLINE (periodický edge-case), aby se CloudQueue nezasekla plná
+- REPLAY se neblokuje na jednom problematickém framu (defer)
+- CloudQueue FIFO determinismus: výběr i drop nejstaršího podle `timestamp, id`
+
 ## [1.3.6] - 2025-12-15
 
 ### Added

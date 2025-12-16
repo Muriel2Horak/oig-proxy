@@ -5,15 +5,18 @@ OIG Proxy - hlavní orchestrace s ONLINE/OFFLINE/REPLAY režimy.
 
 import asyncio
 import logging
+import socket
 import time
 from typing import Any
 
 from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
 from config import (
     CLOUD_REPLAY_RATE,
+    CLOUD_ACK_TIMEOUT,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
+    REPLAY_ACK_TIMEOUT,
     TARGET_PORT,
     TARGET_SERVER,
 )
@@ -372,6 +375,27 @@ class OIGProxy:
                 await self.publish_proxy_status()
                 await self._publish_mode_if_ready(reason="periodic")
                 await self._publish_prms_if_ready(reason="periodic")
+
+                # Pokud běží ONLINE a cloud fronta není prázdná, přepni do REPLAY,
+                # jinak se může fronta plnit a nikdy nevysypat (chybí edge-case přechod).
+                queue_size = self.cloud_queue.size()
+                start_replay = False
+                if self.cloud_health.is_online and queue_size > 0:
+                    async with self.mode_lock:
+                        if self.mode == ProxyMode.ONLINE:
+                            self.mode = ProxyMode.REPLAY
+                            self.stats["mode_changes"] += 1
+                            start_replay = True
+                    if start_replay:
+                        logger.info(
+                            "🟡 Režim změněn: ONLINE → REPLAY "
+                            f"({queue_size} frames ve frontě, periodic)"
+                        )
+                        if self._replay_task is None or self._replay_task.done():
+                            self._replay_task = asyncio.create_task(
+                                self._replay_cloud_queue()
+                            )
+                        await self.publish_proxy_status(force=True)
             except Exception as e:
                 logger.debug(f"Proxy status loop publish failed: {e}")
     
@@ -426,8 +450,14 @@ class OIGProxy:
             # Check zda cloud je stále online
             if not self.cloud_health.is_online:
                 logger.warning("⚠️ Replay přerušeno - cloud offline")
+                mode_changed = False
                 async with self.mode_lock:
-                    self.mode = ProxyMode.OFFLINE
+                    if self.mode != ProxyMode.OFFLINE:
+                        self.mode = ProxyMode.OFFLINE
+                        self.stats["mode_changes"] += 1
+                        mode_changed = True
+                if mode_changed:
+                    await self.publish_proxy_status(force=True)
                 break
             
             # Vezmi další frame z fronty
@@ -438,9 +468,14 @@ class OIGProxy:
                     f"✅ Replay dokončen ({replayed} frames), "
                     "přepínám na ONLINE režim"
                 )
+                mode_changed = False
                 async with self.mode_lock:
-                    self.mode = ProxyMode.ONLINE
-                    self.stats["mode_changes"] += 1
+                    if self.mode != ProxyMode.ONLINE:
+                        self.mode = ProxyMode.ONLINE
+                        self.stats["mode_changes"] += 1
+                        mode_changed = True
+                if mode_changed:
+                    await self.publish_proxy_status(force=True)
                 break
             
             frame_id, table_name, frame_bytes = item
@@ -456,10 +491,10 @@ class OIGProxy:
                 writer.write(frame_bytes)
                 await writer.drain()
                 
-                # Čekej na ACK (timeout 3s)
+                # Čekej na ACK (timeout)
                 await asyncio.wait_for(
                     reader.read(4096),
-                    timeout=3.0
+                    timeout=REPLAY_ACK_TIMEOUT
                 )
                 
                 writer.close()
@@ -479,7 +514,8 @@ class OIGProxy:
                 
             except Exception as e:
                 logger.error(f"❌ Replay failed pro frame {frame_id}: {e}")
-                # Necháme frame ve frontě, zkusíme další
+                # Nenecháme se zablokovat jedním problémovým framem.
+                await self.cloud_queue.defer(frame_id, delay_s=60.0)
             
             # Rate limiting
             await asyncio.sleep(interval)
@@ -506,21 +542,39 @@ class OIGProxy:
             self._active_box_writer = writer
             self._active_box_peer = f"{addr[0]}:{addr[1]}" if addr else None
 
+        # Socket tuning (best effort): keepalive + low-latency ACK forwarding.
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except Exception:
+                pass
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                # Linux keepalive tuning (ignored if not supported).
+                for opt, val in (
+                    (getattr(socket, "TCP_KEEPIDLE", None), 60),
+                    (getattr(socket, "TCP_KEEPINTVL", None), 20),
+                    (getattr(socket, "TCP_KEEPCNT", None), 3),
+                ):
+                    if opt is None:
+                        continue
+                    try:
+                        sock.setsockopt(socket.IPPROTO_TCP, opt, val)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         logger.debug(f"🔌 BOX připojen ({conn_id}): {addr}")
         self.box_connected = True
         self.box_connections += 1
         await self.publish_proxy_status(force=True)
         
         try:
-            # Zpracuj podle aktuálního režimu
-            async with self.mode_lock:
-                current_mode = self.mode
-            
-            if current_mode == ProxyMode.ONLINE:
-                await self._handle_online_mode_connection(reader, writer, conn_id)
-            else:
-                # OFFLINE nebo REPLAY → lokální ACK + queue
-                await self._handle_offline_mode_connection(reader, writer, conn_id)
+            # Zpracování musí respektovat změny režimu i během jednoho TCP session
+            # (cloud může spadnout uprostřed a BOX drží spojení).
+            await self._handle_box_connection(reader, writer, conn_id)
             
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
@@ -542,22 +596,38 @@ class OIGProxy:
         box_reader: asyncio.StreamReader,
         box_writer: asyncio.StreamWriter,
         conn_id: int
-    ):
-        """
-        ONLINE režim s reconnect logikou:
-        - Drží BOX spojení aktivní
-        - Pro každý frame se pokusí forward na cloud
-        - Pokud cloud selže/ukončí, vytvoří nové cloud spojení
-        - Pokud cloud nedostupný, offline mode pro daný frame
-        - Timeout 15 min na BOX idle (detekce mrtvého BOXu)
-        """
+    ) -> None:
+        """Zpětná kompatibilita: ONLINE režim je řešen per-frame v `_handle_box_connection()`."""
+        await self._handle_box_connection(box_reader, box_writer, conn_id)
+
+    async def _note_cloud_failure(self, reason: str) -> None:
+        """Zaznamená cloud selhání a přepne proxy do OFFLINE, aby se spustil REPLAY."""
+        was_online = self.cloud_health.is_online
+        self.cloud_health.is_online = False
+        self.cloud_health.consecutive_successes = 0
+        self.cloud_health.consecutive_failures = self.cloud_health.fail_threshold
+        self.cloud_health.last_check_time = time.time()
+        if was_online:
+            logger.warning(f"☁️ Cloud forced OFFLINE ({reason})")
+
+        async with self.mode_lock:
+            current_mode = self.mode
+        if current_mode == ProxyMode.ONLINE:
+            await self._on_cloud_state_change("cloud_down")
+
+    async def _handle_box_connection(
+        self,
+        box_reader: asyncio.StreamReader,
+        box_writer: asyncio.StreamWriter,
+        conn_id: int,
+    ) -> None:
+        """Jednotný handler pro BOX session, který respektuje změny režimu během spojení."""
         BOX_IDLE_TIMEOUT = 900  # 15 minut
         CLOUD_CONNECT_TIMEOUT = 5.0
-        CLOUD_ACK_TIMEOUT = 10.0
-        
-        cloud_reader = None
-        cloud_writer = None
-        
+
+        cloud_reader: asyncio.StreamReader | None = None
+        cloud_writer: asyncio.StreamWriter | None = None
+
         try:
             while True:
                 # Čti frame od BOX s timeoutem (detekce mrtvého BOXu)
@@ -571,7 +641,7 @@ class OIGProxy:
                         f"⏱️ BOX idle timeout (15 min) - closing session (conn={conn_id})"
                     )
                     break
-                
+
                 if not data:
                     logger.debug(
                         f"🔌 BOX ukončil spojení (EOF, conn={conn_id}, "
@@ -581,22 +651,28 @@ class OIGProxy:
                     )
                     await self.publish_proxy_status(force=True)
                     break
-                
+
                 # Zpracuj frame
-                frame = data.decode('utf-8', errors='replace')
+                frame = data.decode("utf-8", errors="replace")
                 self.stats["frames_received"] += 1
-                self._last_data_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+                self._last_data_iso = time.strftime(
+                    "%Y-%m-%dT%H:%M:%S%z", time.localtime()
+                )
                 self._last_data_epoch = time.time()
-                
+
                 # Parse & capture
                 parsed = self.parser.parse_xml_frame(frame)
                 device_id = parsed.get("_device_id") if parsed else None
                 table_name = parsed.get("_table") if parsed else None
                 # IsNew* frames nemají TblName, vezmeme z Result
-                if (not table_name and parsed and parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW")):
+                if (
+                    not table_name
+                    and parsed
+                    and parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW")
+                ):
                     table_name = parsed["Result"]
                     parsed["_table"] = table_name
-                
+
                 # Auto-detect device_id from BOX frames
                 if device_id and self.device_id == "AUTO":
                     self.device_id = device_id
@@ -606,18 +682,27 @@ class OIGProxy:
                     # Re-publish availability with correct device_id
                     self.mqtt_publisher.publish_availability()
                     logger.info(f"🔑 Device ID detected: {device_id}")
-                    await self._publish_mode_if_ready(device_id=device_id, reason="device_autodetect")
-                    await self._publish_prms_if_ready(reason="device_autodetect")
+                    await self._publish_mode_if_ready(
+                        device_id=device_id, reason="device_autodetect"
+                    )
+                    await self._publish_prms_if_ready(
+                        reason="device_autodetect"
+                    )
 
                 # Persist *_prms tabulky (chodí zřídka) pro obnovu po restartu
                 self._maybe_persist_table_state(parsed, table_name, device_id)
-                
+
                 capture_payload(
-                    device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame),
-                    conn_id=conn_id, peer=self._active_box_peer
+                    device_id,
+                    table_name,
+                    frame,
+                    parsed or {},
+                    direction="box_to_proxy",
+                    length=len(data),
+                    conn_id=conn_id,
+                    peer=self._active_box_peer,
                 )
-                
+
                 # MQTT publish (vždy, nezávisle na cloud)
                 if parsed:
                     # IsNew* telemetry
@@ -627,15 +712,42 @@ class OIGProxy:
                         self._isnew_last_poll_iso = self._last_data_iso
                     await self._maybe_process_mode(parsed, table_name, device_id)
                     await self.mqtt_publisher.publish_data(parsed)
-                
-                # Pokud nemáme cloud spojení, vytvoř nové
+
+                async with self.mode_lock:
+                    current_mode = self.mode
+
+                # OFFLINE/REPLAY → lokální ACK + queue
+                if current_mode != ProxyMode.ONLINE:
+                    if cloud_writer:
+                        try:
+                            cloud_writer.close()
+                            await cloud_writer.wait_closed()
+                        except Exception:
+                            pass
+                    cloud_reader = None
+                    cloud_writer = None
+                    self.cloud_session_connected = False
+
+                    await self._process_frame_offline(
+                        data, table_name, device_id, box_writer
+                    )
+
+                    # Log každých 10 queued frames
+                    if self.stats["frames_queued"] % 10 == 0:
+                        queue_size = self.cloud_queue.size()
+                        logger.info(
+                            f"📦 {self.mode.value}: "
+                            f"{self.stats['frames_queued']} frames queued "
+                            f"({queue_size} ve frontě)"
+                        )
+                    continue
+
+                # ONLINE režim: forward na cloud
                 if cloud_writer is None or cloud_writer.is_closing():
                     try:
                         cloud_reader, cloud_writer = await asyncio.wait_for(
-                            asyncio.open_connection(
-                                TARGET_SERVER, TARGET_PORT
-                            ),
-                            timeout=CLOUD_CONNECT_TIMEOUT
+                            asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
+                            timeout=CLOUD_CONNECT_TIMEOUT,
                         )
                         self.cloud_connects += 1
                         self.cloud_session_connected = True
@@ -647,47 +759,62 @@ class OIGProxy:
                             f"⚠️ Cloud nedostupný: {e} - offline mode "
                             f"(conn={conn_id}, table={table_name})"
                         )
-                        # Cloud nedostupný → offline mode pro tento frame
+                        self.cloud_errors += 1
+                        self.cloud_session_connected = False
+                        cloud_reader = None
+                        cloud_writer = None
+
                         await self._process_frame_offline(
                             data, table_name, device_id, box_writer
                         )
-                        await self.publish_proxy_status(force=True)
+                        await self._note_cloud_failure("connect_failed")
                         continue
-                
-                # Forward na cloud
+
                 try:
+                    assert cloud_writer is not None
+                    assert cloud_reader is not None
                     cloud_writer.write(data)
                     await cloud_writer.drain()
                     self.stats["frames_forwarded"] += 1
-                    
+
                     # Čekej na ACK od cloudu
                     ack_data = await asyncio.wait_for(
                         cloud_reader.read(4096),
-                        timeout=CLOUD_ACK_TIMEOUT
+                        timeout=CLOUD_ACK_TIMEOUT,
                     )
-                    
+
                     if not ack_data:
                         # Cloud ukončil spojení (EOF)
                         logger.warning(
-                            f"⚠️ Cloud ukončil spojení - reconnect next frame "
+                            f"⚠️ Cloud ukončil spojení - offline mode "
                             f"(conn={conn_id}, table={table_name})"
                         )
                         self.cloud_disconnects += 1
                         self.cloud_session_connected = False
-                        cloud_writer.close()
+                        try:
+                            cloud_writer.close()
+                        except Exception:
+                            pass
+                        cloud_reader = None
                         cloud_writer = None
-                        # Tento frame musíme zpracovat offline
+
                         await self._process_frame_offline(
-                            frame, table_name, device_id, box_writer
+                            data, table_name, device_id, box_writer
                         )
+                        await self._note_cloud_failure("cloud_eof")
                         continue
-                    
+
                     # Capture cloud response
-                    ack_str = ack_data.decode('utf-8')
+                    ack_str = ack_data.decode("utf-8", errors="replace")
                     capture_payload(
-                        None, table_name, ack_str, {},
-                        direction="cloud_to_proxy", length=len(ack_data),
-                        conn_id=conn_id, peer=self._active_box_peer
+                        None,
+                        table_name,
+                        ack_str,
+                        {},
+                        direction="cloud_to_proxy",
+                        length=len(ack_data),
+                        conn_id=conn_id,
+                        peer=self._active_box_peer,
                     )
                     if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
                         self._isnew_last_response = self._last_data_iso
@@ -695,33 +822,39 @@ class OIGProxy:
                             self._isnew_last_rtt_ms = round(
                                 (time.time() - self._isnew_last_poll_epoch) * 1000, 1
                             )
-                    
+
                     # ACK Learning
                     if table_name:
                         self.ack_learner.learn_from_cloud(ack_str, table_name)
-                    
+
                     # Forward ACK na BOX
                     box_writer.write(ack_data)
                     await box_writer.drain()
                     self.stats["acks_cloud"] += 1
-                    
+
                 except asyncio.TimeoutError:
                     logger.warning(
-                        f"⏱️ Cloud ACK timeout - offline mode for this frame "
-                        f"(conn={conn_id}, table={table_name})"
+                        f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) - "
+                        f"offline mode (conn={conn_id}, table={table_name})"
                     )
                     self.cloud_timeouts += 1
                     self.cloud_session_connected = False
                     if cloud_writer:
-                        cloud_writer.close()
+                        try:
+                            cloud_writer.close()
+                        except Exception:
+                            pass
+                    cloud_reader = None
                     cloud_writer = None
+
                     await self._process_frame_offline(
                         data, table_name, device_id, box_writer
                     )
-                    
+                    await self._note_cloud_failure("ack_timeout")
+
                 except Exception as e:
                     logger.warning(
-                        f"⚠️ Cloud error: {e} - offline mode for this frame "
+                        f"⚠️ Cloud error: {e} - offline mode "
                         f"(conn={conn_id}, table={table_name})"
                     )
                     self.cloud_errors += 1
@@ -731,13 +864,16 @@ class OIGProxy:
                             cloud_writer.close()
                         except Exception:
                             pass
+                    cloud_reader = None
                     cloud_writer = None
+
                     await self._process_frame_offline(
                         data, table_name, device_id, box_writer
                     )
-                    
+                    await self._note_cloud_failure("cloud_error")
+
         except Exception as e:
-            logger.error(f"❌ Online mode error: {e}")
+            logger.error(f"❌ Box connection handler error: {e}")
         finally:
             if cloud_writer:
                 try:
@@ -769,91 +905,9 @@ class OIGProxy:
         box_reader: asyncio.StreamReader,
         box_writer: asyncio.StreamWriter,
         conn_id: int
-    ):
-        """
-        OFFLINE/REPLAY režim - persistent connection s lokálním ACK.
-        Timeout 15 min na BOX idle (detekce mrtvého BOXu).
-        """
-        BOX_IDLE_TIMEOUT = 900  # 15 minut
-        
-        try:
-            while True:
-                # Čti frame od BOX s timeoutem
-                try:
-                    data = await asyncio.wait_for(
-                        box_reader.read(8192),
-                        timeout=BOX_IDLE_TIMEOUT
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"⏱️ BOX idle timeout (15 min) - closing session (conn={conn_id})"
-                    )
-                    break
-                
-                if not data:
-                    logger.debug(
-                        f"🔌 BOX ukončil spojení (EOF, conn={conn_id}, "
-                        f"frames_rx={self.stats['frames_received']}, "
-                        f"queue={self.cloud_queue.size()})"
-                    )
-                    break
-                
-                frame = data.decode('utf-8', errors='replace')
-                self.stats["frames_received"] += 1
-                self._last_data_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-                self._last_data_epoch = time.time()
-                
-                # Parse & capture
-                parsed = self.parser.parse_xml_frame(frame)
-                device_id = parsed.get("_device_id") if parsed else None
-                table_name = parsed.get("_table") if parsed else None
-                # IsNew* frames nemají TblName, vezmeme z Result
-                if (not table_name and parsed and parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW")):
-                    table_name = parsed["Result"]
-                    parsed["_table"] = table_name
-
-                # Auto-detect device_id from BOX frames
-                if device_id and self.device_id == "AUTO":
-                    self.device_id = device_id
-                    self.mqtt_publisher.device_id = device_id
-                    # Clear discovery cache to re-send with correct device_id
-                    self.mqtt_publisher.discovery_sent.clear()
-                    # Re-publish availability with correct device_id
-                    self.mqtt_publisher.publish_availability()
-                    logger.info(f"🔑 Device ID detected: {device_id}")
-                    await self._publish_mode_if_ready(device_id=device_id, reason="device_autodetect")
-                    await self._publish_prms_if_ready(reason="device_autodetect")
-
-                # Persist *_prms tabulky (chodí zřídka) pro obnovu po restartu
-                self._maybe_persist_table_state(parsed, table_name, device_id)
-                
-                capture_payload(
-                    device_id, table_name, frame, parsed or {},
-                    direction="box_to_proxy", length=len(frame),
-                    conn_id=conn_id, peer=self._active_box_peer
-                )
-                
-                # MQTT publish
-                if parsed:
-                    await self._maybe_process_mode(parsed, table_name, device_id)
-                    await self.mqtt_publisher.publish_data(parsed)
-                
-                # Lokální ACK + queue
-                await self._process_frame_offline(
-                    data, table_name, device_id, box_writer
-                )
-                
-                # Log každých 10 frames
-                if self.stats["frames_queued"] % 10 == 0:
-                    queue_size = self.cloud_queue.size()
-                    logger.info(
-                        f"📦 {self.mode.value}: "
-                        f"{self.stats['frames_queued']} frames queued "
-                        f"({queue_size} ve frontě)"
-                    )
-                    
-        except Exception as e:
-            logger.debug(f"Offline mode ukončen: {e}")
+    ) -> None:
+        """Zpětná kompatibilita: OFFLINE/REPLAY režim je řešen per-frame v `_handle_box_connection()`."""
+        await self._handle_box_connection(box_reader, box_writer, conn_id)
     
     def get_stats(self) -> dict[str, Any]:
         """Vrátí statistiky proxy."""
