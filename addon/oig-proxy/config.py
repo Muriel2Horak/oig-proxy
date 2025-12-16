@@ -84,6 +84,7 @@ CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
 # Capture Configuration
 # ============================================================================
 CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
+CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
 
 # ============================================================================
 # Queue Configuration

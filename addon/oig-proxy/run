@@ -84,4 +84,14 @@ else
   bashio::log.info "📋 Capture payloads: DISABLED"
 fi
 
+# CAPTURE_RAW_BYTES - boolean z config (ukládá base64 raw bytes do payloads.db)
+CAPTURE_RAW_BYTES=$(bashio::config 'capture_raw_bytes' 2>/dev/null)
+if [ "$CAPTURE_RAW_BYTES" = "true" ] || [ "$CAPTURE_RAW_BYTES" = "1" ]; then
+  export CAPTURE_RAW_BYTES="true"
+  bashio::log.info "📦 Capture raw bytes: ENABLED"
+else
+  export CAPTURE_RAW_BYTES="false"
+  bashio::log.info "📦 Capture raw bytes: DISABLED"
+fi
+
 python -u /app/main.py

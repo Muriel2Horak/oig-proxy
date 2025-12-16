@@ -11,12 +11,14 @@ import queue
 import sqlite3
 import threading
 import time
+import base64
 from contextlib import suppress
 from typing import Any
 
 from config import (
     CAPTURE_DB_PATH,
     CAPTURE_PAYLOADS,
+    CAPTURE_RAW_BYTES,
     MAP_RELOAD_SECONDS,
     MODE_STATE_PATH,
     PRMS_STATE_PATH,
@@ -438,6 +440,7 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
             conn.execute("PRAGMA busy_timeout=2000")
         except Exception:
             pass
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS frames (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -445,6 +448,7 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
                 device_id TEXT,
                 table_name TEXT,
                 raw TEXT,
+                raw_b64 TEXT,
                 parsed TEXT,
                 direction TEXT,
                 conn_id INTEGER,
@@ -452,9 +456,10 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
                 length INTEGER
             )
         """)
-        
+
         # Přidat chybějící sloupce (backward compatibility)
         for col_name, col_type in [
+            ("raw_b64", "TEXT"),
             ("direction", "TEXT"),
             ("conn_id", "INTEGER"),
             ("peer", "TEXT"),
@@ -527,8 +532,8 @@ def _capture_worker(db_path: str) -> None:
 
         sql = (
             "INSERT INTO frames "
-            "(ts, device_id, table_name, raw, parsed, direction, conn_id, peer, length) "
-            "VALUES (?,?,?,?,?,?,?,?,?)"
+            "(ts, device_id, table_name, raw, raw_b64, parsed, direction, conn_id, peer, length) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)"
         )
 
         assert _capture_queue is not None
@@ -541,6 +546,7 @@ def capture_payload(
     device_id: str | None,
     table: str | None,
     raw: str,
+    raw_bytes: bytes | None,
     parsed: dict[str, Any],
     direction: str | None = None,
     conn_id: int | None = None,
@@ -549,7 +555,7 @@ def capture_payload(
 ) -> None:
     """Uloží payload do capture databáze."""
     global _capture_queue, _capture_thread, _capture_cols
-    
+
     if not CAPTURE_PAYLOADS:
         return
 
@@ -572,14 +578,18 @@ def capture_payload(
             name="capture-writer",
         )
         _capture_thread.start()
-    
+
     try:
         ts = iso_now()
+        raw_b64: str | None = None
+        if CAPTURE_RAW_BYTES and raw_bytes is not None:
+            raw_b64 = base64.b64encode(raw_bytes).decode("ascii")
         values = (
             ts,
             device_id,
             table,
             raw,
+            raw_b64,
             json.dumps(parsed, ensure_ascii=False),
             direction,
             conn_id,

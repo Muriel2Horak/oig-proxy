@@ -25,7 +25,8 @@
     "map_reload_seconds": 0,
     "proxy_status_interval": 60,
     "log_level": "INFO",
-    "capture_payloads": false
+    "capture_payloads": false,
+    "capture_raw_bytes": false
   },
   "schema": {
     "target_server": "str",
@@ -40,6 +41,7 @@
     "proxy_status_interval": "int",
     "log_level": "list(INFO|DEBUG|WARNING|ERROR)",
     "capture_payloads": "bool?",
+    "capture_raw_bytes": "bool?",
     "ha_ip": "str?",
     "dns_upstream": "str?"
   },
