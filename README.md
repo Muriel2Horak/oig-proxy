@@ -61,17 +61,76 @@ Proxy typicky vytvoří dvě „větve“ zařízení:
 Poznámka: změny typu entity (sensor ↔ binary_sensor) vyžadují vymazat staré retained discovery config topics, jinak HA drží původní component.
 
 ## Požadavky na uživatele
-1) **MQTT broker** (např. HA add-on Mosquitto), vytvořit účet/heslo a znát host/port.
-2) **DNS/route přepis**: zajistit, aby `oigservis.cz` (target) směřoval na IP HA s proxy (router DNS, HA DNS, nebo vlastní dnsmasq z `dnsmasq.conf`). Box musí volat na HA port 5710.
-3) **Add-on repo**: v HA → Doplňky → Repos přidat `https://github.com/Muriel2Horak/oig-proxy`.
-4) **Instalace add-onu**: „OIG Proxy“ → Configure:
-   - `target_server`: `oigservis.cz` (nebo vlastní, pokud se mění název, ale obvykle jen DNS přepis).
-   - `target_port`: 5710
-   - `proxy_port`: 5710 (stejný port, na který Box volá)
-   - `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password`: dle Mosquitto.
-   - `map_reload_seconds`: 0 (vypnuto) nebo např. 300 pro periodický reload mapy.
-   - Mapování senzorů: mountuje `/data/sensor_map.json`; neznámé klíče se logují do `/data/unknown_sensors.json`.
-5) **Spustit add-on** a ověřit v logu „Nové připojení“ a publikované discovery v MQTT.
+### 1) MQTT broker (Mosquitto)
+1. V HA otevři **Nastavení → Doplňky → Obchod s doplňky**.
+2. Nainstaluj doplněk **Mosquitto broker** a spusť ho.
+3. V **Nastavení → Zařízení a služby → MQTT** (integrace) přidej MQTT integraci.
+   - Host: obvykle `core-mosquitto`
+   - Port: `1883`
+   - Uživatelské jméno/heslo: dle konfigurace Mosquitto (doporučeno vytvořit separátní účet).
+
+### 2) Instalace add-onu OIG Proxy (krok za krokem)
+1. V HA otevři **Nastavení → Doplňky → Obchod s doplňky**.
+2. Vpravo nahoře klikni na **⋮** (tři tečky) → **Repozitáře**.
+3. Přidej repo: `https://github.com/Muriel2Horak/oig-proxy` a potvrď.
+4. Najdi doplněk **OIG Proxy** a klikni **Instalovat**.
+5. Otevři záložku **Konfigurace** a nastav minimálně:
+   - `target_server`: `oigservis.cz`
+   - `target_port`: `5710`
+   - `proxy_port`: `5710`
+   - `mqtt_host`: `core-mosquitto`
+   - `mqtt_port`: `1883`
+   - `mqtt_username`, `mqtt_password`: účet z Mosquitto
+   - `log_level`: `INFO` (na ladění `DEBUG`)
+6. (Volitelné) ladicí záznam do SQLite:
+   - `capture_payloads: true` – ukládá rámce do `/data/payloads.db`
+   - `capture_raw_bytes: true` – ukládá i hrubé bajty (`raw_b64`) pro analýzu CRC
+7. Klikni **Uložit**.
+8. Na záložce **Info** dej **Spustit**.
+9. Ověření:
+   - v logu add-onu uvidíš `🚀 OIG Proxy naslouchá na 0.0.0.0:5710`
+   - po připojení BOXu uvidíš `BOX připojen`
+   - v MQTT by měly vznikat retained discovery topicy `homeassistant/.../config`
+
+### 3) DNS přesměrování (aby BOX volal proxy)
+BOX musí místo cloudu (`oigservis.cz`) chodit na IP Home Assistanta, kde běží add-on.
+Nejjednodušší je udělat DNS override v lokální síti.
+
+#### Rychlá kontrola, že DNS funguje
+- Na PC v síti: `nslookup oigservis.cz <IP_DNS_serveru>`
+- Na HA (Terminal & SSH add-on): `nslookup oigservis.cz`
+- Očekávání: `oigservis.cz` se překládá na IP HA (ne na veřejnou IP).
+
+#### Varianta A: Router umí DNS override/host record (doporučeno)
+1. V routeru najdi sekci typu **LAN / DHCP / DNS** nebo **DNS Rebind / Hostnames / Local DNS**.
+2. Přidej statický záznam:
+   - hostname: `oigservis.cz`
+   - typ: `A`
+   - IP: `<IP Home Assistanta v LAN>`
+3. Ujisti se, že DHCP rozdává jako DNS server router (nebo DNS, který ten override umí).
+4. Restartuj BOX (nebo aspoň jeho síť), aby si načetl nový DNS.
+5. Pokud router používá DoH/DoT nebo „DNS proxy“, zkontroluj, že **lokální host override má prioritu** (u některých routerů je potřeba vypnout DoH pro LAN).
+
+#### Varianta B: Pi-hole / AdGuard Home / dnsmasq (když router neumí override)
+1. Provozuj lokální DNS server (Pi-hole / AdGuard Home / dnsmasq) v LAN.
+2. Nastav v něm DNS přepis:
+   - `oigservis.cz` → `<IP Home Assistanta>`
+3. Nastav v routeru DHCP tak, aby klientům (včetně BOXu) rozdával jako DNS právě tento DNS server.
+4. Zkontroluj, že klienti nemají „fallback“ na veřejné DNS (např. 8.8.8.8).
+
+#### Varianta C: Jen pro test (hosts na jednom PC)
+Funguje jen pro testování z PC, ne pro BOX:
+- Přidej do hosts: `oigservis.cz <IP_HA>`
+
+#### Typické problémy (rychlá diagnostika)
+- **BOX má natvrdo veřejné DNS**: v routeru zablokuj odchozí DNS (TCP/UDP 53) mimo lokální DNS server, nebo přesměruj DNS provoz na svůj DNS (policy routing/NAT).
+- **DNS cache**: po změně záznamu restartuj BOX; na PC může pomoct flush DNS cache.
+- **Více domén**: pokud se v komunikaci objeví i jiné domény, přidej je do override stejně (logy/proxy capture ti to odhalí).
+
+#### Příklady konfigurace (orientačně)
+- **OpenWrt (dnsmasq)**: v LuCI → *Network → DHCP and DNS → Hostnames* přidej `oigservis.cz` → `<IP_HA>`.
+  - CLI: přidej do `/etc/hosts` řádek `<IP_HA> oigservis.cz` a restartuj dnsmasq: `service dnsmasq restart`.
+- **MikroTik**: *IP → DNS → Static* přidej `oigservis.cz` s adresou `<IP_HA>` a zapni `Allow Remote Requests`.
 
 ## Lokální spuštění (mimo HA)
 ```
@@ -97,6 +156,8 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 - `SENSOR_MAP_PATH` (default `/data/sensor_map.json` v add-onu).
 - `MAP_RELOAD_SECONDS` (0 = vypnuto) – periodický reload mapy.
 - `UNKNOWN_SENSORS_PATH` (default `/data/unknown_sensors.json`).
+- `CAPTURE_PAYLOADS` (default `false`) – ukládá všechny frames do `/data/payloads.db`.
+- `CAPTURE_RAW_BYTES` (default `false`) – ukládá i hrubé bajty (`raw_b64`) pro CRC analýzu.
 
 ## Bateriové banky (SubD architektura)
 

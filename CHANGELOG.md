@@ -2,6 +2,18 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.8] - 2025-12-16
+
+### Added
+
+- Add-on volba `capture_raw_bytes` (env `CAPTURE_RAW_BYTES`) pro ukládání hrubých bajtů (`raw_b64`) do `/data/payloads.db` pro CRC analýzu
+- Skript `scripts/crc_hunt.py` pro hledání CRC/checksum kandidátů nad capture databází
+
+### Fixed
+
+- REPLAY: `defer()` respektuje `timestamp` jako `not_before` a task necyklí jeden frame donekonečna
+- REPLAY: problematické `END` rámce typu `Reason=All data sent` se při opakovaném timeoutu zahodí (cloud na ně typicky neodpovídá), aby neblokovaly replay frontu
+
 ## [1.3.7] - 2025-12-16
 
 ### Added
