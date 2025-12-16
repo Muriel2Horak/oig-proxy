@@ -11,6 +11,7 @@ import queue
 import sqlite3
 import threading
 import time
+from contextlib import suppress
 from typing import Any
 
 from config import (
@@ -94,6 +95,43 @@ def save_mode_state(mode_value: int, device_id: str | None) -> None:
         logger.error(f"MODE: Nepodařilo se uložit stav: {e}")
 
 
+def _load_json_file(path: str) -> Any | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _parse_prms_tables(raw_tables: Any) -> dict[str, dict[str, Any]]:
+    tables: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw_tables, dict):
+        return tables
+
+    for table_name, entry in raw_tables.items():
+        if not isinstance(table_name, str) or not isinstance(entry, dict):
+            continue
+        if "values" in entry:
+            values = entry.get("values")
+            if isinstance(values, dict):
+                tables[table_name] = values
+            continue
+        tables[table_name] = entry
+    return tables
+
+
+def _split_prms_state(data: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], str | None]:
+    device_id = data.get("device_id")
+    raw_tables = data.get("tables")
+
+    # Backward compatibility: pokud je soubor přímo dict table->values
+    if raw_tables is None:
+        raw_tables = data
+        device_id = None
+
+    return _parse_prms_tables(raw_tables), (str(device_id) if device_id else None)
+
+
 def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
     """Načte poslední známé hodnoty tabulek z perzistentního souboru.
 
@@ -103,34 +141,10 @@ def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
     try:
         if not os.path.exists(PRMS_STATE_PATH):
             return {}, None
-        with open(PRMS_STATE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if not isinstance(data, dict):
+        loaded = _load_json_file(PRMS_STATE_PATH)
+        if not isinstance(loaded, dict):
             return {}, None
-
-        device_id = data.get("device_id")
-        raw_tables = data.get("tables")
-
-        # Backward compatibility: pokud je soubor přímo dict table->values
-        if raw_tables is None:
-            raw_tables = data
-            device_id = None
-
-        tables: dict[str, dict[str, Any]] = {}
-        if isinstance(raw_tables, dict):
-            for table_name, entry in raw_tables.items():
-                if not isinstance(table_name, str):
-                    continue
-                if isinstance(entry, dict) and "values" in entry:
-                    values = entry.get("values")
-                    if isinstance(values, dict):
-                        tables[table_name] = values
-                elif isinstance(entry, dict):
-                    tables[table_name] = entry
-
-        device_id_str = str(device_id) if device_id else None
-        return tables, device_id_str
+        return _split_prms_state(loaded)
     except Exception as e:
         logger.warning(f"STATE: Nepodařilo se načíst table state: {e}")
         return {}, None
@@ -150,30 +164,24 @@ def save_prms_state(
     try:
         os.makedirs(os.path.dirname(PRMS_STATE_PATH), exist_ok=True)
 
-        existing: dict[str, Any] = {}
-        if os.path.exists(PRMS_STATE_PATH):
-            try:
-                with open(PRMS_STATE_PATH, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    existing = loaded
-            except Exception:
-                existing = {}
+        existing = _load_json_file(PRMS_STATE_PATH)
+        existing_dict: dict[str, Any] = existing if isinstance(existing, dict) else {}
 
-        existing_device_id = existing.get("device_id")
-        existing_tables = existing.get("tables")
+        existing_device_id = existing_dict.get("device_id")
+        existing_tables = existing_dict.get("tables")
 
         # Backward compatibility: pokud je soubor přímo dict table->values
         if existing_tables is None and any(
-            isinstance(k, str) and k.startswith("tbl_") for k in existing.keys()
+            isinstance(k, str) and k.startswith("tbl_") for k in existing_dict.keys()
         ):
-            existing_tables = existing
+            existing_tables = existing_dict
             existing_device_id = None
 
-        if not isinstance(existing_tables, dict):
-            existing_tables = {}
+        existing_tables_dict: dict[str, Any] = (
+            existing_tables if isinstance(existing_tables, dict) else {}
+        )
 
-        prior_entry = existing_tables.get(table_name) if existing_tables else None
+        prior_entry = existing_tables_dict.get(table_name)
         prior_values: dict[str, Any] = {}
         if isinstance(prior_entry, dict) and "values" in prior_entry:
             pv = prior_entry.get("values")
@@ -184,11 +192,11 @@ def save_prms_state(
 
         merged = dict(prior_values)
         merged.update(values)
-        existing_tables[table_name] = {"ts": iso_now(), "values": merged}
+        existing_tables_dict[table_name] = {"ts": iso_now(), "values": merged}
 
         out = {
             "device_id": str(device_id) if device_id else existing_device_id,
-            "tables": existing_tables,
+            "tables": existing_tables_dict,
         }
         with open(PRMS_STATE_PATH, "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False)
@@ -238,10 +246,150 @@ def decode_warnings(key: str, value: Any) -> list[str]:
         remark = item.get("remark_cs") or item.get("remark")
         if bit is None:
             continue
-        if val_int & int(bit):
-            if remark:
-                texts.append(remark)
+        if (val_int & int(bit)) and remark:
+            texts.append(remark)
     return texts
+
+
+def _builtin_sensors() -> dict[str, SensorConfig]:
+    return {
+        "tbl_events:Type": SensorConfig(
+            "Typ události", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "tbl_events:Confirm": SensorConfig(
+            "Potvrzení události", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "tbl_events:Content": SensorConfig(
+            "Text události", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:status": SensorConfig(
+            "Stav komunikace", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:mode": SensorConfig(
+            "Režim komunikace", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:last_data": SensorConfig(
+            "Poslední data", "", "timestamp", None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:cloud_online": SensorConfig(
+            "Cloud připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+        ),
+        "proxy_status:cloud_session_connected": SensorConfig(
+            "Cloud TCP připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+        ),
+        "proxy_status:cloud_session_active": SensorConfig(
+            "Cloud TCP aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:cloud_connects": SensorConfig(
+            "Cloud - připojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:cloud_disconnects": SensorConfig(
+            "Cloud - odpojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:cloud_timeouts": SensorConfig(
+            "Cloud - timeouts (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:cloud_errors": SensorConfig(
+            "Cloud - chyby (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:box_connected": SensorConfig(
+            "BOX připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+        ),
+        "proxy_status:box_data_recent": SensorConfig(
+            "Data z BOXu tečou", "", "connectivity", None, None, "proxy", "diagnostic", None, True
+        ),
+        "proxy_status:box_connections": SensorConfig(
+            "BOX spojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:box_connections_active": SensorConfig(
+            "BOX aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:cloud_queue": SensorConfig(
+            "Cloud fronta", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:mqtt_queue": SensorConfig(
+            "MQTT fronta", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:isnewset_polls": SensorConfig(
+            "IsNewSet - počet", "", None, "measurement", None, "proxy", "diagnostic"
+        ),
+        "proxy_status:isnewset_last_poll": SensorConfig(
+            "IsNewSet - poslední dotaz", "", "timestamp", None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:isnewset_last_response": SensorConfig(
+            "IsNewSet - poslední odpověď", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:isnewset_last_rtt_ms": SensorConfig(
+            "IsNewSet - RTT", "ms", None, "measurement", None, "proxy", "diagnostic"
+        ),
+    }
+
+
+def _add_sensors_from_mapping(mapping: dict[str, Any]) -> int:
+    sensors = mapping.get("sensors", {})
+    if not isinstance(sensors, dict):
+        return 0
+
+    added = 0
+    for sid, meta in sensors.items():
+        if not isinstance(sid, str) or not isinstance(meta, dict):
+            continue
+        name = meta.get("name_cs") or meta.get("name") or friendly_name(sid)
+        unit = meta.get("unit_of_measurement") or ""
+        device_class = meta.get("device_class")
+        state_class = meta.get("state_class")
+        icon = meta.get("icon")
+        device_mapping = meta.get("device_mapping")
+        entity_category = meta.get("entity_category")
+        options = meta.get("options")
+        is_binary = meta.get("is_binary", False)
+
+        SENSORS[sid] = SensorConfig(
+            name,
+            unit,
+            device_class,
+            state_class,
+            icon,
+            device_mapping,
+            entity_category,
+            options,
+            is_binary,
+        )
+        added += 1
+
+    for sid, cfg in _builtin_sensors().items():
+        if sid not in SENSORS:
+            SENSORS[sid] = cfg
+            added += 1
+
+    return added
+
+
+def _build_warning_map(mapping: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    entries = mapping.get("warnings_3f", [])
+    if not isinstance(entries, list):
+        return out
+
+    for w in entries:
+        if not isinstance(w, dict):
+            continue
+        key = w.get("table_key") or w.get("key")
+        bit = w.get("bit")
+        remark = w.get("remark")
+        remark_cs = w.get("remark_cs")
+        code = w.get("warning_code")
+        if not key or bit is None:
+            continue
+        out.setdefault(str(key), []).append(
+            {
+                "bit": int(bit),
+                "remark": remark,
+                "remark_cs": remark_cs,
+                "code": code,
+            }
+        )
+    return out
 
 
 def load_sensor_map() -> None:
@@ -259,134 +407,17 @@ def load_sensor_map() -> None:
         return
     
     try:
-        with open(SENSOR_MAP_PATH, "r", encoding="utf-8") as f:
-            mapping = json.load(f)
-        
-        sensors = mapping.get("sensors", {})
-        added = 0
-        for sid, meta in sensors.items():
-            name = (
-                meta.get("name_cs") or 
-                meta.get("name") or 
-                friendly_name(sid)
-            )
-            unit = meta.get("unit_of_measurement") or ""
-            device_class = meta.get("device_class")
-            state_class = meta.get("state_class")
-            icon = meta.get("icon")
-            device_mapping = meta.get("device_mapping")
-            entity_category = meta.get("entity_category")
-            options = meta.get("options")
-            is_binary = meta.get("is_binary", False)
-            
-            SENSORS[sid] = SensorConfig(
-                name, unit, device_class, state_class, icon,
-                device_mapping, entity_category, options, is_binary
-            )
-            added += 1
-        
-        # Vestavene senzory, pokud chybi v mapovani
-        builtin = {
-            "tbl_events:Type": SensorConfig(
-                "Typ události", "", None, None, None, "proxy", "diagnostic"
-            ),
-            "tbl_events:Confirm": SensorConfig(
-                "Potvrzení události", "", None, None, None, "proxy", "diagnostic"
-            ),
-            "tbl_events:Content": SensorConfig(
-                "Text události", "", None, None, None, "proxy", "diagnostic"
-            ),
-            "proxy_status:status": SensorConfig(
-                "Stav komunikace", "", None, None, None, "proxy", "diagnostic"
-            ),
-            "proxy_status:mode": SensorConfig(
-                "Režim komunikace", "", None, None, None, "proxy", "diagnostic"
-            ),
-            "proxy_status:last_data": SensorConfig(
-                "Poslední data", "", "timestamp", None, None, "proxy", "diagnostic"
-            ),
-            "proxy_status:cloud_online": SensorConfig(
-                "Cloud připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
-            ),
-            "proxy_status:cloud_session_connected": SensorConfig(
-                "Cloud TCP připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
-            ),
-            "proxy_status:cloud_session_active": SensorConfig(
-                "Cloud TCP aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:cloud_connects": SensorConfig(
-                "Cloud - připojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:cloud_disconnects": SensorConfig(
-                "Cloud - odpojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:cloud_timeouts": SensorConfig(
-                "Cloud - timeouts (počet)", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:cloud_errors": SensorConfig(
-                "Cloud - chyby (počet)", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:box_connected": SensorConfig(
-                "BOX připojen", "", "connectivity", None, None, "proxy", "diagnostic", None, True
-            ),
-            "proxy_status:box_data_recent": SensorConfig(
-                "Data z BOXu tečou", "", "connectivity", None, None, "proxy", "diagnostic", None, True
-            ),
-            "proxy_status:box_connections": SensorConfig(
-                "BOX spojení (počet)", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:box_connections_active": SensorConfig(
-                "BOX aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:cloud_queue": SensorConfig(
-                "Cloud fronta", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:mqtt_queue": SensorConfig(
-                "MQTT fronta", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:isnewset_polls": SensorConfig(
-                "IsNewSet - počet", "", None, "measurement", None, "proxy", "diagnostic"
-            ),
-            "proxy_status:isnewset_last_poll": SensorConfig(
-                "IsNewSet - poslední dotaz", "", "timestamp", None, None, "proxy", "diagnostic"
-            ),
-            "proxy_status:isnewset_last_response": SensorConfig(
-                "IsNewSet - poslední odpověď", "", None, None, None, "proxy", "diagnostic"
-            ),
-            "proxy_status:isnewset_last_rtt_ms": SensorConfig(
-                "IsNewSet - RTT", "ms", None, "measurement", None, "proxy", "diagnostic"
-            ),
-        }
-        for sid, cfg in builtin.items():
-            if sid not in SENSORS:
-                SENSORS[sid] = cfg
-                added += 1
-        
+        loaded = _load_json_file(SENSOR_MAP_PATH)
+        if not isinstance(loaded, dict):
+            return
+
+        added = _add_sensors_from_mapping(loaded)
         if added:
-            logger.info(
-                f"Sensor map: Načteno {added} senzorů z {SENSOR_MAP_PATH}"
-            )
-            # Ukázka prvních 5 senzorů
+            logger.info(f"Sensor map: Načteno {added} senzorů z {SENSOR_MAP_PATH}")
             sample = list(SENSORS.keys())[:5]
             logger.debug(f"Sensor map sample: {sample}")
-        
-        # Warning map pro dekódování bitů chyb
-        WARNING_MAP = {}
-        for w in mapping.get("warnings_3f", []):
-            key = w.get("table_key") or w.get("key")
-            bit = w.get("bit")
-            remark = w.get("remark")
-            remark_cs = w.get("remark_cs")
-            code = w.get("warning_code")
-            if not key or bit is None:
-                continue
-            WARNING_MAP.setdefault(key, []).append({
-                "bit": int(bit),
-                "remark": remark,
-                "remark_cs": remark_cs,
-                "code": code
-            })
-        
+
+        WARNING_MAP = _build_warning_map(loaded)
         _last_map_load = now
     except Exception as e:
         logger.warning(f"Načtení mappingu selhalo: {e}")
@@ -443,17 +474,56 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
         logger.warning(f"Init capture DB failed: {e}")
         return None, set()
 
+
+def _configure_capture_conn(conn: sqlite3.Connection) -> None:
+    with suppress(Exception):
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA busy_timeout=2000")
+
+
+def _commit_capture_batch(
+    conn: sqlite3.Connection, sql: str, batch: list[tuple[Any, ...]]
+) -> None:
+    if not batch:
+        return
+    try:
+        conn.executemany(sql, batch)
+        conn.commit()
+    except Exception as e:
+        logger.debug(f"Capture worker write failed (dropping batch): {e}")
+        with suppress(Exception):
+            conn.rollback()
+
+
+def _capture_loop(conn: sqlite3.Connection, sql: str, q: queue.Queue[tuple[Any, ...]]) -> None:
+    batch: list[tuple[Any, ...]] = []
+    last_commit = time.time()
+    while True:
+        try:
+            item = q.get(timeout=1.0)
+        except queue.Empty:
+            item = None
+
+        if item is None:
+            _commit_capture_batch(conn, sql, batch)
+            batch.clear()
+            last_commit = time.time()
+            continue
+
+        batch.append(item)
+        if len(batch) >= 200 or (time.time() - last_commit) >= 0.5:
+            _commit_capture_batch(conn, sql, batch)
+            batch.clear()
+            last_commit = time.time()
+
+
 def _capture_worker(db_path: str) -> None:
     """Background writer pro payload capture (neblokuje asyncio event loop)."""
     try:
         conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA temp_store=MEMORY")
-            conn.execute("PRAGMA busy_timeout=2000")
-        except Exception:
-            pass
+        _configure_capture_conn(conn)
 
         sql = (
             "INSERT INTO frames "
@@ -462,44 +532,7 @@ def _capture_worker(db_path: str) -> None:
         )
 
         assert _capture_queue is not None
-        batch: list[tuple[Any, ...]] = []
-        last_commit = time.time()
-        while True:
-            try:
-                item = _capture_queue.get(timeout=1.0)
-            except queue.Empty:
-                item = None
-
-            if item is None:
-                # flush
-                if batch:
-                    try:
-                        conn.executemany(sql, batch)
-                        conn.commit()
-                    except Exception:
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass
-                    batch.clear()
-                last_commit = time.time()
-                continue
-
-            batch.append(item)
-            # batch commit
-            if len(batch) >= 200 or (time.time() - last_commit) >= 0.5:
-                try:
-                    conn.executemany(sql, batch)
-                    conn.commit()
-                except Exception as e:
-                    # Nezdržujeme proxy - při problému zápis zahodíme.
-                    logger.debug(f"Capture worker write failed (dropping batch): {e}")
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-                batch.clear()
-                last_commit = time.time()
+        _capture_loop(conn, sql, _capture_queue)
     except Exception as e:
         logger.warning(f"Capture worker crashed: {e}")
 

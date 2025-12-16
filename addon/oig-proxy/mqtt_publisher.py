@@ -444,7 +444,77 @@ class MQTTPublisher:
             self._health_check_task = asyncio.create_task(
                 self.health_check_loop()
             )
-    
+
+    @staticmethod
+    def _state_topic(dev_id: str, table: str | None) -> str:
+        if table:
+            return f"{MQTT_NAMESPACE}/{dev_id}/{table}/state"
+        return f"{MQTT_NAMESPACE}/{dev_id}/state"
+
+    @staticmethod
+    def _json_key(sensor_id: str) -> str:
+        return sensor_id.split(":", 1)[1] if ":" in sensor_id else sensor_id
+
+    def _build_discovery_payload(
+        self,
+        *,
+        sensor_id: str,
+        config: SensorConfig,
+        table: str | None,
+        device_id: str,
+    ) -> tuple[str, dict[str, Any]]:
+        device_type = config.device_mapping or "inverter"
+        device_name = DEVICE_NAMES.get(device_type, "Střídač")
+
+        device_identifier = f"{MQTT_NAMESPACE}_{device_id}_{device_type}"
+        full_device_name = f"OIG {device_name} ({device_id})"
+
+        safe_sensor_id = sensor_id.replace(":", "_").lower()
+        unique_id = f"{MQTT_NAMESPACE}_{device_id}_{safe_sensor_id}"
+        availability_topic = f"{MQTT_NAMESPACE}/{device_id}/availability"
+
+        component = "binary_sensor" if config.is_binary else "sensor"
+        base_object_id = f"{MQTT_NAMESPACE}_{device_id}_{safe_sensor_id}"
+
+        payload: dict[str, Any] = {
+            "name": config.name,
+            "unique_id": unique_id,
+            "state_topic": self._state_topic(device_id, table),
+            "value_template": f"{{{{ value_json.{self._json_key(sensor_id)} }}}}",
+            "availability": [{"topic": availability_topic}],
+            "default_entity_id": f"{component}.{base_object_id}",
+            "device": {
+                "identifiers": [device_identifier],
+                "name": full_device_name,
+                "manufacturer": "OIG Power",
+                "model": f"OIG BatteryBox - {device_name}",
+            },
+        }
+
+        if device_type not in ("inverter", "proxy"):
+            payload["device"]["via_device"] = f"{MQTT_NAMESPACE}_{self.device_id}_inverter"
+
+        if config.is_binary:
+            payload["payload_on"] = "1"
+            payload["payload_off"] = "0"
+        else:
+            if config.state_class:
+                payload["state_class"] = config.state_class
+            if config.options:
+                payload["options"] = config.options
+
+        if config.unit and not config.is_binary:
+            payload["unit_of_measurement"] = config.unit
+        if config.device_class:
+            payload["device_class"] = config.device_class
+        if config.icon:
+            payload["icon"] = config.icon
+        if config.entity_category:
+            payload["entity_category"] = config.entity_category
+
+        topic = f"homeassistant/{component}/{unique_id}/config"
+        return topic, payload
+
     def send_discovery(
         self,
         sensor_id: str,
@@ -460,83 +530,19 @@ class MQTTPublisher:
             return
 
         dev_id = device_id or self.device_id
-        
-        device_type = config.device_mapping or "inverter"
-        device_suffix = device_type
-        device_name = DEVICE_NAMES.get(device_type, "Střídač")
-        
-        device_identifier = (
-            f"{MQTT_NAMESPACE}_{dev_id}_{device_suffix}"
+        topic, discovery_payload = self._build_discovery_payload(
+            sensor_id=sensor_id,
+            config=config,
+            table=table,
+            device_id=dev_id,
         )
-        full_device_name = f"OIG {device_name} ({dev_id})"
-        
-        safe_sensor_id = sensor_id.replace(":", "_").lower()
-        unique_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
-        availability_topic = (
-            f"{MQTT_NAMESPACE}/{dev_id}/availability"
-        )
-        
-        if table:
-            state_topic = f"{MQTT_NAMESPACE}/{dev_id}/{table}/state"
-        else:
-            state_topic = f"{MQTT_NAMESPACE}/{dev_id}/state"
-        
-        if ":" in sensor_id:
-            json_key = sensor_id.split(":", 1)[1]
-        else:
-            json_key = sensor_id
-        value_template = f"{{{{ value_json.{json_key} }}}}"
-        
-        discovery_payload = {
-            "name": config.name,
-            "unique_id": unique_id,
-            "state_topic": state_topic,
-            "value_template": value_template,
-            "availability": [{"topic": availability_topic}],
-            "device": {
-                "identifiers": [device_identifier],
-                "name": full_device_name,
-                "manufacturer": "OIG Power",
-                "model": f"OIG BatteryBox - {device_name}",
-                "via_device": (
-                    f"{MQTT_NAMESPACE}_{self.device_id}_inverter"
-                ),
-            },
-        }
-        
-        # Proxy i inverter jsou root zařízení, bez via_device
-        if device_type in ("inverter", "proxy"):
-            del discovery_payload["device"]["via_device"]
-        
-        if config.is_binary:
-            component = "binary_sensor"
-            discovery_payload["payload_on"] = "1"
-            discovery_payload["payload_off"] = "0"
-        else:
-            component = "sensor"
-            if config.state_class:
-                discovery_payload["state_class"] = config.state_class
-            if config.options:
-                discovery_payload["options"] = config.options
-        
-        # HA 2026.4: object_id je deprecated → nahraď default_entity_id
-        base_object_id = f"{MQTT_NAMESPACE}_{dev_id}_{safe_sensor_id}"
-        discovery_payload["default_entity_id"] = f"{component}.{base_object_id}"
-        
-        if config.unit and not config.is_binary:
-            discovery_payload["unit_of_measurement"] = config.unit
-        if config.device_class:
-            discovery_payload["device_class"] = config.device_class
-        if config.icon:
-            discovery_payload["icon"] = config.icon
-        if config.entity_category:
-            discovery_payload["entity_category"] = config.entity_category
-        
-        topic = f"homeassistant/{component}/{unique_id}/config"
         result = self.client.publish(
             topic, json.dumps(discovery_payload), retain=True, qos=1
         )
         self.discovery_sent.add(sensor_id)
+        component = "binary_sensor" if config.is_binary else "sensor"
+        device_type = config.device_mapping or "inverter"
+        device_name = DEVICE_NAMES.get(device_type, "Střídač")
         logger.debug(
             f"MQTT: Discovery {sensor_id} → {component}/{device_name} "
             f"(mid={result.mid})"
@@ -551,31 +557,12 @@ class MQTTPublisher:
             if table in ("proxy_status", "tbl_events")
             else self.device_id
         )
-        
-        # Připravíme data
-        publish_data = {}
-        mapped_count = 0
-        for key in data:
-            if key.startswith("_"):
-                continue
-            cfg, unique_key = get_sensor_config(key, table)
-            if cfg:
-                self.send_discovery(unique_key, cfg, table, device_id=target_device_id)
-                mapped_count += 1
-                value = data[key]
-                # Enum konverze
-                if cfg.options and isinstance(value, int):
-                    if 0 <= value < len(cfg.options):
-                        value = cfg.options[value]
-                publish_data[key] = value
-            else:
-                publish_data[key] = data[key]
-        
-        if table:
-            topic = f"{MQTT_NAMESPACE}/{target_device_id}/{table}/state"
-        else:
-            topic = f"{MQTT_NAMESPACE}/{target_device_id}/state"
-        
+
+        publish_data, mapped_count = self._map_data_for_publish(
+            data, table=str(table) if table else None, target_device_id=target_device_id
+        )
+
+        topic = self._state_topic(target_device_id, str(table) if table else None)
         payload = json.dumps(publish_data)
         
         # Pokud není připojeno, přidej do fronty
@@ -617,6 +604,32 @@ class MQTTPublisher:
             self.last_error_msg = str(e)
             logger.error(f"MQTT: Publish exception: {e}")
             return False
+
+    def _map_data_for_publish(
+        self,
+        data: dict[str, Any],
+        *,
+        table: str | None,
+        target_device_id: str,
+    ) -> tuple[dict[str, Any], int]:
+        publish_data: dict[str, Any] = {}
+        mapped_count = 0
+        for key, value in data.items():
+            if key.startswith("_"):
+                continue
+            cfg, unique_key = get_sensor_config(key, table)
+            if cfg is None:
+                publish_data[key] = value
+                continue
+
+            self.send_discovery(unique_key, cfg, table, device_id=target_device_id)
+            mapped_count += 1
+
+            if cfg.options and isinstance(value, int) and 0 <= value < len(cfg.options):
+                publish_data[key] = cfg.options[value]
+            else:
+                publish_data[key] = value
+        return publish_data, mapped_count
 
     async def publish_proxy_status(self, status_payload: dict[str, Any]) -> bool:
         """Publikuje stav proxy jako samostatnou tabulku proxy_status."""

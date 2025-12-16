@@ -1,11 +1,15 @@
 # Changelog
 
+<!-- markdownlint-disable MD024 -->
+
 ## [1.3.7] - 2025-12-16
 
 ### Added
+
 - Add-on option `cloud_ack_timeout` (env `CLOUD_ACK_TIMEOUT`) pro max čekání na ACK z cloudu v ONLINE režimu
 
 ### Fixed
+
 - Stabilnější BOX ↔ proxy spojení: rychlý fallback na lokální ACK + queue při zpomalení/timeoutu cloudu (méně reconnectů BOXu)
 - REPLAY se spouští i když vznikne fronta v ONLINE (periodický edge-case), aby se CloudQueue nezasekla plná
 - REPLAY se neblokuje na jednom problematickém framu (defer)
@@ -14,6 +18,7 @@
 ## [1.3.6] - 2025-12-15
 
 ### Added
+
 - Perzistence snapshotu tabulek (`tbl_*` kromě `tbl_actual`) do `/data/prms_state.json` pro obnovu po restartu
 - Re-publish uloženého snapshotu po startu a po MQTT reconnectu (senzory nečekají desítky minut až hodiny na `*_prms`)
 - Obnova `device_id` při `DEVICE_ID=AUTO` z uloženého stavu (MODE/table snapshot)
@@ -21,6 +26,7 @@
 ## [1.3.2] - 2025-12-12
 
 ### Fixed
+
 - **sensor_map.json**: Změna `entity_category` z `config` na `diagnostic` pro 127 senzorů
   - HA nepřijímá `entity_category: config` pro binary_sensor a sensor entity
 - **sensor_map.json**: Oprava jednotek z `MWh` na `kWh` pro roční senzory:
@@ -38,6 +44,7 @@
 ## [1.3.1] - 2025-12-11
 
 ### Added
+
 - Modularizace kódu (proxy.py, mqtt_publisher.py, cloud_manager.py, utils.py)
 - Device mapping v sensor_map.json pro rozdělení entit do zařízení
 - Capture payloads do SQLite databáze
@@ -45,4 +52,5 @@
 ## [1.3.0] - 2025-12-10
 
 ### Added
+
 - Initial modular release

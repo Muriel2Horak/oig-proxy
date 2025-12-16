@@ -9,7 +9,7 @@ import os
 # MQTT Availability Check
 # ============================================================================
 try:
-    import paho.mqtt.client  # noqa: F401
+    import paho.mqtt.client  # type: ignore[import-untyped,import-not-found]  # noqa: F401,E501
     MQTT_AVAILABLE = True
 except ImportError:
     MQTT_AVAILABLE = False
@@ -17,6 +17,7 @@ except ImportError:
 # ============================================================================
 # Helpers
 # ============================================================================
+
 
 def _get_int_env(name: str, default: int) -> int:
     """Vrátí int z env proměnné s bezpečným fallbackem."""
@@ -30,6 +31,7 @@ def _get_int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
 
 # ============================================================================
 # MQTT Configuration
@@ -62,10 +64,11 @@ PROXY_STATUS_INTERVAL = _get_int_env("PROXY_STATUS_INTERVAL", 60)
 # Sensor Map Configuration
 # ============================================================================
 SENSOR_MAP_PATH = os.getenv(
-    "SENSOR_MAP_PATH", 
+    "SENSOR_MAP_PATH",
     os.path.join(os.path.dirname(__file__), "sensor_map.json")
 )
-MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))  # 0 = disabled
+# 0 disables reload
+MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))
 
 # ============================================================================
 # Persistence Paths
@@ -91,10 +94,18 @@ MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
 # ============================================================================
 # Health Check Configuration
 # ============================================================================
-CLOUD_HEALTH_CHECK_INTERVAL = int(os.getenv("CLOUD_HEALTH_CHECK_INTERVAL", "30"))
-CLOUD_HEALTH_CHECK_TIMEOUT = float(os.getenv("CLOUD_HEALTH_CHECK_TIMEOUT", "5.0"))
-CLOUD_HEALTH_FAIL_THRESHOLD = int(os.getenv("CLOUD_HEALTH_FAIL_THRESHOLD", "3"))
-CLOUD_HEALTH_SUCCESS_THRESHOLD = int(os.getenv("CLOUD_HEALTH_SUCCESS_THRESHOLD", "2"))
+CLOUD_HEALTH_CHECK_INTERVAL = int(
+    os.getenv("CLOUD_HEALTH_CHECK_INTERVAL", "30")
+)
+CLOUD_HEALTH_CHECK_TIMEOUT = float(
+    os.getenv("CLOUD_HEALTH_CHECK_TIMEOUT", "5.0")
+)
+CLOUD_HEALTH_FAIL_THRESHOLD = int(
+    os.getenv("CLOUD_HEALTH_FAIL_THRESHOLD", "3")
+)
+CLOUD_HEALTH_SUCCESS_THRESHOLD = int(
+    os.getenv("CLOUD_HEALTH_SUCCESS_THRESHOLD", "2")
+)
 
 # ============================================================================
 # Replay Configuration

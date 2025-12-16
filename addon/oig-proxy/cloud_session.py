@@ -13,10 +13,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 
 
 logger = logging.getLogger(__name__)
+
+_WARN_THROTTLE_S = 30.0
+_READ_CHUNK_BYTES = 4096
+_DEFAULT_ACK_MAX_BYTES = 4096
 
 
 @dataclass
@@ -56,22 +61,21 @@ class CloudSessionManager:
         self._rx_buf = bytearray()
 
     def is_connected(self) -> bool:
-        w = self._writer
-        return bool(w) and not w.is_closing()
+        writer = self._writer
+        return writer is not None and not writer.is_closing()
 
     async def close(self, *, count_disconnect: bool = False) -> None:
         async with self._conn_lock:
             await self._close_locked(count_disconnect=count_disconnect)
 
     async def _close_locked(self, *, count_disconnect: bool = False) -> None:
-        if self._writer is not None:
-            if count_disconnect and not self._writer.is_closing():
+        writer = self._writer
+        if writer is not None:
+            if count_disconnect and not writer.is_closing():
                 self.stats.disconnects += 1
-            try:
-                self._writer.close()
-                await self._writer.wait_closed()
-            except Exception:
-                pass
+            with suppress(Exception):
+                writer.close()
+                await writer.wait_closed()
         self._reader = None
         self._writer = None
         self._rx_buf.clear()
@@ -107,7 +111,9 @@ class CloudSessionManager:
         ack_timeout_s: float,
         ack_max_bytes: int,
     ) -> bytes:
-        assert self._reader is not None
+        reader = self._reader
+        if reader is None:
+            raise ConnectionError("Cloud connection not established")
 
         # Nejprve zkus vyzobnout z interního bufferu.
         existing = self._extract_one_xml_frame(self._rx_buf)
@@ -116,7 +122,7 @@ class CloudSessionManager:
 
         async def _read_until_frame() -> bytes:
             while True:
-                chunk = await self._reader.read(4096)
+                chunk = await reader.read(_READ_CHUNK_BYTES)
                 if not chunk:
                     return b""
                 self._rx_buf.extend(chunk)
@@ -138,12 +144,12 @@ class CloudSessionManager:
             if self.is_connected():
                 return
 
-            now = time.time()
+            now = time.monotonic()
             since_last = now - self._last_connect_attempt
             if since_last < self._backoff_s:
                 await asyncio.sleep(self._backoff_s - since_last)
 
-            self._last_connect_attempt = time.time()
+            self._last_connect_attempt = time.monotonic()
             try:
                 self._reader, self._writer = await asyncio.wait_for(
                     asyncio.open_connection(self.host, self.port),
@@ -152,30 +158,47 @@ class CloudSessionManager:
                 self.stats.connects += 1
                 self._backoff_s = self.min_reconnect_s
                 logger.debug(
-                    f"☁️ Připojeno k {self.host}:{self.port} "
-                    f"(connects={self.stats.connects}, "
-                    f"timeouts={self.stats.timeouts}, "
-                    f"errors={self.stats.errors}, "
-                    f"disconnects={self.stats.disconnects})"
+                    "☁️ Připojeno k %s:%s "
+                    "(connects=%s, timeouts=%s, errors=%s, disconnects=%s)",
+                    self.host,
+                    self.port,
+                    self.stats.connects,
+                    self.stats.timeouts,
+                    self.stats.errors,
+                    self.stats.disconnects,
                 )
+            except asyncio.TimeoutError:
+                self.stats.timeouts += 1
+                self.stats.errors += 1
+                await self._close_locked()
+                self._backoff_s = min(self.max_reconnect_s, self._backoff_s * 2.0)
+                now = time.monotonic()
+                if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
+                    logger.warning(
+                        "☁️ Cloud connect timeout (backoff=%.1fs)",
+                        self._backoff_s,
+                    )
+                    self._last_warn_ts = now
+                raise
             except Exception as e:
                 self.stats.errors += 1
                 await self._close_locked()
                 self._backoff_s = min(self.max_reconnect_s, self._backoff_s * 2.0)
-                now = time.time()
-                if (now - self._last_warn_ts) >= 30:
+                now = time.monotonic()
+                if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning(
-                        f"☁️ Cloud connect failed: {e} "
-                        f"(backoff={self._backoff_s:.1f}s)"
+                        "☁️ Cloud connect failed: %s (backoff=%.1fs)",
+                        e,
+                        self._backoff_s,
                     )
                     self._last_warn_ts = now
-                raise e
+                raise
 
     async def send_and_read_ack(
         self,
         data: bytes,
         ack_timeout_s: float,
-        ack_max_bytes: int = 4096,
+        ack_max_bytes: int = _DEFAULT_ACK_MAX_BYTES,
     ) -> bytes:
         """
         Pošle bytes na cloud a přečte odpověď (ACK).
@@ -183,12 +206,13 @@ class CloudSessionManager:
         """
         async with self._io_lock:
             await self.ensure_connected()
-            assert self._writer is not None
-            assert self._reader is not None
+            writer = self._writer
+            if writer is None:
+                raise ConnectionError("Cloud connection not established")
 
             try:
-                self._writer.write(data)
-                await self._writer.drain()
+                writer.write(data)
+                await writer.drain()
                 ack = await self._read_one_ack_frame(
                     ack_timeout_s=ack_timeout_s,
                     ack_max_bytes=ack_max_bytes,
@@ -196,8 +220,8 @@ class CloudSessionManager:
                 if not ack:
                     # Cloud ukončil spojení (EOF)
                     self.stats.disconnects += 1
-                    now = time.time()
-                    if (now - self._last_warn_ts) >= 30:
+                    now = time.monotonic()
+                    if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                         logger.warning("☁️ Cloud connection closed (EOF)")
                         self._last_warn_ts = now
                     await self.close()
@@ -205,16 +229,16 @@ class CloudSessionManager:
                 return ack
             except asyncio.TimeoutError:
                 self.stats.timeouts += 1
-                now = time.time()
-                if (now - self._last_warn_ts) >= 30:
+                now = time.monotonic()
+                if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning("☁️ Cloud ACK timeout")
                     self._last_warn_ts = now
                 await self.close()
                 raise
             except Exception:
                 self.stats.errors += 1
-                now = time.time()
-                if (now - self._last_warn_ts) >= 30:
+                now = time.monotonic()
+                if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning("☁️ Cloud error (connection reset)")
                     self._last_warn_ts = now
                 await self.close()

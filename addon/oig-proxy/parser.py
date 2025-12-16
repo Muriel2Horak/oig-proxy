@@ -58,7 +58,7 @@ class OIGDataParser:
             "ver", "CRC", "DT", "ID_SubD"
         }
         
-        for match in re.finditer(r"<([A-Za-z_0-9]+)>([^<]*)</\1>", data):
+        for match in re.finditer(r"<(\w+)>([^<]*)</\1>", data):
             key, value = match.groups()
             if key in skip_fields:
                 continue

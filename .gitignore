@@ -22,3 +22,4 @@ testing/test_data/*.json
 /tmp/
 *.log
 .vscode/
+.scannerwork/
