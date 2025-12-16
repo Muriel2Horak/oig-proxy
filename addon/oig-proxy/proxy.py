@@ -8,6 +8,7 @@ import logging
 import socket
 import time
 from contextlib import suppress
+import re
 from typing import Any
 
 from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
@@ -671,11 +672,13 @@ class OIGProxy:
         device_id: str | None,
         box_writer: asyncio.StreamWriter,
         cloud_writer: asyncio.StreamWriter | None,
+        note_cloud_failure: bool = True,
     ) -> tuple[None, None]:
         self.cloud_session_connected = False
         await self._close_writer(cloud_writer)
         await self._process_frame_offline(frame_bytes, table_name, device_id, box_writer)
-        await self._note_cloud_failure(reason)
+        if note_cloud_failure:
+            await self._note_cloud_failure(reason)
         return None, None
 
     async def _ensure_cloud_connected(
@@ -800,6 +803,7 @@ class OIGProxy:
                 device_id=device_id,
                 box_writer=box_writer,
                 cloud_writer=cloud_writer,
+                note_cloud_failure=False,
             )
         except Exception as e:
             logger.warning(
@@ -824,6 +828,10 @@ class OIGProxy:
 
         parsed = self.parser.parse_xml_frame(frame)
         device_id, table_name = self._extract_device_and_table(parsed)
+        if table_name is None:
+            table_name = self._infer_table_name(frame)
+        if device_id is None:
+            device_id = self._infer_device_id(frame)
         if device_id:
             await self._maybe_autodetect_device_id(device_id)
 
@@ -848,6 +856,21 @@ class OIGProxy:
             await self.mqtt_publisher.publish_data(parsed)
 
         return device_id, table_name
+
+    @staticmethod
+    def _infer_table_name(frame: str) -> str | None:
+        tbl = re.search(r"<TblName>([^<]+)</TblName>", frame)
+        if tbl:
+            return tbl.group(1)
+        res = re.search(r"<Result>([^<]+)</Result>", frame)
+        if res:
+            return res.group(1)
+        return None
+
+    @staticmethod
+    def _infer_device_id(frame: str) -> str | None:
+        m = re.search(r"<ID_Device>(\\d+)</ID_Device>", frame)
+        return m.group(1) if m else None
 
     async def _get_current_mode(self) -> ProxyMode:
         async with self.mode_lock:
