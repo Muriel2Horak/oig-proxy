@@ -8,6 +8,8 @@ __pycache__/
 proxy/.mypy_cache/
 logs/
 analysis/ha_latency_analysis.py
+analysis/*.tsv
+*.pcap
 
 # Databáze s reálnými daty (obsahují ID_Device a komunikaci)
 *.db

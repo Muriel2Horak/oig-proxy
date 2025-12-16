@@ -4,15 +4,12 @@ Konfigurace OIG Proxy - všechny konstanty a environment variables.
 """
 
 import os
+from importlib.util import find_spec
 
 # ============================================================================
 # MQTT Availability Check
 # ============================================================================
-try:
-    import paho.mqtt.client  # noqa: F401
-    MQTT_AVAILABLE = True
-except ImportError:
-    MQTT_AVAILABLE = False
+MQTT_AVAILABLE = find_spec("paho.mqtt.client") is not None
 
 # ============================================================================
 # Helpers

@@ -1044,6 +1044,13 @@ class OIGProxy:
         self.stats["acks_local"] += 1
         
         if table_name and table_name != "tbl_handshake":
+            if table_name == "END":
+                frame = frame_bytes.decode("utf-8", errors="replace")
+                if self._looks_like_all_data_sent_end(frame):
+                    logger.debug(
+                        "OFFLINE: skipping queue for END/All data sent (no cloud ACK expected)"
+                    )
+                    return
             await self.cloud_queue.add(frame_bytes, table_name, device_id)
             self.stats["frames_queued"] += 1
     
