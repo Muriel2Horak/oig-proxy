@@ -1,3 +1,4 @@
 -r addon/oig-proxy/requirements.txt
 types-paho-mqtt
-
+mypy
+flake8
