@@ -413,8 +413,10 @@ class OIGProxy:
                 mqtt_ready = self.mqtt_publisher.is_ready()
                 self._note_mqtt_ready_transition(mqtt_ready)
                 await self.publish_proxy_status()
-                await self._publish_mode_if_ready(reason="periodic")
-                await self._publish_prms_if_ready(reason="periodic")
+                if self._mode_pending_publish:
+                    await self._publish_mode_if_ready(reason="periodic")
+                if self._prms_pending_publish:
+                    await self._publish_prms_if_ready(reason="periodic")
                 await self._maybe_switch_online_to_replay(reason="periodic")
             except Exception as e:
                 logger.debug(f"Proxy status loop publish failed: {e}")
