@@ -586,6 +586,9 @@ class MQTTPublisher:
             return
         if sensor_id in self.discovery_sent:
             return
+
+        # Určit typ entity (sensor vs binary_sensor) dopředu (potřebné pro default_entity_id)
+        component = "binary_sensor" if config.is_binary else "sensor"
         
         # Určit device podle device_mapping
         device_type = config.device_mapping or "inverter"
@@ -618,11 +621,11 @@ class MQTTPublisher:
         
         discovery_payload = {
             "name": config.name,
-            "object_id": object_id,
             "unique_id": unique_id,
             "state_topic": state_topic,
             "value_template": value_template,
             "availability": [{"topic": availability_topic}],
+            "default_entity_id": f"{component}.{object_id}",
             "device": {
                 "identifiers": [device_identifier],
                 "name": full_device_name,
@@ -636,14 +639,11 @@ class MQTTPublisher:
         if device_type == "inverter":
             del discovery_payload["device"]["via_device"]
         
-        # Určit typ entity (sensor vs binary_sensor)
         if config.is_binary:
             # Binary sensor - hodnoty 0/1
-            component = "binary_sensor"
             discovery_payload["payload_on"] = 1
             discovery_payload["payload_off"] = 0
         else:
-            component = "sensor"
             # state_class platí pouze pro sensor
             if config.state_class:
                 discovery_payload["state_class"] = config.state_class
@@ -692,6 +692,18 @@ class MQTTPublisher:
                 if cfg.options and isinstance(value, int):
                     if 0 <= value < len(cfg.options):
                         value = cfg.options[value]
+                # HA `device_class: timestamp` vyžaduje timezone v ISO formátu.
+                if cfg.device_class == "timestamp" and isinstance(value, str):
+                    raw = value.strip()
+                    if raw and not re.search(r"(Z|[+-]\\d{2}:\\d{2})\\s*$", raw):
+                        tzinfo = datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
+                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S.%f"):
+                            try:
+                                dt = datetime.datetime.strptime(raw, fmt).replace(tzinfo=tzinfo)
+                                value = dt.isoformat()
+                                break
+                            except ValueError:
+                                continue
                 # Klíč bez prefixu tabulky (tabulka je v topic)
                 publish_data[key] = value
             else:

@@ -4,9 +4,11 @@ MQTT Publisher s persistentní frontou a replay.
 """
 
 import asyncio
+import datetime
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from typing import Any
@@ -192,6 +194,8 @@ class MQTTPublisher:
         self.client: mqtt.Client | None = None
         self.connected = False
         self.discovery_sent: set[str] = set()
+        self._last_payload_by_topic: dict[str, str] = {}
+        self._local_tzinfo = datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
         
         # Queue
         self.queue = MQTTQueue()
@@ -283,6 +287,7 @@ class MQTTPublisher:
             logger.info(f"MQTT: Připojeno (flags={flags})")
             self.connected = True
             self.reconnect_attempts = 0
+            self._last_payload_by_topic.clear()
             
             # Availability online
             client.publish(
@@ -326,6 +331,7 @@ class MQTTPublisher:
     ) -> None:
         was_connected = self.connected
         self.connected = False
+        self._last_payload_by_topic.clear()
         
         if rc == 0:
             logger.info("MQTT: Odpojeno (čisté odpojení)")
@@ -564,6 +570,11 @@ class MQTTPublisher:
 
         topic = self._state_topic(target_device_id, str(table) if table else None)
         payload = json.dumps(publish_data)
+
+        # De-dupe: pokud payload pro topic je stejný jako minule, nepublikuj ani nequeueuj.
+        if self._last_payload_by_topic.get(topic) == payload:
+            return True
+        self._last_payload_by_topic[topic] = payload
         
         # Pokud není připojeno, přidej do fronty
         if not self.is_ready():
@@ -628,8 +639,28 @@ class MQTTPublisher:
             if cfg.options and isinstance(value, int) and 0 <= value < len(cfg.options):
                 publish_data[key] = cfg.options[value]
             else:
-                publish_data[key] = value
+                publish_data[key] = self._coerce_state_value(cfg, value)
         return publish_data, mapped_count
+
+    _DT_WITH_TZ_RE = re.compile(r"(Z|[+-]\\d{2}:\\d{2})\\s*$")
+
+    def _coerce_state_value(self, cfg: SensorConfig, value: Any) -> Any:
+        if cfg.device_class != "timestamp" or not isinstance(value, str):
+            return value
+
+        raw = value.strip()
+        if not raw or self._DT_WITH_TZ_RE.search(raw):
+            return value
+
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S.%f"):
+            try:
+                dt = datetime.datetime.strptime(raw, fmt)
+                dt = dt.replace(tzinfo=self._local_tzinfo)
+                return dt.isoformat()
+            except ValueError:
+                continue
+
+        return value
 
     async def publish_proxy_status(self, status_payload: dict[str, Any]) -> bool:
         """Publikuje stav proxy jako samostatnou tabulku proxy_status."""
