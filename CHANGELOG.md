@@ -2,6 +2,15 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.10] - 2025-12-17
+
+### Fixed
+
+- MQTT discovery: odstraněn deprecated `object_id` (nahrazen `default_entity_id`), aby HA přestal logovat warningy
+- MQTT timestamp senzory: hodnoty bez timezone se publikují jako ISO8601 s timezone (oprava `Invalid datetime`)
+- MQTT publish: de-dupe stejných payloadů per-topic, aby se neprodukoval zbytečný `state_changed` spam
+- Proxy status loop: MODE/PRMS se publikuje periodicky jen pokud je pending (po změně/restartu/reconnectu)
+
 ## [1.3.9] - 2025-12-16
 
 ### Fixed
