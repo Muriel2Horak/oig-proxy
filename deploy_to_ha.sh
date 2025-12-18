@@ -63,8 +63,8 @@ ssh $HA_HOST "set -e; \
 
 # Supervisor nedovolí rebuild, pokud se liší verze v installed addonu vs. config.json v sources.
 echo "🔎 Kontrola verze (installed vs sources)..."
-INSTALLED_VER=$(ssh $HA_HOST "ha addons info $ADDON_SLUG | awk '/^version:/{print \$2; exit}'")
-SOURCE_VER=$(ssh $HA_HOST "python3 -c \"import json; print(json.load(open('/var/lib/homeassistant/addons/git/d7b5d5b1/addon/oig-proxy/config.json'))['version'])\"")
+INSTALLED_VER=$(ssh $HA_HOST "ha addons info $ADDON_SLUG | awk '/^version:/{print \$2; exit}'" | tr -d '\r' | xargs)
+SOURCE_VER=$(ssh $HA_HOST "python3 -c \"import json; print(json.load(open('/var/lib/homeassistant/addons/git/d7b5d5b1/addon/oig-proxy/config.json'))['version'])\"" | tr -d '\r' | xargs)
 echo "   installed: $INSTALLED_VER"
 echo "   sources:   $SOURCE_VER"
 if [ "$INSTALLED_VER" != "$SOURCE_VER" ]; then

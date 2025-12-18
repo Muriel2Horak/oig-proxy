@@ -76,6 +76,13 @@ export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
 
 # CONTROL_MQTT_ENABLED - boolean z config
 CONTROL_MQTT_ENABLED_RAW=$(bashio::config 'control_mqtt_enabled' 2>/dev/null)
+if [ -z "$CONTROL_MQTT_ENABLED_RAW" ] || [ "$CONTROL_MQTT_ENABLED_RAW" = "null" ]; then
+  # Fallback: allow enabling via persistent flag file in /data when UI/schema doesn't expose the option yet.
+  # Expected values: "true"/"false" (case-insensitive).
+  if [ -f /data/control_mqtt_enabled ]; then
+    CONTROL_MQTT_ENABLED_RAW=$(cat /data/control_mqtt_enabled 2>/dev/null | tr -d '\r\n' | xargs)
+  fi
+fi
 if [ "$CONTROL_MQTT_ENABLED_RAW" = "true" ] || [ "$CONTROL_MQTT_ENABLED_RAW" = "1" ]; then
   export CONTROL_MQTT_ENABLED="true"
   bashio::log.info "🕹️ Control over MQTT: ENABLED"

@@ -678,7 +678,7 @@ class MQTTPublisher:
             self.publish_failed += 1
             self.last_error_time = time.time()
             self.last_error_msg = str(e)
-            logger.error(f"MQTT: Publish exception: {e}")
+            logger.exception("MQTT: Publish exception")
             return False
 
     def _map_data_for_publish(

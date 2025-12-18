@@ -1066,9 +1066,19 @@ class OIGProxy:
                     break
 
                 frame = data.decode("utf-8", errors="replace")
-                device_id, table_name = await self._process_box_frame_common(
-                    frame_bytes=data, frame=frame, conn_id=conn_id
-                )
+                try:
+                    device_id, table_name = await self._process_box_frame_common(
+                        frame_bytes=data, frame=frame, conn_id=conn_id
+                    )
+                except Exception:
+                    # Nechceme shazovat celé BOX spojení kvůli chybě v publish/discovery/parsing.
+                    # Traceback nám pomůže najít přesnou příčinu (např. regex v některé knihovně).
+                    logger.exception(
+                        "❌ Frame processing error (conn=%s, peer=%s)",
+                        conn_id,
+                        self._active_box_peer,
+                    )
+                    continue
 
                 if self._maybe_handle_local_setting_ack(frame, box_writer):
                     continue
@@ -1095,8 +1105,12 @@ class OIGProxy:
                     connect_timeout_s=CLOUD_CONNECT_TIMEOUT,
                 )
 
-        except Exception as e:
-            logger.error(f"❌ Box connection handler error: {e}")
+        except Exception:
+            logger.exception(
+                "❌ Box connection handler error (conn=%s, peer=%s)",
+                conn_id,
+                self._active_box_peer,
+            )
         finally:
             await self._close_writer(cloud_writer)
             self.cloud_session_connected = False
