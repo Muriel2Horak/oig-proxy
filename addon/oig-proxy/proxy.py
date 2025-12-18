@@ -1231,8 +1231,10 @@ class OIGProxy:
 
     @staticmethod
     def _parse_setting_event(content: str) -> tuple[str, str, str | None, str | None] | None:
+        # Example:
+        #   "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
         m = re.search(
-            r"tbl_([a-z0-9_]+)\\s*/\\s*([A-Z0-9_]+):\\s*\\[([^\\]]*)\\]->\\[([^\\]]*)\\]",
+            r"tbl_([a-z0-9_]+)\s*/\s*([A-Z0-9_]+):\s*\[([^\]]*)\]\s*->\s*\[([^\]]*)\]",
             content,
         )
         if not m:
