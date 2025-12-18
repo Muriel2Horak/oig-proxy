@@ -23,7 +23,6 @@
 ### Added
 
 - Add-on volba `capture_raw_bytes` (env `CAPTURE_RAW_BYTES`) pro ukládání hrubých bajtů (`raw_b64`) do `/data/payloads.db` pro CRC analýzu
-- Skript `scripts/crc_hunt.py` pro hledání CRC/checksum kandidátů nad capture databází
 
 ### Fixed
 

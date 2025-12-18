@@ -20,6 +20,12 @@ analysis/*.tsv
 # Testovací data (extrakt z reálné komunikace)
 testing/test_data/*.json
 
+# Lokální experimenty (necommitovat)
+analysis/local_only/
+analysis/ha/
+testing/local_*.py
+addon/oig-proxy/local_*.py
+
 # Dočasné a runtime soubory
 /tmp/
 *.log
