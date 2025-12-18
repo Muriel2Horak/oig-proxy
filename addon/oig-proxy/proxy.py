@@ -7,14 +7,30 @@ import asyncio
 import logging
 import socket
 import time
+import random
+import json
+from collections import deque
 from contextlib import suppress
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
 from config import (
     CLOUD_REPLAY_RATE,
     CLOUD_ACK_TIMEOUT,
+    CONTROL_API_HOST,
+    CONTROL_API_PORT,
+    CONTROL_MQTT_ACK_TIMEOUT_S,
+    CONTROL_MQTT_APPLIED_TIMEOUT_S,
+    CONTROL_MQTT_BOX_READY_SECONDS,
+    CONTROL_MQTT_ENABLED,
+    CONTROL_MQTT_MODE_QUIET_SECONDS,
+    CONTROL_MQTT_QOS,
+    CONTROL_MQTT_RETAIN,
+    CONTROL_MQTT_RESULT_TOPIC,
+    CONTROL_MQTT_SET_TOPIC,
+    CONTROL_WRITE_WHITELIST,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
@@ -22,6 +38,8 @@ from config import (
     TARGET_PORT,
     TARGET_SERVER,
 )
+from control_api import ControlAPIServer
+from local_oig_crc import build_frame
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from parser import OIGDataParser
@@ -72,6 +90,31 @@ class OIGProxy:
         self._active_box_writer: asyncio.StreamWriter | None = None
         self._active_box_peer: str | None = None
         self._conn_seq: int = 0
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._control_api: ControlAPIServer | None = None
+        self._local_setting_pending: dict[str, Any] | None = None
+
+        # Control over MQTT (production)
+        self._control_mqtt_enabled: bool = bool(CONTROL_MQTT_ENABLED)
+        self._control_set_topic: str = CONTROL_MQTT_SET_TOPIC
+        self._control_result_topic: str = CONTROL_MQTT_RESULT_TOPIC
+        self._control_qos: int = int(CONTROL_MQTT_QOS)
+        self._control_retain: bool = bool(CONTROL_MQTT_RETAIN)
+        self._control_box_ready_s: float = float(CONTROL_MQTT_BOX_READY_SECONDS)
+        self._control_ack_timeout_s: float = float(CONTROL_MQTT_ACK_TIMEOUT_S)
+        self._control_applied_timeout_s: float = float(CONTROL_MQTT_APPLIED_TIMEOUT_S)
+        self._control_mode_quiet_s: float = float(CONTROL_MQTT_MODE_QUIET_SECONDS)
+        self._control_whitelist: dict[str, set[str]] = CONTROL_WRITE_WHITELIST
+
+        self._control_queue: deque[dict[str, Any]] = deque()
+        self._control_inflight: dict[str, Any] | None = None
+        self._control_lock = asyncio.Lock()
+        self._control_ack_task: asyncio.Task[Any] | None = None
+        self._control_applied_task: asyncio.Task[Any] | None = None
+        self._control_quiet_task: asyncio.Task[Any] | None = None
+
+        self._box_connected_since_epoch: float | None = None
+        self._last_values: dict[tuple[str, str], Any] = {}
         
         # Statistiky
         self.stats = {
@@ -101,6 +144,22 @@ class OIGProxy:
     
     async def start(self):
         """Spustí proxy server."""
+        self._loop = asyncio.get_running_loop()
+
+        if CONTROL_API_PORT and CONTROL_API_PORT > 0:
+            try:
+                self._control_api = ControlAPIServer(
+                    host=CONTROL_API_HOST,
+                    port=CONTROL_API_PORT,
+                    proxy=self,
+                )
+                self._control_api.start()
+                logger.info(
+                    f"🧪 Control API listening on http://{CONTROL_API_HOST}:{CONTROL_API_PORT}"
+                )
+            except Exception as e:
+                logger.error(f"Control API start failed: {e}")
+
         # Nastavíme callback pro cloud health změny
         self.cloud_health.set_mode_callback(self._on_cloud_state_change)
         
@@ -113,6 +172,9 @@ class OIGProxy:
         else:
             logger.warning("MQTT: Initial connect failed, health check se pokusí reconnect")
             await self.mqtt_publisher.start_health_check()
+
+        if self._control_mqtt_enabled:
+            self._setup_control_mqtt()
 
         # Pokud máme uložené device_id a aktuální device je AUTO, použij ho
         if self.device_id == "AUTO":
@@ -317,9 +379,9 @@ class OIGProxy:
             mode_int = int(new_mode)
         except Exception:
             return
-        if mode_int < 0 or mode_int > 3:
+        if mode_int < 0 or mode_int > 5:
             logger.debug(
-                f"MODE: Hodnota {mode_int} mimo rozsah 0-3, zdroj {source}, ignoruji"
+                f"MODE: Hodnota {mode_int} mimo rozsah 0-5, zdroj {source}, ignoruji"
             )
             return
 
@@ -642,6 +704,7 @@ class OIGProxy:
         logger.debug(f"🔌 BOX připojen ({conn_id}): {addr}")
         self.box_connected = True
         self.box_connections += 1
+        self._box_connected_since_epoch = time.time()
         await self.publish_proxy_status()
 
         try:
@@ -651,6 +714,7 @@ class OIGProxy:
         finally:
             await self._close_writer(writer)
             self.box_connected = False
+            self._box_connected_since_epoch = None
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
     
@@ -933,6 +997,8 @@ class OIGProxy:
                 self._isnew_polls += 1
                 self._isnew_last_poll_epoch = time.time()
                 self._isnew_last_poll_iso = self._last_data_iso
+            self._cache_last_values(parsed, table_name)
+            await self._control_observe_box_frame(parsed, table_name, frame)
             await self._maybe_process_mode(parsed, table_name, device_id)
             await self.mqtt_publisher.publish_data(parsed)
 
@@ -1003,6 +1069,9 @@ class OIGProxy:
                 device_id, table_name = await self._process_box_frame_common(
                     frame_bytes=data, frame=frame, conn_id=conn_id
                 )
+
+                if self._maybe_handle_local_setting_ack(frame, box_writer):
+                    continue
                 current_mode = await self._get_current_mode()
 
                 if current_mode != ProxyMode.ONLINE:
@@ -1075,3 +1144,588 @@ class OIGProxy:
             "mqtt_connected": self.mqtt_publisher.connected,
             **self.stats
         }
+
+    # ---------------------------------------------------------------------
+    # Control over MQTT (production)
+    # ---------------------------------------------------------------------
+
+    def _setup_control_mqtt(self) -> None:
+        if self._loop is None:
+            return
+
+        def _handler(topic: str, payload: bytes, qos: int, retain: bool) -> None:
+            if self._loop is None:
+                return
+            asyncio.run_coroutine_threadsafe(
+                self._control_on_mqtt_message(topic=topic, payload=payload, retain=retain),
+                self._loop,
+            )
+
+        self.mqtt_publisher.add_message_handler(
+            topic=self._control_set_topic,
+            handler=_handler,
+            qos=self._control_qos,
+        )
+        logger.info(
+            "CONTROL: MQTT enabled (set=%s result=%s)",
+            self._control_set_topic,
+            self._control_result_topic,
+        )
+
+    async def _control_publish_result(
+        self,
+        *,
+        tx: dict[str, Any],
+        status: str,
+        error: str | None = None,
+        detail: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "tx_id": tx.get("tx_id"),
+            "device_id": None if self.device_id == "AUTO" else self.device_id,
+            "tbl_name": tx.get("tbl_name"),
+            "tbl_item": tx.get("tbl_item"),
+            "new_value": tx.get("new_value"),
+            "status": status,
+            "error": error,
+            "detail": detail,
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        if extra:
+            payload.update(extra)
+        await self.mqtt_publisher.publish_raw(
+            topic=self._control_result_topic,
+            payload=json.dumps(payload, ensure_ascii=False),
+            qos=self._control_qos,
+            retain=self._control_retain,
+        )
+
+    @staticmethod
+    def _parse_setting_event(content: str) -> tuple[str, str, str | None, str | None] | None:
+        m = re.search(
+            r"tbl_([a-z0-9_]+)\\s*/\\s*([A-Z0-9_]+):\\s*\\[([^\\]]*)\\]->\\[([^\\]]*)\\]",
+            content,
+        )
+        if not m:
+            return None
+        tbl_name = f"tbl_{m.group(1)}"
+        return tbl_name, m.group(2), m.group(3), m.group(4)
+
+    def _cache_last_values(self, parsed: dict[str, Any], table_name: str | None) -> None:
+        if not parsed or not table_name:
+            return
+        if table_name == "tbl_events":
+            return
+        for key, value in parsed.items():
+            if key.startswith("_"):
+                continue
+            self._last_values[(table_name, key)] = value
+
+    def _control_is_box_ready(self) -> tuple[bool, str | None]:
+        if not self.box_connected:
+            return False, "box_not_connected"
+        if self.device_id == "AUTO":
+            return False, "device_id_unknown"
+        if self._box_connected_since_epoch is None:
+            return False, "box_not_ready"
+        if (time.time() - self._box_connected_since_epoch) < self._control_box_ready_s:
+            return False, "box_not_ready"
+        if self._last_data_epoch is None:
+            return False, "box_not_sending_data"
+        if (time.time() - self._last_data_epoch) > 30:
+            return False, "box_not_sending_data"
+        return True, None
+
+    def _control_normalize_value(
+        self, *, tbl_name: str, tbl_item: str, new_value: Any
+    ) -> tuple[str, str] | tuple[None, str]:
+        raw = new_value
+        if isinstance(raw, (int, float)):
+            raw_str = str(raw)
+        else:
+            raw_str = str(raw).strip()
+
+        key = (tbl_name, tbl_item)
+        if key == ("tbl_box_prms", "MODE"):
+            try:
+                mode_int = int(float(raw_str))
+            except Exception:
+                return None, "bad_value"
+            if mode_int < 0 or mode_int > 5:
+                return None, "bad_value"
+            v = str(mode_int)
+            return v, v
+
+        if key in (("tbl_invertor_prm1", "AAC_MAX_CHRG"), ("tbl_invertor_prm1", "A_MAX_CHRG")):
+            try:
+                f = float(raw_str)
+            except Exception:
+                return None, "bad_value"
+            v = f"{f:.1f}"
+            return v, v
+
+        return raw_str, raw_str
+
+    async def _control_on_mqtt_message(
+        self, *, topic: str, payload: bytes, retain: bool
+    ) -> None:
+        try:
+            data = json.loads(payload.decode("utf-8", errors="strict"))
+        except Exception:
+            await self.mqtt_publisher.publish_raw(
+                topic=self._control_result_topic,
+                payload=json.dumps(
+                    {
+                        "tx_id": None,
+                        "status": "error",
+                        "error": "bad_json",
+                        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    }
+                ),
+                qos=self._control_qos,
+                retain=self._control_retain,
+            )
+            return
+
+        tx_id = str(data.get("tx_id") or "").strip()
+        tbl_name = str(data.get("tbl_name") or "").strip()
+        tbl_item = str(data.get("tbl_item") or "").strip()
+        if not tx_id or not tbl_name or not tbl_item or "new_value" not in data:
+            await self._control_publish_result(
+                tx={"tx_id": tx_id or None, "tbl_name": tbl_name, "tbl_item": tbl_item, "new_value": data.get("new_value")},
+                status="error",
+                error="missing_fields",
+            )
+            return
+
+        ok, why = self._control_is_box_ready()
+        tx: dict[str, Any] = {
+            "tx_id": tx_id,
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": data.get("new_value"),
+            "confirm": str(data.get("confirm") or "New"),
+            "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        if not ok:
+            await self._control_publish_result(tx=tx, status="error", error=why)
+            return
+
+        allowed = tbl_item in self._control_whitelist.get(tbl_name, set())
+        if not allowed:
+            await self._control_publish_result(tx=tx, status="error", error="not_allowed")
+            return
+
+        send_value, err = self._control_normalize_value(
+            tbl_name=tbl_name, tbl_item=tbl_item, new_value=tx["new_value"]
+        )
+        if send_value is None:
+            await self._control_publish_result(tx=tx, status="error", error=err)
+            return
+        tx["new_value"] = send_value
+        tx["_canon"] = send_value
+
+        current = self._last_values.get((tbl_name, tbl_item))
+        if current is not None:
+            current_norm, _ = self._control_normalize_value(
+                tbl_name=tbl_name, tbl_item=tbl_item, new_value=current
+            )
+            if current_norm is not None and str(current_norm) == str(send_value):
+                await self._control_publish_result(
+                    tx=tx, status="completed", detail="noop_already_set"
+                )
+                return
+
+        async with self._control_lock:
+            if self._control_inflight is not None:
+                infl = self._control_inflight
+                if (
+                    infl.get("tbl_name") == tbl_name
+                    and infl.get("tbl_item") == tbl_item
+                    and infl.get("_canon") == tx.get("_canon")
+                ):
+                    await self._control_publish_result(
+                        tx=tx, status="completed", detail="duplicate_ignored"
+                    )
+                    return
+            for q in self._control_queue:
+                if (
+                    q.get("tbl_name") == tbl_name
+                    and q.get("tbl_item") == tbl_item
+                    and q.get("_canon") == tx.get("_canon")
+                ):
+                    await self._control_publish_result(
+                        tx=tx, status="completed", detail="duplicate_ignored"
+                    )
+                    return
+
+            self._control_queue.append(tx)
+
+        await self._control_publish_result(tx=tx, status="accepted")
+        await self._control_maybe_start_next()
+
+    async def _control_maybe_start_next(self) -> None:
+        async with self._control_lock:
+            if self._control_inflight is not None:
+                return
+            if not self._control_queue:
+                return
+            tx = self._control_queue.popleft()
+            self._control_inflight = tx
+            tx["stage"] = "accepted"
+
+        await self._control_start_inflight()
+
+    async def _control_start_inflight(self) -> None:
+        async with self._control_lock:
+            tx = self._control_inflight
+        if tx is None:
+            return
+
+        result = await self._send_setting_to_box(
+            tbl_name=str(tx["tbl_name"]),
+            tbl_item=str(tx["tbl_item"]),
+            new_value=str(tx["new_value"]),
+            confirm=str(tx.get("confirm") or "New"),
+            tx_id=str(tx["tx_id"]),
+        )
+        if not result.get("ok"):
+            await self._control_publish_result(
+                tx=tx, status="error", error=str(result.get("error") or "send_failed")
+            )
+            await self._control_finish_inflight()
+            return
+
+        tx["stage"] = "sent_to_box"
+        tx["id"] = result.get("id")
+        tx["id_set"] = result.get("id_set")
+        tx["sent_at_mono"] = time.monotonic()
+
+        await self._control_publish_result(
+            tx=tx,
+            status="sent_to_box",
+            extra={"id": tx.get("id"), "id_set": tx.get("id_set")},
+        )
+
+        if self._control_ack_task and not self._control_ack_task.done():
+            self._control_ack_task.cancel()
+        self._control_ack_task = asyncio.create_task(self._control_ack_timeout())
+
+    async def _control_on_box_setting_ack(self, *, tx_id: str | None, ack: bool) -> None:
+        if not tx_id:
+            return
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None or str(tx.get("tx_id")) != str(tx_id):
+                return
+            tx["stage"] = "box_ack" if ack else "error"
+
+        if self._control_ack_task and not self._control_ack_task.done():
+            self._control_ack_task.cancel()
+        self._control_ack_task = None
+
+        if not ack:
+            await self._control_publish_result(tx=tx, status="error", error="box_nack")
+            await self._control_finish_inflight()
+            return
+
+        await self._control_publish_result(tx=tx, status="box_ack")
+
+        if self._control_applied_task and not self._control_applied_task.done():
+            self._control_applied_task.cancel()
+        self._control_applied_task = asyncio.create_task(self._control_applied_timeout())
+
+    async def _control_ack_timeout(self) -> None:
+        await asyncio.sleep(self._control_ack_timeout_s)
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None:
+                return
+            if tx.get("stage") not in ("sent_to_box", "accepted"):
+                return
+        await self._control_publish_result(
+            tx=tx, status="error", error="timeout_waiting_ack"
+        )
+        await self._control_finish_inflight()
+
+    async def _control_applied_timeout(self) -> None:
+        await asyncio.sleep(self._control_applied_timeout_s)
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None:
+                return
+            if tx.get("stage") in ("applied", "completed", "error"):
+                return
+        await self._control_publish_result(
+            tx=tx, status="error", error="timeout_waiting_applied"
+        )
+        await self._control_finish_inflight()
+
+    async def _control_quiet_wait(self) -> None:
+        while True:
+            async with self._control_lock:
+                tx = self._control_inflight
+                if tx is None:
+                    return
+                if tx.get("stage") not in ("applied",):
+                    return
+                last = float(tx.get("last_inv_ack_mono") or tx.get("applied_at_mono") or 0.0)
+                wait_s = max(0.0, (last + self._control_mode_quiet_s) - time.monotonic())
+            if wait_s > 0:
+                await asyncio.sleep(wait_s)
+                continue
+            break
+
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None:
+                return
+            if tx.get("stage") != "applied":
+                return
+        await self._control_publish_result(tx=tx, status="completed", detail="quiet_window")
+        await self._control_finish_inflight()
+
+    async def _control_finish_inflight(self) -> None:
+        async with self._control_lock:
+            self._control_inflight = None
+            for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
+                if task and not task.done():
+                    task.cancel()
+            self._control_ack_task = None
+            self._control_applied_task = None
+            self._control_quiet_task = None
+        await self._control_maybe_start_next()
+
+    async def _control_observe_box_frame(
+        self, parsed: dict[str, Any], table_name: str | None, frame: str
+    ) -> None:
+        async with self._control_lock:
+            tx = self._control_inflight
+        if tx is None or not parsed or not table_name:
+            return
+
+        if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW", "END"):
+            async with self._control_lock:
+                tx2 = self._control_inflight
+                if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
+                    return
+                stage = tx2.get("stage")
+            if stage in ("box_ack", "applied"):
+                await self._control_publish_result(
+                    tx=tx, status="completed", detail=f"box_marker:{table_name}"
+                )
+                await self._control_finish_inflight()
+            return
+
+        if table_name != "tbl_events":
+            return
+
+        content = parsed.get("Content")
+        typ = parsed.get("Type")
+        if not content or not isinstance(content, str):
+            return
+
+        if typ == "Setting":
+            ev = self._parse_setting_event(content)
+            if not ev:
+                return
+            ev_tbl, ev_item, old_v, new_v = ev
+            if ev_tbl != tx.get("tbl_name") or ev_item != tx.get("tbl_item"):
+                return
+            desired = str(tx.get("new_value"))
+            if str(new_v) != desired:
+                return
+            async with self._control_lock:
+                tx2 = self._control_inflight
+                if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
+                    return
+                tx2["stage"] = "applied"
+                tx2["applied_at_mono"] = time.monotonic()
+                tx2["last_inv_ack_mono"] = tx2["applied_at_mono"]
+            await self._control_publish_result(
+                tx=tx, status="applied", extra={"old_value": old_v, "observed_new_value": new_v}
+            )
+
+            if (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "MODE"):
+                await self._control_publish_result(tx=tx, status="completed", detail="applied")
+                await self._control_finish_inflight()
+                return
+
+            if self._control_quiet_task and not self._control_quiet_task.done():
+                self._control_quiet_task.cancel()
+            self._control_quiet_task = asyncio.create_task(self._control_quiet_wait())
+            return
+
+        if "Invertor ACK" in content and (tx.get("tbl_name"), tx.get("tbl_item")) == ("tbl_box_prms", "MODE"):
+            async with self._control_lock:
+                tx2 = self._control_inflight
+                if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
+                    return
+                if tx2.get("stage") != "applied":
+                    return
+                tx2["last_inv_ack_mono"] = time.monotonic()
+            if self._control_quiet_task and not self._control_quiet_task.done():
+                self._control_quiet_task.cancel()
+            self._control_quiet_task = asyncio.create_task(self._control_quiet_wait())
+
+    # ---------------------------------------------------------------------
+    # Control API (prototype)
+    # ---------------------------------------------------------------------
+
+    def get_control_api_health(self) -> dict[str, Any]:
+        now = time.time()
+        last_age_s: float | None = None
+        if self._last_data_epoch is not None:
+            last_age_s = max(0.0, now - self._last_data_epoch)
+        return {
+            "ok": True,
+            "device_id": None if self.device_id == "AUTO" else self.device_id,
+            "box_connected": bool(self.box_connected),
+            "box_peer": self._active_box_peer,
+            "box_data_age_s": last_age_s,
+        }
+
+    def control_api_send_setting(
+        self,
+        *,
+        tbl_name: str,
+        tbl_item: str,
+        new_value: str,
+        confirm: str = "New",
+    ) -> dict[str, Any]:
+        if self._loop is None:
+            return {"ok": False, "error": "event_loop_not_ready"}
+
+        fut = asyncio.run_coroutine_threadsafe(
+            self._send_setting_to_box(
+                tbl_name=tbl_name,
+                tbl_item=tbl_item,
+                new_value=new_value,
+                confirm=confirm,
+            ),
+            self._loop,
+        )
+        try:
+            return fut.result(timeout=5.0)
+        except Exception as e:
+            return {"ok": False, "error": f"send_failed:{type(e).__name__}"}
+
+    async def _send_setting_to_box(
+        self,
+        *,
+        tbl_name: str,
+        tbl_item: str,
+        new_value: str,
+        confirm: str,
+        tx_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not self.box_connected:
+            return {"ok": False, "error": "box_not_connected"}
+        if self._last_data_epoch is None or (time.time() - self._last_data_epoch) > 30:
+            return {"ok": False, "error": "box_not_sending_data"}
+        if self.device_id == "AUTO":
+            return {"ok": False, "error": "device_id_unknown"}
+
+        async with self._box_conn_lock:
+            writer = self._active_box_writer
+        if writer is None:
+            return {"ok": False, "error": "no_active_box_writer"}
+
+        msg_id = random.randint(10_000_000, 99_999_999)
+        id_set = int(time.time())
+        now_local = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+
+        inner = (
+            f"<ID>{msg_id}</ID>"
+            f"<ID_Device>{self.device_id}</ID_Device>"
+            f"<ID_Set>{id_set}</ID_Set>"
+            "<ID_SubD>0</ID_SubD>"
+            f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+            f"<NewValue>{new_value}</NewValue>"
+            f"<Confirm>{confirm}</Confirm>"
+            f"<TblName>{tbl_name}</TblName>"
+            f"<TblItem>{tbl_item}</TblItem>"
+            "<ID_Server>5</ID_Server>"
+            "<mytimediff>0</mytimediff>"
+            "<Reason>Setting</Reason>"
+            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+            "<ver>55734</ver>"
+        )
+        frame = build_frame(inner, add_crlf=True).encode("utf-8", errors="strict")
+
+        self._local_setting_pending = {
+            "sent_at": time.monotonic(),
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": new_value,
+            "id": msg_id,
+            "id_set": id_set,
+            "tx_id": tx_id,
+        }
+
+        writer.write(frame)
+        await writer.drain()
+
+        logger.info(
+            "CONTROL: Sent Setting %s/%s=%s (id=%s id_set=%s)",
+            tbl_name,
+            tbl_item,
+            new_value,
+            msg_id,
+            id_set,
+        )
+
+        return {
+            "ok": True,
+            "sent": True,
+            "device_id": self.device_id,
+            "id": msg_id,
+            "id_set": id_set,
+        }
+
+    def _maybe_handle_local_setting_ack(
+        self, frame: str, box_writer: asyncio.StreamWriter
+    ) -> bool:
+        pending = self._local_setting_pending
+        if not pending:
+            return False
+        if (time.monotonic() - float(pending.get("sent_at", 0.0))) > self._control_ack_timeout_s:
+            return False
+        if "<Reason>Setting</Reason>" not in frame:
+            return False
+        if "<Result>ACK</Result>" not in frame and "<Result>NACK</Result>" not in frame:
+            return False
+
+        ack_ok = "<Result>ACK</Result>" in frame
+        tx_id = pending.get("tx_id")
+
+        now_local = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+        end_inner = (
+            "<Result>END</Result>"
+            f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
+            f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
+        )
+        end_frame = build_frame(end_inner, add_crlf=True).encode("utf-8", errors="strict")
+
+        box_writer.write(end_frame)
+        try:
+            asyncio.create_task(box_writer.drain())
+        except Exception:
+            pass
+
+        try:
+            asyncio.create_task(self._control_on_box_setting_ack(tx_id=str(tx_id) if tx_id else None, ack=ack_ok))
+        except Exception:
+            pass
+
+        logger.info(
+            "CONTROL: BOX responded to local Setting (sent END), last=%s/%s=%s",
+            pending.get("tbl_name"),
+            pending.get("tbl_item"),
+            pending.get("new_value"),
+        )
+        self._local_setting_pending = None
+        return True

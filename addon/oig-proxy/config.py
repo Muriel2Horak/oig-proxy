@@ -58,6 +58,38 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 PROXY_STATUS_INTERVAL = _get_int_env("PROXY_STATUS_INTERVAL", 60)
 
 # ============================================================================
+# Control API (prototype)
+# ============================================================================
+# No auth in prototype; set port to 0 to disable.
+CONTROL_API_HOST = os.getenv("CONTROL_API_HOST", "127.0.0.1")
+CONTROL_API_PORT = _get_int_env("CONTROL_API_PORT", 0)
+
+# ============================================================================
+# Control over MQTT (production)
+# ============================================================================
+CONTROL_MQTT_ENABLED = os.getenv("CONTROL_MQTT_ENABLED", "false").lower() == "true"
+CONTROL_MQTT_SET_TOPIC = os.getenv(
+    "CONTROL_MQTT_SET_TOPIC", "oig_local/oig_proxy/control/set"
+)
+CONTROL_MQTT_RESULT_TOPIC = os.getenv(
+    "CONTROL_MQTT_RESULT_TOPIC", "oig_local/oig_proxy/control/result"
+)
+CONTROL_MQTT_QOS = _get_int_env("CONTROL_MQTT_QOS", 1)
+CONTROL_MQTT_RETAIN = os.getenv("CONTROL_MQTT_RETAIN", "false").lower() == "true"
+CONTROL_MQTT_BOX_READY_SECONDS = _get_int_env("CONTROL_MQTT_BOX_READY_SECONDS", 10)
+CONTROL_MQTT_ACK_TIMEOUT_S = float(os.getenv("CONTROL_MQTT_ACK_TIMEOUT_S", "30"))
+CONTROL_MQTT_APPLIED_TIMEOUT_S = float(os.getenv("CONTROL_MQTT_APPLIED_TIMEOUT_S", "120"))
+CONTROL_MQTT_MODE_QUIET_SECONDS = float(os.getenv("CONTROL_MQTT_MODE_QUIET_SECONDS", "20"))
+
+# Default whitelist (deny-by-default for everything else)
+CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
+    "tbl_batt_prms": {"FMT_ON", "BAT_MIN"},
+    "tbl_boiler_prms": {"ISON", "MANUAL", "SSR0", "SSR1", "SSR2", "OFFSET"},
+    "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA"},
+    "tbl_invertor_prm1": {"AAC_MAX_CHRG", "A_MAX_CHRG"},
+}
+
+# ============================================================================
 # Sensor Map Configuration
 # ============================================================================
 SENSOR_MAP_PATH = os.getenv(

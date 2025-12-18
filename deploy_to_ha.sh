@@ -34,6 +34,8 @@ scp $LOCAL_SOURCE/cloud_manager.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/cloud_session.py $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || true
 scp $LOCAL_SOURCE/mqtt_publisher.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/proxy.py $HA_HOST:/tmp/oig-proxy-new/
+scp $LOCAL_SOURCE/control_api.py $HA_HOST:/tmp/oig-proxy-new/
+scp $LOCAL_SOURCE/local_oig_crc.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/main.py $HA_HOST:/tmp/oig-proxy-new/
 scp $LOCAL_SOURCE/config.json $HA_HOST:/tmp/oig-proxy-new/ 2>/dev/null || true
 scp $LOCAL_SOURCE/Dockerfile $HA_HOST:/tmp/oig-proxy-new/
@@ -48,12 +50,28 @@ echo ""
 echo "🔨 Krok 4: Rebuild addonu s novými soubory..."
 # Ha addon rebuild automaticky použije soubory z git repository
 # Musíme je tam zkopírovat před rebuildem
-ssh $HA_HOST "docker run --rm -v /var/lib/homeassistant/addons/git/d7b5d5b1/addon/oig-proxy:/target \
-                          -v /tmp/oig-proxy-new:/source \
-                          alpine sh -c 'cp /source/* /target/ 2>/dev/null || true' || \
-              echo 'Zkouším alternativní metodu...' && \
-              sudo cp /tmp/oig-proxy-new/* /var/lib/homeassistant/addons/git/d7b5d5b1/addon/oig-proxy/ || \
-              echo '⚠️  Nelze zkopírovat do git repo, použiji přímý update do kontejneru'"
+ssh $HA_HOST "set -e; \
+              if docker run --rm \
+                -v /var/lib/homeassistant/addons/git/d7b5d5b1/addon/oig-proxy:/target \
+                -v /tmp/oig-proxy-new:/source \
+                alpine sh -c 'cp /source/* /target/ 2>/dev/null || true'; then \
+                  echo '✅ Updated add-on sources in /var/lib/homeassistant/addons/git/...'; \
+              else \
+                  echo '❌ Failed to update add-on sources (no sudo fallback configured)'; \
+                  exit 1; \
+              fi"
+
+# Supervisor nedovolí rebuild, pokud se liší verze v installed addonu vs. config.json v sources.
+echo "🔎 Kontrola verze (installed vs sources)..."
+INSTALLED_VER=$(ssh $HA_HOST "ha addons info $ADDON_SLUG | awk '/^version:/{print \$2; exit}'")
+SOURCE_VER=$(ssh $HA_HOST "python3 -c \"import json; print(json.load(open('/var/lib/homeassistant/addons/git/d7b5d5b1/addon/oig-proxy/config.json'))['version'])\"")
+echo "   installed: $INSTALLED_VER"
+echo "   sources:   $SOURCE_VER"
+if [ "$INSTALLED_VER" != "$SOURCE_VER" ]; then
+  echo "❌ Verze nesedí. Supervisor odmítne 'rebuild' s chybou 'Version changed, use Update instead Rebuild'."
+  echo "   Srovnej verzi v 'addon/oig-proxy/config.json' na $INSTALLED_VER (a pak deploy), nebo proveď řízený downgrade/upgrade přes HA UI."
+  exit 2
+fi
 
 ssh $HA_HOST "ha addons rebuild $ADDON_SLUG"
 echo "✅ Addon rebuilded"

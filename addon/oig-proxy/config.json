@@ -26,7 +26,8 @@
     "proxy_status_interval": 60,
     "log_level": "INFO",
     "capture_payloads": false,
-    "capture_raw_bytes": false
+    "capture_raw_bytes": false,
+    "control_mqtt_enabled": false
   },
   "schema": {
     "target_server": "str",
@@ -42,6 +43,7 @@
     "log_level": "list(INFO|DEBUG|WARNING|ERROR)",
     "capture_payloads": "bool?",
     "capture_raw_bytes": "bool?",
+    "control_mqtt_enabled": "bool?",
     "ha_ip": "str?",
     "dns_upstream": "str?"
   },

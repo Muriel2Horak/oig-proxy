@@ -74,6 +74,16 @@ export LOG_LEVEL=$LOG_LEVEL_RAW
 export SENSOR_MAP_PATH=/data/sensor_map.json
 export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
 
+# CONTROL_MQTT_ENABLED - boolean z config
+CONTROL_MQTT_ENABLED_RAW=$(bashio::config 'control_mqtt_enabled' 2>/dev/null)
+if [ "$CONTROL_MQTT_ENABLED_RAW" = "true" ] || [ "$CONTROL_MQTT_ENABLED_RAW" = "1" ]; then
+  export CONTROL_MQTT_ENABLED="true"
+  bashio::log.info "🕹️ Control over MQTT: ENABLED"
+else
+  export CONTROL_MQTT_ENABLED="false"
+  bashio::log.info "🕹️ Control over MQTT: DISABLED"
+fi
+
 # CAPTURE_PAYLOADS - boolean z config
 CAPTURE_RAW=$(bashio::config 'capture_payloads')
 if [ "$CAPTURE_RAW" = "true" ] || [ "$CAPTURE_RAW" = "1" ]; then

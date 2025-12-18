@@ -65,9 +65,9 @@ def load_mode_state() -> tuple[int | None, str | None]:
                         mode_int = int(mode_value)
                     except Exception:
                         mode_int = None
-                    if mode_int is None or mode_int < 0 or mode_int > 3:
+                    if mode_int is None or mode_int < 0 or mode_int > 5:
                         logger.warning(
-                            f"MODE: Uložená hodnota {mode_value} je mimo rozsah 0-3, ignoruji"
+                            f"MODE: Uložená hodnota {mode_value} je mimo rozsah 0-5, ignoruji"
                         )
                         return None, device_id
                     logger.info(

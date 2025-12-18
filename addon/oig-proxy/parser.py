@@ -83,7 +83,7 @@ class OIGDataParser:
         nebo 'Locally : tbl_box_prms / MODE: [old]->[new]'
         
         Returns:
-            int: Nová MODE hodnota (0-3) nebo None
+            int: Nová MODE hodnota (0-5) nebo None
         """
         match = re.search(r'MODE:\s*\[(\d+)\]->\[(\d+)\]', content)
         if match:

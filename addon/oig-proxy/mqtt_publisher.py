@@ -12,6 +12,7 @@ import re
 import sqlite3
 import time
 from typing import Any
+from collections.abc import Callable
 
 from config import (
     DEVICE_NAMES,
@@ -196,6 +197,7 @@ class MQTTPublisher:
         self.discovery_sent: set[str] = set()
         self._last_payload_by_topic: dict[str, str] = {}
         self._local_tzinfo = datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
+        self._message_handlers: dict[str, tuple[int, Callable[[str, bytes, int, bool], None]]] = {}
         
         # Queue
         self.queue = MQTTQueue()
@@ -239,6 +241,7 @@ class MQTTPublisher:
             self.client.on_connect = self._on_connect
             self.client.on_disconnect = self._on_disconnect
             self.client.on_publish = self._on_publish
+            self.client.on_message = self._on_message
             
             logger.info(
                 f"MQTT: Připojuji k {MQTT_HOST}:{MQTT_PORT} "
@@ -306,6 +309,14 @@ class MQTTPublisher:
             
             # Reset discovery
             self.discovery_sent.clear()
+
+            # Subscribe handlers (if any)
+            for topic, (qos, _) in self._message_handlers.items():
+                try:
+                    client.subscribe(topic, qos=qos)
+                    logger.info(f"MQTT: Subscribed {topic}")
+                except Exception as e:
+                    logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
             
             # Trigger replay
             if self._replay_task is None or self._replay_task.done():
@@ -356,6 +367,60 @@ class MQTTPublisher:
                 f"MQTT: 📊 Stats: {self.publish_success} OK, "
                 f"{self.publish_failed} FAIL z {self.publish_count} celkem"
             )
+
+    def add_message_handler(
+        self,
+        *,
+        topic: str,
+        handler: Callable[[str, bytes, int, bool], None],
+        qos: int = 1,
+    ) -> None:
+        """Zaregistruje handler pro příchozí MQTT zprávy na daném topicu."""
+        self._message_handlers[topic] = (qos, handler)
+        if self.client and self.connected:
+            try:
+                self.client.subscribe(topic, qos=qos)
+                logger.info(f"MQTT: Subscribed {topic}")
+            except Exception as e:
+                logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
+
+    def _on_message(self, client: Any, userdata: Any, msg: Any) -> None:
+        try:
+            entry = self._message_handlers.get(getattr(msg, "topic", ""))
+            if entry is None:
+                return
+            _, handler = entry
+            payload: bytes = getattr(msg, "payload", b"") or b""
+            qos: int = int(getattr(msg, "qos", 0) or 0)
+            retain: bool = bool(getattr(msg, "retain", False))
+            handler(str(msg.topic), payload, qos, retain)
+        except Exception as e:
+            logger.warning(f"MQTT: Message handler failed: {e}")
+
+    async def publish_raw(
+        self,
+        *,
+        topic: str,
+        payload: str,
+        qos: int = 1,
+        retain: bool = False,
+        queue_if_offline: bool = True,
+    ) -> bool:
+        """Publikuje raw payload na libovolný topic (bez mapování/discovery)."""
+        if not self.is_ready():
+            if queue_if_offline:
+                await self.queue.add(topic, payload, retain)
+            return False
+        if not self.client:
+            return False
+        try:
+            result = self.client.publish(topic, payload, qos=qos, retain=retain)
+            return result.rc == 0
+        except Exception as e:
+            logger.error(f"MQTT: publish_raw exception: {e}")
+            if queue_if_offline:
+                await self.queue.add(topic, payload, retain)
+            return False
     
     def is_ready(self) -> bool:
         """Vrací True pokud je MQTT připraveno."""
