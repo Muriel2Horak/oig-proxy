@@ -758,6 +758,13 @@ class OIGProxy:
     ) -> bytes | None:
         try:
             data = await asyncio.wait_for(reader.read(8192), timeout=idle_timeout_s)
+        except ConnectionResetError:
+            # BOX (nebo síť) spojení tvrdě ukončil – bereme jako běžné odpojení.
+            logger.debug(
+                "🔌 BOX resetoval spojení (conn=%s)", conn_id
+            )
+            await self.publish_proxy_status()
+            return None
         except asyncio.TimeoutError:
             logger.warning(
                 f"⏱️ BOX idle timeout (15 min) - closing session (conn={conn_id})"
@@ -1105,6 +1112,13 @@ class OIGProxy:
                     connect_timeout_s=CLOUD_CONNECT_TIMEOUT,
                 )
 
+        except ConnectionResetError:
+            # Běžné: BOX přeruší TCP (např. reconnect po modem resetu). Nechceme z toho dělat ERROR.
+            logger.debug(
+                "🔌 BOX ukončil spojení (RST, conn=%s, peer=%s)",
+                conn_id,
+                self._active_box_peer,
+            )
         except Exception:
             logger.exception(
                 "❌ Box connection handler error (conn=%s, peer=%s)",
