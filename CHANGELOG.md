@@ -2,6 +2,25 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.11] - 2025-12-19
+
+### Added
+
+- Control přes MQTT: topic `oig_local/oig_proxy/control/set` + `.../result` (queue, dedupe, noop, whitelist, timeouts)
+- Lokální CRC pro Setting framy (umožňuje změny do BOXu bez cloudu)
+
+### Fixed
+
+- HA add-on deploy: oprava `deploy_to_ha.sh` + kontrola verze, aby rebuild nepadal na false mismatch
+- Control enable bez UI: fallback flag `/data/control_mqtt_enabled`
+- Stabilita: `Connection reset by peer` se bere jako normální odpojení BOXu (ne ERROR)
+- Control: oprava regex parsování `tbl_events` Setting řádků (unbalanced parenthesis)
+
+### Changed
+
+- MQTT discovery: správné groupování zařízení pro `tbl_boiler_prms`, `tbl_recuper_prms`, `tbl_aircon_prms`, `tbl_h_pump_prms`, `tbl_wl_charge_prms`
+- Přejmenování zařízení `Nabíjení` → `Wallbox`
+
 ## [1.3.10] - 2025-12-17
 
 ### Fixed
