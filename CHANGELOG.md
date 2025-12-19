@@ -19,6 +19,12 @@
 - MQTT discovery: správné groupování zařízení pro `tbl_boiler_prms`, `tbl_recuper_prms`, `tbl_aircon_prms`, `tbl_h_pump_prms`, `tbl_wl_charge_prms`
 - Přejmenování zařízení `Nabíjení` → `Wallbox`
 
+## [1.3.12] - 2025-12-19
+
+### Fixed
+
+- Add-on build: přidán chybějící modul pro skládání frame zpráv (oprava chyby při buildování image v HA Supervisoru)
+
 ## [1.3.10] - 2025-12-17
 
 ### Fixed

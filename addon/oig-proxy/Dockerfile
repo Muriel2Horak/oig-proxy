@@ -18,7 +18,7 @@ COPY utils.py /app/utils.py
 COPY parser.py /app/parser.py
 COPY proxy.py /app/proxy.py
 COPY control_api.py /app/control_api.py
-COPY local_oig_crc.py /app/local_oig_crc.py
+COPY oig_frame.py /app/oig_frame.py
 COPY cloud_session.py /app/cloud_session.py
 COPY cloud_manager.py /app/cloud_manager.py
 COPY mqtt_publisher.py /app/mqtt_publisher.py

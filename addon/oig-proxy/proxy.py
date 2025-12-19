@@ -39,7 +39,7 @@ from config import (
     TARGET_SERVER,
 )
 from control_api import ControlAPIServer
-from local_oig_crc import build_frame
+from oig_frame import build_frame
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from parser import OIGDataParser
