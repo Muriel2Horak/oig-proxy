@@ -1293,7 +1293,7 @@
     },
     "tbl_wl_charge_prms:ISON": {
       "name": "Zap. / vyp. + signalizace stavu",
-      "name_cs": "Nabíjení - Zapnuto",
+      "name_cs": "Wallbox - Zapnuto",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1304,7 +1304,7 @@
     },
     "tbl_wl_charge_prms:PRRTY": {
       "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
-      "name_cs": "Nabíjení - Priorita",
+      "name_cs": "Wallbox - Priorita",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1315,7 +1315,7 @@
     },
     "tbl_wl_charge_prms:P_SET": {
       "name": "Nastavený výkonu",
-      "name_cs": "Nabíjení - Nastavený výkon",
+      "name_cs": "Wallbox - Nastavený výkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1326,7 +1326,7 @@
     },
     "tbl_wl_charge_prms:COMOK": {
       "name": "Vyhodnocení komunikace",
-      "name_cs": "Nabíjení - Komunikace OK",
+      "name_cs": "Wallbox - Komunikace OK",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -1338,7 +1338,7 @@
     },
     "tbl_wl_charge_prms:ADDR": {
       "name": "Nastavení IP adresy",
-      "name_cs": "Nabíjení - Nastavení IP",
+      "name_cs": "Wallbox - Nastavení IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,

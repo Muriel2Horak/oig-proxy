@@ -161,7 +161,7 @@ DEVICE_NAMES = {
     "recuper": "Rekuperace",
     "heat_pump": "Tepelné čerpadlo",
     "aircon": "Klimatizace",
-    "wl_charge": "Nabíjení",
+    "wl_charge": "Wallbox",
     "box": "OIG Box",
     "pv": "FVE",
     "grid": "Síť",
