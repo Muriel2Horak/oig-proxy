@@ -7,11 +7,9 @@
 ### Added
 
 - Control přes MQTT: topic `oig_local/oig_proxy/control/set` + `.../result` (queue, dedupe, noop, whitelist, timeouts)
-- Lokální CRC pro Setting framy (umožňuje změny do BOXu bez cloudu)
 
 ### Fixed
 
-- HA add-on deploy: oprava `deploy_to_ha.sh` + kontrola verze, aby rebuild nepadal na false mismatch
 - Control enable bez UI: fallback flag `/data/control_mqtt_enabled`
 - Stabilita: `Connection reset by peer` se bere jako normální odpojení BOXu (ne ERROR)
 - Control: oprava regex parsování `tbl_events` Setting řádků (unbalanced parenthesis)
@@ -41,7 +39,7 @@
 
 ### Added
 
-- Add-on volba `capture_raw_bytes` (env `CAPTURE_RAW_BYTES`) pro ukládání hrubých bajtů (`raw_b64`) do `/data/payloads.db` pro CRC analýzu
+- Add-on volba `capture_raw_bytes` (env `CAPTURE_RAW_BYTES`) pro ukládání hrubých bajtů (`raw_b64`) do `/data/payloads.db` pro low-level analýzu
 
 ### Fixed
 

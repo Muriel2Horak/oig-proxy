@@ -25,6 +25,7 @@ analysis/local_only/
 analysis/ha/
 testing/local_*.py
 addon/oig-proxy/local_*.py
+deploy_to_ha.sh
 
 # Dočasné a runtime soubory
 /tmp/

@@ -84,7 +84,7 @@ Poznámka: změny typu entity (sensor ↔ binary_sensor) vyžadují vymazat star
    - `log_level`: `INFO` (na ladění `DEBUG`)
 6. (Volitelné) ladicí záznam do SQLite:
    - `capture_payloads: true` – ukládá rámce do `/data/payloads.db`
-   - `capture_raw_bytes: true` – ukládá i hrubé bajty (`raw_b64`) pro analýzu CRC
+   - `capture_raw_bytes: true` – ukládá i hrubé bajty (`raw_b64`) pro low-level analýzu
 7. Klikni **Uložit**.
 8. Na záložce **Info** dej **Spustit**.
 9. Ověření:
@@ -171,7 +171,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 - `MAP_RELOAD_SECONDS` (0 = vypnuto) – periodický reload mapy.
 - `UNKNOWN_SENSORS_PATH` (default `/data/unknown_sensors.json`).
 - `CAPTURE_PAYLOADS` (default `false`) – ukládá všechny frames do `/data/payloads.db`.
-- `CAPTURE_RAW_BYTES` (default `false`) – ukládá i hrubé bajty (`raw_b64`) pro CRC analýzu.
+- `CAPTURE_RAW_BYTES` (default `false`) – ukládá i hrubé bajty (`raw_b64`) pro low-level analýzu.
 
 ## Bateriové banky (SubD architektura)
 
