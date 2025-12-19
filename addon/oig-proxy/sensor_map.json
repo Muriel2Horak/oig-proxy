@@ -1024,6 +1024,105 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
+    "tbl_boiler_prms:HDO": {
+      "name": "Signalizace nízkého tarifu HDO",
+      "name_cs": "Bojler - HDO signál aktivní",
+      "unit_of_measurement": "",
+      "device_class": "power",
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "is_binary": true
+    },
+    "tbl_boiler_prms:ZONE1_S": {
+      "name": "Pásmo 1 - začátek",
+      "name_cs": "Bojler - Časové pásmo 1 - Začátek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE1_E": {
+      "name": "Pásmo 1 - konec",
+      "name_cs": "Bojler - Časové pásmo 1 - Konec",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE2_S": {
+      "name": "Pásmo 2 -začátek",
+      "name_cs": "Bojler - Časové pásmo 2 - Začátek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE2_E": {
+      "name": "Pásmo 2 - konec",
+      "name_cs": "Bojler - Časové pásmo 2 - Konec",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE3_S": {
+      "name": "Pásmo 3 - začátek",
+      "name_cs": "Bojler - Časové pásmo 3 - Začátek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE3_E": {
+      "name": "Pásmo 3 - konec",
+      "name_cs": "Bojler - Časové pásmo 3 - Konec",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE4_S": {
+      "name": "Pásmo 4 -začátek",
+      "name_cs": "Bojler - Časové pásmo 4 - Začátek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_boiler_prms:ZONE4_E": {
+      "name": "Pásmo 4 - konec",
+      "name_cs": "Bojler - Časové pásmo 4 - Konec",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "boiler",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "tbl_recuper_prms:ISON": {
       "name": "Zap. / vyp. + signalizace stavu",
       "name_cs": "Rekuperace - Zapnuto",
