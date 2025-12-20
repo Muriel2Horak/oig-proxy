@@ -37,6 +37,9 @@ from config import (
     CONTROL_MQTT_STATUS_PREFIX,
     CONTROL_MQTT_STATUS_RETAIN,
     CONTROL_WRITE_WHITELIST,
+    LOCAL_GETACTUAL_ENABLED,
+    LOCAL_GETACTUAL_INTERVAL_S,
+    FULL_REFRESH_INTERVAL_H,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
@@ -122,6 +125,11 @@ class OIGProxy:
         self._control_pending_path: str = str(CONTROL_MQTT_PENDING_PATH)
         self._control_pending_keys: set[str] = self._control_load_pending_keys()
         self._proxy_status_attrs_topic: str = str(PROXY_STATUS_ATTRS_TOPIC)
+        self._local_getactual_enabled: bool = bool(LOCAL_GETACTUAL_ENABLED)
+        self._local_getactual_interval_s: float = float(LOCAL_GETACTUAL_INTERVAL_S)
+        self._local_getactual_task: asyncio.Task[Any] | None = None
+        self._full_refresh_interval_h: int = int(FULL_REFRESH_INTERVAL_H)
+        self._full_refresh_task: asyncio.Task[Any] | None = None
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
@@ -216,6 +224,8 @@ class OIGProxy:
         self._mqtt_was_ready = self.mqtt_publisher.is_ready()
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._proxy_status_loop())
+        if self._full_refresh_task is None or self._full_refresh_task.done():
+            self._full_refresh_task = asyncio.create_task(self._full_refresh_loop())
         
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -325,6 +335,75 @@ class OIGProxy:
             )
         except Exception as e:
             logger.debug(f"Proxy status attrs publish failed: {e}")
+
+    @staticmethod
+    def _build_getactual_frame() -> bytes:
+        inner = "<Result>ACK</Result><ToDo>GetActual</ToDo>"
+        return build_frame(inner).encode("utf-8", errors="strict")
+
+    @staticmethod
+    def _build_ack_only_frame() -> bytes:
+        inner = "<Result>ACK</Result>"
+        return build_frame(inner).encode("utf-8", errors="strict")
+
+    async def _send_getactual_to_box(
+        self, writer: asyncio.StreamWriter, *, conn_id: int
+    ) -> None:
+        frame_bytes = self._build_getactual_frame()
+        writer.write(frame_bytes)
+        await writer.drain()
+        capture_payload(
+            None,
+            "GetActual",
+            frame_bytes.decode("utf-8", errors="replace"),
+            frame_bytes,
+            {},
+            direction="proxy_to_box",
+            length=len(frame_bytes),
+            conn_id=conn_id,
+            peer=self._active_box_peer,
+        )
+
+    async def _local_getactual_loop(
+        self, writer: asyncio.StreamWriter, *, conn_id: int
+    ) -> None:
+        if not self._local_getactual_enabled:
+            return
+        while True:
+            if writer.is_closing():
+                return
+            if not self.box_connected:
+                await asyncio.sleep(self._local_getactual_interval_s)
+                continue
+            if await self._get_current_mode() != ProxyMode.ONLINE:
+                await asyncio.sleep(self._local_getactual_interval_s)
+                continue
+            try:
+                await self._send_getactual_to_box(writer, conn_id=conn_id)
+            except Exception as e:
+                logger.debug(f"GetActual poll failed (conn={conn_id}): {e}")
+            await asyncio.sleep(self._local_getactual_interval_s)
+
+    async def _full_refresh_loop(self) -> None:
+        interval_s = max(1, int(self._full_refresh_interval_h)) * 3600
+        while True:
+            await asyncio.sleep(interval_s)
+            if not self.box_connected:
+                continue
+            if await self._get_current_mode() != ProxyMode.ONLINE:
+                continue
+            if self._control_inflight or self._control_queue:
+                continue
+            try:
+                logger.info("CONTROL: Full refresh (SA) requested")
+                await self._send_setting_to_box(
+                    tbl_name="tbl_box_prms",
+                    tbl_item="SA",
+                    new_value="1",
+                    confirm="New",
+                )
+            except Exception as e:
+                logger.debug(f"Full refresh (SA) failed: {e}")
 
     async def _publish_mode_if_ready(
         self,
@@ -793,12 +872,20 @@ class OIGProxy:
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
         await self.publish_proxy_status()
+        if self._local_getactual_task and not self._local_getactual_task.done():
+            self._local_getactual_task.cancel()
+        self._local_getactual_task = asyncio.create_task(
+            self._local_getactual_loop(writer, conn_id=conn_id)
+        )
 
         try:
             await self._handle_box_connection(reader, writer, conn_id)
         except Exception as e:
             logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
         finally:
+            if self._local_getactual_task and not self._local_getactual_task.done():
+                self._local_getactual_task.cancel()
+            self._local_getactual_task = None
             await self._close_writer(writer)
             self.box_connected = False
             self._box_connected_since_epoch = None
@@ -1031,6 +1118,66 @@ class OIGProxy:
             return cloud_reader, cloud_writer
 
         except asyncio.TimeoutError:
+            if table_name == "END":
+                logger.warning(
+                    f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) on END - "
+                    f"sending local ACK to box (conn={conn_id})"
+                )
+                ack_only = self._build_ack_only_frame()
+                box_writer.write(ack_only)
+                await box_writer.drain()
+                self.stats["acks_local"] += 1
+                try:
+                    ack_data = await asyncio.wait_for(
+                        cloud_reader.read(4096),
+                        timeout=30.0,
+                    )
+                    if ack_data:
+                        ack_str = ack_data.decode("utf-8", errors="replace")
+                        capture_payload(
+                            None,
+                            table_name,
+                            ack_str,
+                            ack_data,
+                            {},
+                            direction="cloud_to_proxy",
+                            length=len(ack_data),
+                            conn_id=conn_id,
+                            peer=self._active_box_peer,
+                        )
+                        self.ack_learner.learn_from_cloud(ack_str, table_name)
+                        self.stats["acks_cloud"] += 1
+                    return cloud_reader, cloud_writer
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"⏱️ Cloud ACK timeout (END extended 30.0s) - "
+                        f"offline mode (conn={conn_id}, table={table_name})"
+                    )
+                    self.cloud_timeouts += 1
+                    return await self._fallback_offline_from_cloud_issue(
+                        reason="ack_timeout",
+                        frame_bytes=frame_bytes,
+                        table_name=table_name,
+                        device_id=device_id,
+                        box_writer=box_writer,
+                        cloud_writer=cloud_writer,
+                        note_cloud_failure=False,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Cloud error after END timeout: {e} - "
+                        f"offline mode (conn={conn_id}, table={table_name})"
+                    )
+                    self.cloud_errors += 1
+                    return await self._fallback_offline_from_cloud_issue(
+                        reason="cloud_error",
+                        frame_bytes=frame_bytes,
+                        table_name=table_name,
+                        device_id=device_id,
+                        box_writer=box_writer,
+                        cloud_writer=cloud_writer,
+                    )
+
             logger.warning(
                 f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) - "
                 f"offline mode (conn={conn_id}, table={table_name})"

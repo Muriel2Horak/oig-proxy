@@ -58,6 +58,12 @@ if [ -z "$PROXY_STATUS_INTERVAL_RAW" ] || [ "$PROXY_STATUS_INTERVAL_RAW" = "null
 fi
 export PROXY_STATUS_INTERVAL=$PROXY_STATUS_INTERVAL_RAW
 
+FULL_REFRESH_INTERVAL_RAW=$(bashio::config 'full_refresh_interval_hours')
+if [ -z "$FULL_REFRESH_INTERVAL_RAW" ] || [ "$FULL_REFRESH_INTERVAL_RAW" = "null" ]; then
+  FULL_REFRESH_INTERVAL_RAW=24
+fi
+export FULL_REFRESH_INTERVAL_H=$FULL_REFRESH_INTERVAL_RAW
+
 # NOVÉ: DEVICE_ID (volitelné, pokud není v config, použije se auto-detection)
 DEVICE_ID_RAW=$(bashio::config 'device_id' 2>/dev/null)
 if [ ! -z "$DEVICE_ID_RAW" ] && [ "$DEVICE_ID_RAW" != "null" ]; then

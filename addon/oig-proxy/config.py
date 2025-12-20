@@ -33,6 +33,20 @@ def _get_int_env(name: str, default: int) -> int:
         return default
 
 
+def _get_float_env(name: str, default: float) -> float:
+    """Vrátí float z env proměnné s bezpečným fallbackem."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if raw == "" or raw.lower() == "null":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 # ============================================================================
 # MQTT Configuration
 # ============================================================================
@@ -46,6 +60,9 @@ MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
 PROXY_STATUS_ATTRS_TOPIC = os.getenv(
     "PROXY_STATUS_ATTRS_TOPIC", "oig_local/oig_proxy/proxy_status/attrs"
 )
+LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "true").lower() == "true"
+LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 5.0)
+FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 
 # ============================================================================
 # Cloud Configuration
