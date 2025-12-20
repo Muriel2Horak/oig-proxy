@@ -2,6 +2,12 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.15] - 2025-12-20
+
+### Added
+
+- Optimistické aktualizace MQTT stavů po potvrzení změny z BOXu (control)
+
 ## [1.3.14] - 2025-12-20
 
 ### Added

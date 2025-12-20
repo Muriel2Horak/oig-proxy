@@ -45,6 +45,8 @@ from config import (
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
     PROXY_STATUS_ATTRS_TOPIC,
+    MQTT_PUBLISH_QOS,
+    MQTT_STATE_RETAIN,
     REPLAY_ACK_TIMEOUT,
     TARGET_PORT,
     TARGET_SERVER,
@@ -56,6 +58,7 @@ from mqtt_publisher import MQTTPublisher
 from parser import OIGDataParser
 from utils import (
     capture_payload,
+    get_sensor_config,
     load_mode_state,
     load_prms_state,
     save_mode_state,
@@ -1977,10 +1980,86 @@ class OIGProxy:
             return
 
         await self._control_publish_result(tx=tx, status="box_ack")
+        try:
+            await self._control_publish_optimistic_state(tx=tx)
+        except Exception as e:
+            logger.debug(f"CONTROL: Optimistic publish failed: {e}")
 
         if self._control_applied_task and not self._control_applied_task.done():
             self._control_applied_task.cancel()
         self._control_applied_task = asyncio.create_task(self._control_applied_timeout())
+
+    @staticmethod
+    def _control_coerce_value(value: Any) -> Any:
+        if value is None or isinstance(value, (int, float, bool)):
+            return value
+        text = str(value).strip()
+        if text.lower() in ("true", "false"):
+            return text.lower() == "true"
+        if re.fullmatch(r"-?\d+", text):
+            try:
+                return int(text)
+            except Exception:
+                return value
+        if re.fullmatch(r"-?\d+\.\d+", text):
+            try:
+                return float(text)
+            except Exception:
+                return value
+        return value
+
+    def _control_map_optimistic_value(self, *, tbl_name: str, tbl_item: str, value: Any) -> Any:
+        cfg, _ = get_sensor_config(tbl_item, tbl_name)
+        if cfg and cfg.options:
+            text = str(value).strip()
+            if re.fullmatch(r"-?\d+", text):
+                idx = int(text)
+                if 0 <= idx < len(cfg.options):
+                    return cfg.options[idx]
+        return self._control_coerce_value(value)
+
+    async def _control_publish_optimistic_state(self, *, tx: dict[str, Any]) -> None:
+        tbl_name = str(tx.get("tbl_name") or "")
+        tbl_item = str(tx.get("tbl_item") or "")
+        if not tbl_name or not tbl_item:
+            return
+
+        target_device_id = self.device_id if self.device_id != "AUTO" else self.mqtt_publisher.device_id
+        topic = self.mqtt_publisher._state_topic(target_device_id, tbl_name)
+        cached = self.mqtt_publisher._last_payload_by_topic.get(topic)
+        if not cached:
+            logger.debug(
+                "CONTROL: Optimistic publish skipped (no cache) %s/%s",
+                tbl_name,
+                tbl_item,
+            )
+            return
+
+        try:
+            payload = json.loads(cached)
+        except Exception:
+            payload = {}
+
+        payload[tbl_item] = self._control_map_optimistic_value(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            value=tx.get("new_value"),
+        )
+
+        updated = json.dumps(payload, ensure_ascii=True)
+        self.mqtt_publisher._last_payload_by_topic[topic] = updated
+        await self.mqtt_publisher.publish_raw(
+            topic=topic,
+            payload=updated,
+            qos=MQTT_PUBLISH_QOS,
+            retain=MQTT_STATE_RETAIN,
+        )
+        logger.info(
+            "CONTROL: Optimistic state publish %s/%s=%s",
+            tbl_name,
+            tbl_item,
+            payload.get(tbl_item),
+        )
 
     async def _control_ack_timeout(self) -> None:
         await asyncio.sleep(self._control_ack_timeout_s)
