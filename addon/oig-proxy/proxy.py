@@ -218,6 +218,11 @@ class OIGProxy:
                 )
                 self.mqtt_publisher.publish_availability()
 
+        if self._force_offline_enabled():
+            await self._switch_mode(ProxyMode.OFFLINE)
+            self.cloud_session_connected = False
+            logger.warning("🔴 Forced OFFLINE (config)")
+
         # Po připojení MQTT publikuj stav (init)
         await self.publish_proxy_status()
         await self._publish_mode_if_ready(reason="startup")

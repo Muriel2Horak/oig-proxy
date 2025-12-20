@@ -2,6 +2,12 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.14] - 2025-12-20
+
+### Added
+
+- Offline režim: uplatnění hned po startu při `force_offline`
+
 ## [1.3.13] - 2025-12-20
 
 ### Added
