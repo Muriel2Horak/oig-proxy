@@ -324,6 +324,15 @@ def _builtin_sensors() -> dict[str, SensorConfig]:
         "proxy_status:isnewset_last_rtt_ms": SensorConfig(
             "IsNewSet - RTT", "ms", None, "measurement", None, "proxy", "diagnostic"
         ),
+        "proxy_status:control_queue_len": SensorConfig(
+            "Control - fronta (počet)", "", None, "measurement", None, "proxy", "diagnostic", None, False, "state"
+        ),
+        "proxy_status:control_inflight": SensorConfig(
+            "Control - běžící příkaz", "", None, None, None, "proxy", "diagnostic"
+        ),
+        "proxy_status:control_last_result": SensorConfig(
+            "Control - poslední výsledek", "", None, None, None, "proxy", "diagnostic"
+        ),
     }
 
 
@@ -345,6 +354,7 @@ def _add_sensors_from_mapping(mapping: dict[str, Any]) -> int:
         entity_category = meta.get("entity_category")
         options = meta.get("options")
         is_binary = meta.get("is_binary", False)
+        json_attributes_topic = meta.get("json_attributes_topic")
 
         SENSORS[sid] = SensorConfig(
             name,
@@ -356,6 +366,7 @@ def _add_sensors_from_mapping(mapping: dict[str, Any]) -> int:
             entity_category,
             options,
             is_binary,
+            json_attributes_topic,
         )
         added += 1
 

@@ -9,7 +9,10 @@ from importlib.util import find_spec
 # ============================================================================
 # MQTT Availability Check
 # ============================================================================
-MQTT_AVAILABLE = find_spec("paho.mqtt.client") is not None
+try:
+    MQTT_AVAILABLE = find_spec("paho.mqtt.client") is not None
+except ModuleNotFoundError:
+    MQTT_AVAILABLE = False
 
 # ============================================================================
 # Helpers
@@ -40,6 +43,9 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_NAMESPACE = os.getenv("MQTT_NAMESPACE", "oig_local")
 MQTT_PUBLISH_QOS = 1  # QoS level (0=fire&forget, 1=at least once)
 MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
+PROXY_STATUS_ATTRS_TOPIC = os.getenv(
+    "PROXY_STATUS_ATTRS_TOPIC", "oig_local/oig_proxy/proxy_status/attrs"
+)
 
 # ============================================================================
 # Cloud Configuration
@@ -74,8 +80,12 @@ CONTROL_MQTT_SET_TOPIC = os.getenv(
 CONTROL_MQTT_RESULT_TOPIC = os.getenv(
     "CONTROL_MQTT_RESULT_TOPIC", "oig_local/oig_proxy/control/result"
 )
+CONTROL_MQTT_STATUS_PREFIX = os.getenv(
+    "CONTROL_MQTT_STATUS_PREFIX", "oig_local/oig_proxy/control/status"
+)
 CONTROL_MQTT_QOS = _get_int_env("CONTROL_MQTT_QOS", 1)
 CONTROL_MQTT_RETAIN = os.getenv("CONTROL_MQTT_RETAIN", "false").lower() == "true"
+CONTROL_MQTT_STATUS_RETAIN = os.getenv("CONTROL_MQTT_STATUS_RETAIN", "true").lower() == "true"
 CONTROL_MQTT_BOX_READY_SECONDS = _get_int_env("CONTROL_MQTT_BOX_READY_SECONDS", 10)
 CONTROL_MQTT_ACK_TIMEOUT_S = float(os.getenv("CONTROL_MQTT_ACK_TIMEOUT_S", "30"))
 CONTROL_MQTT_APPLIED_TIMEOUT_S = float(os.getenv("CONTROL_MQTT_APPLIED_TIMEOUT_S", "120"))
@@ -85,7 +95,7 @@ CONTROL_MQTT_MODE_QUIET_SECONDS = float(os.getenv("CONTROL_MQTT_MODE_QUIET_SECON
 CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
     "tbl_batt_prms": {"FMT_ON", "BAT_MIN"},
     "tbl_boiler_prms": {"ISON", "MANUAL", "SSR0", "SSR1", "SSR2", "OFFSET"},
-    "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA"},
+    "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA", "RQRESET"},
     "tbl_invertor_prm1": {"AAC_MAX_CHRG", "A_MAX_CHRG"},
 }
 
@@ -108,6 +118,15 @@ PRMS_STATE_PATH = os.path.join(DATA_DIR, "prms_state.json")
 CLOUD_QUEUE_DB_PATH = os.path.join(DATA_DIR, "cloud_queue.db")
 MQTT_QUEUE_DB_PATH = os.path.join(DATA_DIR, "mqtt_queue.db")
 CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
+
+# Control MQTT logging
+CONTROL_MQTT_LOG_ENABLED = os.getenv("CONTROL_MQTT_LOG_ENABLED", "false").lower() == "true"
+CONTROL_MQTT_LOG_PATH = os.getenv(
+    "CONTROL_MQTT_LOG_PATH", os.path.join(DATA_DIR, "control_results.jsonl")
+)
+CONTROL_MQTT_PENDING_PATH = os.getenv(
+    "CONTROL_MQTT_PENDING_PATH", os.path.join(DATA_DIR, "control_pending.json")
+)
 
 # ============================================================================
 # Capture Configuration

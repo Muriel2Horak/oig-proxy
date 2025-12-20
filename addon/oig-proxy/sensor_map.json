@@ -2,7 +2,7 @@
   "sensors": {
     "ID": {
       "name": "Identifikator zaznamu",
-      "name_cs": "Systém - ID záznamu",
+      "name_cs": "Syst\u00e9m - ID z\u00e1znamu",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -13,7 +13,7 @@
     },
     "ID_Device": {
       "name": "Identifikator zarizeni",
-      "name_cs": "Systém - ID zařízení",
+      "name_cs": "Syst\u00e9m - ID za\u0159\u00edzen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -24,7 +24,7 @@
     },
     "ID_Set": {
       "name": "Identifikator sady dat",
-      "name_cs": "Systém - ID sady dat",
+      "name_cs": "Syst\u00e9m - ID sady dat",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -34,8 +34,8 @@
       "entity_category": "diagnostic"
     },
     "DT": {
-      "name": "Datum a čas",
-      "name_cs": "Systém - Datum čas",
+      "name": "Datum a \u010das",
+      "name_cs": "Syst\u00e9m - Datum \u010das",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -45,8 +45,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_events:Type": {
-      "name": "Typ události",
-      "name_cs": "Typ události",
+      "name": "Typ ud\u00e1losti",
+      "name_cs": "Typ ud\u00e1losti",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -56,8 +56,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_events:Confirm": {
-      "name": "Potvrzení události",
-      "name_cs": "Potvrzení události",
+      "name": "Potvrzen\u00ed ud\u00e1losti",
+      "name_cs": "Potvrzen\u00ed ud\u00e1losti",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -67,8 +67,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_events:Content": {
-      "name": "Text události",
-      "name_cs": "Text události",
+      "name": "Text ud\u00e1losti",
+      "name_cs": "Text ud\u00e1losti",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -89,8 +89,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:mode": {
-      "name": "Režim komunikace",
-      "name_cs": "Režim komunikace",
+      "name": "Re\u017eim komunikace",
+      "name_cs": "Re\u017eim komunikace",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -100,8 +100,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:last_data": {
-      "name": "Poslední data",
-      "name_cs": "Poslední data",
+      "name": "Posledn\u00ed data",
+      "name_cs": "Posledn\u00ed data",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -111,8 +111,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:cloud_online": {
-      "name": "Cloud připojen",
-      "name_cs": "Cloud připojen",
+      "name": "Cloud p\u0159ipojen",
+      "name_cs": "Cloud p\u0159ipojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -123,8 +123,8 @@
       "is_binary": true
     },
     "proxy_status:cloud_session_active": {
-      "name": "Cloud TCP aktivní spojení",
-      "name_cs": "Cloud TCP aktivní spojení",
+      "name": "Cloud TCP aktivn\u00ed spojen\u00ed",
+      "name_cs": "Cloud TCP aktivn\u00ed spojen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -134,8 +134,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:cloud_session_connected": {
-      "name": "Cloud TCP připojen",
-      "name_cs": "Cloud TCP připojen",
+      "name": "Cloud TCP p\u0159ipojen",
+      "name_cs": "Cloud TCP p\u0159ipojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -146,8 +146,8 @@
       "is_binary": true
     },
     "proxy_status:box_connected": {
-      "name": "BOX připojen",
-      "name_cs": "BOX připojen",
+      "name": "BOX p\u0159ipojen",
+      "name_cs": "BOX p\u0159ipojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -158,8 +158,8 @@
       "is_binary": true
     },
     "proxy_status:box_data_recent": {
-      "name": "Data z BOXu tečou",
-      "name_cs": "Data z BOXu tečou",
+      "name": "Data z BOXu te\u010dou",
+      "name_cs": "Data z BOXu te\u010dou",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -170,8 +170,8 @@
       "is_binary": true
     },
     "proxy_status:box_connections": {
-      "name": "BOX spojení (počet)",
-      "name_cs": "BOX spojení (počet)",
+      "name": "BOX spojen\u00ed (po\u010det)",
+      "name_cs": "BOX spojen\u00ed (po\u010det)",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -181,8 +181,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:box_connections_active": {
-      "name": "BOX aktivní spojení",
-      "name_cs": "BOX aktivní spojení",
+      "name": "BOX aktivn\u00ed spojen\u00ed",
+      "name_cs": "BOX aktivn\u00ed spojen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -225,8 +225,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:isnewset_polls": {
-      "name": "IsNewSet - počet",
-      "name_cs": "IsNewSet - počet",
+      "name": "IsNewSet - po\u010det",
+      "name_cs": "IsNewSet - po\u010det",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -236,8 +236,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:isnewset_last_poll": {
-      "name": "IsNewSet - poslední dotaz",
-      "name_cs": "IsNewSet - poslední dotaz",
+      "name": "IsNewSet - posledn\u00ed dotaz",
+      "name_cs": "IsNewSet - posledn\u00ed dotaz",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -247,8 +247,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:isnewset_last_response": {
-      "name": "IsNewSet - poslední odpověď",
-      "name_cs": "IsNewSet - poslední odpověď",
+      "name": "IsNewSet - posledn\u00ed odpov\u011b\u010f",
+      "name_cs": "IsNewSet - posledn\u00ed odpov\u011b\u010f",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -268,9 +268,43 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
+    "proxy_status:control_queue_len": {
+      "name": "Control - fronta (po\u010det)",
+      "name_cs": "Control - fronta (po\u010det)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "measurement",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic",
+      "json_attributes_topic": "oig_local/oig_proxy/proxy_status/attrs"
+    },
+    "proxy_status:control_inflight": {
+      "name": "Control - b\u011b\u017e\u00edc\u00ed p\u0159\u00edkaz",
+      "name_cs": "Control - b\u011b\u017e\u00edc\u00ed p\u0159\u00edkaz",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:control_last_result": {
+      "name": "Control - posledn\u00ed v\u00fdsledek",
+      "name_cs": "Control - posledn\u00ed v\u00fdsledek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "FV_V1": {
-      "name": "Napětí string 1",
-      "name_cs": "FVE - Napětí string 1",
+      "name": "Nap\u011bt\u00ed string 1",
+      "name_cs": "FVE - Nap\u011bt\u00ed string 1",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -289,8 +323,8 @@
       "todo": false
     },
     "FV_P1": {
-      "name": "Výkon string 1",
-      "name_cs": "FVE - Výkon string 1",
+      "name": "V\u00fdkon string 1",
+      "name_cs": "FVE - V\u00fdkon string 1",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -299,8 +333,8 @@
       "todo": false
     },
     "FV_V2": {
-      "name": "Napětí string 2",
-      "name_cs": "FVE - Napětí string 2",
+      "name": "Nap\u011bt\u00ed string 2",
+      "name_cs": "FVE - Nap\u011bt\u00ed string 2",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -319,8 +353,8 @@
       "todo": false
     },
     "FV_P2": {
-      "name": "Výkon string 2",
-      "name_cs": "FVE - Výkon string 2",
+      "name": "V\u00fdkon string 2",
+      "name_cs": "FVE - V\u00fdkon string 2",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -329,8 +363,8 @@
       "todo": false
     },
     "FV_AD": {
-      "name": "Výroba FV dnes",
-      "name_cs": "FVE - Výroba dnes",
+      "name": "V\u00fdroba FV dnes",
+      "name_cs": "FVE - V\u00fdroba dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -339,8 +373,8 @@
       "todo": false
     },
     "FV_AM": {
-      "name": "Výroba FV tento měsíc",
-      "name_cs": "FVE - Výroba měsíc",
+      "name": "V\u00fdroba FV tento m\u011bs\u00edc",
+      "name_cs": "FVE - V\u00fdroba m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -349,8 +383,8 @@
       "todo": false
     },
     "FV_AY": {
-      "name": "Výroba FV tento rok",
-      "name_cs": "FVE - Výroba rok",
+      "name": "V\u00fdroba FV tento rok",
+      "name_cs": "FVE - V\u00fdroba rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -359,8 +393,8 @@
       "todo": false
     },
     "FV_PROC": {
-      "name": "Výkon FVE(%)",
-      "name_cs": "FVE - Využití výkonu",
+      "name": "V\u00fdkon FVE(%)",
+      "name_cs": "FVE - Vyu\u017eit\u00ed v\u00fdkonu",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": "measurement",
@@ -369,8 +403,8 @@
       "todo": false
     },
     "ACI_VR": {
-      "name": "Napětí sítě L1",
-      "name_cs": "Síť - Napětí L1",
+      "name": "Nap\u011bt\u00ed s\u00edt\u011b L1",
+      "name_cs": "S\u00ed\u0165 - Nap\u011bt\u00ed L1",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -379,8 +413,8 @@
       "todo": false
     },
     "ACI_VS": {
-      "name": "Napětí sítě L2",
-      "name_cs": "Síť - Napětí L2",
+      "name": "Nap\u011bt\u00ed s\u00edt\u011b L2",
+      "name_cs": "S\u00ed\u0165 - Nap\u011bt\u00ed L2",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -389,8 +423,8 @@
       "todo": false
     },
     "ACI_VT": {
-      "name": "Napětí sítě L3",
-      "name_cs": "Síť - Napětí L3",
+      "name": "Nap\u011bt\u00ed s\u00edt\u011b L3",
+      "name_cs": "S\u00ed\u0165 - Nap\u011bt\u00ed L3",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -399,8 +433,8 @@
       "todo": false
     },
     "ACI_WR": {
-      "name": "Výkon sítě L1 (-/+ odběr/dodávka)",
-      "name_cs": "Síť - Výkon L1",
+      "name": "V\u00fdkon s\u00edt\u011b L1 (-/+ odb\u011br/dod\u00e1vka)",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon L1",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -409,8 +443,8 @@
       "todo": false
     },
     "ACI_WS": {
-      "name": "Výkon sítě L2 (-/+ odběr/dodávka)",
-      "name_cs": "Síť - Výkon L2",
+      "name": "V\u00fdkon s\u00edt\u011b L2 (-/+ odb\u011br/dod\u00e1vka)",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon L2",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -419,8 +453,8 @@
       "todo": false
     },
     "ACI_WT": {
-      "name": "Výkon sítě L3 (-/+ odběr/dodávka)",
-      "name_cs": "Síť - Výkon L3",
+      "name": "V\u00fdkon s\u00edt\u011b L3 (-/+ odb\u011br/dod\u00e1vka)",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon L3",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -429,8 +463,8 @@
       "todo": false
     },
     "ACI_F": {
-      "name": "Frekvence sítě",
-      "name_cs": "Síť - Frekvence",
+      "name": "Frekvence s\u00edt\u011b",
+      "name_cs": "S\u00ed\u0165 - Frekvence",
       "unit_of_measurement": "Hz",
       "device_class": "frequency",
       "state_class": "measurement",
@@ -439,8 +473,8 @@
       "todo": false
     },
     "AC_AD": {
-      "name": "Energie AC střídače dnes",
-      "name_cs": "Síť - Energie AC dnes",
+      "name": "Energie AC st\u0159\u00edda\u010de dnes",
+      "name_cs": "S\u00ed\u0165 - Energie AC dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -449,8 +483,8 @@
       "todo": false
     },
     "AC_AM": {
-      "name": "Energie AC střídače tento měsíc",
-      "name_cs": "Síť - Energie AC měsíc",
+      "name": "Energie AC st\u0159\u00edda\u010de tento m\u011bs\u00edc",
+      "name_cs": "S\u00ed\u0165 - Energie AC m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -459,8 +493,8 @@
       "todo": false
     },
     "AC_AY": {
-      "name": "Energie AC střídače tento rok",
-      "name_cs": "Síť - Energie AC rok",
+      "name": "Energie AC st\u0159\u00edda\u010de tento rok",
+      "name_cs": "S\u00ed\u0165 - Energie AC rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -469,8 +503,8 @@
       "todo": false
     },
     "AC_PD": {
-      "name": "Dodávka AC střídače dnes",
-      "name_cs": "Síť - Dodávka dnes",
+      "name": "Dod\u00e1vka AC st\u0159\u00edda\u010de dnes",
+      "name_cs": "S\u00ed\u0165 - Dod\u00e1vka dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -479,8 +513,8 @@
       "todo": false
     },
     "AC_PM": {
-      "name": "Dodávka AC střídače tento měsíc",
-      "name_cs": "Síť - Dodávka měsíc",
+      "name": "Dod\u00e1vka AC st\u0159\u00edda\u010de tento m\u011bs\u00edc",
+      "name_cs": "S\u00ed\u0165 - Dod\u00e1vka m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -489,8 +523,8 @@
       "todo": false
     },
     "AC_PY": {
-      "name": "Dodávka AC střídače tento rok",
-      "name_cs": "Síť - Dodávka rok",
+      "name": "Dod\u00e1vka AC st\u0159\u00edda\u010de tento rok",
+      "name_cs": "S\u00ed\u0165 - Dod\u00e1vka rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -499,8 +533,8 @@
       "todo": false
     },
     "ACO_VR": {
-      "name": "Výstupní napětí L1",
-      "name_cs": "Spotřeba - Napětí L1",
+      "name": "V\u00fdstupn\u00ed nap\u011bt\u00ed L1",
+      "name_cs": "Spot\u0159eba - Nap\u011bt\u00ed L1",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -509,8 +543,8 @@
       "todo": false
     },
     "ACO_VS": {
-      "name": "Výstupní napětí L2",
-      "name_cs": "Spotřeba - Napětí L2",
+      "name": "V\u00fdstupn\u00ed nap\u011bt\u00ed L2",
+      "name_cs": "Spot\u0159eba - Nap\u011bt\u00ed L2",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -519,8 +553,8 @@
       "todo": false
     },
     "ACO_VT": {
-      "name": "Výstupní napětí L3",
-      "name_cs": "Spotřeba - Napětí L3",
+      "name": "V\u00fdstupn\u00ed nap\u011bt\u00ed L3",
+      "name_cs": "Spot\u0159eba - Nap\u011bt\u00ed L3",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -529,8 +563,8 @@
       "todo": false
     },
     "ACO_PR": {
-      "name": "Výstupní výkon L1",
-      "name_cs": "Spotřeba - Výkon L1",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon L1",
+      "name_cs": "Spot\u0159eba - V\u00fdkon L1",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -539,8 +573,8 @@
       "todo": false
     },
     "ACO_PS": {
-      "name": "Výstupní výkon L2",
-      "name_cs": "Spotřeba - Výkon L2",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon L2",
+      "name_cs": "Spot\u0159eba - V\u00fdkon L2",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -549,8 +583,8 @@
       "todo": false
     },
     "ACO_PT": {
-      "name": "Výstupní výkon L3",
-      "name_cs": "Spotřeba - Výkon L3",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon L3",
+      "name_cs": "Spot\u0159eba - V\u00fdkon L3",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -559,8 +593,8 @@
       "todo": false
     },
     "ACO_P": {
-      "name": "Spotřeba domu",
-      "name_cs": "Spotřeba - Výkon domu",
+      "name": "Spot\u0159eba domu",
+      "name_cs": "Spot\u0159eba - V\u00fdkon domu",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -569,8 +603,8 @@
       "todo": false
     },
     "ACO_PAR": {
-      "name": "Výstupní výkon zdánlivý L1",
-      "name_cs": "Spotřeba - Zdánlivý výkon L1",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon zd\u00e1nliv\u00fd L1",
+      "name_cs": "Spot\u0159eba - Zd\u00e1nliv\u00fd v\u00fdkon L1",
       "unit_of_measurement": "VA",
       "device_class": "apparent_power",
       "state_class": "measurement",
@@ -579,8 +613,8 @@
       "todo": false
     },
     "ACO_PAS": {
-      "name": "Výstupní výkon zdánlivý L2",
-      "name_cs": "Spotřeba - Zdánlivý výkon L2",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon zd\u00e1nliv\u00fd L2",
+      "name_cs": "Spot\u0159eba - Zd\u00e1nliv\u00fd v\u00fdkon L2",
       "unit_of_measurement": "VA",
       "device_class": "apparent_power",
       "state_class": "measurement",
@@ -589,8 +623,8 @@
       "todo": false
     },
     "ACO_PAT": {
-      "name": "Výstupní výkon zdánlivý L3",
-      "name_cs": "Spotřeba - Zdánlivý výkon L3",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon zd\u00e1nliv\u00fd L3",
+      "name_cs": "Spot\u0159eba - Zd\u00e1nliv\u00fd v\u00fdkon L3",
       "unit_of_measurement": "VA",
       "device_class": "apparent_power",
       "state_class": "measurement",
@@ -599,8 +633,8 @@
       "todo": false
     },
     "ACO_PA": {
-      "name": "Výstupní výkon zdánlivý celkový",
-      "name_cs": "Spotřeba - Zdánlivý výkon celk.",
+      "name": "V\u00fdstupn\u00ed v\u00fdkon zd\u00e1nliv\u00fd celkov\u00fd",
+      "name_cs": "Spot\u0159eba - Zd\u00e1nliv\u00fd v\u00fdkon celk.",
       "unit_of_measurement": "VA",
       "device_class": "apparent_power",
       "state_class": "measurement",
@@ -610,7 +644,7 @@
     },
     "ACO_F": {
       "name": "Frekvence",
-      "name_cs": "Spotřeba - Frekvence výstupu",
+      "name_cs": "Spot\u0159eba - Frekvence v\u00fdstupu",
       "unit_of_measurement": "Hz",
       "device_class": "frequency",
       "state_class": "measurement",
@@ -619,8 +653,8 @@
       "todo": false
     },
     "EN_DAY": {
-      "name": "Denní odběr (loDEnergy 999994)",
-      "name_cs": "Spotřeba - Odběr dnes",
+      "name": "Denn\u00ed odb\u011br (loDEnergy 999994)",
+      "name_cs": "Spot\u0159eba - Odb\u011br dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -629,8 +663,8 @@
       "todo": false
     },
     "EN_MONT": {
-      "name": "Měsíční odběr (loMEnergy 999995)",
-      "name_cs": "Spotřeba - Odběr měsíc",
+      "name": "M\u011bs\u00ed\u010dn\u00ed odb\u011br (loMEnergy 999995)",
+      "name_cs": "Spot\u0159eba - Odb\u011br m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -639,8 +673,8 @@
       "todo": false
     },
     "EN_YEAR": {
-      "name": "Roční odběr (loYEnergy 999996)",
-      "name_cs": "Spotřeba - Odběr rok",
+      "name": "Ro\u010dn\u00ed odb\u011br (loYEnergy 999996)",
+      "name_cs": "Spot\u0159eba - Odb\u011br rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -649,8 +683,8 @@
       "todo": false
     },
     "BAT_N": {
-      "name": "Počet baterii",
-      "name_cs": "Baterie - Počet článků",
+      "name": "Po\u010det baterii",
+      "name_cs": "Baterie - Po\u010det \u010dl\u00e1nk\u016f",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -660,8 +694,8 @@
       "entity_category": "diagnostic"
     },
     "BAT_CI": {
-      "name": "Maximální nabíjecí proud",
-      "name_cs": "Baterie - Max. nabíjecí proud",
+      "name": "Maxim\u00e1ln\u00ed nab\u00edjec\u00ed proud",
+      "name_cs": "Baterie - Max. nab\u00edjec\u00ed proud",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -671,8 +705,8 @@
       "entity_category": "diagnostic"
     },
     "BAT_CU": {
-      "name": "Maximální nabíjecí napětí",
-      "name_cs": "Baterie - Max. nabíjecí napětí",
+      "name": "Maxim\u00e1ln\u00ed nab\u00edjec\u00ed nap\u011bt\u00ed",
+      "name_cs": "Baterie - Max. nab\u00edjec\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -682,8 +716,8 @@
       "entity_category": "diagnostic"
     },
     "FMT_ON": {
-      "name": "Formátování baterie zap. / vyp.",
-      "name_cs": "Baterie - Formátování aktivní",
+      "name": "Form\u00e1tov\u00e1n\u00ed baterie zap. / vyp.",
+      "name_cs": "Baterie - Form\u00e1tov\u00e1n\u00ed aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "running",
       "state_class": null,
@@ -694,8 +728,8 @@
       "is_binary": true
     },
     "FMT_PROGRESS": {
-      "name": "Formátování baterie stav %",
-      "name_cs": "Baterie - Formátování progress",
+      "name": "Form\u00e1tov\u00e1n\u00ed baterie stav %",
+      "name_cs": "Baterie - Form\u00e1tov\u00e1n\u00ed progress",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": "measurement",
@@ -705,8 +739,8 @@
       "entity_category": "diagnostic"
     },
     "BAT_HDO": {
-      "name": "Nabíjení baterie",
-      "name_cs": "Baterie - Nabíjení v HDO",
+      "name": "Nab\u00edjen\u00ed baterie",
+      "name_cs": "Baterie - Nab\u00edjen\u00ed v HDO",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -716,8 +750,8 @@
       "entity_category": "diagnostic"
     },
     "BAT_AA": {
-      "name": "Nabíjení ze sítě - aktuální výkon",
-      "name_cs": "Baterie - Nabíjení ze sítě výkon",
+      "name": "Nab\u00edjen\u00ed ze s\u00edt\u011b - aktu\u00e1ln\u00ed v\u00fdkon",
+      "name_cs": "Baterie - Nab\u00edjen\u00ed ze s\u00edt\u011b v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -727,7 +761,7 @@
     },
     "BAT_MIN": {
       "name": "Baterie minimum",
-      "name_cs": "Baterie - Minimum pro vybíjení",
+      "name_cs": "Baterie - Minimum pro vyb\u00edjen\u00ed",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": null,
@@ -738,7 +772,7 @@
     },
     "BAT_GL_MIN": {
       "name": "Backup min",
-      "name_cs": "Baterie - Záložní minimum",
+      "name_cs": "Baterie - Z\u00e1lo\u017en\u00ed minimum",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": null,
@@ -749,7 +783,7 @@
     },
     "BAT_AG_MIN": {
       "name": "Agregat min",
-      "name_cs": "Baterie - Minimum pro agregát",
+      "name_cs": "Baterie - Minimum pro agreg\u00e1t",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": null,
@@ -759,8 +793,8 @@
       "entity_category": "diagnostic"
     },
     "LO_DAY": {
-      "name": "Počet dnů k začátku balancování",
-      "name_cs": "Baterie - Dní do balancování",
+      "name": "Po\u010det dn\u016f k za\u010d\u00e1tku balancov\u00e1n\u00ed",
+      "name_cs": "Baterie - Dn\u00ed do balancov\u00e1n\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -770,8 +804,8 @@
       "entity_category": "diagnostic"
     },
     "BAL_ON": {
-      "name": "Indikace balancování, stav 0 (šedá), stav 1",
-      "name_cs": "Baterie - Balancování aktivní",
+      "name": "Indikace balancov\u00e1n\u00ed, stav 0 (\u0161ed\u00e1), stav 1",
+      "name_cs": "Baterie - Balancov\u00e1n\u00ed aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "running",
       "state_class": null,
@@ -782,8 +816,8 @@
       "is_binary": true
     },
     "HDO1_S": {
-      "name": "HDO časové pásmo 1",
-      "name_cs": "Síť - HDO pásmo 1 začátek",
+      "name": "HDO \u010dasov\u00e9 p\u00e1smo 1",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 1 za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -794,7 +828,7 @@
     },
     "HDO1_E": {
       "name": "End",
-      "name_cs": "Síť - HDO pásmo 1 konec",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 1 konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -804,8 +838,8 @@
       "entity_category": "diagnostic"
     },
     "HDO2_S": {
-      "name": "HDO časové pásmo 2",
-      "name_cs": "Síť - HDO pásmo 2 začátek",
+      "name": "HDO \u010dasov\u00e9 p\u00e1smo 2",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 2 za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -816,7 +850,7 @@
     },
     "HDO2_E": {
       "name": "End",
-      "name_cs": "Síť - HDO pásmo 2 konec",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 2 konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -826,8 +860,8 @@
       "entity_category": "diagnostic"
     },
     "BAT_V": {
-      "name": "Baterie napětí",
-      "name_cs": "Baterie - Napětí",
+      "name": "Baterie nap\u011bt\u00ed",
+      "name_cs": "Baterie - Nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -837,7 +871,7 @@
     },
     "BAT_C": {
       "name": "Baterie kapacita",
-      "name_cs": "Baterie - Stav nabití",
+      "name_cs": "Baterie - Stav nabit\u00ed",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": "measurement",
@@ -858,7 +892,7 @@
     "BAT_T": {
       "name": "Baterie teplota",
       "name_cs": "Baterie - Teplota",
-      "unit_of_measurement": "°C",
+      "unit_of_measurement": "\u00b0C",
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -876,8 +910,8 @@
       "todo": false
     },
     "BAT_AD": {
-      "name": "Nabíjení ze sítě - baterie denní en.",
-      "name_cs": "Baterie - Ze sítě energie dnes",
+      "name": "Nab\u00edjen\u00ed ze s\u00edt\u011b - baterie denn\u00ed en.",
+      "name_cs": "Baterie - Ze s\u00edt\u011b energie dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -886,8 +920,8 @@
       "todo": false
     },
     "BAT_AM": {
-      "name": "Nabíjení ze sítě - baterie měsíční en.",
-      "name_cs": "Baterie - Ze sítě energie měsíc",
+      "name": "Nab\u00edjen\u00ed ze s\u00edt\u011b - baterie m\u011bs\u00ed\u010dn\u00ed en.",
+      "name_cs": "Baterie - Ze s\u00edt\u011b energie m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -896,8 +930,8 @@
       "todo": false
     },
     "BAT_AY": {
-      "name": "Nabíjení ze sítě - baterie roční en.",
-      "name_cs": "Baterie - Ze sítě energie rok",
+      "name": "Nab\u00edjen\u00ed ze s\u00edt\u011b - baterie ro\u010dn\u00ed en.",
+      "name_cs": "Baterie - Ze s\u00edt\u011b energie rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -926,8 +960,8 @@
       "todo": false
     },
     "BAT_P": {
-      "name": "Výkon baterie",
-      "name_cs": "Baterie - Výkon",
+      "name": "V\u00fdkon baterie",
+      "name_cs": "Baterie - V\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -937,7 +971,7 @@
     },
     "ISON": {
       "name": "Zap. / vyp. + signalizace stavu",
-      "name_cs": "Střídač - Zapnuto",
+      "name_cs": "St\u0159\u00edda\u010d - Zapnuto",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -947,8 +981,8 @@
       "is_binary": true
     },
     "PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
-      "name_cs": "Střídač - Priorita toku",
+      "name": "Priorita toku(p\u0159ep\u00edna\u010d GRID-TIE: 0 (baterie-s\u00ed\u0165), 1 (baterie-z\u00e1t\u011b\u017e-s\u00ed\u0165), 2)",
+      "name_cs": "St\u0159\u00edda\u010d - Priorita toku",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -958,8 +992,8 @@
       "entity_category": "diagnostic"
     },
     "P_SET": {
-      "name": "Nastavený výkonu",
-      "name_cs": "Střídač - Nastavený výkon",
+      "name": "Nastaven\u00fd v\u00fdkonu",
+      "name_cs": "St\u0159\u00edda\u010d - Nastaven\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -980,7 +1014,7 @@
       "is_binary": true
     },
     "tbl_boiler_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
+      "name": "Priorita toku(p\u0159ep\u00edna\u010d GRID-TIE: 0 (baterie-s\u00ed\u0165), 1 (baterie-z\u00e1t\u011b\u017e-s\u00ed\u0165), 2)",
       "name_cs": "Bojler - Priorita",
       "unit_of_measurement": "",
       "device_class": null,
@@ -991,8 +1025,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:P_SET": {
-      "name": "Nastavený výkonu",
-      "name_cs": "Bojler - Nastavený výkon",
+      "name": "Nastaven\u00fd v\u00fdkonu",
+      "name_cs": "Bojler - Nastaven\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1002,7 +1036,7 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:COMOK": {
-      "name": "Vyhodnocení komunikace",
+      "name": "Vyhodnocen\u00ed komunikace",
       "name_cs": "Bojler - Komunikace OK",
       "unit_of_measurement": "",
       "device_class": "connectivity",
@@ -1014,8 +1048,8 @@
       "is_binary": true
     },
     "tbl_boiler_prms:ADDR": {
-      "name": "Nastavení IP adresy",
-      "name_cs": "Bojler - Nastavení IP",
+      "name": "Nastaven\u00ed IP adresy",
+      "name_cs": "Bojler - Nastaven\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1025,8 +1059,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:HDO": {
-      "name": "Signalizace nízkého tarifu HDO",
-      "name_cs": "Bojler - HDO signál aktivní",
+      "name": "Signalizace n\u00edzk\u00e9ho tarifu HDO",
+      "name_cs": "Bojler - HDO sign\u00e1l aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1036,8 +1070,8 @@
       "is_binary": true
     },
     "tbl_boiler_prms:ZONE1_S": {
-      "name": "Pásmo 1 - začátek",
-      "name_cs": "Bojler - Časové pásmo 1 - Začátek",
+      "name": "P\u00e1smo 1 - za\u010d\u00e1tek",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 1 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1047,8 +1081,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE1_E": {
-      "name": "Pásmo 1 - konec",
-      "name_cs": "Bojler - Časové pásmo 1 - Konec",
+      "name": "P\u00e1smo 1 - konec",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 1 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1058,8 +1092,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE2_S": {
-      "name": "Pásmo 2 -začátek",
-      "name_cs": "Bojler - Časové pásmo 2 - Začátek",
+      "name": "P\u00e1smo 2 -za\u010d\u00e1tek",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 2 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1069,8 +1103,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE2_E": {
-      "name": "Pásmo 2 - konec",
-      "name_cs": "Bojler - Časové pásmo 2 - Konec",
+      "name": "P\u00e1smo 2 - konec",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 2 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1080,8 +1114,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE3_S": {
-      "name": "Pásmo 3 - začátek",
-      "name_cs": "Bojler - Časové pásmo 3 - Začátek",
+      "name": "P\u00e1smo 3 - za\u010d\u00e1tek",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 3 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1091,8 +1125,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE3_E": {
-      "name": "Pásmo 3 - konec",
-      "name_cs": "Bojler - Časové pásmo 3 - Konec",
+      "name": "P\u00e1smo 3 - konec",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 3 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1102,8 +1136,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE4_S": {
-      "name": "Pásmo 4 -začátek",
-      "name_cs": "Bojler - Časové pásmo 4 - Začátek",
+      "name": "P\u00e1smo 4 -za\u010d\u00e1tek",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 4 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1113,8 +1147,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_boiler_prms:ZONE4_E": {
-      "name": "Pásmo 4 - konec",
-      "name_cs": "Bojler - Časové pásmo 4 - Konec",
+      "name": "P\u00e1smo 4 - konec",
+      "name_cs": "Bojler - \u010casov\u00e9 p\u00e1smo 4 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1135,7 +1169,7 @@
       "is_binary": true
     },
     "tbl_recuper_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
+      "name": "Priorita toku(p\u0159ep\u00edna\u010d GRID-TIE: 0 (baterie-s\u00ed\u0165), 1 (baterie-z\u00e1t\u011b\u017e-s\u00ed\u0165), 2)",
       "name_cs": "Rekuperace - Priorita",
       "unit_of_measurement": "",
       "device_class": null,
@@ -1146,8 +1180,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_recuper_prms:P_SET": {
-      "name": "Nastavený výkonu",
-      "name_cs": "Rekuperace - Nastavený výkon",
+      "name": "Nastaven\u00fd v\u00fdkonu",
+      "name_cs": "Rekuperace - Nastaven\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1157,7 +1191,7 @@
       "entity_category": "diagnostic"
     },
     "tbl_recuper_prms:COMOK": {
-      "name": "Vyhodnocení komunikace",
+      "name": "Vyhodnocen\u00ed komunikace",
       "name_cs": "Rekuperace - Komunikace OK",
       "unit_of_measurement": "",
       "device_class": "connectivity",
@@ -1169,8 +1203,8 @@
       "is_binary": true
     },
     "tbl_recuper_prms:ADDR": {
-      "name": "Nastavení IP adresy",
-      "name_cs": "Rekuperace - Nastavení IP",
+      "name": "Nastaven\u00ed IP adresy",
+      "name_cs": "Rekuperace - Nastaven\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1181,7 +1215,7 @@
     },
     "tbl_h_pump_prms:ISON": {
       "name": "Zap. / vyp. + signalizace stavu",
-      "name_cs": "Tepelné čerpadlo - Zapnuto",
+      "name_cs": "Tepeln\u00e9 \u010derpadlo - Zapnuto",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1191,8 +1225,8 @@
       "is_binary": true
     },
     "tbl_h_pump_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
-      "name_cs": "Tepelné čerpadlo - Priorita",
+      "name": "Priorita toku(p\u0159ep\u00edna\u010d GRID-TIE: 0 (baterie-s\u00ed\u0165), 1 (baterie-z\u00e1t\u011b\u017e-s\u00ed\u0165), 2)",
+      "name_cs": "Tepeln\u00e9 \u010derpadlo - Priorita",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1202,8 +1236,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_h_pump_prms:P_SET": {
-      "name": "Nastavený výkonu",
-      "name_cs": "Tepelné čerpadlo - Nastavený výkon",
+      "name": "Nastaven\u00fd v\u00fdkonu",
+      "name_cs": "Tepeln\u00e9 \u010derpadlo - Nastaven\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1213,8 +1247,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_h_pump_prms:COMOK": {
-      "name": "Vyhodnocení komunikace",
-      "name_cs": "Tepelné čerpadlo - Komunikace OK",
+      "name": "Vyhodnocen\u00ed komunikace",
+      "name_cs": "Tepeln\u00e9 \u010derpadlo - Komunikace OK",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -1225,8 +1259,8 @@
       "is_binary": true
     },
     "tbl_h_pump_prms:ADDR": {
-      "name": "Nastavení IP adresy",
-      "name_cs": "Tepelné čerpadlo - Nastavení IP",
+      "name": "Nastaven\u00ed IP adresy",
+      "name_cs": "Tepeln\u00e9 \u010derpadlo - Nastaven\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1247,7 +1281,7 @@
       "is_binary": true
     },
     "tbl_aircon_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
+      "name": "Priorita toku(p\u0159ep\u00edna\u010d GRID-TIE: 0 (baterie-s\u00ed\u0165), 1 (baterie-z\u00e1t\u011b\u017e-s\u00ed\u0165), 2)",
       "name_cs": "Klimatizace - Priorita",
       "unit_of_measurement": "",
       "device_class": null,
@@ -1258,8 +1292,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_aircon_prms:P_SET": {
-      "name": "Nastavený výkonu",
-      "name_cs": "Klimatizace - Nastavený výkon",
+      "name": "Nastaven\u00fd v\u00fdkonu",
+      "name_cs": "Klimatizace - Nastaven\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1269,7 +1303,7 @@
       "entity_category": "diagnostic"
     },
     "tbl_aircon_prms:COMOK": {
-      "name": "Vyhodnocení komunikace",
+      "name": "Vyhodnocen\u00ed komunikace",
       "name_cs": "Klimatizace - Komunikace OK",
       "unit_of_measurement": "",
       "device_class": "connectivity",
@@ -1281,8 +1315,8 @@
       "is_binary": true
     },
     "tbl_aircon_prms:ADDR": {
-      "name": "Nastavení IP adresy",
-      "name_cs": "Klimatizace - Nastavení IP",
+      "name": "Nastaven\u00ed IP adresy",
+      "name_cs": "Klimatizace - Nastaven\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1303,7 +1337,7 @@
       "is_binary": true
     },
     "tbl_wl_charge_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
+      "name": "Priorita toku(p\u0159ep\u00edna\u010d GRID-TIE: 0 (baterie-s\u00ed\u0165), 1 (baterie-z\u00e1t\u011b\u017e-s\u00ed\u0165), 2)",
       "name_cs": "Wallbox - Priorita",
       "unit_of_measurement": "",
       "device_class": null,
@@ -1314,8 +1348,8 @@
       "entity_category": "diagnostic"
     },
     "tbl_wl_charge_prms:P_SET": {
-      "name": "Nastavený výkonu",
-      "name_cs": "Wallbox - Nastavený výkon",
+      "name": "Nastaven\u00fd v\u00fdkonu",
+      "name_cs": "Wallbox - Nastaven\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1325,7 +1359,7 @@
       "entity_category": "diagnostic"
     },
     "tbl_wl_charge_prms:COMOK": {
-      "name": "Vyhodnocení komunikace",
+      "name": "Vyhodnocen\u00ed komunikace",
       "name_cs": "Wallbox - Komunikace OK",
       "unit_of_measurement": "",
       "device_class": "connectivity",
@@ -1337,8 +1371,8 @@
       "is_binary": true
     },
     "tbl_wl_charge_prms:ADDR": {
-      "name": "Nastavení IP adresy",
-      "name_cs": "Wallbox - Nastavení IP",
+      "name": "Nastaven\u00ed IP adresy",
+      "name_cs": "Wallbox - Nastaven\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1348,8 +1382,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE1_S": {
-      "name": "Pásmo 1 - začátek",
-      "name_cs": "Časové pásmo 1 - Začátek",
+      "name": "P\u00e1smo 1 - za\u010d\u00e1tek",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 1 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1359,8 +1393,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE1_E": {
-      "name": "Pásmo 1 - konec",
-      "name_cs": "Časové pásmo 1 - Konec",
+      "name": "P\u00e1smo 1 - konec",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 1 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1370,8 +1404,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE2_S": {
-      "name": "Pásmo 2 -začátek",
-      "name_cs": "Časové pásmo 2 - Začátek",
+      "name": "P\u00e1smo 2 -za\u010d\u00e1tek",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 2 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1381,8 +1415,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE2_E": {
-      "name": "Pásmo 2 - konec",
-      "name_cs": "Časové pásmo 2 - Konec",
+      "name": "P\u00e1smo 2 - konec",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 2 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1392,8 +1426,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE3_S": {
-      "name": "Pásmo 3 - začátek",
-      "name_cs": "Časové pásmo 3 - Začátek",
+      "name": "P\u00e1smo 3 - za\u010d\u00e1tek",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 3 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1403,8 +1437,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE3_E": {
-      "name": "Pásmo 3 - konec",
-      "name_cs": "Časové pásmo 3 - Konec",
+      "name": "P\u00e1smo 3 - konec",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 3 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1414,8 +1448,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE4_S": {
-      "name": "Pásmo 4 -začátek",
-      "name_cs": "Časové pásmo 4 - Začátek",
+      "name": "P\u00e1smo 4 -za\u010d\u00e1tek",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 4 - Za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1425,8 +1459,8 @@
       "entity_category": "diagnostic"
     },
     "ZONE4_E": {
-      "name": "Pásmo 4 - konec",
-      "name_cs": "Časové pásmo 4 - Konec",
+      "name": "P\u00e1smo 4 - konec",
+      "name_cs": "\u010casov\u00e9 p\u00e1smo 4 - Konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1436,8 +1470,8 @@
       "entity_category": "diagnostic"
     },
     "HDO": {
-      "name": "Signalizace nízkého tarifu HDO",
-      "name_cs": "Síť - HDO signál aktivní",
+      "name": "Signalizace n\u00edzk\u00e9ho tarifu HDO",
+      "name_cs": "S\u00ed\u0165 - HDO sign\u00e1l aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1448,7 +1482,7 @@
     },
     "TERMOSTAT": {
       "name": "Termostat",
-      "name_cs": "Bojler - Termostat aktivní",
+      "name_cs": "Bojler - Termostat aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1457,7 +1491,7 @@
       "todo": false
     },
     "WD": {
-      "name": "Kolik el. energie dodat v signálu HDO",
+      "name": "Kolik el. energie dodat v sign\u00e1lu HDO",
       "name_cs": "Bojler - Energie pro HDO",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
@@ -1469,7 +1503,7 @@
     },
     "MANUAL": {
       "name": "Bojler manual",
-      "name_cs": "Bojler - Manuální režim",
+      "name_cs": "Bojler - Manu\u00e1ln\u00ed re\u017eim",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1480,8 +1514,8 @@
       "is_binary": true
     },
     "SSR0": {
-      "name": "Zapnutí / vypnutí SSR1",
-      "name_cs": "Bojler - SSR relé 1",
+      "name": "Zapnut\u00ed / vypnut\u00ed SSR1",
+      "name_cs": "Bojler - SSR rel\u00e9 1",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1491,8 +1525,8 @@
       "is_binary": true
     },
     "SSR1": {
-      "name": "Zapnutí / vypnutí SSR1",
-      "name_cs": "Bojler - SSR relé 2",
+      "name": "Zapnut\u00ed / vypnut\u00ed SSR1",
+      "name_cs": "Bojler - SSR rel\u00e9 2",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1502,8 +1536,8 @@
       "is_binary": true
     },
     "SSR2": {
-      "name": "Zapnutí / vypnutí SSR1",
-      "name_cs": "Bojler - SSR relé 3",
+      "name": "Zapnut\u00ed / vypnut\u00ed SSR1",
+      "name_cs": "Bojler - SSR rel\u00e9 3",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1513,8 +1547,8 @@
       "is_binary": true
     },
     "OFFSET": {
-      "name": "OFFSET na přetoky do bojleru",
-      "name_cs": "Bojler - Offset přetoků",
+      "name": "OFFSET na p\u0159etoky do bojleru",
+      "name_cs": "Bojler - Offset p\u0159etok\u016f",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -1524,8 +1558,8 @@
       "entity_category": "diagnostic"
     },
     "P": {
-      "name": "Bohjler - aktuální výkon",
-      "name_cs": "Bojler - Aktuální výkon",
+      "name": "Bohjler - aktu\u00e1ln\u00ed v\u00fdkon",
+      "name_cs": "Bojler - Aktu\u00e1ln\u00ed v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -1544,8 +1578,8 @@
       "todo": false
     },
     "BOJ_AM": {
-      "name": "Energie bojler tento měsíc",
-      "name_cs": "Bojler - Energie měsíc",
+      "name": "Energie bojler tento m\u011bs\u00edc",
+      "name_cs": "Bojler - Energie m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -1564,7 +1598,7 @@
       "todo": false
     },
     "COMOK": {
-      "name": "Vyhodnocení komunikace",
+      "name": "Vyhodnocen\u00ed komunikace",
       "name_cs": "Komunikace - Stav",
       "unit_of_measurement": "",
       "device_class": "connectivity",
@@ -1576,8 +1610,8 @@
       "is_binary": true
     },
     "ADDR": {
-      "name": "Nastavení IP adresy",
-      "name_cs": "Komunikace - Nastavení IP",
+      "name": "Nastaven\u00ed IP adresy",
+      "name_cs": "Komunikace - Nastaven\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1588,7 +1622,7 @@
     },
     "Type": {
       "name": "Identifikator Typu Zarizeni",
-      "name_cs": "Systém - Typ zařízení",
+      "name_cs": "Syst\u00e9m - Typ za\u0159\u00edzen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1599,7 +1633,7 @@
     },
     "Confirm": {
       "name": "Potvrzeni - Kvitace preneseni pozadavku",
-      "name_cs": "Systém - Potvrzení",
+      "name_cs": "Syst\u00e9m - Potvrzen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1610,7 +1644,7 @@
     },
     "Content": {
       "name": "Obsah hlasky",
-      "name_cs": "Systém - Obsah hlášky",
+      "name_cs": "Syst\u00e9m - Obsah hl\u00e1\u0161ky",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1621,7 +1655,7 @@
     },
     "ID_Server": {
       "name": "ID Server - identifikator serveru, ktery pristroj obsluhuje",
-      "name_cs": "Systém - ID serveru",
+      "name_cs": "Syst\u00e9m - ID serveru",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1632,7 +1666,7 @@
     },
     "ID_Location": {
       "name": "ID umisteni",
-      "name_cs": "Systém - ID umístění",
+      "name_cs": "Syst\u00e9m - ID um\u00edst\u011bn\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1643,7 +1677,7 @@
     },
     "LastIP": {
       "name": "Posledni IP adresa ze ktere pristroj volal",
-      "name_cs": "Firmware - Poslední IP",
+      "name_cs": "Firmware - Posledn\u00ed IP",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1654,7 +1688,7 @@
     },
     "LastCall": {
       "name": "Cas posledniho volani z pristroje",
-      "name_cs": "Firmware - Poslední volání",
+      "name_cs": "Firmware - Posledn\u00ed vol\u00e1n\u00ed",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -1665,7 +1699,7 @@
     },
     "LastUpdate": {
       "name": "LastUpdate",
-      "name_cs": "Firmware - Poslední update",
+      "name_cs": "Firmware - Posledn\u00ed update",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -1676,7 +1710,7 @@
     },
     "LastSet": {
       "name": "Cas posledniho nastavovani",
-      "name_cs": "Firmware - Poslední nastavení",
+      "name_cs": "Firmware - Posledn\u00ed nastaven\u00ed",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -1687,7 +1721,7 @@
     },
     "LastWeather": {
       "name": "Cas posledniho nahrani prepdpovedi",
-      "name_cs": "Firmware - Poslední počasí",
+      "name_cs": "Firmware - Posledn\u00ed po\u010das\u00ed",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -1698,7 +1732,7 @@
     },
     "UserLastOn": {
       "name": "Cas kdy byl uzivatel naposled online",
-      "name_cs": "Firmware - Uživatel online",
+      "name_cs": "Firmware - U\u017eivatel online",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -1709,7 +1743,7 @@
     },
     "FW_Base": {
       "name": "Korenove oznaceni FW",
-      "name_cs": "Firmware - Základ",
+      "name_cs": "Firmware - Z\u00e1klad",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1720,7 +1754,7 @@
     },
     "FW_LastVersion": {
       "name": "Posledni verze updatovaciho balicku",
-      "name_cs": "Firmware - Poslední verze",
+      "name_cs": "Firmware - Posledn\u00ed verze",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1731,7 +1765,7 @@
     },
     "FW_LastFile": {
       "name": "Posledni nahrany soubor updatovaciho balicku",
-      "name_cs": "Firmware - Poslední soubor",
+      "name_cs": "Firmware - Posledn\u00ed soubor",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1764,7 +1798,7 @@
     },
     "Testing": {
       "name": "Povoleni testovaci procedury komunikace - Pozor !!!",
-      "name_cs": "Firmware - Testovací režim",
+      "name_cs": "Firmware - Testovac\u00ed re\u017eim",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1775,7 +1809,7 @@
     },
     "SettingEnabled": {
       "name": "Povoleni odesilat nastaveni za Serveru",
-      "name_cs": "Firmware - Nastavení povoleno",
+      "name_cs": "Firmware - Nastaven\u00ed povoleno",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1786,7 +1820,7 @@
     },
     "ReadOutEnabled": {
       "name": "Povoleni vycitat pristroj",
-      "name_cs": "Firmware - Čtení povoleno",
+      "name_cs": "Firmware - \u010cten\u00ed povoleno",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1797,7 +1831,7 @@
     },
     "Record": {
       "name": "Changed / Accepted",
-      "name_cs": "Systém - Záznam",
+      "name_cs": "Syst\u00e9m - Z\u00e1znam",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1819,7 +1853,7 @@
     },
     "ERR_BATT": {
       "name": "Chyby baterie",
-      "name_cs": "Střídač - Chyby baterie",
+      "name_cs": "St\u0159\u00edda\u010d - Chyby baterie",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1830,7 +1864,7 @@
     },
     "ERR_GRID": {
       "name": "Chyby grid",
-      "name_cs": "Síť - Chyby",
+      "name_cs": "S\u00ed\u0165 - Chyby",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1841,7 +1875,7 @@
     },
     "ERR_AC": {
       "name": "Chyby CBB",
-      "name_cs": "Střídač - Chyby AC",
+      "name_cs": "St\u0159\u00edda\u010d - Chyby AC",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1851,8 +1885,8 @@
       "entity_category": "diagnostic"
     },
     "ERR_ELSE": {
-      "name": "Ostatní chyby",
-      "name_cs": "Střídač - Ostatní chyby",
+      "name": "Ostatn\u00ed chyby",
+      "name_cs": "St\u0159\u00edda\u010d - Ostatn\u00ed chyby",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1863,8 +1897,8 @@
     },
     "T_INN": {
       "name": "Teplota invertoru",
-      "name_cs": "Střídač - Teplota",
-      "unit_of_measurement": "°C",
+      "name_cs": "St\u0159\u00edda\u010d - Teplota",
+      "unit_of_measurement": "\u00b0C",
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -1872,8 +1906,8 @@
       "todo": false
     },
     "CHARGE": {
-      "name": "Nabíjení baterie DC",
-      "name_cs": "Baterie - DC nabíjení aktivní",
+      "name": "Nab\u00edjen\u00ed baterie DC",
+      "name_cs": "Baterie - DC nab\u00edjen\u00ed aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "battery_charging",
       "state_class": null,
@@ -1883,8 +1917,8 @@
       "is_binary": true
     },
     "CHARGE_AC": {
-      "name": "Nabíjení baterie AC",
-      "name_cs": "Baterie - AC nabíjení aktivní",
+      "name": "Nab\u00edjen\u00ed baterie AC",
+      "name_cs": "Baterie - AC nab\u00edjen\u00ed aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "plug",
       "state_class": null,
@@ -1894,8 +1928,8 @@
       "is_binary": true
     },
     "TO_GRID": {
-      "name": "Dodávka do sítě",
-      "name_cs": "Síť - Dodávka aktivní",
+      "name": "Dod\u00e1vka do s\u00edt\u011b",
+      "name_cs": "S\u00ed\u0165 - Dod\u00e1vka aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1905,8 +1939,8 @@
       "is_binary": true
     },
     "LOAD_PV_ON": {
-      "name": "Vybíjení baterek do zátěže při dostupné FVE",
-      "name_cs": "Spotřeba - Vybíjení s FVE",
+      "name": "Vyb\u00edjen\u00ed baterek do z\u00e1t\u011b\u017ee p\u0159i dostupn\u00e9 FVE",
+      "name_cs": "Spot\u0159eba - Vyb\u00edjen\u00ed s FVE",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1917,8 +1951,8 @@
       "is_binary": true
     },
     "LOAD_PV_OFF": {
-      "name": "Vybíjení baterek do zátěže při nedostupné FVE",
-      "name_cs": "Spotřeba - Vybíjení bez FVE",
+      "name": "Vyb\u00edjen\u00ed baterek do z\u00e1t\u011b\u017ee p\u0159i nedostupn\u00e9 FVE",
+      "name_cs": "Spot\u0159eba - Vyb\u00edjen\u00ed bez FVE",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1929,8 +1963,8 @@
       "is_binary": true
     },
     "GRID_PV_ON": {
-      "name": "Vybíjení baterek do sítě při dostupné FVE",
-      "name_cs": "Síť - Vybíjení bat. s FVE",
+      "name": "Vyb\u00edjen\u00ed baterek do s\u00edt\u011b p\u0159i dostupn\u00e9 FVE",
+      "name_cs": "S\u00ed\u0165 - Vyb\u00edjen\u00ed bat. s FVE",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1941,8 +1975,8 @@
       "is_binary": true
     },
     "GRID_PV_OFF": {
-      "name": "Vybíjení baterek do sítě při nedostupné FVE",
-      "name_cs": "Síť - Vybíjení bat. bez FVE",
+      "name": "Vyb\u00edjen\u00ed baterek do s\u00edt\u011b p\u0159i nedostupn\u00e9 FVE",
+      "name_cs": "S\u00ed\u0165 - Vyb\u00edjen\u00ed bat. bez FVE",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1954,7 +1988,7 @@
     },
     "tbl_invertor_prms:MODE": {
       "name": "Inverter Mode",
-      "name_cs": "Střídač - Režim",
+      "name_cs": "St\u0159\u00edda\u010d - Re\u017eim",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1965,7 +1999,7 @@
     },
     "tbl_box_prms:MODE": {
       "name": "BatteryBox Mode",
-      "name_cs": "BatteryBox - Režim",
+      "name_cs": "BatteryBox - Re\u017eim",
       "unit_of_measurement": "",
       "device_class": "enum",
       "state_class": null,
@@ -1983,7 +2017,7 @@
     },
     "tbl_actual:ENBL": {
       "name": "System Enabled (live)",
-      "name_cs": "Systém - Povoleno (live)",
+      "name_cs": "Syst\u00e9m - Povoleno (live)",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -1995,7 +2029,7 @@
     },
     "tbl_actual:VIZ": {
       "name": "Visualization (live)",
-      "name_cs": "Systém - Vizualizace (live)",
+      "name_cs": "Syst\u00e9m - Vizualizace (live)",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2006,8 +2040,8 @@
     },
     "tbl_actual:Temp": {
       "name": "Box Temperature (live)",
-      "name_cs": "Střídač - Teplota v boxu (live)",
-      "unit_of_measurement": "°C",
+      "name_cs": "St\u0159\u00edda\u010d - Teplota v boxu (live)",
+      "unit_of_measurement": "\u00b0C",
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -2016,7 +2050,7 @@
     },
     "tbl_actual:Humid": {
       "name": "Box Humidity (live)",
-      "name_cs": "Střídač - Vlhkost v boxu (live)",
+      "name_cs": "St\u0159\u00edda\u010d - Vlhkost v boxu (live)",
       "unit_of_measurement": "%",
       "device_class": "humidity",
       "state_class": "measurement",
@@ -2026,7 +2060,7 @@
     },
     "tbl_actual:ACO_P": {
       "name": "Load Power (live)",
-      "name_cs": "Spotřeba - Výkon domu (live)",
+      "name_cs": "Spot\u0159eba - V\u00fdkon domu (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2036,7 +2070,7 @@
     },
     "tbl_actual:FV_P1": {
       "name": "PV String 1 Power (live)",
-      "name_cs": "FVE - Výkon string 1 (live)",
+      "name_cs": "FVE - V\u00fdkon string 1 (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2046,7 +2080,7 @@
     },
     "tbl_actual:FV_P2": {
       "name": "PV String 2 Power (live)",
-      "name_cs": "FVE - Výkon string 2 (live)",
+      "name_cs": "FVE - V\u00fdkon string 2 (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2056,7 +2090,7 @@
     },
     "tbl_actual:ACI_WR": {
       "name": "Grid Power L1 (live)",
-      "name_cs": "Síť - Výkon L1 (live)",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon L1 (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2066,7 +2100,7 @@
     },
     "tbl_actual:ACI_WS": {
       "name": "Grid Power L2 (live)",
-      "name_cs": "Síť - Výkon L2 (live)",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon L2 (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2076,7 +2110,7 @@
     },
     "tbl_actual:ACI_WT": {
       "name": "Grid Power L3 (live)",
-      "name_cs": "Síť - Výkon L3 (live)",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon L3 (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2086,7 +2120,7 @@
     },
     "tbl_actual:BAT_P": {
       "name": "Battery Power (live)",
-      "name_cs": "Baterie - Výkon (live)",
+      "name_cs": "Baterie - V\u00fdkon (live)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2096,7 +2130,7 @@
     },
     "tbl_actual:FV_PROC": {
       "name": "PV Utilization (live)",
-      "name_cs": "FVE - Využití výkonu (live)",
+      "name_cs": "FVE - Vyu\u017eit\u00ed v\u00fdkonu (live)",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": "measurement",
@@ -2106,7 +2140,7 @@
     },
     "tbl_actual:BAT_C": {
       "name": "Battery SoC (live)",
-      "name_cs": "Baterie - Stav nabití (live)",
+      "name_cs": "Baterie - Stav nabit\u00ed (live)",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": "measurement",
@@ -2116,7 +2150,7 @@
     },
     "tbl_actual:MSC_SELF": {
       "name": "Self-sufficiency (live)",
-      "name_cs": "Spotřeba - Soběstačnost (live)",
+      "name_cs": "Spot\u0159eba - Sob\u011bsta\u010dnost (live)",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": "measurement",
@@ -2126,7 +2160,7 @@
     },
     "tbl_actual:STAT": {
       "name": "Inverter Status (live)",
-      "name_cs": "Střídač - Status (live)",
+      "name_cs": "St\u0159\u00edda\u010d - Status (live)",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2137,7 +2171,7 @@
     },
     "MODE": {
       "name": "Mode",
-      "name_cs": "Režim",
+      "name_cs": "Re\u017eim",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2148,7 +2182,7 @@
     },
     "MODEL": {
       "name": "Model",
-      "name_cs": "Střídač - Model",
+      "name_cs": "St\u0159\u00edda\u010d - Model",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2159,7 +2193,7 @@
     },
     "PRLL_OUT": {
       "name": "Parallel for output",
-      "name_cs": "Spotřeba - Paralelní výstup",
+      "name_cs": "Spot\u0159eba - Paraleln\u00ed v\u00fdstup",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2171,7 +2205,7 @@
     },
     "P_ADJ_STRT": {
       "name": "Auto-adjustment starts when power rate reaches",
-      "name_cs": "Střídač - Auto-adjust start",
+      "name_cs": "St\u0159\u00edda\u010d - Auto-adjust start",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": null,
@@ -2182,7 +2216,7 @@
     },
     "P_ADJ_ENBL": {
       "name": "Auto-adjustment Enable",
-      "name_cs": "Střídač - Auto-adjust povolen",
+      "name_cs": "St\u0159\u00edda\u010d - Auto-adjust povolen",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2194,7 +2228,7 @@
     },
     "PF_MIN_100": {
       "name": "Minimum PF value when power percentage reaches 100%",
-      "name_cs": "Síť - Min. účiník při 100%",
+      "name_cs": "S\u00ed\u0165 - Min. \u00fa\u010din\u00edk p\u0159i 100%",
       "unit_of_measurement": "",
       "device_class": "power_factor",
       "state_class": null,
@@ -2205,7 +2239,7 @@
     },
     "STATUS": {
       "name": "Status",
-      "name_cs": "Střídač - Stav",
+      "name_cs": "St\u0159\u00edda\u010d - Stav",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2215,8 +2249,8 @@
       "entity_category": "diagnostic"
     },
     "FAIN": {
-      "name": "Ventilátor 1",
-      "name_cs": "Jistič - Vstup síť",
+      "name": "Ventil\u00e1tor 1",
+      "name_cs": "Jisti\u010d - Vstup s\u00ed\u0165",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2227,8 +2261,8 @@
       "is_binary": true
     },
     "FAOUT": {
-      "name": "Ventilátor 2",
-      "name_cs": "Jistič - Výstup zátěž",
+      "name": "Ventil\u00e1tor 2",
+      "name_cs": "Jisti\u010d - V\u00fdstup z\u00e1t\u011b\u017e",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2239,8 +2273,8 @@
       "is_binary": true
     },
     "FAT": {
-      "name": "Zátěž",
-      "name_cs": "Jistič - Zátěž",
+      "name": "Z\u00e1t\u011b\u017e",
+      "name_cs": "Jisti\u010d - Z\u00e1t\u011b\u017e",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2251,8 +2285,8 @@
       "is_binary": true
     },
     "FAT2": {
-      "name": "Nezáloha",
-      "name_cs": "Jistič - Nezáloha",
+      "name": "Nez\u00e1loha",
+      "name_cs": "Jisti\u010d - Nez\u00e1loha",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2264,7 +2298,7 @@
     },
     "FADC1": {
       "name": "1FADC",
-      "name_cs": "Jistič - DC 1",
+      "name_cs": "Jisti\u010d - DC 1",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2276,7 +2310,7 @@
     },
     "FADC2": {
       "name": "2FADC",
-      "name_cs": "Jistič - DC 2",
+      "name_cs": "Jisti\u010d - DC 2",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2288,7 +2322,7 @@
     },
     "FADC3": {
       "name": "3FADC",
-      "name_cs": "Jistič - DC 3",
+      "name_cs": "Jisti\u010d - DC 3",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -2300,7 +2334,7 @@
     },
     "FV1": {
       "name": "1FV/DC",
-      "name_cs": "FVE - Jistič string 1",
+      "name_cs": "FVE - Jisti\u010d string 1",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2311,7 +2345,7 @@
     },
     "FV2": {
       "name": "2FV/DC",
-      "name_cs": "FVE - Jistič string 2",
+      "name_cs": "FVE - Jisti\u010d string 2",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2321,8 +2355,8 @@
       "entity_category": "diagnostic"
     },
     "BYPASS": {
-      "name": "Automatický bypass",
-      "name_cs": "Spotřeba - Automatický bypass",
+      "name": "Automatick\u00fd bypass",
+      "name_cs": "Spot\u0159eba - Automatick\u00fd bypass",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2331,8 +2365,8 @@
       "todo": false
     },
     "BYPASS_M": {
-      "name": "Ruční bypass",
-      "name_cs": "Spotřeba - Manuální bypass",
+      "name": "Ru\u010dn\u00ed bypass",
+      "name_cs": "Spot\u0159eba - Manu\u00e1ln\u00ed bypass",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2342,8 +2376,8 @@
       "entity_category": "diagnostic"
     },
     "COMINVERT": {
-      "name": "Komunikace invertor - včetně výčet poruch",
-      "name_cs": "Střídač - Stav komunikace",
+      "name": "Komunikace invertor - v\u010detn\u011b v\u00fd\u010det poruch",
+      "name_cs": "St\u0159\u00edda\u010d - Stav komunikace",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2353,8 +2387,8 @@
       "entity_category": "diagnostic"
     },
     "COMELMER": {
-      "name": "Komunikace elektroměr - včetně výčet poruch",
-      "name_cs": "Komunikace - Elektroměr",
+      "name": "Komunikace elektrom\u011br - v\u010detn\u011b v\u00fd\u010det poruch",
+      "name_cs": "Komunikace - Elektrom\u011br",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2364,7 +2398,7 @@
       "entity_category": "diagnostic"
     },
     "COMBATT": {
-      "name": "Komunikace baterie - včetně výčet poruch",
+      "name": "Komunikace baterie - v\u010detn\u011b v\u00fd\u010det poruch",
       "name_cs": "Baterie - Stav komunikace",
       "unit_of_measurement": "",
       "device_class": null,
@@ -2375,8 +2409,8 @@
       "entity_category": "diagnostic"
     },
     "COMEXPANZ": {
-      "name": "Komunikace expanzní deska - včetně výčet poruch",
-      "name_cs": "Komunikace - Expanzní deska",
+      "name": "Komunikace expanzn\u00ed deska - v\u010detn\u011b v\u00fd\u010det poruch",
+      "name_cs": "Komunikace - Expanzn\u00ed deska",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2386,8 +2420,8 @@
       "entity_category": "diagnostic"
     },
     "COMMPP": {
-      "name": "Komunikace MPPT Victron regulátor - včetně výčet poruch",
-      "name_cs": "Komunikace - MPPT regulátor",
+      "name": "Komunikace MPPT Victron regul\u00e1tor - v\u010detn\u011b v\u00fd\u010det poruch",
+      "name_cs": "Komunikace - MPPT regul\u00e1tor",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2398,7 +2432,7 @@
     },
     "MODE1": {
       "name": "Mod CBB",
-      "name_cs": "Wallbox - Režim CBB",
+      "name_cs": "Wallbox - Re\u017eim CBB",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2408,8 +2442,8 @@
       "entity_category": "diagnostic"
     },
     "S_STOP_ISON": {
-      "name": "Centrál stop - zap. /vyp.",
-      "name_cs": "Střídač - Centrální stop",
+      "name": "Centr\u00e1l stop - zap. /vyp.",
+      "name_cs": "St\u0159\u00edda\u010d - Centr\u00e1ln\u00ed stop",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2420,7 +2454,7 @@
     },
     "LCD_BRIGH": {
       "name": "Jas LCD",
-      "name_cs": "Střídač - Jas LCD",
+      "name_cs": "St\u0159\u00edda\u010d - Jas LCD",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": null,
@@ -2431,7 +2465,7 @@
     },
     "LED_BRIGH": {
       "name": "Jas LED",
-      "name_cs": "Střídač - Jas LED",
+      "name_cs": "St\u0159\u00edda\u010d - Jas LED",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": null,
@@ -2441,9 +2475,9 @@
       "entity_category": "diagnostic"
     },
     "FAN1": {
-      "name": "Teplota ventilátor 1",
-      "name_cs": "Střídač - Teplota ventilátor 1",
-      "unit_of_measurement": "°C",
+      "name": "Teplota ventil\u00e1tor 1",
+      "name_cs": "St\u0159\u00edda\u010d - Teplota ventil\u00e1tor 1",
+      "unit_of_measurement": "\u00b0C",
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -2451,9 +2485,9 @@
       "todo": false
     },
     "FAN2": {
-      "name": "Teplota ventilátor 2",
-      "name_cs": "Střídač - Teplota ventilátor 2",
-      "unit_of_measurement": "°C",
+      "name": "Teplota ventil\u00e1tor 2",
+      "name_cs": "St\u0159\u00edda\u010d - Teplota ventil\u00e1tor 2",
+      "unit_of_measurement": "\u00b0C",
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -2461,8 +2495,8 @@
       "todo": false
     },
     "BAT_AC": {
-      "name": "Dobití AC",
-      "name_cs": "Baterie - Dobití AC cíl",
+      "name": "Dobit\u00ed AC",
+      "name_cs": "Baterie - Dobit\u00ed AC c\u00edl",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": null,
@@ -2472,8 +2506,8 @@
       "entity_category": "diagnostic"
     },
     "P_FVE": {
-      "name": "Výkon FVE",
-      "name_cs": "FVE - Celkový výkon",
+      "name": "V\u00fdkon FVE",
+      "name_cs": "FVE - Celkov\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2482,8 +2516,8 @@
       "todo": false
     },
     "P_BAT": {
-      "name": "Baterie instalovaná kapacita",
-      "name_cs": "Baterie - Instalovaná kapacita",
+      "name": "Baterie instalovan\u00e1 kapacita",
+      "name_cs": "Baterie - Instalovan\u00e1 kapacita",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": null,
@@ -2493,8 +2527,8 @@
       "entity_category": "diagnostic"
     },
     "P_GRID": {
-      "name": "Výkon síť",
-      "name_cs": "Síť - Výkon (+odběr/-dodávka)",
+      "name": "V\u00fdkon s\u00ed\u0165",
+      "name_cs": "S\u00ed\u0165 - V\u00fdkon (+odb\u011br/-dod\u00e1vka)",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2503,8 +2537,8 @@
       "todo": false
     },
     "P_LOAD": {
-      "name": "Výkon zátěž",
-      "name_cs": "Spotřeba - Celkový výkon",
+      "name": "V\u00fdkon z\u00e1t\u011b\u017e",
+      "name_cs": "Spot\u0159eba - Celkov\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -2513,8 +2547,8 @@
       "todo": false
     },
     "RQRESET": {
-      "name": "Požadavek na RESET LCD",
-      "name_cs": "Systém - Požadavek reset LCD",
+      "name": "Po\u017eadavek na RESET LCD",
+      "name_cs": "Syst\u00e9m - Po\u017eadavek reset LCD",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2524,8 +2558,8 @@
       "entity_category": "diagnostic"
     },
     "RQRESEE": {
-      "name": "Požadavek na RESET LCD EEPROM",
-      "name_cs": "Systém - Požadavek reset EEPROM",
+      "name": "Po\u017eadavek na RESET LCD EEPROM",
+      "name_cs": "Syst\u00e9m - Po\u017eadavek reset EEPROM",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2536,7 +2570,7 @@
     },
     "SW": {
       "name": "Verze SW",
-      "name_cs": "Střídač - Verze SW",
+      "name_cs": "St\u0159\u00edda\u010d - Verze SW",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2568,8 +2602,8 @@
       "entity_category": "diagnostic"
     },
     "BAT_FORMAT": {
-      "name": "Nastavení min. kapacity pro nabíjení ze strany AC",
-      "name_cs": "Baterie - Formátování povoleno",
+      "name": "Nastaven\u00ed min. kapacity pro nab\u00edjen\u00ed ze strany AC",
+      "name_cs": "Baterie - Form\u00e1tov\u00e1n\u00ed povoleno",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2580,7 +2614,7 @@
     },
     "SCNT": {
       "name": "Pocet startu LCD",
-      "name_cs": "Střídač - Počet startů",
+      "name_cs": "St\u0159\u00edda\u010d - Po\u010det start\u016f",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -2590,8 +2624,8 @@
       "entity_category": "diagnostic"
     },
     "ENLOADS": {
-      "name": "Zapnutí / vypnutí zátěže",
-      "name_cs": "Spotřeba - Zátěž povolena",
+      "name": "Zapnut\u00ed / vypnut\u00ed z\u00e1t\u011b\u017ee",
+      "name_cs": "Spot\u0159eba - Z\u00e1t\u011b\u017e povolena",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2602,7 +2636,7 @@
     },
     "ACOUPLMT": {
       "name": "Parametr pro dobijeni Baterie v AC-Coupling modu",
-      "name_cs": "Spotřeba - AC coupling limit",
+      "name_cs": "Spot\u0159eba - AC coupling limit",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2613,7 +2647,7 @@
     },
     "HWID": {
       "name": "Hardwarovy identifikator LCD",
-      "name_cs": "Střídač - HW identifikátor",
+      "name_cs": "St\u0159\u00edda\u010d - HW identifik\u00e1tor",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2624,7 +2658,7 @@
     },
     "ACCON": {
       "name": "Zapnut / vypnut AC coupling",
-      "name_cs": "Střídač - AC coupling zapnut",
+      "name_cs": "St\u0159\u00edda\u010d - AC coupling zapnut",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2634,8 +2668,8 @@
       "entity_category": "diagnostic"
     },
     "CRCT": {
-      "name": "Indikace krizového ovládání (regulace 0-100%) - relé HDO",
-      "name_cs": "Jistič - Krizové ovládání HDO",
+      "name": "Indikace krizov\u00e9ho ovl\u00e1d\u00e1n\u00ed (regulace 0-100%) - rel\u00e9 HDO",
+      "name_cs": "Jisti\u010d - Krizov\u00e9 ovl\u00e1d\u00e1n\u00ed HDO",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2645,8 +2679,8 @@
       "entity_category": "diagnostic"
     },
     "NB": {
-      "name": "Zapnutí / vypnutí měření nezálohy",
-      "name_cs": "Systém - Měření nezálohy",
+      "name": "Zapnut\u00ed / vypnut\u00ed m\u011b\u0159en\u00ed nez\u00e1lohy",
+      "name_cs": "Syst\u00e9m - M\u011b\u0159en\u00ed nez\u00e1lohy",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2656,8 +2690,8 @@
       "entity_category": "diagnostic"
     },
     "CRCTE": {
-      "name": "Povoleni indikace krizového ovládání",
-      "name_cs": "Jistič - Krizové ovládání povoleno",
+      "name": "Povoleni indikace krizov\u00e9ho ovl\u00e1d\u00e1n\u00ed",
+      "name_cs": "Jisti\u010d - Krizov\u00e9 ovl\u00e1d\u00e1n\u00ed povoleno",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2667,8 +2701,8 @@
       "entity_category": "diagnostic"
     },
     "RA": {
-      "name": "Tlačítko aktivace aktualizace FW v3.42.xxxx",
-      "name_cs": "Systém - Aktivace FW update",
+      "name": "Tla\u010d\u00edtko aktivace aktualizace FW v3.42.xxxx",
+      "name_cs": "Syst\u00e9m - Aktivace FW update",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2678,8 +2712,8 @@
       "entity_category": "diagnostic"
     },
     "SA": {
-      "name": "Požadavek na okamžité odeslání dat",
-      "name_cs": "Systém - Okamžité odeslání dat",
+      "name": "Po\u017eadavek na okam\u017eit\u00e9 odesl\u00e1n\u00ed dat",
+      "name_cs": "Syst\u00e9m - Okam\u017eit\u00e9 odesl\u00e1n\u00ed dat",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2690,7 +2724,7 @@
     },
     "DateTime": {
       "name": "DatumCas",
-      "name_cs": "Systém - Datum a čas",
+      "name_cs": "Syst\u00e9m - Datum a \u010das",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -2700,9 +2734,9 @@
       "entity_category": "diagnostic"
     },
     "Temp": {
-      "name": "Měření teploty v CBB boxu",
-      "name_cs": "Střídač - Teplota v boxu",
-      "unit_of_measurement": "°C",
+      "name": "M\u011b\u0159en\u00ed teploty v CBB boxu",
+      "name_cs": "St\u0159\u00edda\u010d - Teplota v boxu",
+      "unit_of_measurement": "\u00b0C",
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
@@ -2710,8 +2744,8 @@
       "todo": false
     },
     "Humid": {
-      "name": "Měření vlhkosti v CBB Boxu",
-      "name_cs": "Střídač - Vlhkost v boxu",
+      "name": "M\u011b\u0159en\u00ed vlhkosti v CBB Boxu",
+      "name_cs": "St\u0159\u00edda\u010d - Vlhkost v boxu",
       "unit_of_measurement": "%",
       "device_class": "humidity",
       "state_class": "measurement",
@@ -2720,8 +2754,8 @@
       "todo": false
     },
     "MSC_SELF": {
-      "name": "Soběstačnost %",
-      "name_cs": "Spotřeba - Soběstačnost",
+      "name": "Sob\u011bsta\u010dnost %",
+      "name_cs": "Spot\u0159eba - Sob\u011bsta\u010dnost",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": "measurement",
@@ -2730,8 +2764,8 @@
       "todo": false
     },
     "STRNGHT": {
-      "name": "Síla signálu Wi-Fi",
-      "name_cs": "Komunikace - Síla Wi-Fi",
+      "name": "S\u00edla sign\u00e1lu Wi-Fi",
+      "name_cs": "Komunikace - S\u00edla Wi-Fi",
       "unit_of_measurement": "dBm",
       "device_class": "signal_strength",
       "state_class": "measurement",
@@ -2742,7 +2776,7 @@
     },
     "TMLASTCALL": {
       "name": "Minut od posledniho odeslani vsech dat",
-      "name_cs": "Systém - Min. od poslání dat",
+      "name_cs": "Syst\u00e9m - Min. od posl\u00e1n\u00ed dat",
       "unit_of_measurement": "min",
       "device_class": null,
       "state_class": "measurement",
@@ -2753,7 +2787,7 @@
     },
     "NewValue": {
       "name": "Nova hodnota",
-      "name_cs": "Systém - Nová hodnota",
+      "name_cs": "Syst\u00e9m - Nov\u00e1 hodnota",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2764,7 +2798,7 @@
     },
     "TblName": {
       "name": "Ve ktere tabulce se nachazi mena promenna",
-      "name_cs": "Systém - Tabulka",
+      "name_cs": "Syst\u00e9m - Tabulka",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2775,7 +2809,7 @@
     },
     "TblItem": {
       "name": "Ktera polozka tabulky se meni",
-      "name_cs": "Systém - Položka",
+      "name_cs": "Syst\u00e9m - Polo\u017eka",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2786,7 +2820,7 @@
     },
     "Name": {
       "name": "Name",
-      "name_cs": "Systém - Název",
+      "name_cs": "Syst\u00e9m - N\u00e1zev",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2797,7 +2831,7 @@
     },
     "Geobaseid": {
       "name": "Geobaseid",
-      "name_cs": "Systém - Geo ID",
+      "name_cs": "Syst\u00e9m - Geo ID",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2808,7 +2842,7 @@
     },
     "LoadedOn": {
       "name": "LoadedOn",
-      "name_cs": "Firmware - Nahráno",
+      "name_cs": "Firmware - Nahr\u00e1no",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -2819,7 +2853,7 @@
     },
     "NextUpdate": {
       "name": "NextUpdate",
-      "name_cs": "Firmware - Další update",
+      "name_cs": "Firmware - Dal\u0161\u00ed update",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -2830,7 +2864,7 @@
     },
     "YRplace": {
       "name": "YRplace",
-      "name_cs": "Systém - Místo YR",
+      "name_cs": "Syst\u00e9m - M\u00edsto YR",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2841,7 +2875,7 @@
     },
     "Status": {
       "name": "OK / BAN",
-      "name_cs": "Systém - OK/BAN",
+      "name_cs": "Syst\u00e9m - OK/BAN",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2852,7 +2886,7 @@
     },
     "id": {
       "name": "Identifikator zaznamu",
-      "name_cs": "Systém - ID záznamu",
+      "name_cs": "Syst\u00e9m - ID z\u00e1znamu",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2863,7 +2897,7 @@
     },
     "name": {
       "name": "Name",
-      "name_cs": "Systém - Název",
+      "name_cs": "Syst\u00e9m - N\u00e1zev",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2874,7 +2908,7 @@
     },
     "country": {
       "name": "Country",
-      "name_cs": "Systém - Země",
+      "name_cs": "Syst\u00e9m - Zem\u011b",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2885,8 +2919,8 @@
     },
     "lon": {
       "name": "Lon",
-      "name_cs": "Systém - Zeměpisná délka",
-      "unit_of_measurement": "°",
+      "name_cs": "Syst\u00e9m - Zem\u011bpisn\u00e1 d\u00e9lka",
+      "unit_of_measurement": "\u00b0",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2896,8 +2930,8 @@
     },
     "lat": {
       "name": "Lat",
-      "name_cs": "Systém - Zeměpisná šířka",
-      "unit_of_measurement": "°",
+      "name_cs": "Syst\u00e9m - Zem\u011bpisn\u00e1 \u0161\u00ed\u0159ka",
+      "unit_of_measurement": "\u00b0",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -2906,8 +2940,8 @@
       "entity_category": "diagnostic"
     },
     "CODE_ERR": {
-      "name": "Chybové kódy invertoru '01','02','03','04','05','06','07','08','11','12','13','14','16','22','23','26','27','32','33','34','35','36'",
-      "name_cs": "Střídač - Kód chyby",
+      "name": "Chybov\u00e9 k\u00f3dy invertoru '01','02','03','04','05','06','07','08','11','12','13','14','16','22','23','26','27','32','33','34','35','36'",
+      "name_cs": "St\u0159\u00edda\u010d - K\u00f3d chyby",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2918,7 +2952,7 @@
     },
     "V_NOMIN": {
       "name": "Nominal output voltage",
-      "name_cs": "Síť - Nominální napětí",
+      "name_cs": "S\u00ed\u0165 - Nomin\u00e1ln\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -2929,7 +2963,7 @@
     },
     "F_NOMIN": {
       "name": "Nominal output frequency",
-      "name_cs": "Síť - Nominální frekvence",
+      "name_cs": "S\u00ed\u0165 - Nomin\u00e1ln\u00ed frekvence",
       "unit_of_measurement": "Hz",
       "device_class": "frequency",
       "state_class": null,
@@ -2940,7 +2974,7 @@
     },
     "CHRG_X": {
       "name": "When float charging current is less than X",
-      "name_cs": "Nabíječka - Float proud limit",
+      "name_cs": "Nab\u00edje\u010dka - Float proud limit",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -2951,7 +2985,7 @@
     },
     "CHRG_T": {
       "name": "Continued T",
-      "name_cs": "Nabíječka - Čas nabíjení",
+      "name_cs": "Nab\u00edje\u010dka - \u010cas nab\u00edjen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2962,7 +2996,7 @@
     },
     "CHRG_Y": {
       "name": "Charger Off, when battery voltage is less than Y",
-      "name_cs": "Nabíječka - Vypnutí napětí",
+      "name_cs": "Nab\u00edje\u010dka - Vypnut\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -2973,7 +3007,7 @@
     },
     "BUZ_MUT_STNB": {
       "name": "Mute the buzzer in the Standby mode",
-      "name_cs": "Střídač - Ztlumit v standby",
+      "name_cs": "St\u0159\u00edda\u010d - Ztlumit v standby",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2984,7 +3018,7 @@
     },
     "AL_MUT_BAT": {
       "name": "Mute alarm in battery mode",
-      "name_cs": "Střídač - Ztlumit alarm bat.",
+      "name_cs": "St\u0159\u00edda\u010d - Ztlumit alarm bat.",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -2995,7 +3029,7 @@
     },
     "IN_AC_WIDE": {
       "name": "Wide AC input range",
-      "name_cs": "Síť - Široký rozsah vstupu",
+      "name_cs": "S\u00ed\u0165 - \u0160irok\u00fd rozsah vstupu",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3006,7 +3040,7 @@
     },
     "OVERFDER": {
       "name": "Over voltage derating",
-      "name_cs": "Síť - Derating přepětí",
+      "name_cs": "S\u00ed\u0165 - Derating p\u0159ep\u011bt\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3017,7 +3051,7 @@
     },
     "OVERVDER": {
       "name": "Over frequency derating",
-      "name_cs": "Síť - Derating překmitočet",
+      "name_cs": "S\u00ed\u0165 - Derating p\u0159ekmito\u010det",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3028,7 +3062,7 @@
     },
     "AUTQREA": {
       "name": "Reactive power automatic control",
-      "name_cs": "Střídač - Auto jalový výkon",
+      "name_cs": "St\u0159\u00edda\u010d - Auto jalov\u00fd v\u00fdkon",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3039,7 +3073,7 @@
     },
     "ONGRQREA": {
       "name": "Grid connected reactive power",
-      "name_cs": "Střídač - Jalový výkon on-grid",
+      "name_cs": "St\u0159\u00edda\u010d - Jalov\u00fd v\u00fdkon on-grid",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3061,7 +3095,7 @@
     },
     "NLINEO": {
       "name": "Output neutral line grounding in battery mode",
-      "name_cs": "Spotřeba - Uzemnění N v bat. režimu",
+      "name_cs": "Spot\u0159eba - Uzemn\u011bn\u00ed N v bat. re\u017eimu",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3071,8 +3105,8 @@
       "entity_category": "diagnostic"
     },
     "PVMIN": {
-      "name": "Nastavení min. urovně na přechod z FMT4 na HOME",
-      "name_cs": "FVE - Min. úroveň pro HOME",
+      "name": "Nastaven\u00ed min. urovn\u011b na p\u0159echod z FMT4 na HOME",
+      "name_cs": "FVE - Min. \u00farove\u0148 pro HOME",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -3082,8 +3116,8 @@
       "entity_category": "diagnostic"
     },
     "SERNO": {
-      "name": "SN číslo invertoru FSP",
-      "name_cs": "Střídač - Sériové číslo",
+      "name": "SN \u010d\u00edslo invertoru FSP",
+      "name_cs": "St\u0159\u00edda\u010d - S\u00e9riov\u00e9 \u010d\u00edslo",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3094,7 +3128,7 @@
     },
     "V_MIN_AC": {
       "name": "Min-grid-connected Voltage",
-      "name_cs": "Síť - Min. připojovací napětí",
+      "name_cs": "S\u00ed\u0165 - Min. p\u0159ipojovac\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3105,7 +3139,7 @@
     },
     "V_MAX_AC": {
       "name": "Max-grid-connected Voltage",
-      "name_cs": "Síť - Max. připojovací napětí",
+      "name_cs": "S\u00ed\u0165 - Max. p\u0159ipojovac\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3116,7 +3150,7 @@
     },
     "F_MIN_AC": {
       "name": "Min-grid-connected Frequency",
-      "name_cs": "Síť - Min. připojovací frekvence",
+      "name_cs": "S\u00ed\u0165 - Min. p\u0159ipojovac\u00ed frekvence",
       "unit_of_measurement": "Hz",
       "device_class": "frequency",
       "state_class": null,
@@ -3127,7 +3161,7 @@
     },
     "F_MAX_AC": {
       "name": "Max-grid-connected Frequency",
-      "name_cs": "Síť - Max. připojovací frekvence",
+      "name_cs": "S\u00ed\u0165 - Max. p\u0159ipojovac\u00ed frekvence",
       "unit_of_measurement": "Hz",
       "device_class": "frequency",
       "state_class": null,
@@ -3138,7 +3172,7 @@
     },
     "T_ON_GRID": {
       "name": "The waiting time before grid connection",
-      "name_cs": "Síť - Čekání před připojením",
+      "name_cs": "S\u00ed\u0165 - \u010cek\u00e1n\u00ed p\u0159ed p\u0159ipojen\u00edm",
       "unit_of_measurement": "s",
       "device_class": "duration",
       "state_class": null,
@@ -3149,7 +3183,7 @@
     },
     "V_MAX_GRID_AV": {
       "name": "Max. grid connected average voltage",
-      "name_cs": "Síť - Max. průměrné napětí",
+      "name_cs": "S\u00ed\u0165 - Max. pr\u016fm\u011brn\u00e9 nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3160,7 +3194,7 @@
     },
     "P_MAX_FEED_GRID": {
       "name": "Max. feed-in grid power",
-      "name_cs": "Síť - Max. výkon do sítě",
+      "name_cs": "S\u00ed\u0165 - Max. v\u00fdkon do s\u00edt\u011b",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -3171,7 +3205,7 @@
     },
     "PF_FEED": {
       "name": "Feed-in power factor",
-      "name_cs": "Síť - Účiník dodávky",
+      "name_cs": "S\u00ed\u0165 - \u00da\u010din\u00edk dod\u00e1vky",
       "unit_of_measurement": "",
       "device_class": "power_factor",
       "state_class": null,
@@ -3182,7 +3216,7 @@
     },
     "V_MIN_PV": {
       "name": "Min. PV input voltage",
-      "name_cs": "FVE - Min. vstupní napětí",
+      "name_cs": "FVE - Min. vstupn\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3193,7 +3227,7 @@
     },
     "V_MAX_PV": {
       "name": "Max. PV input voltage",
-      "name_cs": "FVE - Max. vstupní napětí",
+      "name_cs": "FVE - Max. vstupn\u00ed nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3204,7 +3238,7 @@
     },
     "V_MIN_MPP": {
       "name": "Min MPP votage",
-      "name_cs": "FVE - Min. MPP napětí",
+      "name_cs": "FVE - Min. MPP nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3215,7 +3249,7 @@
     },
     "V_MAX_MPP": {
       "name": "Max MPP votage",
-      "name_cs": "FVE - Max. MPP napětí",
+      "name_cs": "FVE - Max. MPP nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3226,7 +3260,7 @@
     },
     "A_MAX_CHRG": {
       "name": "Max. charging current",
-      "name_cs": "Nabíječka - Max. proud",
+      "name_cs": "Nab\u00edje\u010dka - Max. proud",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -3237,7 +3271,7 @@
     },
     "AAC_MAX_CHRG": {
       "name": "Max. AC charging current",
-      "name_cs": "Nabíječka - Max. AC proud",
+      "name_cs": "Nab\u00edje\u010dka - Max. AC proud",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -3248,7 +3282,7 @@
     },
     "V_CHRG": {
       "name": "Bulk charging voltage",
-      "name_cs": "Nabíječka - Bulk napětí",
+      "name_cs": "Nab\u00edje\u010dka - Bulk nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3259,7 +3293,7 @@
     },
     "V_CHAR_FLO": {
       "name": "Floating charging voltage",
-      "name_cs": "Nabíječka - Float napětí",
+      "name_cs": "Nab\u00edje\u010dka - Float nap\u011bt\u00ed",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3270,7 +3304,7 @@
     },
     "V_CUT_GRID": {
       "name": "Battery cut-off discharging voltage when grid is available",
-      "name_cs": "Síť - Odpojení při dostupné síti",
+      "name_cs": "S\u00ed\u0165 - Odpojen\u00ed p\u0159i dostupn\u00e9 s\u00edti",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3281,7 +3315,7 @@
     },
     "V_RE_GRID": {
       "name": "Battery re-discharging voltage when grid is available",
-      "name_cs": "Síť - Opět. připojení při síti",
+      "name_cs": "S\u00ed\u0165 - Op\u011bt. p\u0159ipojen\u00ed p\u0159i s\u00edti",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3292,7 +3326,7 @@
     },
     "V_CUT_NOGRID": {
       "name": "Battery cut-off discharging voltage when grid is unavailable",
-      "name_cs": "Síť - Odpojení bez sítě",
+      "name_cs": "S\u00ed\u0165 - Odpojen\u00ed bez s\u00edt\u011b",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3303,7 +3337,7 @@
     },
     "V_RE_NOGRID": {
       "name": "Battery re-discharging voltage when grid is unavailable",
-      "name_cs": "Síť - Opět. připojení bez sítě",
+      "name_cs": "S\u00ed\u0165 - Op\u011bt. p\u0159ipojen\u00ed bez s\u00edt\u011b",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": null,
@@ -3314,7 +3348,7 @@
     },
     "A_MAX_DIS_HYB": {
       "name": "Max. battery discharge current in hybrid mode",
-      "name_cs": "Baterie - Max. vybíjecí proud hybrid",
+      "name_cs": "Baterie - Max. vyb\u00edjec\u00ed proud hybrid",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -3325,7 +3359,7 @@
     },
     "P_CAL_R": {
       "name": "Feeding grid power calibration R",
-      "name_cs": "Kalibrace - Výkon L1",
+      "name_cs": "Kalibrace - V\u00fdkon L1",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3336,7 +3370,7 @@
     },
     "P_CAL_S": {
       "name": "Feeding grid power calibration S",
-      "name_cs": "Kalibrace - Výkon L2",
+      "name_cs": "Kalibrace - V\u00fdkon L2",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3347,7 +3381,7 @@
     },
     "P_CAL_T": {
       "name": "Feeding grid power calibration T",
-      "name_cs": "Kalibrace - Výkon L3",
+      "name_cs": "Kalibrace - V\u00fdkon L3",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3358,7 +3392,7 @@
     },
     "BUZ_MUT": {
       "name": "Mute buzer alarm",
-      "name_cs": "Střídač - Ztlumit bzučák",
+      "name_cs": "St\u0159\u00edda\u010d - Ztlumit bzu\u010d\u00e1k",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3369,7 +3403,7 @@
     },
     "GEN_AC_SRC": {
       "name": "Generator as AC source",
-      "name_cs": "Síť - Generátor jako zdroj",
+      "name_cs": "S\u00ed\u0165 - Gener\u00e1tor jako zdroj",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3379,8 +3413,8 @@
       "entity_category": "diagnostic"
     },
     "PRUM": {
-      "name": "Průměrování",
-      "name_cs": "Kalibrace - Průměrování",
+      "name": "Pr\u016fm\u011brov\u00e1n\u00ed",
+      "name_cs": "Kalibrace - Pr\u016fm\u011brov\u00e1n\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3390,8 +3424,8 @@
       "entity_category": "diagnostic"
     },
     "OPAK_REG": {
-      "name": "Opakování regulace",
-      "name_cs": "Kalibrace - Opakování regulace",
+      "name": "Opakov\u00e1n\u00ed regulace",
+      "name_cs": "Kalibrace - Opakov\u00e1n\u00ed regulace",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3412,7 +3446,7 @@
       "entity_category": "diagnostic"
     },
     "KON_L1": {
-      "name": "Konstanata výkonu L1",
+      "name": "Konstanata v\u00fdkonu L1",
       "name_cs": "Kalibrace - Konstanta L1",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3423,7 +3457,7 @@
       "entity_category": "diagnostic"
     },
     "KON_L2": {
-      "name": "Konstanata výkonu L2",
+      "name": "Konstanata v\u00fdkonu L2",
       "name_cs": "Kalibrace - Konstanta L2",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3434,7 +3468,7 @@
       "entity_category": "diagnostic"
     },
     "KON_L3": {
-      "name": "Konstanata výkonu L3",
+      "name": "Konstanata v\u00fdkonu L3",
       "name_cs": "Kalibrace - Konstanta L3",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3445,7 +3479,7 @@
       "entity_category": "diagnostic"
     },
     "POS_L1": {
-      "name": "Posun výkonu L1",
+      "name": "Posun v\u00fdkonu L1",
       "name_cs": "Kalibrace - Posun L1",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3456,7 +3490,7 @@
       "entity_category": "diagnostic"
     },
     "POS_L2": {
-      "name": "Posun výkonu L2",
+      "name": "Posun v\u00fdkonu L2",
       "name_cs": "Kalibrace - Posun L2",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3467,7 +3501,7 @@
       "entity_category": "diagnostic"
     },
     "POS_L3": {
-      "name": "Posun výkonu L3",
+      "name": "Posun v\u00fdkonu L3",
       "name_cs": "Kalibrace - Posun L3",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3478,7 +3512,7 @@
       "entity_category": "diagnostic"
     },
     "NEC_L1": {
-      "name": "Necitlivost výkonu L1",
+      "name": "Necitlivost v\u00fdkonu L1",
       "name_cs": "Kalibrace - Necitlivost L1",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3489,7 +3523,7 @@
       "entity_category": "diagnostic"
     },
     "NEC_L2": {
-      "name": "Necitlivost výkonu L2",
+      "name": "Necitlivost v\u00fdkonu L2",
       "name_cs": "Kalibrace - Necitlivost L2",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3500,7 +3534,7 @@
       "entity_category": "diagnostic"
     },
     "NEC_L3": {
-      "name": "Necitlivost výkonu L3",
+      "name": "Necitlivost v\u00fdkonu L3",
       "name_cs": "Kalibrace - Necitlivost L3",
       "unit_of_measurement": "",
       "device_class": null,
@@ -3511,8 +3545,8 @@
       "entity_category": "diagnostic"
     },
     "SMER_PROUDU": {
-      "name": "Směr proudu",
-      "name_cs": "Kalibrace - Směr proudu",
+      "name": "Sm\u011br proudu",
+      "name_cs": "Kalibrace - Sm\u011br proudu",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3522,8 +3556,8 @@
       "entity_category": "diagnostic"
     },
     "TYP_": {
-      "name": "Typ a zapojení invertoru",
-      "name_cs": "Střídač - Typ a zapojení",
+      "name": "Typ a zapojen\u00ed invertoru",
+      "name_cs": "St\u0159\u00edda\u010d - Typ a zapojen\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3533,8 +3567,8 @@
       "entity_category": "diagnostic"
     },
     "A_MAX": {
-      "name": "Velikost přívodního jističe Distribuce",
-      "name_cs": "Síť - Velikost jističe",
+      "name": "Velikost p\u0159\u00edvodn\u00edho jisti\u010de Distribuce",
+      "name_cs": "S\u00ed\u0165 - Velikost jisti\u010de",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -3544,8 +3578,8 @@
       "entity_category": "diagnostic"
     },
     "CONSUM_LIQ": {
-      "name": "Průměrná spotřeba auta benzín / nafta na 100km",
-      "name_cs": "Wallbox - Spotřeba spalovací/100km",
+      "name": "Pr\u016fm\u011brn\u00e1 spot\u0159eba auta benz\u00edn / nafta na 100km",
+      "name_cs": "Wallbox - Spot\u0159eba spalovac\u00ed/100km",
       "unit_of_measurement": "L",
       "device_class": null,
       "state_class": null,
@@ -3555,9 +3589,9 @@
       "entity_category": "diagnostic"
     },
     "PRICE_LIQ": {
-      "name": "Cena PH 1l v Kč",
+      "name": "Cena PH 1l v K\u010d",
       "name_cs": "Wallbox - Cena paliva",
-      "unit_of_measurement": "Kč/l",
+      "unit_of_measurement": "K\u010d/l",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -3566,8 +3600,8 @@
       "entity_category": "diagnostic"
     },
     "CONSUM_EL": {
-      "name": "Průměrná spotřeba auta na el. na 100km",
-      "name_cs": "Wallbox - Spotřeba EV/100km",
+      "name": "Pr\u016fm\u011brn\u00e1 spot\u0159eba auta na el. na 100km",
+      "name_cs": "Wallbox - Spot\u0159eba EV/100km",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": null,
@@ -3577,9 +3611,9 @@
       "entity_category": "diagnostic"
     },
     "PRICE_ET1": {
-      "name": "Cena el. energie 1kWh v Kč",
+      "name": "Cena el. energie 1kWh v K\u010d",
       "name_cs": "Wallbox - Cena el. tarif 1",
-      "unit_of_measurement": "Kč/kWh",
+      "unit_of_measurement": "K\u010d/kWh",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -3588,9 +3622,9 @@
       "entity_category": "diagnostic"
     },
     "PRICE_ET2": {
-      "name": "Cena el. energie 1 kWh v Kč",
+      "name": "Cena el. energie 1 kWh v K\u010d",
       "name_cs": "Wallbox - Cena el. tarif 2",
-      "unit_of_measurement": "Kč/kWh",
+      "unit_of_measurement": "K\u010d/kWh",
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
@@ -3599,7 +3633,7 @@
       "entity_category": "diagnostic"
     },
     "CARACUSIZE": {
-      "name": "Velikost akumulátoru v automobilu",
+      "name": "Velikost akumul\u00e1toru v automobilu",
       "name_cs": "Wallbox - Kapacita baterie auta",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
@@ -3610,7 +3644,7 @@
       "entity_category": "diagnostic"
     },
     "ETOCAR": {
-      "name": "Dodána el. energie do automobilu",
+      "name": "Dod\u00e1na el. energie do automobilu",
       "name_cs": "Wallbox - Nabito do auta",
       "unit_of_measurement": "%",
       "device_class": null,
@@ -3620,8 +3654,8 @@
       "todo": false
     },
     "CHARGING": {
-      "name": "Dobíjení aktivní / neaktivní",
-      "name_cs": "Wallbox - Nabíjení aktivní",
+      "name": "Dob\u00edjen\u00ed aktivn\u00ed / neaktivn\u00ed",
+      "name_cs": "Wallbox - Nab\u00edjen\u00ed aktivn\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3630,8 +3664,8 @@
       "todo": false
     },
     "A_CHRG": {
-      "name": "Nastavení ručního dobíjecího proudu",
-      "name_cs": "Nabíječka - Ruční proud",
+      "name": "Nastaven\u00ed ru\u010dn\u00edho dob\u00edjec\u00edho proudu",
+      "name_cs": "Nab\u00edje\u010dka - Ru\u010dn\u00ed proud",
       "unit_of_measurement": "A",
       "device_class": "current",
       "state_class": null,
@@ -3652,8 +3686,8 @@
       "entity_category": "diagnostic"
     },
     "EPOWMAX": {
-      "name": "Auto ECO maximální odběr (1-10000W)",
-      "name_cs": "Wallbox - ECO max. odběr",
+      "name": "Auto ECO maxim\u00e1ln\u00ed odb\u011br (1-10000W)",
+      "name_cs": "Wallbox - ECO max. odb\u011br",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -3663,8 +3697,8 @@
       "entity_category": "diagnostic"
     },
     "EBATREC": {
-      "name": "Auto ECO baterie obnovení",
-      "name_cs": "Auto ECO - Baterie obnovení",
+      "name": "Auto ECO baterie obnoven\u00ed",
+      "name_cs": "Auto ECO - Baterie obnoven\u00ed",
       "unit_of_measurement": "%",
       "device_class": "battery",
       "state_class": null,
@@ -3674,8 +3708,8 @@
       "entity_category": "diagnostic"
     },
     "PHSS": {
-      "name": "Počet fází nabíječky",
-      "name_cs": "Wallbox - Počet fází",
+      "name": "Po\u010det f\u00e1z\u00ed nab\u00edje\u010dky",
+      "name_cs": "Wallbox - Po\u010det f\u00e1z\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3685,8 +3719,8 @@
       "entity_category": "diagnostic"
     },
     "EREGREP": {
-      "name": "Auto ECO opakování regulace",
-      "name_cs": "Wallbox - ECO opakování reg.",
+      "name": "Auto ECO opakov\u00e1n\u00ed regulace",
+      "name_cs": "Wallbox - ECO opakov\u00e1n\u00ed reg.",
       "unit_of_measurement": "s",
       "device_class": null,
       "state_class": null,
@@ -3707,8 +3741,8 @@
       "entity_category": "diagnostic"
     },
     "IDENT": {
-      "name": "Pořadové číslo nabíječky",
-      "name_cs": "Wallbox - ID nabíječky",
+      "name": "Po\u0159adov\u00e9 \u010d\u00edslo nab\u00edje\u010dky",
+      "name_cs": "Wallbox - ID nab\u00edje\u010dky",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3718,8 +3752,8 @@
       "entity_category": "diagnostic"
     },
     "ACT_P_L1": {
-      "name": "Wallbox výkon L1",
-      "name_cs": "Wallbox - Výkon L1",
+      "name": "Wallbox v\u00fdkon L1",
+      "name_cs": "Wallbox - V\u00fdkon L1",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -3728,8 +3762,8 @@
       "todo": false
     },
     "ACT_P_L2": {
-      "name": "Wallbox výkon L2",
-      "name_cs": "Wallbox - Výkon L2",
+      "name": "Wallbox v\u00fdkon L2",
+      "name_cs": "Wallbox - V\u00fdkon L2",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -3738,8 +3772,8 @@
       "todo": false
     },
     "ACT_P_L3": {
-      "name": "Wallbox výkon L3",
-      "name_cs": "Wallbox - Výkon L3",
+      "name": "Wallbox v\u00fdkon L3",
+      "name_cs": "Wallbox - V\u00fdkon L3",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": "measurement",
@@ -3748,8 +3782,8 @@
       "todo": false
     },
     "ACT_U_L1": {
-      "name": "Wallbox napětí L1",
-      "name_cs": "Wallbox - Napětí L1",
+      "name": "Wallbox nap\u011bt\u00ed L1",
+      "name_cs": "Wallbox - Nap\u011bt\u00ed L1",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -3758,8 +3792,8 @@
       "todo": false
     },
     "ACT_U_L2": {
-      "name": "Wallbox napětí L2",
-      "name_cs": "Wallbox - Napětí L2",
+      "name": "Wallbox nap\u011bt\u00ed L2",
+      "name_cs": "Wallbox - Nap\u011bt\u00ed L2",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -3768,8 +3802,8 @@
       "todo": false
     },
     "ACT_U_L3": {
-      "name": "Wallbox napětí L3",
-      "name_cs": "Wallbox - Napětí L3",
+      "name": "Wallbox nap\u011bt\u00ed L3",
+      "name_cs": "Wallbox - Nap\u011bt\u00ed L3",
       "unit_of_measurement": "V",
       "device_class": "voltage",
       "state_class": "measurement",
@@ -3808,7 +3842,7 @@
       "todo": false
     },
     "ETOCAR_D": {
-      "name": "Energie dodána do automobilu - denní",
+      "name": "Energie dod\u00e1na do automobilu - denn\u00ed",
       "name_cs": "Wallbox - Energie dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
@@ -3818,8 +3852,8 @@
       "todo": false
     },
     "ETOCAR_M": {
-      "name": "Energie dodána do automobilu - měsíční",
-      "name_cs": "Wallbox - Energie měsíc",
+      "name": "Energie dod\u00e1na do automobilu - m\u011bs\u00ed\u010dn\u00ed",
+      "name_cs": "Wallbox - Energie m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -3828,7 +3862,7 @@
       "todo": false
     },
     "ETOCAR_Y": {
-      "name": "Energie dodána do automobilu - roční",
+      "name": "Energie dod\u00e1na do automobilu - ro\u010dn\u00ed",
       "name_cs": "Wallbox - Energie rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
@@ -3838,7 +3872,7 @@
       "todo": false
     },
     "ETOCAR_PVB_D": {
-      "name": "Energie dodána do automobilu z FVE a baterek - denní",
+      "name": "Energie dod\u00e1na do automobilu z FVE a baterek - denn\u00ed",
       "name_cs": "Wallbox - Z FVE/bat. dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
@@ -3848,8 +3882,8 @@
       "todo": false
     },
     "ETOCAR_PVB_M": {
-      "name": "Energie dodána do automobilu z FVE a baterek - měsíční",
-      "name_cs": "Wallbox - Z FVE/bat. měsíc",
+      "name": "Energie dod\u00e1na do automobilu z FVE a baterek - m\u011bs\u00ed\u010dn\u00ed",
+      "name_cs": "Wallbox - Z FVE/bat. m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -3858,7 +3892,7 @@
       "todo": false
     },
     "ETOCAR_PVB_Y": {
-      "name": "Energie dodána do automobilu z FVE a baterek - roční",
+      "name": "Energie dod\u00e1na do automobilu z FVE a baterek - ro\u010dn\u00ed",
       "name_cs": "Wallbox - Z FVE/bat. rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
@@ -3868,8 +3902,8 @@
       "todo": false
     },
     "ETOCAR_G_D": {
-      "name": "Energie dodána do automobilu ze sítě - denní",
-      "name_cs": "Wallbox - Ze sítě dnes",
+      "name": "Energie dod\u00e1na do automobilu ze s\u00edt\u011b - denn\u00ed",
+      "name_cs": "Wallbox - Ze s\u00edt\u011b dnes",
       "unit_of_measurement": "Wh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -3878,8 +3912,8 @@
       "todo": false
     },
     "ETOCAR_G_M": {
-      "name": "Energie dodána do automobilu ze sítě - měsíční",
-      "name_cs": "Wallbox - Ze sítě měsíc",
+      "name": "Energie dod\u00e1na do automobilu ze s\u00edt\u011b - m\u011bs\u00ed\u010dn\u00ed",
+      "name_cs": "Wallbox - Ze s\u00edt\u011b m\u011bs\u00edc",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -3888,8 +3922,8 @@
       "todo": false
     },
     "ETOCAR_G_Y": {
-      "name": "Energie dodána do automobilu ze sítě - roční",
-      "name_cs": "Wallbox - Ze sítě rok",
+      "name": "Energie dod\u00e1na do automobilu ze s\u00edt\u011b - ro\u010dn\u00ed",
+      "name_cs": "Wallbox - Ze s\u00edt\u011b rok",
       "unit_of_measurement": "kWh",
       "device_class": "energy",
       "state_class": "total_increasing",
@@ -3899,7 +3933,7 @@
     },
     "WFIX": {
       "name": "WFIX",
-      "name_cs": "Bojler - Fixní výkon",
+      "name_cs": "Bojler - Fixn\u00ed v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -3921,7 +3955,7 @@
     },
     "BAT_CH_HI": {
       "name": "BAT_CH_HI",
-      "name_cs": "Baterie - Horní mez nabíjení",
+      "name_cs": "Baterie - Horn\u00ed mez nab\u00edjen\u00ed",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": null,
@@ -3932,7 +3966,7 @@
     },
     "PVMIN0": {
       "name": "PVMIN0",
-      "name_cs": "FVE - Min. úroveň nulová",
+      "name_cs": "FVE - Min. \u00farove\u0148 nulov\u00e1",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -3942,8 +3976,8 @@
       "entity_category": "diagnostic"
     },
     "Result": {
-      "name": "Výsledek",
-      "name_cs": "Systém - Výsledek",
+      "name": "V\u00fdsledek",
+      "name_cs": "Syst\u00e9m - V\u00fdsledek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3954,7 +3988,7 @@
     },
     "BAT_DI_HI": {
       "name": "BAT_DI_HI",
-      "name_cs": "Baterie - Horní mez vybíjení",
+      "name_cs": "Baterie - Horn\u00ed mez vyb\u00edjen\u00ed",
       "unit_of_measurement": "%",
       "device_class": null,
       "state_class": null,
@@ -3964,8 +3998,8 @@
       "entity_category": "diagnostic"
     },
     "W": {
-      "name": "Instalovaný výkon bojleru",
-      "name_cs": "Bojler - Instalovaný výkon",
+      "name": "Instalovan\u00fd v\u00fdkon bojleru",
+      "name_cs": "Bojler - Instalovan\u00fd v\u00fdkon",
       "unit_of_measurement": "W",
       "device_class": "power",
       "state_class": null,
@@ -3975,8 +4009,8 @@
       "entity_category": "diagnostic"
     },
     "Rdt": {
-      "name": "Čas dat",
-      "name_cs": "Systém - Čas dat",
+      "name": "\u010cas dat",
+      "name_cs": "Syst\u00e9m - \u010cas dat",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -3987,7 +4021,7 @@
     },
     "DOMAIN": {
       "name": "DOMAIN",
-      "name_cs": "Komunikace - Doména",
+      "name_cs": "Komunikace - Dom\u00e9na",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -3998,7 +4032,7 @@
     },
     "HGVI_E": {
       "name": "HGVI_E",
-      "name_cs": "Síť - HGVI konec",
+      "name_cs": "S\u00ed\u0165 - HGVI konec",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4009,7 +4043,7 @@
     },
     "Tmr": {
       "name": "Tmr",
-      "name_cs": "Systém - Timer",
+      "name_cs": "Syst\u00e9m - Timer",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4020,7 +4054,7 @@
     },
     "Up": {
       "name": "TODO Up",
-      "name_cs": "Systém - Uptime",
+      "name_cs": "Syst\u00e9m - Uptime",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4031,7 +4065,7 @@
     },
     "ENBL": {
       "name": "ENBL",
-      "name_cs": "Systém - Povoleno",
+      "name_cs": "Syst\u00e9m - Povoleno",
       "unit_of_measurement": "",
       "device_class": "power",
       "state_class": null,
@@ -4043,7 +4077,7 @@
     },
     "UTC": {
       "name": "UTC",
-      "name_cs": "Systém - UTC čas",
+      "name_cs": "Syst\u00e9m - UTC \u010das",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4054,7 +4088,7 @@
     },
     "HGVI_S": {
       "name": "HGVI_S",
-      "name_cs": "Síť - HGVI začátek",
+      "name_cs": "S\u00ed\u0165 - HGVI za\u010d\u00e1tek",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4076,7 +4110,7 @@
     },
     "Lat": {
       "name": "Latence",
-      "name_cs": "Systém - Latence",
+      "name_cs": "Syst\u00e9m - Latence",
       "unit_of_measurement": "ms",
       "device_class": null,
       "state_class": "measurement",
@@ -4087,7 +4121,7 @@
     },
     "FA2": {
       "name": "FA2",
-      "name_cs": "Jistič - Rezerva 2",
+      "name_cs": "Jisti\u010d - Rezerva 2",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4098,7 +4132,7 @@
     },
     "EX": {
       "name": "EX",
-      "name_cs": "Systém - Expanze",
+      "name_cs": "Syst\u00e9m - Expanze",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4109,7 +4143,7 @@
     },
     "ID_SubD": {
       "name": "ID_SubD",
-      "name_cs": "Systém - ID sub-device",
+      "name_cs": "Syst\u00e9m - ID sub-device",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4120,7 +4154,7 @@
     },
     "VIZ": {
       "name": "Vizualizace",
-      "name_cs": "Systém - Vizualizace",
+      "name_cs": "Syst\u00e9m - Vizualizace",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4131,7 +4165,7 @@
     },
     "Fw": {
       "name": "Verze FW",
-      "name_cs": "Střídač - Verze FW",
+      "name_cs": "St\u0159\u00edda\u010d - Verze FW",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4142,7 +4176,7 @@
     },
     "RE": {
       "name": "RE",
-      "name_cs": "Systém - RE",
+      "name_cs": "Syst\u00e9m - RE",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4153,7 +4187,7 @@
     },
     "STAT": {
       "name": "Status",
-      "name_cs": "Střídač - Status",
+      "name_cs": "St\u0159\u00edda\u010d - Status",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4163,8 +4197,8 @@
       "entity_category": "diagnostic"
     },
     "ERR_PV_warnings": {
-      "name": "Varování FV",
-      "name_cs": "FVE - Varování",
+      "name": "Varov\u00e1n\u00ed FV",
+      "name_cs": "FVE - Varov\u00e1n\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4175,7 +4209,7 @@
     },
     "CARCHARGE": {
       "name": "CARCHARGE",
-      "name_cs": "Wallbox - Nabíjení auta",
+      "name_cs": "Wallbox - Nab\u00edjen\u00ed auta",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4185,7 +4219,7 @@
     },
     "LO_DAY_MAX": {
       "name": "LO_DAY_MAX",
-      "name_cs": "Baterie - Max dní balancování",
+      "name_cs": "Baterie - Max dn\u00ed balancov\u00e1n\u00ed",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4196,7 +4230,7 @@
     },
     "TYP": {
       "name": "TYP",
-      "name_cs": "Střídač - Typ",
+      "name_cs": "St\u0159\u00edda\u010d - Typ",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4207,7 +4241,7 @@
     },
     "BAT_DI": {
       "name": "BAT_DI",
-      "name_cs": "Baterie - Vybíjení povoleno",
+      "name_cs": "Baterie - Vyb\u00edjen\u00ed povoleno",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4235,42 +4269,42 @@
       "key": "ERR_PV",
       "warning_code": null,
       "remark": "Solar input 1 loss",
-      "remark_cs": "Výpadek FV vstupu 1"
+      "remark_cs": "V\u00fdpadek FV vstupu 1"
     },
     {
       "bit": 4,
       "key": "ERR_PV",
       "warning_code": null,
       "remark": "Solar input 2 loss",
-      "remark_cs": "Výpadek FV vstupu 2"
+      "remark_cs": "V\u00fdpadek FV vstupu 2"
     },
     {
       "bit": 2,
       "key": "ERR_PV",
       "warning_code": 17,
       "remark": "Solar input 1 voltage too higher",
-      "remark_cs": "Příliš vysoké napětí FV1"
+      "remark_cs": "P\u0159\u00edli\u0161 vysok\u00e9 nap\u011bt\u00ed FV1"
     },
     {
       "bit": 1,
       "key": "ERR_PV",
       "warning_code": 17,
       "remark": "Solar input 2 voltage too higher",
-      "remark_cs": "Příliš vysoké napětí FV2"
+      "remark_cs": "P\u0159\u00edli\u0161 vysok\u00e9 nap\u011bt\u00ed FV2"
     },
     {
       "bit": 16,
       "key": "ERR_BATT",
       "warning_code": 14,
       "remark": "Battery under",
-      "remark_cs": "Příliš nízké napětí baterie"
+      "remark_cs": "P\u0159\u00edli\u0161 n\u00edzk\u00e9 nap\u011bt\u00ed baterie"
     },
     {
       "bit": 8,
       "key": "ERR_BATT",
       "warning_code": 13,
       "remark": "Battery Low",
-      "remark_cs": "Baterie nízká"
+      "remark_cs": "Baterie n\u00edzk\u00e1"
     },
     {
       "bit": 4,
@@ -4284,105 +4318,105 @@
       "key": "ERR_BATT",
       "warning_code": null,
       "remark": "Battery voltage too higher",
-      "remark_cs": "Příliš vysoké napětí baterie"
+      "remark_cs": "P\u0159\u00edli\u0161 vysok\u00e9 nap\u011bt\u00ed baterie"
     },
     {
       "bit": 1,
       "key": "ERR_BATT",
       "warning_code": 16,
       "remark": "Battery low in hybrid mode",
-      "remark_cs": "Nízká baterie v hybridním režimu"
+      "remark_cs": "N\u00edzk\u00e1 baterie v hybridn\u00edm re\u017eimu"
     },
     {
       "bit": 8,
       "key": "ERR_GRID",
       "warning_code": 1,
       "remark": "Grid voltage high loss",
-      "remark_cs": "Výpadek sítě – vysoké napětí"
+      "remark_cs": "V\u00fdpadek s\u00edt\u011b \u2013 vysok\u00e9 nap\u011bt\u00ed"
     },
     {
       "bit": 4,
       "key": "ERR_GRID",
       "warning_code": 2,
       "remark": "Grid voltage low loss",
-      "remark_cs": "Výpadek sítě – nízké napětí"
+      "remark_cs": "V\u00fdpadek s\u00edt\u011b \u2013 n\u00edzk\u00e9 nap\u011bt\u00ed"
     },
     {
       "bit": 2,
       "key": "ERR_GRID",
       "warning_code": 3,
       "remark": "Grid frequency high loss",
-      "remark_cs": "Výpadek sítě – vysoká frekvence"
+      "remark_cs": "V\u00fdpadek s\u00edt\u011b \u2013 vysok\u00e1 frekvence"
     },
     {
       "bit": 1,
       "key": "ERR_GRID",
       "warning_code": 4,
       "remark": "Grid frequency low loss",
-      "remark_cs": "Výpadek sítě – nízká frekvence"
+      "remark_cs": "V\u00fdpadek s\u00edt\u011b \u2013 n\u00edzk\u00e1 frekvence"
     },
     {
       "bit": 16,
       "key": "ERR_AC",
       "warning_code": 5,
       "remark": "AC input long-time average voltage over",
-      "remark_cs": "AC vstup – dlouhodobě vysoké napětí"
+      "remark_cs": "AC vstup \u2013 dlouhodob\u011b vysok\u00e9 nap\u011bt\u00ed"
     },
     {
       "bit": 8,
       "key": "ERR_AC",
       "warning_code": null,
       "remark": "AC input voltage loss",
-      "remark_cs": "AC vstup – ztráta napětí"
+      "remark_cs": "AC vstup \u2013 ztr\u00e1ta nap\u011bt\u00ed"
     },
     {
       "bit": 4,
       "key": "ERR_AC",
       "warning_code": null,
       "remark": "AC input frequency loss",
-      "remark_cs": "AC vstup – ztráta frekvence"
+      "remark_cs": "AC vstup \u2013 ztr\u00e1ta frekvence"
     },
     {
       "bit": 2,
       "key": "ERR_AC",
       "warning_code": 7,
       "remark": "AC input island",
-      "remark_cs": "AC vstup – ostrovní režim"
+      "remark_cs": "AC vstup \u2013 ostrovn\u00ed re\u017eim"
     },
     {
       "bit": 1,
       "key": "ERR_AC",
       "warning_code": 9,
       "remark": "AC input phase dislocation",
-      "remark_cs": "AC vstup – nesoulad fází"
+      "remark_cs": "AC vstup \u2013 nesoulad f\u00e1z\u00ed"
     },
     {
       "bit": 8,
       "key": "ERR_ELSE",
       "warning_code": 12,
       "remark": "Over temperature",
-      "remark_cs": "Přehřátí"
+      "remark_cs": "P\u0159eh\u0159\u00e1t\u00ed"
     },
     {
       "bit": 4,
       "key": "ERR_ELSE",
       "warning_code": 11,
       "remark": "Over Load",
-      "remark_cs": "Přetížení"
+      "remark_cs": "P\u0159et\u00ed\u017een\u00ed"
     },
     {
       "bit": 2,
       "key": "ERR_ELSE",
       "warning_code": 10,
       "remark": "EPO Active",
-      "remark_cs": "Nouzové vypnutí (EPO) aktivní"
+      "remark_cs": "Nouzov\u00e9 vypnut\u00ed (EPO) aktivn\u00ed"
     },
     {
       "bit": 1,
       "key": "ERR_ELSE",
       "warning_code": 8,
       "remark": "AC input wave loss",
-      "remark_cs": "AC vstup – ztráta sinusovky"
+      "remark_cs": "AC vstup \u2013 ztr\u00e1ta sinusovky"
     }
   ]
 }

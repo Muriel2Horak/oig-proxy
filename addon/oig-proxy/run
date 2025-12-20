@@ -91,6 +91,30 @@ else
   bashio::log.info "🕹️ Control over MQTT: DISABLED"
 fi
 
+# CONTROL_MQTT_RETAIN - optional (retain last result for debugging)
+CONTROL_MQTT_RETAIN_RAW=$(bashio::config 'control_mqtt_retain' 2>/dev/null)
+if [ -z "$CONTROL_MQTT_RETAIN_RAW" ] || [ "$CONTROL_MQTT_RETAIN_RAW" = "null" ]; then
+  if [ -f /data/control_mqtt_retain ]; then
+    CONTROL_MQTT_RETAIN_RAW=$(cat /data/control_mqtt_retain 2>/dev/null | tr -d '\r\n' | xargs)
+  fi
+fi
+if [ "$CONTROL_MQTT_RETAIN_RAW" = "true" ] || [ "$CONTROL_MQTT_RETAIN_RAW" = "1" ]; then
+  export CONTROL_MQTT_RETAIN="true"
+  bashio::log.info "🧲 Control MQTT retain: ENABLED"
+fi
+
+# CONTROL_MQTT_LOG_ENABLED - optional (persist results to /data)
+CONTROL_MQTT_LOG_ENABLED_RAW=$(bashio::config 'control_mqtt_log_enabled' 2>/dev/null)
+if [ -z "$CONTROL_MQTT_LOG_ENABLED_RAW" ] || [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "null" ]; then
+  if [ -f /data/control_mqtt_log_enabled ]; then
+    CONTROL_MQTT_LOG_ENABLED_RAW=$(cat /data/control_mqtt_log_enabled 2>/dev/null | tr -d '\r\n' | xargs)
+  fi
+fi
+if [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "true" ] || [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "1" ]; then
+  export CONTROL_MQTT_LOG_ENABLED="true"
+  bashio::log.info "📝 Control MQTT log: ENABLED"
+fi
+
 # CAPTURE_PAYLOADS - boolean z config
 CAPTURE_RAW=$(bashio::config 'capture_payloads')
 if [ "$CAPTURE_RAW" = "true" ] || [ "$CAPTURE_RAW" = "1" ]; then

@@ -35,6 +35,7 @@ class SensorConfig:
     entity_category: str | None = None
     options: list[str] | None = None  # Pro enum device_class
     is_binary: bool = False  # True pro binary_sensor
+    json_attributes_topic: str | None = None
 
 
 # ============================================================================

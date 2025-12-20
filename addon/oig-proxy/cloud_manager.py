@@ -10,6 +10,8 @@ import sqlite3
 import time
 from typing import Any
 
+from oig_frame import build_frame
+
 from config import (
     CLOUD_HEALTH_CHECK_INTERVAL,
     CLOUD_HEALTH_CHECK_TIMEOUT,
@@ -342,65 +344,26 @@ class ACKLearner:
     """Učí se ACK patterns z cloudu pro offline režim."""
     
     def __init__(self):
-        # Learned ACK patterns (table_name -> ACK response)
-        self.patterns: dict[str, str] = {}
-        
-        # Default ACK (learned pattern z analýzy - 92.4% stejných)
-        self.default_ack = (
-            '<Frame><Result>ACK</Result>'
-            '<ToDo>GetActual</ToDo>'
-            '<CRC>00167</CRC></Frame>'
-        )
-        
-        # Inicializuj s known patterns z analýzy
-        self._init_known_patterns()
-    
-    def _init_known_patterns(self):
-        """Inicializuje známé ACK patterns z analýzy."""
-        # Standard ACK pro většinu tabulek (CRC 00167)
-        standard_ack = self.default_ack
-        
-        for table in [
-            "tbl_actual", "tbl_dc_in", "tbl_ac_in", "tbl_ac_out",
-            "tbl_batt", "tbl_boiler", "tbl_box", "tbl_events",
-            "tbl_batt_prms", "tbl_invertor_prms", "tbl_box_prms"
-        ]:
-            self.patterns[table] = standard_ack
-        
-        # IsNewSet polling (CRC 34500)
-        end_response = '<Frame><Result>END</Result><CRC>34500</CRC></Frame>'
-        for query in ["IsNewSet", "IsNewWeather", "IsNewFW"]:
-            self.patterns[query] = end_response
-        
-        logger.info(
-            f"ACKLearner: Initialized with {len(self.patterns)} patterns"
-        )
+        # ACK/END generujeme s korektnim CRC, bez ukladani vzoru.
+        self._ack_inner = "<Result>ACK</Result><ToDo>GetActual</ToDo>"
+        self._end_inner = "<Result>END</Result>"
+        self._end_queries = {"IsNewSet", "IsNewWeather", "IsNewFW"}
+        logger.info("ACKLearner: Initialized with generated ACK/END CRC")
     
     def learn_from_cloud(self, cloud_response: str, table_name: str):
         """Naučí se ACK pattern z cloud odpovědi."""
-        if not table_name or not cloud_response:
-            return
-        
-        # Extrahuj jen ACK/END frame (ignoruj ostatní)
-        if "<Result>ACK</Result>" in cloud_response or \
-           "<Result>END</Result>" in cloud_response:
-            # Update pattern pokud ještě nemáme nebo je jiný
-            if table_name not in self.patterns or \
-               self.patterns[table_name] != cloud_response:
-                self.patterns[table_name] = cloud_response
-                logger.debug(
-                    f"ACKLearner: Learned pattern for {table_name}"
-                )
+        # Učení CRC vypnuto: používáme pouze známé patterny.
+        return
     
     def generate_ack(self, table_name: str | None) -> str:
         """Vygeneruje ACK response pro danou tabulku."""
-        if table_name and table_name in self.patterns:
-            return self.patterns[table_name]
-        return self.default_ack
+        if table_name and table_name in self._end_queries:
+            return build_frame(self._end_inner, add_crlf=False)
+        return build_frame(self._ack_inner, add_crlf=False)
     
     def get_stats(self) -> dict[str, Any]:
         """Vrátí statistiky o naučených patterns."""
         return {
-            "total_patterns": len(self.patterns),
-            "tables": list(self.patterns.keys())
+            "total_patterns": 0,
+            "tables": []
         }

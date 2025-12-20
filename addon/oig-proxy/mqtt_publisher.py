@@ -4,6 +4,7 @@ MQTT Publisher s persistentní frontou a replay.
 """
 
 import asyncio
+import concurrent.futures
 import datetime
 import json
 import logging
@@ -101,6 +102,12 @@ class MQTTQueue:
                         f"MQTTQueue full ({self.max_size}), "
                         "dropped oldest message"
                     )
+
+                # Pokud je zpráva retain, typicky nás zajímá jen poslední stav/config pro daný topic.
+                # Tímhle zabráníme tomu, aby po delším výpadku brokera replay poslal tisíce historických
+                # stavů pro stejný topic (což v HA fan-outne do spousty state_changed událostí).
+                if retain:
+                    self.conn.execute("DELETE FROM queue WHERE topic = ?", (topic,))
                 
                 import time as time_module
                 from utils import iso_now
@@ -198,6 +205,8 @@ class MQTTPublisher:
         self._last_payload_by_topic: dict[str, str] = {}
         self._local_tzinfo = datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
         self._message_handlers: dict[str, tuple[int, Callable[[str, bytes, int, bool], None]]] = {}
+        self._main_loop: asyncio.AbstractEventLoop | None = None
+        self._replay_future: concurrent.futures.Future[Any] | None = None
         
         # Queue
         self.queue = MQTTQueue()
@@ -220,6 +229,13 @@ class MQTTPublisher:
         if not MQTT_AVAILABLE:
             logger.error("MQTT knihovna paho-mqtt není nainstalována")
             return False
+
+        # Pokud connect voláme z asyncio kontextu, uložíme si loop pro thread-safe scheduling.
+        if self._main_loop is None:
+            try:
+                self._main_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._main_loop = None
         
         timeout = timeout or self.CONNECT_TIMEOUT
         
@@ -319,18 +335,7 @@ class MQTTPublisher:
                     logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
             
             # Trigger replay
-            if self._replay_task is None or self._replay_task.done():
-                try:
-                    loop = asyncio.get_running_loop()
-                    self._replay_task = loop.create_task(
-                        self.replay_queue()
-                    )
-                    logger.info("MQTT: Replay task started")
-                except RuntimeError:
-                    # No event loop in MQTT thread - schedule on main loop
-                    logger.debug(
-                        "MQTT: Callback v threadu - skipuju replay task"
-                    )
+            self._schedule_replay()
         else:
             logger.error(f"MQTT: ❌ Připojení odmítnuto: {rc_msg}")
             self.connected = False
@@ -516,6 +521,26 @@ class MQTTPublisher:
                 self.health_check_loop()
             )
 
+    def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Naváže asyncio loop (pro scheduling z MQTT threadu)."""
+        self._main_loop = loop
+
+    def _schedule_replay(self) -> None:
+        """Naplánuje replay MQTT fronty do asyncio loopu (thread-safe)."""
+        if self._main_loop is None:
+            logger.debug("MQTT: Replay skip - nemám asyncio loop")
+            return
+        if self._replay_future is not None and not self._replay_future.done():
+            return
+        try:
+            self._replay_future = asyncio.run_coroutine_threadsafe(
+                self.replay_queue(),
+                self._main_loop,
+            )
+            logger.info("MQTT: Replay task scheduled")
+        except Exception as e:
+            logger.debug(f"MQTT: Replay schedule failed: {e}")
+
     @staticmethod
     def _state_topic(dev_id: str, table: str | None) -> str:
         if table:
@@ -561,6 +586,11 @@ class MQTTPublisher:
                 "model": f"OIG BatteryBox - {device_name}",
             },
         }
+        if config.json_attributes_topic:
+            if config.json_attributes_topic == "state":
+                payload["json_attributes_topic"] = self._state_topic(device_id, table)
+            else:
+                payload["json_attributes_topic"] = config.json_attributes_topic
 
         if device_type not in ("inverter", "proxy"):
             payload["device"]["via_device"] = f"{MQTT_NAMESPACE}_{self.device_id}_inverter"

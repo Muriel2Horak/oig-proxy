@@ -9,6 +9,7 @@ import socket
 import time
 import random
 import json
+import uuid
 from collections import deque
 from contextlib import suppress
 import re
@@ -27,13 +28,19 @@ from config import (
     CONTROL_MQTT_ENABLED,
     CONTROL_MQTT_MODE_QUIET_SECONDS,
     CONTROL_MQTT_QOS,
+    CONTROL_MQTT_LOG_ENABLED,
+    CONTROL_MQTT_LOG_PATH,
+    CONTROL_MQTT_PENDING_PATH,
     CONTROL_MQTT_RETAIN,
     CONTROL_MQTT_RESULT_TOPIC,
     CONTROL_MQTT_SET_TOPIC,
+    CONTROL_MQTT_STATUS_PREFIX,
+    CONTROL_MQTT_STATUS_RETAIN,
     CONTROL_WRITE_WHITELIST,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
+    PROXY_STATUS_ATTRS_TOPIC,
     REPLAY_ACK_TIMEOUT,
     TARGET_PORT,
     TARGET_SERVER,
@@ -98,13 +105,23 @@ class OIGProxy:
         self._control_mqtt_enabled: bool = bool(CONTROL_MQTT_ENABLED)
         self._control_set_topic: str = CONTROL_MQTT_SET_TOPIC
         self._control_result_topic: str = CONTROL_MQTT_RESULT_TOPIC
+        self._control_status_prefix: str = CONTROL_MQTT_STATUS_PREFIX
         self._control_qos: int = int(CONTROL_MQTT_QOS)
         self._control_retain: bool = bool(CONTROL_MQTT_RETAIN)
+        self._control_status_retain: bool = bool(CONTROL_MQTT_STATUS_RETAIN)
+        self._control_log_enabled: bool = bool(CONTROL_MQTT_LOG_ENABLED)
+        self._control_log_path: str = str(CONTROL_MQTT_LOG_PATH)
         self._control_box_ready_s: float = float(CONTROL_MQTT_BOX_READY_SECONDS)
         self._control_ack_timeout_s: float = float(CONTROL_MQTT_ACK_TIMEOUT_S)
         self._control_applied_timeout_s: float = float(CONTROL_MQTT_APPLIED_TIMEOUT_S)
         self._control_mode_quiet_s: float = float(CONTROL_MQTT_MODE_QUIET_SECONDS)
         self._control_whitelist: dict[str, set[str]] = CONTROL_WRITE_WHITELIST
+        self._control_max_attempts: int = 5
+        self._control_retry_delay_s: float = 20.0
+        self._control_session_id: str = uuid.uuid4().hex
+        self._control_pending_path: str = str(CONTROL_MQTT_PENDING_PATH)
+        self._control_pending_keys: set[str] = self._control_load_pending_keys()
+        self._proxy_status_attrs_topic: str = str(PROXY_STATUS_ATTRS_TOPIC)
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
@@ -112,6 +129,9 @@ class OIGProxy:
         self._control_ack_task: asyncio.Task[Any] | None = None
         self._control_applied_task: asyncio.Task[Any] | None = None
         self._control_quiet_task: asyncio.Task[Any] | None = None
+        self._control_retry_task: asyncio.Task[Any] | None = None
+        self._control_last_result: dict[str, Any] | None = None
+        self._control_key_state: dict[str, dict[str, Any]] = {}
 
         self._box_connected_since_epoch: float | None = None
         self._last_values: dict[tuple[str, str], Any] = {}
@@ -145,6 +165,7 @@ class OIGProxy:
     async def start(self):
         """Spustí proxy server."""
         self._loop = asyncio.get_running_loop()
+        self.mqtt_publisher.attach_loop(self._loop)
 
         if CONTROL_API_PORT and CONTROL_API_PORT > 0:
             try:
@@ -191,6 +212,7 @@ class OIGProxy:
         await self.publish_proxy_status()
         await self._publish_mode_if_ready(reason="startup")
         await self._publish_prms_if_ready(reason="startup")
+        await self._control_publish_restart_errors()
         self._mqtt_was_ready = self.mqtt_publisher.is_ready()
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._proxy_status_loop())
@@ -212,9 +234,15 @@ class OIGProxy:
 
     def _build_status_payload(self) -> dict[str, Any]:
         """Vytvoří payload pro proxy_status MQTT sensor."""
+        inflight = self._control_inflight
+        inflight_str = self._format_control_tx(inflight) if inflight else ""
+        last_result_str = self._format_control_result(self._control_last_result)
+        inflight_key = str(inflight.get("request_key") or "") if inflight else ""
+        queue_keys = [str(tx.get("request_key") or "") for tx in list(self._control_queue)]
         payload = {
             "status": self.mode.value,
             "mode": self.mode.value,
+            "control_session_id": self._control_session_id,
             "box_device_id": self.device_id if self.device_id != "AUTO" else None,
             "cloud_online": int(self.cloud_health.is_online),
             "cloud_connects": self.cloud_connects,
@@ -237,8 +265,49 @@ class OIGProxy:
             "isnewset_last_poll": self._isnew_last_poll_iso,
             "isnewset_last_response": self._isnew_last_response,
             "isnewset_last_rtt_ms": self._isnew_last_rtt_ms,
+            "control_queue_len": len(self._control_queue),
+            "control_inflight": inflight_str,
+            "control_inflight_key": inflight_key,
+            "control_queue_keys": [k for k in queue_keys if k],
+            "control_last_result": last_result_str,
         }
         return payload
+
+    def _build_status_attrs_payload(self) -> dict[str, Any]:
+        inflight_key = str(self._control_inflight.get("request_key") or "") if self._control_inflight else ""
+        queue_keys = [str(tx.get("request_key") or "") for tx in list(self._control_queue)]
+        return {
+            "control_inflight_key": inflight_key,
+            "control_queue_keys": [k for k in queue_keys if k],
+        }
+
+    @staticmethod
+    def _format_control_tx(tx: dict[str, Any] | None) -> str:
+        if not tx:
+            return ""
+        tbl = str(tx.get("tbl_name") or "")
+        item = str(tx.get("tbl_item") or "")
+        val = str(tx.get("new_value") or "")
+        stage = str(tx.get("stage") or "")
+        attempts = tx.get("_attempts")
+        tx_id = str(tx.get("tx_id") or "")
+        if attempts is None:
+            return f"{tbl}/{item}={val} ({stage}) tx={tx_id}".strip()
+        return f"{tbl}/{item}={val} ({stage} {attempts}) tx={tx_id}".strip()
+
+    @staticmethod
+    def _format_control_result(result: dict[str, Any] | None) -> str:
+        if not result:
+            return ""
+        status = str(result.get("status") or "")
+        tbl = str(result.get("tbl_name") or "")
+        item = str(result.get("tbl_item") or "")
+        val = str(result.get("new_value") or "")
+        err = result.get("error")
+        tx_id = str(result.get("tx_id") or "")
+        if err:
+            return f"{status} {tbl}/{item}={val} err={err} tx={tx_id}".strip()
+        return f"{status} {tbl}/{item}={val} tx={tx_id}".strip()
 
     async def publish_proxy_status(self) -> None:
         """Publikuje stav proxy."""
@@ -247,6 +316,15 @@ class OIGProxy:
             await self.mqtt_publisher.publish_proxy_status(payload)
         except Exception as e:
             logger.debug(f"Proxy status publish failed: {e}")
+        try:
+            await self.mqtt_publisher.publish_raw(
+                topic=self._proxy_status_attrs_topic,
+                payload=json.dumps(self._build_status_attrs_payload(), ensure_ascii=True),
+                qos=self._control_qos,
+                retain=True,
+            )
+        except Exception as e:
+            logger.debug(f"Proxy status attrs publish failed: {e}")
 
     async def _publish_mode_if_ready(
         self,
@@ -691,6 +769,15 @@ class OIGProxy:
                 self._active_box_writer = None
                 self._active_box_peer = None
 
+    async def _control_note_box_disconnect(self) -> None:
+        """Mark inflight control command as interrupted by box disconnect."""
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None:
+                return
+            if tx.get("stage") in ("sent_to_box", "accepted"):
+                tx["disconnected"] = True
+
     async def handle_connection(
         self,
         reader: asyncio.StreamReader,
@@ -715,6 +802,8 @@ class OIGProxy:
             await self._close_writer(writer)
             self.box_connected = False
             self._box_connected_since_epoch = None
+            if self._control_mqtt_enabled:
+                await self._control_note_box_disconnect()
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
     
@@ -1007,6 +1096,7 @@ class OIGProxy:
             self._cache_last_values(parsed, table_name)
             await self._control_observe_box_frame(parsed, table_name, frame)
             await self._maybe_process_mode(parsed, table_name, device_id)
+            await self._control_maybe_start_next()
             await self.mqtt_publisher.publish_data(parsed)
 
         return device_id, table_name
@@ -1211,6 +1301,7 @@ class OIGProxy:
     ) -> None:
         payload: dict[str, Any] = {
             "tx_id": tx.get("tx_id"),
+            "request_key": tx.get("request_key"),
             "device_id": None if self.device_id == "AUTO" else self.device_id,
             "tbl_name": tx.get("tbl_name"),
             "tbl_item": tx.get("tbl_item"),
@@ -1222,12 +1313,133 @@ class OIGProxy:
         }
         if extra:
             payload.update(extra)
+        self._control_last_result = payload
         await self.mqtt_publisher.publish_raw(
             topic=self._control_result_topic,
-            payload=json.dumps(payload, ensure_ascii=False),
+            payload=json.dumps(payload, ensure_ascii=True),
             qos=self._control_qos,
             retain=self._control_retain,
         )
+        if self._control_log_enabled:
+            try:
+                with open(self._control_log_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+            except Exception as e:
+                logger.debug(f"CONTROL: Log write failed: {e}")
+        try:
+            await self.publish_proxy_status()
+        except Exception as e:
+            logger.debug(f"CONTROL: Status publish failed: {e}")
+
+        key_state = self._control_result_key_state(status=status, detail=detail)
+        if key_state:
+            try:
+                await self._control_publish_key_status(tx=tx, state=key_state, detail=detail)
+            except Exception as e:
+                logger.debug(f"CONTROL: Key status publish failed: {e}")
+
+    @staticmethod
+    def _control_build_request_key(
+        *, tbl_name: str, tbl_item: str, canon_value: str
+    ) -> str:
+        return f"{tbl_name}/{tbl_item}/{canon_value}"
+
+    def _control_status_topic(self, request_key: str) -> str:
+        return f"{self._control_status_prefix}/{request_key}"
+
+    @staticmethod
+    def _control_result_key_state(status: str, detail: str | None) -> str | None:
+        if status == "completed" and detail in ("duplicate_ignored", "noop_already_set"):
+            return None
+        mapping = {
+            "accepted": "queued",
+            "deferred": "queued",
+            "sent_to_box": "sent",
+            "box_ack": "acked",
+            "applied": "applied",
+            "completed": "done",
+            "error": "error",
+        }
+        return mapping.get(status)
+
+    async def _control_publish_key_status(
+        self, *, tx: dict[str, Any], state: str, detail: str | None = None
+    ) -> None:
+        request_key = str(tx.get("request_key") or "").strip()
+        if not request_key:
+            return
+        payload: dict[str, Any] = {
+            "request_key": request_key,
+            "state": state,
+            "tx_id": tx.get("tx_id"),
+            "tbl_name": tx.get("tbl_name"),
+            "tbl_item": tx.get("tbl_item"),
+            "new_value": tx.get("new_value"),
+            "detail": detail,
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        self._control_key_state[request_key] = payload
+        self._control_update_pending_keys(request_key=request_key, state=state)
+        await self.mqtt_publisher.publish_raw(
+            topic=self._control_status_topic(request_key),
+            payload=json.dumps(payload, ensure_ascii=True),
+            qos=self._control_qos,
+            retain=self._control_status_retain,
+        )
+
+    def _control_load_pending_keys(self) -> set[str]:
+        try:
+            with open(self._control_pending_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            return set()
+        except Exception as e:
+            logger.debug(f"CONTROL: Pending load failed: {e}")
+            return set()
+        if isinstance(data, list):
+            return {str(item) for item in data if item}
+        return set()
+
+    def _control_store_pending_keys(self) -> None:
+        try:
+            with open(self._control_pending_path, "w", encoding="utf-8") as fh:
+                json.dump(sorted(self._control_pending_keys), fh, ensure_ascii=True)
+        except Exception as e:
+            logger.debug(f"CONTROL: Pending save failed: {e}")
+
+    def _control_update_pending_keys(self, *, request_key: str, state: str) -> None:
+        if state in ("queued", "sent", "acked", "applied"):
+            if request_key not in self._control_pending_keys:
+                self._control_pending_keys.add(request_key)
+                self._control_store_pending_keys()
+            return
+        if state in ("done", "error"):
+            if request_key in self._control_pending_keys:
+                self._control_pending_keys.discard(request_key)
+                self._control_store_pending_keys()
+
+    async def _control_publish_restart_errors(self) -> None:
+        if not self._control_pending_keys:
+            return
+        for request_key in sorted(self._control_pending_keys):
+            tbl_name = ""
+            tbl_item = ""
+            new_value = ""
+            parts = request_key.split("/", 2)
+            if len(parts) == 3:
+                tbl_name, tbl_item, new_value = parts
+            tx = {
+                "tx_id": None,
+                "request_key": request_key,
+                "tbl_name": tbl_name,
+                "tbl_item": tbl_item,
+                "new_value": new_value,
+            }
+            await self._control_publish_result(
+                tx=tx, status="error", error="proxy_restart", detail="proxy_restart"
+            )
+        self._control_pending_keys.clear()
+        self._control_store_pending_keys()
 
     @staticmethod
     def _parse_setting_event(content: str) -> tuple[str, str, str | None, str | None] | None:
@@ -1266,6 +1478,51 @@ class OIGProxy:
         if (time.time() - self._last_data_epoch) > 30:
             return False, "box_not_sending_data"
         return True, None
+
+    async def _control_defer_inflight(self, *, reason: str) -> None:
+        """Requeue inflight command for retry; stop after max attempts."""
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None:
+                return
+            attempts = int(tx.get("_attempts") or 0)
+            if attempts >= self._control_max_attempts:
+                self._control_inflight = None
+            else:
+                tx["stage"] = "deferred"
+                tx["deferred_reason"] = reason
+                tx["next_attempt_at"] = time.monotonic() + self._control_retry_delay_s
+                self._control_queue.appendleft(tx)
+                self._control_inflight = None
+            for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
+                if task and not task.done():
+                    task.cancel()
+            self._control_ack_task = None
+            self._control_applied_task = None
+            self._control_quiet_task = None
+
+        if attempts >= self._control_max_attempts:
+            await self._control_publish_result(
+                tx=tx,
+                status="error",
+                error="max_attempts_exceeded",
+                detail=reason,
+                extra={"attempts": attempts, "max_attempts": self._control_max_attempts},
+            )
+            await self._control_maybe_start_next()
+            return
+
+        await self._control_publish_result(
+            tx=tx,
+            status="deferred",
+            detail=reason,
+            extra={
+                "attempts": attempts,
+                "max_attempts": self._control_max_attempts,
+                "retry_in_s": self._control_retry_delay_s,
+            },
+        )
+        await self._control_maybe_start_next()
 
     def _control_normalize_value(
         self, *, tbl_name: str, tbl_item: str, new_value: Any
@@ -1329,7 +1586,6 @@ class OIGProxy:
             )
             return
 
-        ok, why = self._control_is_box_ready()
         tx: dict[str, Any] = {
             "tx_id": tx_id,
             "tbl_name": tbl_name,
@@ -1337,10 +1593,8 @@ class OIGProxy:
             "new_value": data.get("new_value"),
             "confirm": str(data.get("confirm") or "New"),
             "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "_attempts": 0,
         }
-        if not ok:
-            await self._control_publish_result(tx=tx, status="error", error=why)
-            return
 
         allowed = tbl_item in self._control_whitelist.get(tbl_name, set())
         if not allowed:
@@ -1355,40 +1609,42 @@ class OIGProxy:
             return
         tx["new_value"] = send_value
         tx["_canon"] = send_value
+        request_key_raw = str(data.get("request_key") or "").strip()
+        request_key = self._control_build_request_key(
+            tbl_name=tbl_name, tbl_item=tbl_item, canon_value=send_value
+        )
+        if request_key_raw and request_key_raw != request_key:
+            tx["request_key_raw"] = request_key_raw
+        tx["request_key"] = request_key
 
-        current = self._last_values.get((tbl_name, tbl_item))
-        if current is not None:
-            current_norm, _ = self._control_normalize_value(
-                tbl_name=tbl_name, tbl_item=tbl_item, new_value=current
+        active_state = None
+        async with self._control_lock:
+            active_state = (
+                self._control_key_state.get(request_key, {}).get("state")
+                if request_key
+                else None
             )
-            if current_norm is not None and str(current_norm) == str(send_value):
+            current = self._last_values.get((tbl_name, tbl_item))
+            if current is not None:
+                current_norm, _ = self._control_normalize_value(
+                    tbl_name=tbl_name, tbl_item=tbl_item, new_value=current
+                )
+                if (
+                    current_norm is not None
+                    and str(current_norm) == str(send_value)
+                    and self._control_inflight is None
+                    and not self._control_queue
+                ):
+                    await self._control_publish_result(
+                        tx=tx, status="completed", detail="noop_already_set"
+                    )
+                    return
+
+            if active_state in ("queued", "sent", "acked", "applied"):
                 await self._control_publish_result(
-                    tx=tx, status="completed", detail="noop_already_set"
+                    tx=tx, status="completed", detail="duplicate_ignored"
                 )
                 return
-
-        async with self._control_lock:
-            if self._control_inflight is not None:
-                infl = self._control_inflight
-                if (
-                    infl.get("tbl_name") == tbl_name
-                    and infl.get("tbl_item") == tbl_item
-                    and infl.get("_canon") == tx.get("_canon")
-                ):
-                    await self._control_publish_result(
-                        tx=tx, status="completed", detail="duplicate_ignored"
-                    )
-                    return
-            for q in self._control_queue:
-                if (
-                    q.get("tbl_name") == tbl_name
-                    and q.get("tbl_item") == tbl_item
-                    and q.get("_canon") == tx.get("_canon")
-                ):
-                    await self._control_publish_result(
-                        tx=tx, status="completed", detail="duplicate_ignored"
-                    )
-                    return
 
             self._control_queue.append(tx)
 
@@ -1396,21 +1652,64 @@ class OIGProxy:
         await self._control_maybe_start_next()
 
     async def _control_maybe_start_next(self) -> None:
+        ok, _ = self._control_is_box_ready()
+        if not ok:
+            return
+
+        schedule_delay: float | None = None
         async with self._control_lock:
             if self._control_inflight is not None:
                 return
             if not self._control_queue:
                 return
-            tx = self._control_queue.popleft()
+            tx = self._control_queue[0]
+            next_at = float(tx.get("next_attempt_at") or 0.0)
+            now = time.monotonic()
+            if next_at and now < next_at:
+                schedule_delay = next_at - now
+                tx = None
+            else:
+                tx = self._control_queue.popleft()
             self._control_inflight = tx
-            tx["stage"] = "accepted"
+            if tx is not None:
+                tx["stage"] = "accepted"
 
+        if schedule_delay is not None:
+            await self._control_schedule_retry(schedule_delay)
+            return
+        if tx is None:
+            return
         await self._control_start_inflight()
+
+    async def _control_schedule_retry(self, delay_s: float) -> None:
+        if delay_s <= 0:
+            await self._control_maybe_start_next()
+            return
+        if self._control_retry_task and not self._control_retry_task.done():
+            return
+
+        async def _wait_and_retry() -> None:
+            await asyncio.sleep(delay_s)
+            await self._control_maybe_start_next()
+
+        self._control_retry_task = asyncio.create_task(_wait_and_retry())
 
     async def _control_start_inflight(self) -> None:
         async with self._control_lock:
             tx = self._control_inflight
-        if tx is None:
+            if tx is None:
+                return
+            attempts = int(tx.get("_attempts") or 0)
+            too_many = attempts >= self._control_max_attempts
+
+        if too_many:
+            await self._control_publish_result(
+                tx=tx,
+                status="error",
+                error="max_attempts_exceeded",
+                extra={"attempts": attempts, "max_attempts": self._control_max_attempts},
+            )
+            await self._control_finish_inflight()
             return
 
         result = await self._send_setting_to_box(
@@ -1421,21 +1720,31 @@ class OIGProxy:
             tx_id=str(tx["tx_id"]),
         )
         if not result.get("ok"):
-            await self._control_publish_result(
-                tx=tx, status="error", error=str(result.get("error") or "send_failed")
-            )
+            err = str(result.get("error") or "send_failed")
+            if err in ("box_not_connected", "box_not_sending_data", "no_active_box_writer"):
+                await self._control_defer_inflight(reason=err)
+                return
+            await self._control_publish_result(tx=tx, status="error", error=err)
             await self._control_finish_inflight()
             return
 
+        tx["attempts"] = attempts + 1
+        tx["_attempts"] = attempts + 1
         tx["stage"] = "sent_to_box"
         tx["id"] = result.get("id")
         tx["id_set"] = result.get("id_set")
         tx["sent_at_mono"] = time.monotonic()
+        tx["disconnected"] = False
 
         await self._control_publish_result(
             tx=tx,
             status="sent_to_box",
-            extra={"id": tx.get("id"), "id_set": tx.get("id_set")},
+            extra={
+                "id": tx.get("id"),
+                "id_set": tx.get("id_set"),
+                "attempts": tx.get("_attempts"),
+                "max_attempts": self._control_max_attempts,
+            },
         )
 
         if self._control_ack_task and not self._control_ack_task.done():
@@ -1474,10 +1783,10 @@ class OIGProxy:
                 return
             if tx.get("stage") not in ("sent_to_box", "accepted"):
                 return
-        await self._control_publish_result(
-            tx=tx, status="error", error="timeout_waiting_ack"
-        )
-        await self._control_finish_inflight()
+        if not self.box_connected or tx.get("disconnected"):
+            await self._control_defer_inflight(reason="box_not_connected")
+            return
+        await self._control_defer_inflight(reason="timeout_waiting_ack")
 
     async def _control_applied_timeout(self) -> None:
         await asyncio.sleep(self._control_applied_timeout_s)
