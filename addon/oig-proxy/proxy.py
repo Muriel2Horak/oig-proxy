@@ -40,6 +40,7 @@ from config import (
     LOCAL_GETACTUAL_ENABLED,
     LOCAL_GETACTUAL_INTERVAL_S,
     FULL_REFRESH_INTERVAL_H,
+    FORCE_OFFLINE,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
@@ -130,6 +131,7 @@ class OIGProxy:
         self._local_getactual_task: asyncio.Task[Any] | None = None
         self._full_refresh_interval_h: int = int(FULL_REFRESH_INTERVAL_H)
         self._full_refresh_task: asyncio.Task[Any] | None = None
+        self._force_offline_config: bool = bool(FORCE_OFFLINE)
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
@@ -346,6 +348,22 @@ class OIGProxy:
         inner = "<Result>ACK</Result>"
         return build_frame(inner).encode("utf-8", errors="strict")
 
+    def _build_offline_ack_frame(self, table_name: str | None) -> bytes:
+        if table_name == "END":
+            return self._build_end_time_frame()
+        return self._build_ack_only_frame()
+
+    @staticmethod
+    def _build_end_time_frame() -> bytes:
+        now_local = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+        inner = (
+            "<Result>END</Result>"
+            f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
+            f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
+        )
+        return build_frame(inner).encode("utf-8", errors="strict")
+
     async def _send_getactual_to_box(
         self, writer: asyncio.StreamWriter, *, conn_id: int
     ) -> None:
@@ -375,19 +393,34 @@ class OIGProxy:
             if not self.box_connected:
                 await asyncio.sleep(self._local_getactual_interval_s)
                 continue
-            if await self._get_current_mode() != ProxyMode.ONLINE:
-                await asyncio.sleep(self._local_getactual_interval_s)
-                continue
+            if not self._force_offline_enabled():
+                if await self._get_current_mode() != ProxyMode.ONLINE:
+                    await asyncio.sleep(self._local_getactual_interval_s)
+                    continue
             try:
                 await self._send_getactual_to_box(writer, conn_id=conn_id)
             except Exception as e:
                 logger.debug(f"GetActual poll failed (conn={conn_id}): {e}")
             await asyncio.sleep(self._local_getactual_interval_s)
 
+    def _force_offline_enabled(self) -> bool:
+        return self._force_offline_config
+
+    async def _maybe_force_offline(self, reason: str) -> None:
+        if not self._force_offline_enabled():
+            return
+        old_mode = await self._switch_mode(ProxyMode.OFFLINE)
+        if old_mode != ProxyMode.OFFLINE:
+            logger.warning(f"🔴 Forced OFFLINE ({reason})")
+        self.cloud_session_connected = False
+        await self.publish_proxy_status()
+
     async def _full_refresh_loop(self) -> None:
         interval_s = max(1, int(self._full_refresh_interval_h)) * 3600
         while True:
             await asyncio.sleep(interval_s)
+            if self._force_offline_enabled():
+                continue
             if not self.box_connected:
                 continue
             if await self._get_current_mode() != ProxyMode.ONLINE:
@@ -631,6 +664,13 @@ class OIGProxy:
             try:
                 mqtt_ready = self.mqtt_publisher.is_ready()
                 self._note_mqtt_ready_transition(mqtt_ready)
+                if self._force_offline_enabled():
+                    await self._maybe_force_offline("config")
+                else:
+                    async with self.mode_lock:
+                        current_mode = self.mode
+                    if current_mode == ProxyMode.OFFLINE and self.cloud_health.is_online:
+                        await self._on_cloud_state_change("cloud_recovered")
                 await self.publish_proxy_status()
                 if self._mode_pending_publish:
                     await self._publish_mode_if_ready(reason="periodic")
@@ -1016,6 +1056,10 @@ class OIGProxy:
         table_name: str | None,
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+        if self._force_offline_enabled():
+            await self._close_writer(cloud_writer)
+            self.cloud_session_connected = False
+            return None, None
         if cloud_writer is not None and not cloud_writer.is_closing():
             return cloud_reader, cloud_writer
         try:
@@ -1049,6 +1093,15 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+        if self._force_offline_enabled():
+            await self._maybe_force_offline("config")
+            return await self._handle_frame_offline_mode(
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+            )
         cloud_reader, cloud_writer = await self._ensure_cloud_connected(
             cloud_reader,
             cloud_writer,
@@ -1121,10 +1174,10 @@ class OIGProxy:
             if table_name == "END":
                 logger.warning(
                     f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) on END - "
-                    f"sending local ACK to box (conn={conn_id})"
+                    f"sending local END to box (conn={conn_id})"
                 )
-                ack_only = self._build_ack_only_frame()
-                box_writer.write(ack_only)
+                end_frame = self._build_end_time_frame()
+                box_writer.write(end_frame)
                 await box_writer.drain()
                 self.stats["acks_local"] += 1
                 try:
@@ -1264,6 +1317,8 @@ class OIGProxy:
         return m.group(1) if m else None
 
     async def _get_current_mode(self) -> ProxyMode:
+        if self._force_offline_enabled():
+            return ProxyMode.OFFLINE
         async with self.mode_lock:
             return self.mode
 
@@ -1374,8 +1429,8 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter
     ):
         """Zpracuj frame v offline režimu - lokální ACK + queue."""
-        ack_response = self.ack_learner.generate_ack(table_name)
-        box_writer.write(ack_response.encode('utf-8'))
+        ack_response = self._build_offline_ack_frame(table_name)
+        box_writer.write(ack_response)
         await box_writer.drain()
         self.stats["acks_local"] += 1
         

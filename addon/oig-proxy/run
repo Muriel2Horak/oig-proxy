@@ -64,6 +64,12 @@ if [ -z "$FULL_REFRESH_INTERVAL_RAW" ] || [ "$FULL_REFRESH_INTERVAL_RAW" = "null
 fi
 export FULL_REFRESH_INTERVAL_H=$FULL_REFRESH_INTERVAL_RAW
 
+FORCE_OFFLINE_RAW=$(bashio::config 'force_offline')
+if [ -z "$FORCE_OFFLINE_RAW" ] || [ "$FORCE_OFFLINE_RAW" = "null" ]; then
+  FORCE_OFFLINE_RAW="false"
+fi
+export FORCE_OFFLINE=$FORCE_OFFLINE_RAW
+
 # NOVÉ: DEVICE_ID (volitelné, pokud není v config, použije se auto-detection)
 DEVICE_ID_RAW=$(bashio::config 'device_id' 2>/dev/null)
 if [ ! -z "$DEVICE_ID_RAW" ] && [ "$DEVICE_ID_RAW" != "null" ]; then

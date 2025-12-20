@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.3.12",
+  "version": "1.3.13",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": [
@@ -25,6 +25,7 @@
     "map_reload_seconds": 0,
     "proxy_status_interval": 60,
     "full_refresh_interval_hours": 24,
+    "force_offline": false,
     "log_level": "INFO",
     "capture_payloads": false,
     "capture_raw_bytes": false,
@@ -42,6 +43,7 @@
     "map_reload_seconds": "int",
     "proxy_status_interval": "int",
     "full_refresh_interval_hours": "int",
+    "force_offline": "bool?",
     "log_level": "list(INFO|DEBUG|WARNING|ERROR)",
     "capture_payloads": "bool?",
     "capture_raw_bytes": "bool?",
