@@ -61,7 +61,7 @@ PROXY_STATUS_ATTRS_TOPIC = os.getenv(
     "PROXY_STATUS_ATTRS_TOPIC", "oig_local/oig_proxy/proxy_status/attrs"
 )
 LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "true").lower() == "true"
-LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 5.0)
+LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 FORCE_OFFLINE = os.getenv("FORCE_OFFLINE", "false").lower() == "true"
 

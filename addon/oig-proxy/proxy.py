@@ -124,7 +124,7 @@ class OIGProxy:
         self._control_mode_quiet_s: float = float(CONTROL_MQTT_MODE_QUIET_SECONDS)
         self._control_whitelist: dict[str, set[str]] = CONTROL_WRITE_WHITELIST
         self._control_max_attempts: int = 5
-        self._control_retry_delay_s: float = 20.0
+        self._control_retry_delay_s: float = 120.0
         self._control_session_id: str = uuid.uuid4().hex
         self._control_pending_path: str = str(CONTROL_MQTT_PENDING_PATH)
         self._control_pending_keys: set[str] = self._control_load_pending_keys()

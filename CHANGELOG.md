@@ -2,6 +2,12 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.16] - 2025-12-21
+
+### Fixed
+
+- Opravy chyb a drobná vylepšení stability
+
 ## [1.3.15] - 2025-12-20
 
 ### Added
