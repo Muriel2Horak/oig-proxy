@@ -401,10 +401,6 @@ class OIGProxy:
             if not self.box_connected:
                 await asyncio.sleep(self._local_getactual_interval_s)
                 continue
-            if not self._force_offline_enabled():
-                if await self._get_current_mode() != ProxyMode.ONLINE:
-                    await asyncio.sleep(self._local_getactual_interval_s)
-                    continue
             try:
                 await self._send_getactual_to_box(writer, conn_id=conn_id)
             except Exception as e:
@@ -1047,10 +1043,17 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter,
         cloud_writer: asyncio.StreamWriter | None,
         note_cloud_failure: bool = True,
+        send_box_ack: bool = True,
     ) -> tuple[None, None]:
         self.cloud_session_connected = False
         await self._close_writer(cloud_writer)
-        await self._process_frame_offline(frame_bytes, table_name, device_id, box_writer)
+        await self._process_frame_offline(
+            frame_bytes,
+            table_name,
+            device_id,
+            box_writer,
+            send_ack=send_box_ack,
+        )
         if note_cloud_failure:
             await self._note_cloud_failure(reason)
         return None, None
@@ -1188,56 +1191,10 @@ class OIGProxy:
                 box_writer.write(end_frame)
                 await box_writer.drain()
                 self.stats["acks_local"] += 1
-                try:
-                    ack_data = await asyncio.wait_for(
-                        cloud_reader.read(4096),
-                        timeout=30.0,
-                    )
-                    if ack_data:
-                        ack_str = ack_data.decode("utf-8", errors="replace")
-                        capture_payload(
-                            None,
-                            table_name,
-                            ack_str,
-                            ack_data,
-                            {},
-                            direction="cloud_to_proxy",
-                            length=len(ack_data),
-                            conn_id=conn_id,
-                            peer=self._active_box_peer,
-                        )
-                        self.ack_learner.learn_from_cloud(ack_str, table_name)
-                        self.stats["acks_cloud"] += 1
-                    return cloud_reader, cloud_writer
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"⏱️ Cloud ACK timeout (END extended 30.0s) - "
-                        f"offline mode (conn={conn_id}, table={table_name})"
-                    )
-                    self.cloud_timeouts += 1
-                    return await self._fallback_offline_from_cloud_issue(
-                        reason="ack_timeout",
-                        frame_bytes=frame_bytes,
-                        table_name=table_name,
-                        device_id=device_id,
-                        box_writer=box_writer,
-                        cloud_writer=cloud_writer,
-                        note_cloud_failure=False,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️ Cloud error after END timeout: {e} - "
-                        f"offline mode (conn={conn_id}, table={table_name})"
-                    )
-                    self.cloud_errors += 1
-                    return await self._fallback_offline_from_cloud_issue(
-                        reason="cloud_error",
-                        frame_bytes=frame_bytes,
-                        table_name=table_name,
-                        device_id=device_id,
-                        box_writer=box_writer,
-                        cloud_writer=cloud_writer,
-                    )
+                # Boxu jsme odpověděli lokálně, takže už neblokujeme BOX session čekáním na cloud.
+                # Cloud ACK pro END není pro BOX kritický a často chodí pozdě nebo vůbec.
+                self.cloud_timeouts += 1
+                return cloud_reader, cloud_writer
 
             logger.warning(
                 f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) - "
@@ -1434,13 +1391,16 @@ class OIGProxy:
         frame_bytes: bytes,
         table_name: str | None,
         device_id: str | None,
-        box_writer: asyncio.StreamWriter
+        box_writer: asyncio.StreamWriter,
+        *,
+        send_ack: bool = True,
     ):
         """Zpracuj frame v offline režimu - lokální ACK + queue."""
-        ack_response = self._build_offline_ack_frame(table_name)
-        box_writer.write(ack_response)
-        await box_writer.drain()
-        self.stats["acks_local"] += 1
+        if send_ack:
+            ack_response = self._build_offline_ack_frame(table_name)
+            box_writer.write(ack_response)
+            await box_writer.drain()
+            self.stats["acks_local"] += 1
         
         if table_name and table_name != "tbl_handshake":
             if table_name == "END":
@@ -2018,6 +1978,47 @@ class OIGProxy:
                     return cfg.options[idx]
         return self._control_coerce_value(value)
 
+    def _control_update_persisted_snapshot(
+        self,
+        *,
+        tbl_name: str,
+        tbl_item: str,
+        raw_value: Any,
+    ) -> None:
+        """Upraví perzistentní snapshot (prms_state + in-memory) tak, aby nevracel starou hodnotu."""
+        if not tbl_name or not tbl_item:
+            return
+        if not self._should_persist_table(tbl_name):
+            return
+
+        resolved_device_id = (
+            (self.device_id if self.device_id != "AUTO" else None)
+            or self._prms_device_id
+        )
+
+        try:
+            save_prms_state(tbl_name, {tbl_item: raw_value}, resolved_device_id)
+        except Exception as e:
+            logger.debug(f"STATE: snapshot update failed ({tbl_name}/{tbl_item}): {e}")
+
+        existing = self._prms_tables.get(tbl_name, {})
+        merged: dict[str, Any] = {}
+        if isinstance(existing, dict):
+            merged.update(existing)
+        merged[tbl_item] = raw_value
+        self._prms_tables[tbl_name] = merged
+        if resolved_device_id:
+            self._prms_device_id = resolved_device_id
+
+        if tbl_name == "tbl_box_prms" and tbl_item == "MODE":
+            try:
+                mode_int = int(raw_value)
+            except Exception:
+                return
+            if 0 <= mode_int <= 5 and mode_int != self._mode_value:
+                self._mode_value = mode_int
+                save_mode_state(mode_int, resolved_device_id or self._mode_device_id)
+
     async def _control_publish_optimistic_state(self, *, tx: dict[str, Any]) -> None:
         tbl_name = str(tx.get("tbl_name") or "")
         tbl_item = str(tx.get("tbl_item") or "")
@@ -2044,6 +2045,12 @@ class OIGProxy:
             tbl_name=tbl_name,
             tbl_item=tbl_item,
             value=tx.get("new_value"),
+        )
+        raw_value = self._control_coerce_value(tx.get("new_value"))
+        self._control_update_persisted_snapshot(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            raw_value=raw_value,
         )
 
         updated = json.dumps(payload, ensure_ascii=True)
