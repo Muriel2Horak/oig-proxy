@@ -115,63 +115,63 @@ entities:
   priority_load_243: "no"
   
   # Denní energie
-  day_battery_charge_70: sensor.oig_local_2206237016_bat_apd
-  day_battery_discharge_71: sensor.oig_local_2206237016_bat_and
-  day_load_energy_84: sensor.oig_local_2206237016_aco_ad
-  day_grid_import_76: sensor.oig_local_2206237016_aci_ad
-  day_grid_export_77: sensor.oig_local_2206237016_aco_to_grid_day
-  day_pv_energy_108: sensor.oig_local_2206237016_fv_ad
-  day_aux_energy: sensor.oig_local_2206237016_bojler_ad
+  day_battery_charge_70: sensor.oig_local_BOX_ID_bat_apd
+  day_battery_discharge_71: sensor.oig_local_BOX_ID_bat_and
+  day_load_energy_84: sensor.oig_local_BOX_ID_aco_ad
+  day_grid_import_76: sensor.oig_local_BOX_ID_aci_ad
+  day_grid_export_77: sensor.oig_local_BOX_ID_aco_to_grid_day
+  day_pv_energy_108: sensor.oig_local_BOX_ID_fv_ad
+  day_aux_energy: sensor.oig_local_BOX_ID_bojler_ad
   
   # Napětí a proud střídače
-  inverter_voltage_154: sensor.oig_local_2206237016_aci_vr
-  inverter_voltage_L2: sensor.oig_local_2206237016_aci_vs
-  inverter_voltage_L3: sensor.oig_local_2206237016_aci_vt
+  inverter_voltage_154: sensor.oig_local_BOX_ID_aci_vr
+  inverter_voltage_L2: sensor.oig_local_BOX_ID_aci_vs
+  inverter_voltage_L3: sensor.oig_local_BOX_ID_aci_vt
   inverter_current_164: none
-  inverter_power_175: sensor.oig_local_2206237016_p_load
+  inverter_power_175: sensor.oig_local_BOX_ID_p_load
   
   # Síť
-  grid_power_169: sensor.oig_local_2206237016_p_grid
+  grid_power_169: sensor.oig_local_BOX_ID_p_grid
   
   # FVE
-  pv1_power_186: sensor.oig_local_2206237016_fv_p1
-  pv2_power_187: sensor.oig_local_2206237016_fv_p2
+  pv1_power_186: sensor.oig_local_BOX_ID_fv_p1
+  pv2_power_187: sensor.oig_local_BOX_ID_fv_p2
   pv3_power_188: none
   pv4_power_189: none
-  pv_total: sensor.oig_local_2206237016_p_fve
-  pv1_voltage_109: sensor.oig_local_2206237016_fv_v1
-  pv1_current_110: sensor.oig_local_2206237016_fv_i1
-  pv2_voltage_111: sensor.oig_local_2206237016_fv_v2
-  pv2_current_112: sensor.oig_local_2206237016_fv_i2
+  pv_total: sensor.oig_local_BOX_ID_p_fve
+  pv1_voltage_109: sensor.oig_local_BOX_ID_fv_v1
+  pv1_current_110: sensor.oig_local_BOX_ID_fv_i1
+  pv2_voltage_111: sensor.oig_local_BOX_ID_fv_v2
+  pv2_current_112: sensor.oig_local_BOX_ID_fv_i2
   pv3_voltage_113: none
   pv3_current_114: none
   pv4_voltage_115: none
   pv4_current_116: none
   
   # Baterie
-  battery_soc_184: sensor.oig_local_2206237016_bat_c
-  battery_power_190: sensor.oig_local_2206237016_bat_p
-  battery_voltage_183: sensor.oig_local_2206237016_bat_v
-  battery_current_191: sensor.oig_local_2206237016_bat_i
-  battery_temp_182: sensor.oig_local_2206237016_bat_t
+  battery_soc_184: sensor.oig_local_BOX_ID_bat_c
+  battery_power_190: sensor.oig_local_BOX_ID_bat_p
+  battery_voltage_183: sensor.oig_local_BOX_ID_bat_v
+  battery_current_191: sensor.oig_local_BOX_ID_bat_i
+  battery_temp_182: sensor.oig_local_BOX_ID_bat_t
   
   # Zátěž
-  essential_power: sensor.oig_local_2206237016_p_load
-  load_power_L1: sensor.oig_local_2206237016_aco_pr
-  load_power_L2: sensor.oig_local_2206237016_aco_ps
-  load_power_L3: sensor.oig_local_2206237016_aco_pt
-  load_frequency_192: sensor.oig_local_2206237016_aci_f
+  essential_power: sensor.oig_local_BOX_ID_p_load
+  load_power_L1: sensor.oig_local_BOX_ID_aco_pr
+  load_power_L2: sensor.oig_local_BOX_ID_aco_ps
+  load_power_L3: sensor.oig_local_BOX_ID_aco_pt
+  load_frequency_192: sensor.oig_local_BOX_ID_aci_f
   
   # Non-essential loads (nezáloha)
   non_essential_load1: sensor.wallbox_garaz_nabijeci_vykon
-  non_essential_load2: sensor.oig_local_2206237016_bojler_w
+  non_essential_load2: sensor.oig_local_BOX_ID_bojler_w
   non_essential_load1_extra: sensor.auto_denni_cena
   
   # Grid CT power
-  grid_ct_power_172: sensor.oig_local_2206237016_aci_pr
-  grid_ct_power_L2: sensor.oig_local_2206237016_aci_ps
-  grid_ct_power_L3: sensor.oig_local_2206237016_aci_pt
-  grid_ct_power_total: sensor.oig_local_2206237016_aci_p
+  grid_ct_power_172: sensor.oig_local_BOX_ID_aci_pr
+  grid_ct_power_L2: sensor.oig_local_BOX_ID_aci_ps
+  grid_ct_power_L3: sensor.oig_local_BOX_ID_aci_pt
+  grid_ct_power_total: sensor.oig_local_BOX_ID_aci_p
   
   # Status a stavy
   inverter_status_59: none
@@ -179,7 +179,7 @@ entities:
   remaining_solar: sensor.energy_production_today_remaining
   
   # Teploty
-  radiator_temp_91: sensor.oig_local_2206237016_box_t
+  radiator_temp_91: sensor.oig_local_BOX_ID_box_t
   dc_transformer_temp_90: sensor.garaz_teplota
   environment_temp: sensor.venku_teplota
   
@@ -219,19 +219,19 @@ entities:
   # Essential loads (domácí spotřebiče)
   essential_load1: sensor.mycka_vykon_2
   essential_load2: sensor.pracka_vykon_2
-  essential_load3: sensor.oig_local_2206237016_bojler_w
+  essential_load3: sensor.oig_local_BOX_ID_bojler_w
   essential_load4: sensor.em_klima_vykon
   essential_load5: sensor.susicka_vykon_2
   essential_load6: sensor.antela_power_strip_vykon
   essential_load1_extra: sensor.mycka_denni_spotreba
   essential_load2_extra: sensor.pracka_denni_spotreba
-  essential_load3_extra: sensor.oig_local_2206237016_bojler_ad
+  essential_load3_extra: sensor.oig_local_BOX_ID_bojler_ad
   essential_load4_extra: sensor.klima_denni_spotreba
   essential_load5_extra: sensor.susicka_denni_spotreba
   essential_load6_extra: sensor.bazen_spotrreba
   
   # Další parametry
-  total_pv_generation: sensor.oig_local_2206237016_fv_ad
+  total_pv_generation: sensor.oig_local_BOX_ID_fv_ad
   battery2_power_190: sensor.wallbox_garaz_nabijeci_vykon
   battery2_soc_184: sensor.car_battery_percentage_2
 dynamic_line_width: true
