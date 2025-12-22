@@ -2047,6 +2047,8 @@ class OIGProxy:
             value=tx.get("new_value"),
         )
         raw_value = self._control_coerce_value(tx.get("new_value"))
+        # Keep in-memory cache consistent with optimistic state to avoid stale dedup.
+        self._last_values[(tbl_name, tbl_item)] = raw_value
         self._control_update_persisted_snapshot(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
