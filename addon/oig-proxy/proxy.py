@@ -45,6 +45,7 @@ from config import (
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
     PROXY_STATUS_ATTRS_TOPIC,
+    MQTT_NAMESPACE,
     MQTT_PUBLISH_QOS,
     MQTT_STATE_RETAIN,
     REPLAY_ACK_TIMEOUT,
@@ -90,6 +91,8 @@ class OIGProxy:
         self._mode_pending_publish: bool = self._mode_value is not None
         self._prms_tables, self._prms_device_id = load_prms_state()
         self._prms_pending_publish: bool = bool(self._prms_tables)
+        self._table_cache: dict[str, dict[str, Any]] = {}
+        self._mqtt_cache_device_id: str | None = None
         self._mqtt_was_ready: bool = False
         
         # Režim
@@ -145,6 +148,7 @@ class OIGProxy:
         self._control_retry_task: asyncio.Task[Any] | None = None
         self._control_last_result: dict[str, Any] | None = None
         self._control_key_state: dict[str, dict[str, Any]] = {}
+        self._control_post_drain_refresh_pending: bool = False
 
         self._box_connected_since_epoch: float | None = None
         self._last_values: dict[tuple[str, str], Any] = {}
@@ -209,6 +213,7 @@ class OIGProxy:
 
         if self._control_mqtt_enabled:
             self._setup_control_mqtt()
+        self._setup_mqtt_state_cache()
 
         # Pokud máme uložené device_id a aktuální device je AUTO, použij ho
         if self.device_id == "AUTO":
@@ -220,6 +225,7 @@ class OIGProxy:
                     f"🔑 Obnovuji device_id z uloženého stavu: {self.device_id}"
                 )
                 self.mqtt_publisher.publish_availability()
+                self._setup_mqtt_state_cache()
 
         if self._force_offline_enabled():
             await self._switch_mode(ProxyMode.OFFLINE)
@@ -228,8 +234,6 @@ class OIGProxy:
 
         # Po připojení MQTT publikuj stav (init)
         await self.publish_proxy_status()
-        await self._publish_mode_if_ready(reason="startup")
-        await self._publish_prms_if_ready(reason="startup")
         await self._control_publish_restart_errors()
         self._mqtt_was_ready = self.mqtt_publisher.is_ready()
         if self._status_task is None or self._status_task.done():
@@ -448,12 +452,8 @@ class OIGProxy:
         *,
         reason: str | None = None
     ) -> None:
-        """Publikuje známý MODE do MQTT (obnova po restartu)."""
+        """Publikuje známý MODE do MQTT."""
         if self._mode_value is None:
-            return
-        if not self.mqtt_publisher.is_ready():
-            self._mode_pending_publish = True
-            logger.debug("MODE: MQTT není připraveno, publish odkládám")
             return
         target_device_id = device_id
         if not target_device_id:
@@ -462,7 +462,6 @@ class OIGProxy:
             elif self._mode_device_id:
                 target_device_id = self._mode_device_id
         if not target_device_id:
-            self._mode_pending_publish = True
             logger.debug("MODE: Nemám device_id, publish odložen")
             return
 
@@ -474,14 +473,12 @@ class OIGProxy:
 
         try:
             await self.mqtt_publisher.publish_data(payload)
-            self._mode_pending_publish = False
             if reason:
                 logger.info(
                     f"MODE: Publikován stav {self._mode_value} ({reason})"
                 )
         except Exception as e:
             logger.debug(f"MODE publish failed: {e}")
-            self._mode_pending_publish = True
 
     @staticmethod
     def _should_persist_table(table_name: str | None) -> bool:
@@ -502,31 +499,7 @@ class OIGProxy:
         device_id: str | None,
     ) -> None:
         """Uloží poslední známé hodnoty pro vybrané tabulky (pro obnovu po restartu)."""
-        if not parsed or not table_name:
-            return
-        if not self._should_persist_table(table_name):
-            return
-
-        values = {k: v for k, v in parsed.items() if not k.startswith("_")}
-        if not values:
-            return
-
-        resolved_device_id = (
-            device_id
-            or (self.device_id if self.device_id != "AUTO" else None)
-            or self._prms_device_id
-        )
-
-        save_prms_state(table_name, values, resolved_device_id)
-
-        existing = self._prms_tables.get(table_name, {})
-        merged: dict[str, Any] = {}
-        if isinstance(existing, dict):
-            merged.update(existing)
-        merged.update(values)
-        self._prms_tables[table_name] = merged
-        if resolved_device_id:
-            self._prms_device_id = resolved_device_id
+        return
 
     async def _publish_prms_if_ready(self, *, reason: str | None = None) -> None:
         """Publikuje uložené *_prms hodnoty do MQTT (obnova po restartu/reconnectu)."""
@@ -610,12 +583,7 @@ class OIGProxy:
                     await self._handle_mode_update(new_mode, device_id, "tbl_events")
 
     def _note_mqtt_ready_transition(self, mqtt_ready: bool) -> None:
-        """Při MQTT reconnectu označí perzistované hodnoty k re-publish."""
-        if mqtt_ready and not self._mqtt_was_ready:
-            if self._mode_value is not None:
-                self._mode_pending_publish = True
-            if self._prms_tables:
-                self._prms_pending_publish = True
+        """Uloží změnu MQTT readiness (bez re-publish ze snapshotu)."""
         self._mqtt_was_ready = mqtt_ready
 
     async def _switch_mode(self, new_mode: ProxyMode) -> ProxyMode:
@@ -676,10 +644,6 @@ class OIGProxy:
                     if current_mode == ProxyMode.OFFLINE and self.cloud_health.is_online:
                         await self._on_cloud_state_change("cloud_recovered")
                 await self.publish_proxy_status()
-                if self._mode_pending_publish:
-                    await self._publish_mode_if_ready(reason="periodic")
-                if self._prms_pending_publish:
-                    await self._publish_prms_if_ready(reason="periodic")
                 await self._maybe_switch_online_to_replay(reason="periodic")
             except Exception as e:
                 logger.debug(f"Proxy status loop publish failed: {e}")
@@ -1030,8 +994,7 @@ class OIGProxy:
         self.mqtt_publisher.discovery_sent.clear()
         self.mqtt_publisher.publish_availability()
         logger.info(f"🔑 Device ID detected: {device_id}")
-        await self._publish_mode_if_ready(device_id=device_id, reason="device_autodetect")
-        await self._publish_prms_if_ready(reason="device_autodetect")
+        self._setup_mqtt_state_cache()
 
     async def _fallback_offline_from_cloud_issue(
         self,
@@ -1437,6 +1400,40 @@ class OIGProxy:
     # Control over MQTT (production)
     # ---------------------------------------------------------------------
 
+    def _setup_mqtt_state_cache(self) -> None:
+        if self._loop is None:
+            return
+        device_id = self.mqtt_publisher.device_id or self.device_id
+        if not device_id or device_id == "AUTO":
+            return
+        if self._mqtt_cache_device_id == device_id:
+            return
+        topic = f"{MQTT_NAMESPACE}/{device_id}/+/state"
+
+        def _handler(msg_topic: str, payload: bytes, qos: int, retain: bool) -> None:
+            if self._loop is None:
+                return
+            try:
+                payload_text = payload.decode("utf-8", errors="strict")
+            except Exception:
+                payload_text = payload.decode("utf-8", errors="replace")
+            self._loop.call_soon_threadsafe(
+                asyncio.create_task,
+                self._handle_mqtt_state_message(
+                    topic=msg_topic,
+                    payload_text=payload_text,
+                    retain=retain,
+                ),
+            )
+
+        self.mqtt_publisher.add_message_handler(
+            topic=topic,
+            handler=_handler,
+            qos=1,
+        )
+        self._mqtt_cache_device_id = device_id
+        logger.info("MQTT: Cache subscription enabled (%s)", topic)
+
     def _setup_control_mqtt(self) -> None:
         if self._loop is None:
             return
@@ -1459,6 +1456,91 @@ class OIGProxy:
             self._control_set_topic,
             self._control_result_topic,
         )
+
+    def _parse_mqtt_state_topic(self, topic: str) -> tuple[str | None, str | None]:
+        parts = topic.split("/")
+        if len(parts) != 4:
+            return None, None
+        namespace, device_id, table_name, suffix = parts
+        if namespace != MQTT_NAMESPACE or suffix != "state":
+            return None, None
+        return device_id, table_name
+
+    def _mqtt_state_to_raw_value(
+        self, *, tbl_name: str, tbl_item: str, value: Any
+    ) -> Any:
+        if isinstance(value, (dict, list)):
+            return value
+        cfg, _ = get_sensor_config(tbl_item, tbl_name)
+        if cfg and cfg.options:
+            if isinstance(value, str):
+                text = value.strip()
+                for idx, opt in enumerate(cfg.options):
+                    if text == opt or text.lower() == opt.lower():
+                        return idx
+                try:
+                    return int(float(text))
+                except Exception:
+                    return text
+            if isinstance(value, (int, float)):
+                idx = int(value)
+                if 0 <= idx < len(cfg.options):
+                    return idx
+        return self._control_coerce_value(value)
+
+    async def _handle_mqtt_state_message(
+        self,
+        *,
+        topic: str,
+        payload_text: str,
+        retain: bool,
+    ) -> None:
+        device_id, table_name = self._parse_mqtt_state_topic(topic)
+        if not device_id or not table_name:
+            return
+        target_device_id = self.mqtt_publisher.device_id or self.device_id
+        if not target_device_id or target_device_id == "AUTO":
+            return
+        if device_id != target_device_id:
+            return
+        if not table_name.startswith("tbl_"):
+            return
+        try:
+            payload = json.loads(payload_text)
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+
+        raw_values: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key.startswith("_"):
+                continue
+            raw_value = self._mqtt_state_to_raw_value(
+                tbl_name=table_name,
+                tbl_item=key,
+                value=value,
+            )
+            raw_values[key] = raw_value
+            self._update_cached_value(
+                tbl_name=table_name,
+                tbl_item=key,
+                raw_value=raw_value,
+                update_mode=True,
+            )
+
+        if raw_values and self._should_persist_table(table_name):
+            try:
+                save_prms_state(table_name, raw_values, device_id)
+            except Exception as e:
+                logger.debug(f"STATE: snapshot update failed ({table_name}): {e}")
+            existing = self._prms_tables.get(table_name, {})
+            merged: dict[str, Any] = {}
+            if isinstance(existing, dict):
+                merged.update(existing)
+            merged.update(raw_values)
+            self._prms_tables[table_name] = merged
+            self._prms_device_id = device_id
 
     async def _control_publish_result(
         self,
@@ -1625,14 +1707,45 @@ class OIGProxy:
         return tbl_name, m.group(2), m.group(3), m.group(4)
 
     def _cache_last_values(self, parsed: dict[str, Any], table_name: str | None) -> None:
-        if not parsed or not table_name:
+        return
+
+    def _update_cached_value(
+        self,
+        *,
+        tbl_name: str,
+        tbl_item: str,
+        raw_value: Any,
+        update_mode: bool,
+    ) -> None:
+        if not tbl_name or not tbl_item:
             return
-        if table_name == "tbl_events":
+        self._last_values[(tbl_name, tbl_item)] = raw_value
+        table_cache = self._table_cache.setdefault(tbl_name, {})
+        table_cache[tbl_item] = raw_value
+
+        if not update_mode:
             return
-        for key, value in parsed.items():
-            if key.startswith("_"):
-                continue
-            self._last_values[(table_name, key)] = value
+
+        if (tbl_name, tbl_item) != ("tbl_box_prms", "MODE"):
+            return
+        try:
+            mode_int = int(raw_value)
+        except Exception:
+            return
+        if mode_int < 0 or mode_int > 5:
+            return
+        if mode_int == self._mode_value:
+            return
+
+        self._mode_value = mode_int
+        resolved_device_id = (
+            (self.device_id if self.device_id != "AUTO" else None)
+            or self._mode_device_id
+            or self._prms_device_id
+        )
+        if resolved_device_id:
+            self._mode_device_id = resolved_device_id
+        save_mode_state(mode_int, resolved_device_id)
 
     def _control_is_box_ready(self) -> tuple[bool, str | None]:
         if not self.box_connected:
@@ -1680,6 +1793,7 @@ class OIGProxy:
                 extra={"attempts": attempts, "max_attempts": self._control_max_attempts},
             )
             await self._control_maybe_start_next()
+            await self._control_maybe_queue_post_drain_refresh(last_tx=tx)
             return
 
         await self._control_publish_result(
@@ -1817,6 +1931,7 @@ class OIGProxy:
                 return
 
             self._control_queue.append(tx)
+            self._control_post_drain_refresh_pending = True
 
         await self._control_publish_result(tx=tx, status="accepted")
         await self._control_maybe_start_next()
@@ -1985,7 +2100,7 @@ class OIGProxy:
         tbl_item: str,
         raw_value: Any,
     ) -> None:
-        """Upraví perzistentní snapshot (prms_state + in-memory) tak, aby nevracel starou hodnotu."""
+        """Upraví perzistentní snapshot (prms_state) bez zásahu do cache."""
         if not tbl_name or not tbl_item:
             return
         if not self._should_persist_table(tbl_name):
@@ -2010,49 +2125,40 @@ class OIGProxy:
         if resolved_device_id:
             self._prms_device_id = resolved_device_id
 
-        if tbl_name == "tbl_box_prms" and tbl_item == "MODE":
-            try:
-                mode_int = int(raw_value)
-            except Exception:
-                return
-            if 0 <= mode_int <= 5 and mode_int != self._mode_value:
-                self._mode_value = mode_int
-                save_mode_state(mode_int, resolved_device_id or self._mode_device_id)
-
     async def _control_publish_optimistic_state(self, *, tx: dict[str, Any]) -> None:
         tbl_name = str(tx.get("tbl_name") or "")
         tbl_item = str(tx.get("tbl_item") or "")
         if not tbl_name or not tbl_item:
             return
 
+        raw_value = self._control_coerce_value(tx.get("new_value"))
         target_device_id = self.device_id if self.device_id != "AUTO" else self.mqtt_publisher.device_id
         topic = self.mqtt_publisher._state_topic(target_device_id, tbl_name)
         cached = self.mqtt_publisher._last_payload_by_topic.get(topic)
-        if not cached:
-            logger.debug(
-                "CONTROL: Optimistic publish skipped (no cache) %s/%s",
-                tbl_name,
-                tbl_item,
-            )
-            return
-
+        payload: dict[str, Any] = {}
         try:
-            payload = json.loads(cached)
+            if cached:
+                payload = json.loads(cached)
         except Exception:
             payload = {}
+
+        if not payload:
+            table_values = self._table_cache.get(tbl_name)
+            if not table_values:
+                table_values = self._prms_tables.get(tbl_name)
+            if isinstance(table_values, dict) and table_values:
+                raw_payload = dict(table_values)
+                raw_payload[tbl_item] = raw_value
+                payload, _ = self.mqtt_publisher._map_data_for_publish(
+                    {"_table": tbl_name, **raw_payload},
+                    table=tbl_name,
+                    target_device_id=target_device_id,
+                )
 
         payload[tbl_item] = self._control_map_optimistic_value(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
             value=tx.get("new_value"),
-        )
-        raw_value = self._control_coerce_value(tx.get("new_value"))
-        # Keep in-memory cache consistent with optimistic state to avoid stale dedup.
-        self._last_values[(tbl_name, tbl_item)] = raw_value
-        self._control_update_persisted_snapshot(
-            tbl_name=tbl_name,
-            tbl_item=tbl_item,
-            raw_value=raw_value,
         )
 
         updated = json.dumps(payload, ensure_ascii=True)
@@ -2122,6 +2228,7 @@ class OIGProxy:
 
     async def _control_finish_inflight(self) -> None:
         async with self._control_lock:
+            tx = self._control_inflight
             self._control_inflight = None
             for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
                 if task and not task.done():
@@ -2129,6 +2236,56 @@ class OIGProxy:
             self._control_ack_task = None
             self._control_applied_task = None
             self._control_quiet_task = None
+        await self._control_maybe_start_next()
+        await self._control_maybe_queue_post_drain_refresh(last_tx=tx)
+
+    async def _control_maybe_queue_post_drain_refresh(
+        self,
+        *,
+        last_tx: dict[str, Any] | None,
+    ) -> None:
+        if not last_tx:
+            return
+        if (last_tx.get("tbl_name"), last_tx.get("tbl_item")) == ("tbl_box_prms", "SA"):
+            return
+
+        async with self._control_lock:
+            if self._control_inflight is not None or self._control_queue:
+                return
+            if not self._control_post_drain_refresh_pending:
+                return
+            self._control_post_drain_refresh_pending = False
+
+        await self._control_enqueue_internal_sa(reason="queue_drained")
+
+    async def _control_enqueue_internal_sa(self, *, reason: str) -> None:
+        request_key = self._control_build_request_key(
+            tbl_name="tbl_box_prms",
+            tbl_item="SA",
+            canon_value="1",
+        )
+        tx = {
+            "tx_id": f"internal_sa_{int(time.time() * 1000)}",
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "SA",
+            "new_value": "1",
+            "confirm": "New",
+            "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "_attempts": 0,
+            "_canon": "1",
+            "request_key": request_key,
+            "_internal": "post_drain_sa",
+        }
+
+        async with self._control_lock:
+            if self._control_inflight and self._control_inflight.get("request_key") == request_key:
+                return
+            for queued in self._control_queue:
+                if queued.get("request_key") == request_key:
+                    return
+            self._control_queue.append(tx)
+
+        await self._control_publish_result(tx=tx, status="accepted", detail=f"internal_sa:{reason}")
         await self._control_maybe_start_next()
 
     async def _control_observe_box_frame(

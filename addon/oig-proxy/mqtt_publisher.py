@@ -205,6 +205,7 @@ class MQTTPublisher:
         self._last_payload_by_topic: dict[str, str] = {}
         self._local_tzinfo = datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
         self._message_handlers: dict[str, tuple[int, Callable[[str, bytes, int, bool], None]]] = {}
+        self._wildcard_handlers: list[tuple[str, int, Callable[[str, bytes, int, bool], None]]] = []
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._replay_future: concurrent.futures.Future[Any] | None = None
         
@@ -333,6 +334,12 @@ class MQTTPublisher:
                     logger.info(f"MQTT: Subscribed {topic}")
                 except Exception as e:
                     logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
+            for topic, qos, _ in self._wildcard_handlers:
+                try:
+                    client.subscribe(topic, qos=qos)
+                    logger.info(f"MQTT: Subscribed {topic}")
+                except Exception as e:
+                    logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
             
             # Trigger replay
             self._schedule_replay()
@@ -381,7 +388,10 @@ class MQTTPublisher:
         qos: int = 1,
     ) -> None:
         """Zaregistruje handler pro příchozí MQTT zprávy na daném topicu."""
-        self._message_handlers[topic] = (qos, handler)
+        if "+" in topic or "#" in topic:
+            self._wildcard_handlers.append((topic, qos, handler))
+        else:
+            self._message_handlers[topic] = (qos, handler)
         if self.client and self.connected:
             try:
                 self.client.subscribe(topic, qos=qos)
@@ -391,16 +401,36 @@ class MQTTPublisher:
 
     def _on_message(self, client: Any, userdata: Any, msg: Any) -> None:
         try:
-            entry = self._message_handlers.get(getattr(msg, "topic", ""))
-            if entry is None:
-                return
-            _, handler = entry
+            topic = str(getattr(msg, "topic", ""))
+            entry = self._message_handlers.get(topic)
             payload: bytes = getattr(msg, "payload", b"") or b""
             qos: int = int(getattr(msg, "qos", 0) or 0)
             retain: bool = bool(getattr(msg, "retain", False))
-            handler(str(msg.topic), payload, qos, retain)
+            if entry is not None:
+                _, handler = entry
+                handler(topic, payload, qos, retain)
+            for pattern, _, handler in self._wildcard_handlers:
+                if self._topic_matches(pattern, topic):
+                    handler(topic, payload, qos, retain)
         except Exception as e:
             logger.warning(f"MQTT: Message handler failed: {e}")
+
+    @staticmethod
+    def _topic_matches(pattern: str, topic: str) -> bool:
+        if pattern == topic:
+            return True
+        p_parts = pattern.split("/")
+        t_parts = topic.split("/")
+        for idx, p in enumerate(p_parts):
+            if p == "#":
+                return True
+            if idx >= len(t_parts):
+                return False
+            if p == "+":
+                continue
+            if p != t_parts[idx]:
+                return False
+        return len(t_parts) == len(p_parts)
 
     async def publish_raw(
         self,
