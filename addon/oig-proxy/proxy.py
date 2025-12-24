@@ -1590,6 +1590,12 @@ class OIGProxy:
             except Exception as e:
                 logger.debug(f"CONTROL: Key status publish failed: {e}")
 
+        # SA only after real applied/completed change (avoid noop/duplicate)
+        if status in ("applied", "completed") and not error:
+            if detail not in ("noop_already_set", "duplicate_ignored"):
+                if (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "SA"):
+                    self._control_post_drain_refresh_pending = True
+
     @staticmethod
     def _control_build_request_key(
         *, tbl_name: str, tbl_item: str, canon_value: str
@@ -1931,7 +1937,6 @@ class OIGProxy:
                 return
 
             self._control_queue.append(tx)
-            self._control_post_drain_refresh_pending = True
 
         await self._control_publish_result(tx=tx, status="accepted")
         await self._control_maybe_start_next()
