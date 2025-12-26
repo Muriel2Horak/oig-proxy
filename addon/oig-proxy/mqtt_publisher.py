@@ -274,7 +274,6 @@ class MQTTPublisher:
                 time.sleep(0.1)
             
             if self.connected:
-                logger.info(f"MQTT: ✅ Připojeno k {MQTT_HOST}:{MQTT_PORT}")
                 self.reconnect_attempts = 0
                 return True
             else:
@@ -331,13 +330,13 @@ class MQTTPublisher:
             for topic, (qos, _) in self._message_handlers.items():
                 try:
                     client.subscribe(topic, qos=qos)
-                    logger.info(f"MQTT: Subscribed {topic}")
+                    logger.debug(f"MQTT: Subscribed {topic}")
                 except Exception as e:
                     logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
             for topic, qos, _ in self._wildcard_handlers:
                 try:
                     client.subscribe(topic, qos=qos)
-                    logger.info(f"MQTT: Subscribed {topic}")
+                    logger.debug(f"MQTT: Subscribed {topic}")
                 except Exception as e:
                     logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
             
@@ -375,7 +374,7 @@ class MQTTPublisher:
         self.last_publish_time = time.time()
         
         if self.publish_success % self.PUBLISH_LOG_EVERY == 0:
-            logger.info(
+            logger.debug(
                 f"MQTT: 📊 Stats: {self.publish_success} OK, "
                 f"{self.publish_failed} FAIL z {self.publish_count} celkem"
             )
@@ -395,7 +394,7 @@ class MQTTPublisher:
         if self.client and self.connected:
             try:
                 self.client.subscribe(topic, qos=qos)
-                logger.info(f"MQTT: Subscribed {topic}")
+                logger.debug(f"MQTT: Subscribed {topic}")
             except Exception as e:
                 logger.warning(f"MQTT: Subscribe failed {topic}: {e}")
 
@@ -490,7 +489,7 @@ class MQTTPublisher:
                     
                     if replayed % 10 == 0:
                         remaining = self.queue.size()
-                        logger.info(
+                        logger.debug(
                             f"MQTT: Replay progress: {replayed}/{queue_size} "
                             f"({remaining} zbývá)"
                         )
@@ -542,7 +541,7 @@ class MQTTPublisher:
         dev_id = device_id or self.device_id
         topic = f"{MQTT_NAMESPACE}/{dev_id}/availability"
         self.client.publish(topic, "online", retain=True, qos=1)
-        logger.info(f"MQTT: Availability published to {topic}")
+        logger.debug(f"MQTT: Availability published to {topic}")
     
     async def start_health_check(self) -> None:
         """Spustí health check jako background task."""
@@ -567,7 +566,7 @@ class MQTTPublisher:
                 self.replay_queue(),
                 self._main_loop,
             )
-            logger.info("MQTT: Replay task scheduled")
+            logger.debug("MQTT: Replay task scheduled")
         except Exception as e:
             logger.debug(f"MQTT: Replay schedule failed: {e}")
 

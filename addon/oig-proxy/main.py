@@ -50,7 +50,7 @@ async def main():
     
     # Načti sensor mapu (DŮLEŽITÉ pro MQTT entity)
     load_sensor_map()
-    logger.info("✅ Sensor map loaded")
+    logger.debug("✅ Sensor map loaded")
     
     # DEVICE_ID je optional - detekuje se z komunikace
     device_id = os.getenv('DEVICE_ID')

@@ -178,6 +178,8 @@ class OIGProxy:
         self.cloud_timeouts = 0
         self.cloud_errors = 0
         self.cloud_session_connected = False
+        self._last_hb_ts: float = 0.0
+        self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
     
     async def start(self):
         """Spustí proxy server."""
@@ -621,6 +623,41 @@ class OIGProxy:
         self._ensure_replay_task_running()
         await self.publish_proxy_status()
 
+    def _log_status_heartbeat(self) -> None:
+        if self._hb_interval_s <= 0:
+            return
+        now = time.time()
+        if (now - self._last_hb_ts) < self._hb_interval_s:
+            return
+        self._last_hb_ts = now
+
+        last_data_age = "n/a"
+        if self._last_data_epoch is not None:
+            last_data_age = f"{int(now - self._last_data_epoch)}s"
+
+        box_uptime = "n/a"
+        if self._box_connected_since_epoch is not None:
+            box_uptime = f"{int(now - self._box_connected_since_epoch)}s"
+
+        logger.info(
+            "💓 HB: mode=%s box=%s cloud=%s cloud_sess=%s mqtt=%s q_cloud=%s q_mqtt=%s "
+            "frames_rx=%s tx=%s queued=%s ack=%s/%s last_data_age=%s box_uptime=%s",
+            self.mode.value,
+            "on" if self.box_connected else "off",
+            "on" if self.cloud_health.is_online else "off",
+            "on" if self.cloud_session_connected else "off",
+            "on" if self.mqtt_publisher.is_ready() else "off",
+            self.cloud_queue.size(),
+            self.mqtt_publisher.queue.size(),
+            self.stats["frames_received"],
+            self.stats["frames_forwarded"],
+            self.stats["frames_queued"],
+            self.stats["acks_local"],
+            self.stats["acks_cloud"],
+            last_data_age,
+            box_uptime,
+        )
+
     async def _proxy_status_loop(self) -> None:
         """Periodicky publikuje proxy_status do MQTT (pro HA restart)."""
         if PROXY_STATUS_INTERVAL <= 0:
@@ -645,6 +682,7 @@ class OIGProxy:
                         await self._on_cloud_state_change("cloud_recovered")
                 await self.publish_proxy_status()
                 await self._maybe_switch_online_to_replay(reason="periodic")
+                self._log_status_heartbeat()
             except Exception as e:
                 logger.debug(f"Proxy status loop publish failed: {e}")
 
@@ -700,7 +738,7 @@ class OIGProxy:
 
             if replayed % 10 == 0:
                 remaining = self.cloud_queue.size()
-                logger.info(
+                logger.debug(
                     f"🔄 Replay progress: {replayed} odesláno, {remaining} zbývá"
                 )
             return True
@@ -875,7 +913,7 @@ class OIGProxy:
         conn_id = await self._register_box_connection(writer, addr)
         self._tune_socket(writer)
 
-        logger.debug(f"🔌 BOX připojen ({conn_id}): {addr}")
+        logger.info("🔌 BOX připojen (conn=%s, peer=%s)", conn_id, addr)
         self.box_connected = True
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
@@ -944,7 +982,7 @@ class OIGProxy:
             data = await asyncio.wait_for(reader.read(8192), timeout=idle_timeout_s)
         except ConnectionResetError:
             # BOX (nebo síť) spojení tvrdě ukončil – bereme jako běžné odpojení.
-            logger.debug(
+            logger.info(
                 "🔌 BOX resetoval spojení (conn=%s)", conn_id
             )
             await self.publish_proxy_status()
@@ -956,7 +994,7 @@ class OIGProxy:
             return None
 
         if not data:
-            logger.debug(
+            logger.info(
                 f"🔌 BOX ukončil spojení (EOF, conn={conn_id}, "
                 f"frames_rx={self.stats['frames_received']}, "
                 f"frames_tx={self.stats['frames_forwarded']}, "
@@ -1042,8 +1080,16 @@ class OIGProxy:
                 timeout=connect_timeout_s,
             )
             self.cloud_connects += 1
+            was_connected = self.cloud_session_connected
             self.cloud_session_connected = True
-            logger.debug(f"☁️ Připojeno k {TARGET_SERVER}:{TARGET_PORT}")
+            if not was_connected:
+                logger.info(
+                    "☁️ Cloud session connected (%s:%s, conn=%s, table=%s)",
+                    TARGET_SERVER,
+                    TARGET_PORT,
+                    conn_id,
+                    table_name or "-",
+                )
             return cloud_reader, cloud_writer
         except Exception as e:
             logger.warning(
@@ -1262,7 +1308,7 @@ class OIGProxy:
         await self._close_writer(cloud_writer)
         self.cloud_session_connected = False
         await self._process_frame_offline(frame_bytes, table_name, device_id, box_writer)
-        if self.stats["frames_queued"] % 10 == 0:
+        if self.stats["frames_queued"] % 100 == 0:
             queue_size = self.cloud_queue.size()
             logger.info(
                 f"📦 {self.mode.value}: "
