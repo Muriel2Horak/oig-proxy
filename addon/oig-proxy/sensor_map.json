@@ -2437,7 +2437,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3584,7 +3584,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3595,7 +3595,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3606,7 +3606,7 @@
       "device_class": "energy",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3617,7 +3617,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3628,7 +3628,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3639,7 +3639,7 @@
       "device_class": "energy",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3650,7 +3650,7 @@
       "device_class": null,
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "CHARGING": {
@@ -3660,7 +3660,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "A_CHRG": {
@@ -3692,7 +3692,7 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3714,7 +3714,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3725,7 +3725,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3736,7 +3736,7 @@
       "device_class": "current",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3747,7 +3747,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3758,7 +3758,7 @@
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_P_L2": {
@@ -3768,7 +3768,7 @@
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_P_L3": {
@@ -3778,7 +3778,7 @@
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_U_L1": {
@@ -3788,7 +3788,7 @@
       "device_class": "voltage",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_U_L2": {
@@ -3798,7 +3798,7 @@
       "device_class": "voltage",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_U_L3": {
@@ -3808,7 +3808,7 @@
       "device_class": "voltage",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_A_L1": {
@@ -3818,7 +3818,7 @@
       "device_class": "current",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_A_L2": {
@@ -3828,7 +3828,7 @@
       "device_class": "current",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ACT_A_L3": {
@@ -3838,7 +3838,7 @@
       "device_class": "current",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_D": {
@@ -3848,7 +3848,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_M": {
@@ -3858,7 +3858,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_Y": {
@@ -3868,7 +3868,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_PVB_D": {
@@ -3878,7 +3878,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_PVB_M": {
@@ -3888,7 +3888,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_PVB_Y": {
@@ -3898,7 +3898,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_G_D": {
@@ -3908,7 +3908,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_G_M": {
@@ -3918,7 +3918,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "ETOCAR_G_Y": {
@@ -3928,7 +3928,7 @@
       "device_class": "energy",
       "state_class": "total_increasing",
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "WFIX": {
@@ -4214,7 +4214,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "wallbox",
+      "device_mapping": "wl_charge",
       "todo": false
     },
     "LO_DAY_MAX": {
