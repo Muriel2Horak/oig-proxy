@@ -158,7 +158,7 @@ class CloudSessionManager:
                 self.stats.connects += 1
                 self._backoff_s = self.min_reconnect_s
                 logger.debug(
-                    "☁️ Připojeno k %s:%s "
+                    "☁️ Connected to %s:%s "
                     "(connects=%s, timeouts=%s, errors=%s, disconnects=%s)",
                     self.host,
                     self.port,

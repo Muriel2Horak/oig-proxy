@@ -210,7 +210,7 @@ class OIGProxy:
         if self.mqtt_publisher.connect():
             await self.mqtt_publisher.start_health_check()
         else:
-            logger.warning("MQTT: Initial connect failed, health check se pokusí reconnect")
+            logger.warning("MQTT: Initial connect failed, health check will retry reconnect")
             await self.mqtt_publisher.start_health_check()
 
         if self._control_mqtt_enabled:
@@ -224,7 +224,7 @@ class OIGProxy:
                 self.device_id = restored_device_id
                 self.mqtt_publisher.device_id = restored_device_id
                 logger.info(
-                    f"🔑 Obnovuji device_id z uloženého stavu: {self.device_id}"
+                    f"🔑 Restoring device_id from saved state: {self.device_id}"
                 )
                 self.mqtt_publisher.publish_availability()
                 self._setup_mqtt_state_cache()
@@ -251,9 +251,9 @@ class OIGProxy:
         )
         
         addr = server.sockets[0].getsockname()
-        logger.info(f"🚀 OIG Proxy naslouchá na {addr[0]}:{addr[1]}")
+        logger.info(f"🚀 OIG Proxy listening on {addr[0]}:{addr[1]}")
         logger.info(f"📡 Cloud target: {TARGET_SERVER}:{TARGET_PORT}")
-        logger.info(f"🔄 Režim: {self.mode.value}")
+        logger.info(f"🔄 Mode: {self.mode.value}")
         
         async with server:
             await server.serve_forever()
@@ -464,7 +464,7 @@ class OIGProxy:
             elif self._mode_device_id:
                 target_device_id = self._mode_device_id
         if not target_device_id:
-            logger.debug("MODE: Nemám device_id, publish odložen")
+            logger.debug("MODE: No device_id, publish deferred")
             return
 
         payload: dict[str, Any] = {
@@ -477,7 +477,7 @@ class OIGProxy:
             await self.mqtt_publisher.publish_data(payload)
             if reason:
                 logger.info(
-                    f"MODE: Publikován stav {self._mode_value} ({reason})"
+                    f"MODE: Published state {self._mode_value} ({reason})"
                 )
         except Exception as e:
             logger.debug(f"MODE publish failed: {e}")
@@ -533,7 +533,7 @@ class OIGProxy:
 
         self._prms_pending_publish = False
         if reason:
-            logger.info(f"STATE: Publikován snapshot ({reason})")
+            logger.info(f"STATE: Published snapshot ({reason})")
 
     async def _handle_mode_update(
         self,
@@ -550,7 +550,7 @@ class OIGProxy:
             return
         if mode_int < 0 or mode_int > 5:
             logger.debug(
-                f"MODE: Hodnota {mode_int} mimo rozsah 0-5, zdroj {source}, ignoruji"
+                f"MODE: Value {mode_int} out of range 0-5, source {source}, ignoring"
             )
             return
 
@@ -616,7 +616,7 @@ class OIGProxy:
             self.stats["mode_changes"] += 1
 
         logger.info(
-            "🟡 Režim změněn: ONLINE → REPLAY (%s frames ve frontě, %s)",
+            "🟡 Mode changed: ONLINE → REPLAY (%s frames in queue, %s)",
             queue_size,
             reason,
         )
@@ -665,7 +665,7 @@ class OIGProxy:
             return
 
         logger.info(
-            f"Proxy status: periodický publish každých "
+            f"Proxy status: periodic publish every "
             f"{PROXY_STATUS_INTERVAL}s"
         )
         while True:
@@ -692,7 +692,7 @@ class OIGProxy:
             old_mode = await self._switch_mode(ProxyMode.OFFLINE)
             if old_mode != ProxyMode.OFFLINE:
                 logger.warning(
-                    f"🔴 Režim změněn: {old_mode.value} → {ProxyMode.OFFLINE.value}"
+                    f"🔴 Mode changed: {old_mode.value} → {ProxyMode.OFFLINE.value}"
                 )
             await self.publish_proxy_status()
             return
@@ -704,13 +704,13 @@ class OIGProxy:
             if old_mode != new_mode:
                 if new_mode == ProxyMode.REPLAY:
                     logger.info(
-                        f"🟡 Režim změněn: {old_mode.value} → {new_mode.value} "
-                        f"({queue_size} frames ve frontě)"
+                        f"🟡 Mode changed: {old_mode.value} → {new_mode.value} "
+                        f"({queue_size} frames in queue)"
                     )
                     self._ensure_replay_task_running()
                 else:
                     logger.info(
-                        f"🟢 Režim změněn: {old_mode.value} → {new_mode.value}"
+                        f"🟢 Mode changed: {old_mode.value} → {new_mode.value}"
                     )
             await self.publish_proxy_status()
 
@@ -739,12 +739,12 @@ class OIGProxy:
             if replayed % 10 == 0:
                 remaining = self.cloud_queue.size()
                 logger.debug(
-                    f"🔄 Replay progress: {replayed} odesláno, {remaining} zbývá"
+                    f"🔄 Replay progress: {replayed} sent, {remaining} remaining"
                 )
             return True
         except asyncio.TimeoutError:
             logger.warning(
-                "⏱️ Replay ACK timeout (%.1fs) pro frame %s (table=%s)",
+                "⏱️ Replay ACK timeout (%.1fs) for frame %s (table=%s)",
                 REPLAY_ACK_TIMEOUT,
                 frame_id,
                 table_name,
@@ -756,7 +756,7 @@ class OIGProxy:
             return False
         except Exception as e:
             logger.exception(
-                "❌ Replay failed pro frame %s (table=%s): %s",
+                "❌ Replay failed for frame %s (table=%s): %s",
                 frame_id,
                 table_name,
                 repr(e),
@@ -813,13 +813,13 @@ class OIGProxy:
 
     async def _replay_cloud_queue(self) -> None:
         """Background task pro replay cloud fronty (rate limited)."""
-        logger.info("🔄 Začínám replay cloud fronty...")
+        logger.info("🔄 Starting cloud queue replay...")
         replayed = 0
         interval = 1.0 / CLOUD_REPLAY_RATE if CLOUD_REPLAY_RATE > 0 else 1.0
 
         while True:
             if not self.cloud_health.is_online:
-                logger.warning("⚠️ Replay přerušeno - cloud offline")
+                logger.warning("⚠️ Replay interrupted - cloud offline")
                 old_mode = await self._switch_mode(ProxyMode.OFFLINE)
                 if old_mode != ProxyMode.OFFLINE:
                     await self.publish_proxy_status()
@@ -829,7 +829,7 @@ class OIGProxy:
             if item is None:
                 if self.cloud_queue.size() <= 0:
                     logger.info(
-                        "✅ Replay dokončen (%s frames), přepínám na ONLINE režim",
+                        "✅ Replay complete (%s frames), switching to ONLINE mode",
                         replayed,
                     )
                     old_mode = await self._switch_mode(ProxyMode.ONLINE)
@@ -850,7 +850,7 @@ class OIGProxy:
 
             await asyncio.sleep(interval)
 
-        logger.info(f"🏁 Replay task ukončen (replayed={replayed})")
+        logger.info(f"🏁 Replay task finished (replayed={replayed})")
 
     async def _register_box_connection(
         self, writer: asyncio.StreamWriter, addr: Any
@@ -860,7 +860,7 @@ class OIGProxy:
             if previous is not None and not previous.is_closing():
                 await self._close_writer(previous)
                 logger.info(
-                    "BOX: uzavírám předchozí spojení kvůli novému připojení"
+                    "BOX: closing previous connection due to new connection"
                 )
 
             self._conn_seq += 1
@@ -913,7 +913,7 @@ class OIGProxy:
         conn_id = await self._register_box_connection(writer, addr)
         self._tune_socket(writer)
 
-        logger.info("🔌 BOX připojen (conn=%s, peer=%s)", conn_id, addr)
+        logger.info("🔌 BOX connected (conn=%s, peer=%s)", conn_id, addr)
         self.box_connected = True
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
@@ -927,7 +927,7 @@ class OIGProxy:
         try:
             await self._handle_box_connection(reader, writer, conn_id)
         except Exception as e:
-            logger.error(f"❌ Chyba při zpracování spojení od {addr}: {e}")
+            logger.error(f"❌ Error handling connection from {addr}: {e}")
         finally:
             if self._local_getactual_task and not self._local_getactual_task.done():
                 self._local_getactual_task.cancel()
@@ -983,7 +983,7 @@ class OIGProxy:
         except ConnectionResetError:
             # BOX (nebo síť) spojení tvrdě ukončil – bereme jako běžné odpojení.
             logger.info(
-                "🔌 BOX resetoval spojení (conn=%s)", conn_id
+                "🔌 BOX reset the connection (conn=%s)", conn_id
             )
             await self.publish_proxy_status()
             return None
@@ -995,7 +995,7 @@ class OIGProxy:
 
         if not data:
             logger.info(
-                f"🔌 BOX ukončil spojení (EOF, conn={conn_id}, "
+                f"🔌 BOX closed the connection (EOF, conn={conn_id}, "
                 f"frames_rx={self.stats['frames_received']}, "
                 f"frames_tx={self.stats['frames_forwarded']}, "
                 f"queue={self.cloud_queue.size()})"
@@ -1093,7 +1093,7 @@ class OIGProxy:
             return cloud_reader, cloud_writer
         except Exception as e:
             logger.warning(
-                f"⚠️ Cloud nedostupný: {e} - offline mode "
+                f"⚠️ Cloud unavailable: {e} - offline mode "
                 f"(conn={conn_id}, table={table_name})"
             )
             self.cloud_errors += 1
@@ -1150,7 +1150,7 @@ class OIGProxy:
             )
             if not ack_data:
                 logger.warning(
-                    f"⚠️ Cloud ukončil spojení - offline mode "
+                    f"⚠️ Cloud closed the connection - offline mode "
                     f"(conn={conn_id}, table={table_name})"
                 )
                 self.cloud_disconnects += 1
@@ -1313,7 +1313,7 @@ class OIGProxy:
             logger.info(
                 f"📦 {self.mode.value}: "
                 f"{self.stats['frames_queued']} frames queued "
-                f"({queue_size} ve frontě)"
+                f"({queue_size} in queue)"
             )
         return None, None
 
@@ -1381,7 +1381,7 @@ class OIGProxy:
         except ConnectionResetError:
             # Běžné: BOX přeruší TCP (např. reconnect po modem resetu). Nechceme z toho dělat ERROR.
             logger.debug(
-                "🔌 BOX ukončil spojení (RST, conn=%s, peer=%s)",
+                "🔌 BOX closed the connection (RST, conn=%s, peer=%s)",
                 conn_id,
                 self._active_box_peer,
             )

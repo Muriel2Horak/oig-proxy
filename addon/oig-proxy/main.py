@@ -61,7 +61,7 @@ async def main():
         device_id = "AUTO"  # Placeholder - bude aktualizováno z prvního framu
     
     # Konfigurace
-    logger.info("📋 Konfigurace:")
+    logger.info("📋 Configuration:")
     logger.info(f"   Device ID: {device_id}")
     logger.info(f"   Listen: {PROXY_LISTEN_HOST}:{PROXY_LISTEN_PORT}")
     logger.info(f"   Cloud target: {TARGET_SERVER}:{TARGET_PORT}")

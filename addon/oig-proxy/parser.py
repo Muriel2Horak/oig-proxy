@@ -48,7 +48,7 @@ class OIGDataParser:
             subframe_id = int(subframe_match.group(1))
             if subframe_id > 0:
                 logger.debug(
-                    f"SubD={subframe_id} ignorován (neaktivní banka)"
+                    f"SubD={subframe_id} ignored (inactive bank)"
                 )
                 return {}  # Prázdný dict - nebude publikován
         
@@ -89,6 +89,6 @@ class OIGDataParser:
         if match:
             old_value = int(match.group(1))
             new_value = int(match.group(2))
-            logger.info(f"MODE: Event detekován: {old_value} → {new_value}")
+            logger.info(f"MODE: Event detected: {old_value} → {new_value}")
             return new_value
         return None

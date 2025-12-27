@@ -67,16 +67,16 @@ def load_mode_state() -> tuple[int | None, str | None]:
                         mode_int = None
                     if mode_int is None or mode_int < 0 or mode_int > 5:
                         logger.warning(
-                            f"MODE: Uložená hodnota {mode_value} je mimo rozsah 0-5, ignoruji"
+                            f"MODE: Stored value {mode_value} is out of range 0-5, ignoring"
                         )
                         return None, device_id
                     logger.info(
-                        f"MODE: Načten uložený stav: {mode_int} "
+                        f"MODE: Loaded saved state: {mode_int} "
                         f"(device_id={device_id})"
                     )
                     return mode_int, device_id
     except Exception as e:
-        logger.warning(f"MODE: Nepodařilo se načíst stav: {e}")
+        logger.warning(f"MODE: Failed to load state: {e}")
     return None, None
 
 
@@ -91,10 +91,10 @@ def save_mode_state(mode_value: int, device_id: str | None) -> None:
                 "timestamp": iso_now()
             }, f)
         logger.debug(
-            f"MODE: Stav uložen: {mode_value} (device_id={device_id})"
+            f"MODE: State saved: {mode_value} (device_id={device_id})"
         )
     except Exception as e:
-        logger.error(f"MODE: Nepodařilo se uložit stav: {e}")
+        logger.error(f"MODE: Failed to save state: {e}")
 
 
 def _load_json_file(path: str) -> Any | None:
@@ -148,7 +148,7 @@ def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
             return {}, None
         return _split_prms_state(loaded)
     except Exception as e:
-        logger.warning(f"STATE: Nepodařilo se načíst table state: {e}")
+        logger.warning(f"STATE: Failed to load table state: {e}")
         return {}, None
 
 
@@ -203,7 +203,7 @@ def save_prms_state(
         with open(PRMS_STATE_PATH, "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False)
     except Exception as e:
-        logger.debug(f"STATE: Nepodařilo se uložit table state ({table_name}): {e}")
+        logger.debug(f"STATE: Failed to save table state ({table_name}): {e}")
 
 
 def get_sensor_config(
@@ -415,7 +415,7 @@ def load_sensor_map() -> None:
     
     if not os.path.exists(SENSOR_MAP_PATH):
         logger.info(
-            f"JSON mapping nenalezen, přeskočeno ({SENSOR_MAP_PATH})"
+            f"JSON mapping not found, skipped ({SENSOR_MAP_PATH})"
         )
         return
     
@@ -426,14 +426,14 @@ def load_sensor_map() -> None:
 
         added = _add_sensors_from_mapping(loaded)
         if added:
-            logger.info(f"Sensor map: Načteno {added} senzorů z {SENSOR_MAP_PATH}")
+            logger.info(f"Sensor map: Loaded {added} sensors from {SENSOR_MAP_PATH}")
             sample = list(SENSORS.keys())[:5]
             logger.debug(f"Sensor map sample: {sample}")
 
         WARNING_MAP = _build_warning_map(loaded)
         _last_map_load = now
     except Exception as e:
-        logger.warning(f"Načtení mappingu selhalo: {e}")
+        logger.warning(f"Sensor map load failed: {e}")
 
 
 def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:

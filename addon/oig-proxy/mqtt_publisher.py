@@ -83,7 +83,7 @@ class MQTTQueue:
         except Exception:
             pass
         
-        logger.info(f"MQTTQueue: Inicializováno ({self.db_path})")
+        logger.info(f"MQTTQueue: Initialized ({self.db_path})")
         return conn
     
     async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
@@ -228,7 +228,7 @@ class MQTTPublisher:
     def connect(self, timeout: float | None = None) -> bool:
         """Připojí k MQTT brokeru s timeoutem."""
         if not MQTT_AVAILABLE:
-            logger.error("MQTT knihovna paho-mqtt není nainstalována")
+            logger.error("MQTT library paho-mqtt is not installed")
             return False
 
         # Pokud connect voláme z asyncio kontextu, uložíme si loop pro thread-safe scheduling.
@@ -261,7 +261,7 @@ class MQTTPublisher:
             self.client.on_message = self._on_message
             
             logger.info(
-                f"MQTT: Připojuji k {MQTT_HOST}:{MQTT_PORT} "
+                f"MQTT: Connecting to {MQTT_HOST}:{MQTT_PORT} "
                 f"(timeout {timeout}s)"
             )
             
@@ -277,12 +277,12 @@ class MQTTPublisher:
                 self.reconnect_attempts = 0
                 return True
             else:
-                logger.error(f"MQTT: ❌ Timeout připojení po {timeout}s")
+                logger.error(f"MQTT: ❌ Connection timeout after {timeout}s")
                 self._cleanup_client()
                 return False
                 
         except Exception as e:
-            logger.error(f"MQTT: ❌ Připojení selhalo: {e}")
+            logger.error(f"MQTT: ❌ Connection failed: {e}")
             self._cleanup_client()
             return False
     
@@ -303,7 +303,7 @@ class MQTTPublisher:
         rc_msg = self.RC_CODES.get(rc, f"Unknown error ({rc})")
         
         if rc == 0:
-            logger.info(f"MQTT: Připojeno (flags={flags})")
+            logger.info(f"MQTT: Connected (flags={flags})")
             self.connected = True
             self.reconnect_attempts = 0
             self._last_payload_by_topic.clear()
@@ -343,7 +343,7 @@ class MQTTPublisher:
             # Trigger replay
             self._schedule_replay()
         else:
-            logger.error(f"MQTT: ❌ Připojení odmítnuto: {rc_msg}")
+            logger.error(f"MQTT: ❌ Connection refused: {rc_msg}")
             self.connected = False
             self.last_error_time = time.time()
             self.last_error_msg = rc_msg
@@ -356,16 +356,16 @@ class MQTTPublisher:
         self._last_payload_by_topic.clear()
         
         if rc == 0:
-            logger.info("MQTT: Odpojeno (čisté odpojení)")
+            logger.info("MQTT: Disconnected (clean disconnect)")
         else:
-            logger.warning(f"MQTT: ⚠️ Neočekávané odpojení (rc={rc})")
+            logger.warning(f"MQTT: ⚠️ Unexpected disconnect (rc={rc})")
             self.last_error_time = time.time()
             self.last_error_msg = f"Unexpected disconnect (rc={rc})"
             
         if was_connected:
             logger.warning(
-                "MQTT: 🔴 Zpracování dat pozastaveno "
-                "do obnovení spojení"
+                "MQTT: 🔴 Data processing paused "
+                "until reconnection"
             )
     
     def _on_publish(self, client: Any, userdata: Any, mid: int) -> None:
@@ -376,7 +376,7 @@ class MQTTPublisher:
         if self.publish_success % self.PUBLISH_LOG_EVERY == 0:
             logger.debug(
                 f"MQTT: 📊 Stats: {self.publish_success} OK, "
-                f"{self.publish_failed} FAIL z {self.publish_count} celkem"
+                f"{self.publish_failed} FAIL out of {self.publish_count} total"
             )
 
     def add_message_handler(
@@ -464,16 +464,16 @@ class MQTTPublisher:
         """Replay fronty po reconnectu (rate limited)."""
         queue_size = self.queue.size()
         if queue_size == 0:
-            logger.debug("MQTT: Replay queue prázdná")
+            logger.debug("MQTT: Replay queue empty")
             return
         
-        logger.info(f"MQTT: Začínám replay {queue_size} zpráv...")
+        logger.info(f"MQTT: Starting replay of {queue_size} messages...")
         replayed = 0
         interval = 1.0 / MQTT_REPLAY_RATE  # ~0.1s pro 10 msg/s
         
         while True:
             if not self.is_ready():
-                logger.warning("MQTT: Replay přerušeno - odpojeno")
+                logger.warning("MQTT: Replay interrupted - disconnected")
                 break
             
             item = await self.queue.get_next()
@@ -491,7 +491,7 @@ class MQTTPublisher:
                         remaining = self.queue.size()
                         logger.debug(
                             f"MQTT: Replay progress: {replayed}/{queue_size} "
-                            f"({remaining} zbývá)"
+                            f"({remaining} remaining)"
                         )
                 else:
                     logger.error(
@@ -504,12 +504,12 @@ class MQTTPublisher:
             
             await asyncio.sleep(interval)
         
-        logger.info(f"MQTT: Replay dokončen ({replayed} zpráv)")
+        logger.info(f"MQTT: Replay complete ({replayed} messages)")
     
     async def health_check_loop(self) -> None:
         """Periodicky kontroluje MQTT spojení."""
         logger.info(
-            f"MQTT: Health check spuštěn "
+            f"MQTT: Health check started "
             f"(interval {self.HEALTH_CHECK_INTERVAL}s)"
         )
         
@@ -519,18 +519,18 @@ class MQTTPublisher:
             if not self.connected:
                 self.reconnect_attempts += 1
                 logger.warning(
-                    f"MQTT: 🔄 Health check - pokus o reconnect "
+                    f"MQTT: 🔄 Health check - reconnect attempt "
                     f"#{self.reconnect_attempts}"
                 )
                 
                 if self.connect(timeout=self.CONNECT_TIMEOUT):
                     logger.info(
-                        f"MQTT: ✅ Reconnect úspěšný po "
-                        f"{self.reconnect_attempts} pokusech"
+                        f"MQTT: ✅ Reconnect succeeded after "
+                        f"{self.reconnect_attempts} attempts"
                     )
                 else:
                     logger.warning(
-                        f"MQTT: ❌ Reconnect selhal, další pokus za "
+                        f"MQTT: ❌ Reconnect failed, next attempt in "
                         f"{self.HEALTH_CHECK_INTERVAL}s"
                     )
     
@@ -557,7 +557,7 @@ class MQTTPublisher:
     def _schedule_replay(self) -> None:
         """Naplánuje replay MQTT fronty do asyncio loopu (thread-safe)."""
         if self._main_loop is None:
-            logger.debug("MQTT: Replay skip - nemám asyncio loop")
+            logger.debug("MQTT: Replay skipped - no asyncio loop")
             return
         if self._replay_future is not None and not self._replay_future.done():
             return
@@ -705,8 +705,8 @@ class MQTTPublisher:
             await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
             if self.publish_count % 100 == 0:
                 logger.warning(
-                    f"MQTT: Offline - data ve frontě "
-                    f"({self.queue.size()} zpráv)"
+                    f"MQTT: Offline - data queued "
+                    f"({self.queue.size()} messages)"
                 )
             self.publish_failed += 1
             return False
@@ -730,7 +730,7 @@ class MQTTPublisher:
                 # Pokud publish selže, přidej do fronty
                 await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
                 self.publish_failed += 1
-                logger.error(f"MQTT: Publish selhal rc={result.rc}")
+                logger.error(f"MQTT: Publish failed rc={result.rc}")
                 return False
         except Exception as e:
             await self.queue.add(topic, payload, MQTT_STATE_RETAIN)

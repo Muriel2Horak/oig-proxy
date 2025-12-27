@@ -76,7 +76,7 @@ class CloudQueue:
             logger.warning(f"CloudQueue: Schema migration failed: {e}")
         conn.commit()
         
-        logger.info(f"CloudQueue: Inicializováno ({self.db_path})")
+        logger.info(f"CloudQueue: Initialized ({self.db_path})")
         return conn
     
     async def add(
