@@ -2015,6 +2015,94 @@
         "Home 6"
       ]
     },
+    "tbl_car_charge_prms:MODE": {
+      "name": "Mode",
+      "name_cs": "Re\u017eim",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "wl_charge",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt:ID_SubD": {
+      "name": "ID_SubD",
+      "name_cs": "Syst\u00e9m - ID sub-device",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt_prms:ID_SubD": {
+      "name": "ID_SubD",
+      "name_cs": "Syst\u00e9m - ID sub-device",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt_prms:TYP": {
+      "name": "TYP",
+      "name_cs": "St\u0159\u00edda\u010d - Typ",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt_prms:HDO1_S": {
+      "name": "HDO \u010dasov\u00e9 p\u00e1smo 1",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 1 za\u010d\u00e1tek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt_prms:HDO1_E": {
+      "name": "End",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 1 konec",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt_prms:HDO2_S": {
+      "name": "HDO \u010dasov\u00e9 p\u00e1smo 2",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 2 za\u010d\u00e1tek",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "tbl_batt_prms:HDO2_E": {
+      "name": "End",
+      "name_cs": "S\u00ed\u0165 - HDO p\u00e1smo 2 konec",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "measured",
+      "device_mapping": "battery",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "tbl_actual:ENBL": {
       "name": "System Enabled (live)",
       "name_cs": "Syst\u00e9m - Povoleno (live)",
@@ -3573,7 +3661,7 @@
       "device_class": "current",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "grid",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3670,7 +3758,7 @@
       "device_class": "current",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3681,7 +3769,7 @@
       "device_class": "battery",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3703,7 +3791,7 @@
       "device_class": "battery",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "wl_charge",
       "todo": false,
       "entity_category": "diagnostic"
     },
