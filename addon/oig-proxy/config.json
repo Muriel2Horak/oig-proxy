@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.3.22",
+  "version": "1.3.23",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dek\u00f3dov\u00e1n\u00ed r\u00e1mc\u016f, warning\u016f, discovery)",
   "arch": [
