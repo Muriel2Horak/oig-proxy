@@ -12,6 +12,7 @@ import sqlite3
 import threading
 import time
 import base64
+import ipaddress
 from contextlib import suppress
 from typing import Any
 
@@ -27,6 +28,20 @@ from config import (
 from models import SensorConfig, WarningEntry
 
 logger = logging.getLogger(__name__)
+
+# Public DNS resolver for cloud target (bypass local override)
+try:
+    import dns.resolver  # type: ignore
+except Exception:  # pragma: no cover - optional dependency guard
+    dns = None
+
+_PUBLIC_DNS_HOSTS = {"oigservis.cz"}
+_PUBLIC_DNS_DEFAULT = ("8.8.8.8", "1.1.1.1")
+_PUBLIC_DNS_CACHE: dict[str, tuple[str, float]] = {}
+_PUBLIC_DNS_LAST_LOG: dict[str, str] = {}
+_PUBLIC_DNS_TTL_DEFAULT_S = 300.0
+_PUBLIC_DNS_TTL_MIN_S = 30.0
+_PUBLIC_DNS_TTL_MAX_S = 3600.0
 
 # Globální state
 SENSORS: dict[str, SensorConfig] = {}
@@ -46,6 +61,87 @@ def friendly_name(sensor_id: str) -> str:
     """Vytvoří lidsky čitelný název ze sensor_id."""
     parts = sensor_id.replace("_", " ").split()
     return " ".join(p.capitalize() for p in parts)
+
+
+def _normalize_hostname(host: str) -> str:
+    return host.strip().rstrip(".").lower()
+
+
+def _is_ip_address(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _public_dns_nameservers() -> list[str]:
+    raw = os.getenv("CLOUD_PUBLIC_DNS", "").strip()
+    if raw:
+        servers = [part.strip() for part in raw.split(",") if part.strip()]
+    else:
+        servers = list(_PUBLIC_DNS_DEFAULT)
+    # Keep only IPv4 addresses
+    valid = [s for s in servers if _is_ip_address(s)]
+    return valid or list(_PUBLIC_DNS_DEFAULT)
+
+
+def _public_dns_cache_get(host: str) -> str | None:
+    cached = _PUBLIC_DNS_CACHE.get(host)
+    if not cached:
+        return None
+    ip, expires_at = cached
+    if expires_at <= time.time():
+        _PUBLIC_DNS_CACHE.pop(host, None)
+        return None
+    return ip
+
+
+def _public_dns_cache_set(host: str, ip: str, ttl_s: float) -> None:
+    ttl = max(_PUBLIC_DNS_TTL_MIN_S, min(_PUBLIC_DNS_TTL_MAX_S, ttl_s))
+    _PUBLIC_DNS_CACHE[host] = (ip, time.time() + ttl)
+
+
+def _resolve_public_dns(host: str) -> tuple[str | None, float]:
+    if dns is None:
+        return None, _PUBLIC_DNS_TTL_DEFAULT_S
+    resolver = dns.resolver.Resolver(configure=False)
+    resolver.nameservers = _public_dns_nameservers()
+    try:
+        answer = resolver.resolve(host, "A", lifetime=2.0)
+        ip = str(answer[0])
+        ttl = float(getattr(answer.rrset, "ttl", _PUBLIC_DNS_TTL_DEFAULT_S))
+        return ip, ttl
+    except Exception:
+        return None, _PUBLIC_DNS_TTL_DEFAULT_S
+
+
+def resolve_cloud_host(host: str) -> str:
+    """
+    Resolve cloud host using public DNS to bypass local overrides.
+    Only applies to known cloud domains (e.g. oigservis.cz).
+    """
+    if not host:
+        return host
+    normalized = _normalize_hostname(host)
+    if _is_ip_address(normalized):
+        return normalized
+    if normalized not in _PUBLIC_DNS_HOSTS:
+        return host
+
+    cached = _public_dns_cache_get(normalized)
+    if cached:
+        return cached
+
+    ip, ttl = _resolve_public_dns(normalized)
+    if ip:
+        _public_dns_cache_set(normalized, ip, ttl)
+        if _PUBLIC_DNS_LAST_LOG.get(normalized) != ip:
+            logger.info("☁️ Cloud DNS (public): %s -> %s", normalized, ip)
+            _PUBLIC_DNS_LAST_LOG[normalized] = ip
+        return ip
+
+    raise RuntimeError(f"Public DNS resolution failed for {normalized}")
 
 
 def load_mode_state() -> tuple[int | None, str | None]:

@@ -62,6 +62,7 @@ from utils import (
     get_sensor_config,
     load_mode_state,
     load_prms_state,
+    resolve_cloud_host,
     save_mode_state,
     save_prms_state,
 )
@@ -1075,8 +1076,9 @@ class OIGProxy:
         if cloud_writer is not None and not cloud_writer.is_closing():
             return cloud_reader, cloud_writer
         try:
+            target_host = resolve_cloud_host(TARGET_SERVER)
             cloud_reader, cloud_writer = await asyncio.wait_for(
-                asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
+                asyncio.open_connection(target_host, TARGET_PORT),
                 timeout=connect_timeout_s,
             )
             self.cloud_connects += 1

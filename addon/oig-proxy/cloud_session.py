@@ -16,6 +16,8 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 
+from utils import resolve_cloud_host
+
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +153,9 @@ class CloudSessionManager:
 
             self._last_connect_attempt = time.monotonic()
             try:
+                target_host = resolve_cloud_host(self.host)
                 self._reader, self._writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.host, self.port),
+                    asyncio.open_connection(target_host, self.port),
                     timeout=self.connect_timeout_s,
                 )
                 self.stats.connects += 1
