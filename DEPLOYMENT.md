@@ -18,7 +18,6 @@ addon/oig-proxy/
 ├── mqtt_publisher.py  (568 lines) - MQTT publikování + queue
 ├── proxy.py           (300 lines) - Hlavní orchestrace + 3 módy
 ├── main.py            (80 lines)  - Entry point (zjednodušený)
-├── main_old.py        (1601 lines)- Backup původního
 └── README_MODULAR.md              - Dokumentace modulů
 
 analysis/              (14 souborů) - Kompletní reverse engineering

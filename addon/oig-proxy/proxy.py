@@ -726,8 +726,9 @@ class OIGProxy:
         reader: asyncio.StreamReader | None = None
         writer: asyncio.StreamWriter | None = None
         try:
+            target_host = resolve_cloud_host(TARGET_SERVER)
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(TARGET_SERVER, TARGET_PORT),
+                asyncio.open_connection(target_host, TARGET_PORT),
                 timeout=5.0,
             )
             writer.write(frame_bytes)

@@ -13,8 +13,7 @@ addon/oig-proxy/
 ├── parser.py            # XML frame parser (100 lines)
 ├── cloud_manager.py     # CloudQueue, CloudHealthChecker, ACKLearner (360 lines)
 ├── mqtt_publisher.py    # MQTTPublisher s frontou (568 lines)
-├── proxy.py             # OIGProxy orchestrace (300 lines)
-└── main_old.py          # Legacy monolit (deprecated)
+└── proxy.py             # OIGProxy orchestrace (300 lines)
 ```
 
 **Celkem:** ~1869 lines (vs. original 1601 lines)
@@ -84,19 +83,6 @@ python3 test_data/extract_frames.py
 
 # 3. Critical test - REPLAY režim
 ./test_replay_mode.sh
-```
-
-## Migrace z main.py na main_new.py
-
-```bash
-# Backup original
-cp main.py main_old.py
-
-# Replace with new
-mv main_new.py main.py
-
-# Update run script pokud potřeba
-# (Dockerfile už spouští main.py)
 ```
 
 ## Environment variables

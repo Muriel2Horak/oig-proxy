@@ -50,9 +50,6 @@ cd /path/to/oig-proxy-addon
 cp /Users/martinhorak/Projects/oig-proxy/addon/oig-proxy/*.py .
 cp /Users/martinhorak/Projects/oig-proxy/addon/oig-proxy/README_MODULAR.md .
 
-# Backup starého main.py
-mv main.py main_old.py
-
 # Update config.json (přidej DEVICE_ID option)
 # Update Dockerfile (pokud potřeba)
 # Update CHANGELOG
