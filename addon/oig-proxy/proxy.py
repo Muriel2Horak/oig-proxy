@@ -1271,6 +1271,7 @@ class OIGProxy:
                 self._isnew_last_poll_epoch = time.time()
                 self._isnew_last_poll_iso = self._last_data_iso
             self._cache_last_values(parsed, table_name)
+            await self._handle_setting_event(parsed, table_name, device_id)
             await self._control_observe_box_frame(parsed, table_name, frame)
             await self._maybe_process_mode(parsed, table_name, device_id)
             await self._control_maybe_start_next()
@@ -1761,6 +1762,33 @@ class OIGProxy:
         tbl_name = f"tbl_{m.group(1)}"
         return tbl_name, m.group(2), m.group(3), m.group(4)
 
+    async def _handle_setting_event(
+        self,
+        parsed: dict[str, Any],
+        table_name: str | None,
+        device_id: str | None,
+    ) -> None:
+        if table_name != "tbl_events":
+            return
+        if not parsed or parsed.get("Type") != "Setting":
+            return
+        content = parsed.get("Content")
+        if not content:
+            return
+        ev = self._parse_setting_event(str(content))
+        if not ev:
+            return
+        tbl_name, tbl_item, _old_value, new_value = ev
+        if new_value is None:
+            return
+        await self._publish_setting_event_state(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=new_value,
+            device_id=device_id,
+            source="tbl_events",
+        )
+
     def _cache_last_values(self, parsed: dict[str, Any], table_name: str | None) -> None:
         return
 
@@ -2109,10 +2137,6 @@ class OIGProxy:
             return
 
         await self._control_publish_result(tx=tx, status="box_ack")
-        try:
-            await self._control_publish_optimistic_state(tx=tx)
-        except Exception as e:
-            logger.debug(f"CONTROL: Optimistic publish failed: {e}")
 
         if self._control_applied_task and not self._control_applied_task.done():
             self._control_applied_task.cancel()
@@ -2179,14 +2203,26 @@ class OIGProxy:
         if resolved_device_id:
             self._prms_device_id = resolved_device_id
 
-    async def _control_publish_optimistic_state(self, *, tx: dict[str, Any]) -> None:
-        tbl_name = str(tx.get("tbl_name") or "")
-        tbl_item = str(tx.get("tbl_item") or "")
+    async def _publish_setting_event_state(
+        self,
+        *,
+        tbl_name: str,
+        tbl_item: str,
+        new_value: Any,
+        device_id: str | None,
+        source: str,
+    ) -> None:
         if not tbl_name or not tbl_item:
             return
 
-        raw_value = self._control_coerce_value(tx.get("new_value"))
-        target_device_id = self.device_id if self.device_id != "AUTO" else self.mqtt_publisher.device_id
+        raw_value = self._control_coerce_value(new_value)
+        target_device_id = device_id
+        if not target_device_id:
+            target_device_id = (
+                self.device_id if self.device_id != "AUTO" else self.mqtt_publisher.device_id
+            )
+        if not target_device_id:
+            return
         topic = self.mqtt_publisher._state_topic(target_device_id, tbl_name)
         cached = self.mqtt_publisher._last_payload_by_topic.get(topic)
         payload: dict[str, Any] = {}
@@ -2212,7 +2248,7 @@ class OIGProxy:
         payload[tbl_item] = self._control_map_optimistic_value(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
-            value=tx.get("new_value"),
+            value=new_value,
         )
 
         updated = json.dumps(payload, ensure_ascii=True)
@@ -2224,10 +2260,11 @@ class OIGProxy:
             retain=MQTT_STATE_RETAIN,
         )
         logger.info(
-            "CONTROL: Optimistic state publish %s/%s=%s",
+            "SETTING: State publish %s/%s=%s (source=%s)",
             tbl_name,
             tbl_item,
             payload.get(tbl_item),
+            source,
         )
 
     async def _control_ack_timeout(self) -> None:
