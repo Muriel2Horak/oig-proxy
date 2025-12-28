@@ -1646,6 +1646,42 @@ class OIGProxy:
                 if (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "SA"):
                     self._control_post_drain_refresh_pending = True
 
+    def _control_drop_post_drain_sa_locked(self) -> list[dict[str, Any]]:
+        """Drop queued post-drain SA refresh so new commands can proceed."""
+        removed: list[dict[str, Any]] = []
+        if not self._control_queue:
+            return removed
+        kept: deque[dict[str, Any]] = deque()
+        for queued in self._control_queue:
+            if (
+                (queued.get("tbl_name"), queued.get("tbl_item")) == ("tbl_box_prms", "SA")
+                and queued.get("_internal") == "post_drain_sa"
+            ):
+                removed.append(queued)
+                continue
+            kept.append(queued)
+        if removed:
+            self._control_queue = kept
+        return removed
+
+    def _control_cancel_post_drain_sa_inflight_locked(self) -> dict[str, Any] | None:
+        """Cancel inflight post-drain SA refresh so new commands can proceed."""
+        tx = self._control_inflight
+        if (
+            not tx
+            or (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "SA")
+            or tx.get("_internal") != "post_drain_sa"
+        ):
+            return None
+        self._control_inflight = None
+        for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
+            if task and not task.done():
+                task.cancel()
+        self._control_ack_task = None
+        self._control_applied_task = None
+        self._control_quiet_task = None
+        return tx
+
     @staticmethod
     def _control_build_request_key(
         *, tbl_name: str, tbl_item: str, canon_value: str
@@ -1985,6 +2021,8 @@ class OIGProxy:
         tx["request_key"] = request_key
 
         active_state = None
+        dropped_sa: list[dict[str, Any]] = []
+        canceled_sa: dict[str, Any] | None = None
         async with self._control_lock:
             active_state = (
                 self._control_key_state.get(request_key, {}).get("state")
@@ -2013,7 +2051,33 @@ class OIGProxy:
                 )
                 return
 
+            canceled_sa = self._control_cancel_post_drain_sa_inflight_locked()
+            dropped_sa = self._control_drop_post_drain_sa_locked()
             self._control_queue.append(tx)
+
+        if canceled_sa:
+            logger.info(
+                "CONTROL: Canceling inflight post-drain SA to allow new command (%s/%s)",
+                tx.get("tbl_name"),
+                tx.get("tbl_item"),
+            )
+            await self._control_publish_result(
+                tx=canceled_sa,
+                status="completed",
+                detail="canceled_by_new_command",
+            )
+
+        for sa_tx in dropped_sa:
+            logger.info(
+                "CONTROL: Dropping post-drain SA to allow new command (%s/%s)",
+                tx.get("tbl_name"),
+                tx.get("tbl_item"),
+            )
+            await self._control_publish_result(
+                tx=sa_tx,
+                status="completed",
+                detail="canceled_by_new_command",
+            )
 
         await self._control_publish_result(tx=tx, status="accepted")
         await self._control_maybe_start_next()

@@ -114,6 +114,7 @@ CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
     "tbl_batt_prms": {"FMT_ON", "BAT_MIN"},
     "tbl_boiler_prms": {"ISON", "MANUAL", "SSR0", "SSR1", "SSR2", "OFFSET"},
     "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA", "RQRESET"},
+    "tbl_invertor_prms": {"GRID_PV_ON", "GRID_PV_OFF", "TO_GRID"},
     "tbl_invertor_prm1": {"AAC_MAX_CHRG", "A_MAX_CHRG"},
 }
 
