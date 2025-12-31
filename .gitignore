@@ -32,3 +32,4 @@ deploy_to_ha.sh
 *.log
 .vscode/
 .scannerwork/
+reports/
