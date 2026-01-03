@@ -153,6 +153,11 @@ MQTT_HOST=... MQTT_PORT=1883 python -u main.py
 ```
 Nebo docker-compose v rootu (doplnit env pro MQTT a cílový server).
 
+## Testy a kvalita
+- Spuštění testů: `./scripts/run_tests.sh` (volitelné env: `COVERAGE_FAIL_UNDER=80`, `RUN_INTEGRATION=0`).
+- Sonar + Bandit: `./scripts/run_sonar.sh` (vyžaduje `SONAR_TOKEN` a `SONAR_HOST_URL` v `.env`; volitelně `SONAR_CONFIGURE_QG=1` a `SONAR_QUALITY_GATE_NAME="Security A +0"`).
+- Reporty se generují do `reports/` (`coverage.xml`, `junit.xml`, `bandit.json`) a jsou v `.gitignore`.
+
 ## Build add-on image (multi-arch)
 ```
 cd addon/oig-proxy

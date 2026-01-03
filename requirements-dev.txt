@@ -2,5 +2,6 @@
 types-paho-mqtt
 mypy
 flake8
+bandit
 pytest
 pytest-cov

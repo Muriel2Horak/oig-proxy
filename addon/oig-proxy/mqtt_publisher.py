@@ -80,8 +80,8 @@ class MQTTQueue:
             if "retain" not in cols:
                 conn.execute("ALTER TABLE queue ADD COLUMN retain INTEGER NOT NULL DEFAULT 0")
                 conn.commit()
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.debug("MQTTQueue: retain column check failed: %s", exc)
         
         logger.info(f"MQTTQueue: Initialized ({self.db_path})")
         return conn
@@ -292,8 +292,8 @@ class MQTTPublisher:
             try:
                 self.client.loop_stop()
                 self.client.disconnect()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("MQTT: Client cleanup failed: %s", exc)
             self.client = None
         self.connected = False
     

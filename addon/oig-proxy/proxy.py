@@ -7,7 +7,7 @@ import asyncio
 import logging
 import socket
 import time
-import random
+import secrets
 import json
 import uuid
 from collections import deque
@@ -1291,7 +1291,7 @@ class OIGProxy:
 
     @staticmethod
     def _infer_device_id(frame: str) -> str | None:
-        m = re.search(r"<ID_Device>(\\d+)</ID_Device>", frame)
+        m = re.search(r"<ID_Device>(\d+)</ID_Device>", frame)
         return m.group(1) if m else None
 
     async def _get_current_mode(self) -> ProxyMode:
@@ -2514,7 +2514,7 @@ class OIGProxy:
         if writer is None:
             return {"ok": False, "error": "no_active_box_writer"}
 
-        msg_id = random.randint(10_000_000, 99_999_999)
+        msg_id = secrets.randbelow(90_000_000) + 10_000_000
         id_set = int(time.time())
         now_local = datetime.now()
         now_utc = datetime.now(timezone.utc)
@@ -2595,13 +2595,18 @@ class OIGProxy:
         box_writer.write(end_frame)
         try:
             asyncio.create_task(box_writer.drain())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("CONTROL: Failed to schedule END drain: %s", exc)
 
         try:
-            asyncio.create_task(self._control_on_box_setting_ack(tx_id=str(tx_id) if tx_id else None, ack=ack_ok))
-        except Exception:
-            pass
+            asyncio.create_task(
+                self._control_on_box_setting_ack(
+                    tx_id=str(tx_id) if tx_id else None,
+                    ack=ack_ok,
+                )
+            )
+        except Exception as exc:
+            logger.debug("CONTROL: Failed to schedule ACK handling: %s", exc)
 
         logger.info(
             "CONTROL: BOX responded to local Setting (sent END), last=%s/%s=%s",

@@ -1,0 +1,18 @@
+[run]
+branch = True
+parallel = True
+source =
+    addon/oig-proxy
+omit =
+    */tests/*
+    */testing/*
+    */analysis/*
+    */.venv/*
+    */__pycache__/*
+    */logs/*
+    */reports/*
+
+[report]
+show_missing = True
+skip_covered = True
+precision = 1
