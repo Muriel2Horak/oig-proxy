@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
-from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
+from cloud_manager import CloudHealthChecker, CloudQueue
 from config import (
     CLOUD_REPLAY_RATE,
     CLOUD_ACK_TIMEOUT,
@@ -85,7 +85,6 @@ class OIGProxy:
         # Komponenty
         self.cloud_queue = CloudQueue()
         self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
-        self.ack_learner = ACKLearner()
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
         loaded_mode, loaded_dev = load_mode_state()
@@ -1212,9 +1211,6 @@ class OIGProxy:
                     self._isnew_last_rtt_ms = round(
                         (time.time() - self._isnew_last_poll_epoch) * 1000, 1
                     )
-
-            if table_name:
-                self.ack_learner.learn_from_cloud(ack_str, table_name)
 
             box_writer.write(ack_data)
             await box_writer.drain()

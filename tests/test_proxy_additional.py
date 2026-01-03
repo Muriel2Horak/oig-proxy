@@ -39,14 +39,6 @@ class DummyCloudQueue:
         return True
 
 
-class DummyAckLearner:
-    def __init__(self) -> None:
-        self.learned = []
-
-    def learn_from_cloud(self, ack_str, table_name):
-        self.learned.append((ack_str, table_name))
-
-
 class DummyMQTT:
     def __init__(self) -> None:
         self.queue = DummyQueue()
@@ -168,7 +160,6 @@ def make_proxy(tmp_path):
         {"is_online": True, "fail_threshold": 1, "consecutive_successes": 0, "consecutive_failures": 0, "last_check_time": 0.0},
     )()
     proxy.cloud_queue = DummyCloudQueue()
-    proxy.ack_learner = DummyAckLearner()
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy._active_box_peer = "1.2.3.4:1234"
@@ -489,7 +480,6 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     )
     assert proxy.stats["frames_forwarded"] == 1
     assert proxy.stats["acks_cloud"] == 1
-    assert proxy.ack_learner.learned
 
 
 def test_forward_frame_online_timeout_end(tmp_path, monkeypatch):

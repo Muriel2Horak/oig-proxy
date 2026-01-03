@@ -1,9 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,missing-kwoa,unexpected-keyword-arg,duplicate-code
 import asyncio
-import re
 
 import cloud_manager
-from oig_frame import compute_frame_checksum
 
 
 def test_cloud_queue_drops_oldest(tmp_path):
@@ -55,22 +53,6 @@ def test_cloud_queue_defer_and_remove(tmp_path):
         asyncio.run(run())
     finally:
         queue.conn.close()
-
-
-def test_ack_learner_generates_crc():
-    learner = cloud_manager.ACKLearner()
-
-    ack = learner.generate_ack("tbl_actual")
-    assert "<Result>ACK</Result>" in ack
-
-    end = learner.generate_ack("IsNewSet")
-    assert "<Result>END</Result>" in end
-
-    for payload in (ack, end):
-        match = re.search(r"<CRC>(\d+)</CRC>", payload)
-        assert match is not None
-        crc = int(match.group(1))
-        assert compute_frame_checksum(payload.encode("utf-8")) == crc
 
 
 def test_cloud_queue_ready_age_and_clear(tmp_path):
@@ -198,8 +180,3 @@ def test_cloud_health_start_creates_task(monkeypatch):
     checker.health_check_loop = fake_loop
     asyncio.run(checker.start())
     assert checker._health_check_task is not None
-
-
-def test_ack_learner_noop():
-    learner = cloud_manager.ACKLearner()
-    learner.learn_from_cloud("<Frame></Frame>", "tbl_actual")

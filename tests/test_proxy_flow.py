@@ -34,14 +34,6 @@ class DummyReader:
         return self._payload
 
 
-class DummyAckLearner:
-    def __init__(self):
-        self.learned = []
-
-    def learn_from_cloud(self, ack_str, table_name):
-        self.learned.append((ack_str, table_name))
-
-
 class DummyCloudQueue:
     def __init__(self):
         self.added = []
@@ -125,7 +117,6 @@ def _make_proxy(tmp_path):
     proxy.cloud_health = type("H", (), {"is_online": True, "fail_threshold": 1, "consecutive_successes": 0, "consecutive_failures": 0, "last_check_time": 0.0})()
     proxy.cloud_queue = DummyCloudQueue()
     proxy.mqtt_publisher = DummyMQTT()
-    proxy.ack_learner = DummyAckLearner()
     proxy.parser = DummyParser({})
     proxy._active_box_peer = None
     proxy._control_inflight = None
@@ -346,7 +337,6 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
 
     asyncio.run(run_success())
     assert proxy.stats["acks_cloud"] == 1
-    assert proxy.ack_learner.learned
 
     async def fake_ensure_eof(*_args, **_kwargs):
         return DummyReader(b""), cloud_writer

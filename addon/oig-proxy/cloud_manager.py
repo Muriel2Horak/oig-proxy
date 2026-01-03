@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cloud management - CloudQueue, CloudHealthChecker, ACKLearner.
+Cloud management - CloudQueue, CloudHealthChecker.
 """
 
 import asyncio
@@ -9,8 +9,6 @@ import os
 import sqlite3
 import time
 from typing import Any
-
-from oig_frame import build_frame
 
 from config import (
     CLOUD_HEALTH_CHECK_INTERVAL,
@@ -336,36 +334,3 @@ class CloudHealthChecker:  # pylint: disable=too-many-arguments,too-many-positio
                 self.health_check_loop()
             )
             logger.debug("CloudHealthChecker: Task started")
-
-
-# ============================================================================
-# ACK Learner - Učení ACK vzorů z cloudu
-# ============================================================================
-
-class ACKLearner:
-    """Učí se ACK patterns z cloudu pro offline režim."""
-
-    def __init__(self):
-        # ACK/END generujeme s korektnim CRC, bez ukladani vzoru.
-        self._ack_inner = "<Result>ACK</Result><ToDo>GetActual</ToDo>"
-        self._end_inner = "<Result>END</Result>"
-        self._end_queries = {"IsNewSet", "IsNewWeather", "IsNewFW"}
-        logger.info("ACKLearner: Initialized with generated ACK/END CRC")
-
-    def learn_from_cloud(self, _cloud_response: str, _table_name: str):
-        """Naučí se ACK pattern z cloud odpovědi."""
-        # Učení CRC vypnuto: používáme pouze známé patterny.
-        return
-
-    def generate_ack(self, table_name: str | None) -> str:
-        """Vygeneruje ACK response pro danou tabulku."""
-        if table_name and table_name in self._end_queries:
-            return build_frame(self._end_inner, add_crlf=False)
-        return build_frame(self._ack_inner, add_crlf=False)
-
-    def get_stats(self) -> dict[str, Any]:
-        """Vrátí statistiky o naučených patterns."""
-        return {
-            "total_patterns": 0,
-            "tables": []
-        }

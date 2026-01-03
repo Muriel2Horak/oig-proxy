@@ -5,7 +5,7 @@ Mock OIG Cloud Server - pro testování proxy.
 Simuluje chování oigservis.cz:5710:
 - Přijímá TCP spojení
 - Parsuje XML frames od BOXu (přes proxy)
-- Posílá ACK/END responses (learned patterns)
+- Posílá ACK/END responses (fixní ACK/END s CRC)
 - Loguje všechny frames pro validaci
 """
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,logging-fstring-interpolation,broad-exception-caught,unspecified-encoding,import-outside-toplevel,unused-import,unused-argument,too-many-locals,too-many-statements,too-many-branches,too-many-instance-attributes,f-string-without-interpolation,line-too-long,too-many-nested-blocks,too-many-return-statements,no-else-return,unused-variable,no-else-continue,duplicate-code
