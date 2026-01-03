@@ -24,7 +24,7 @@ class ProxyMode(Enum):
 # ============================================================================
 
 @dataclass
-class SensorConfig:
+class SensorConfig:  # pylint: disable=too-many-instance-attributes
     """Konfigurace senzoru pro MQTT discovery."""
     name: str
     unit: str

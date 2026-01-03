@@ -1,3 +1,4 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,missing-kwoa,unexpected-keyword-arg,duplicate-code
 import asyncio
 
 import mqtt_publisher
@@ -223,7 +224,7 @@ def test_send_discovery_connected(monkeypatch):
 def test_on_publish_updates_stats(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.PUBLISH_LOG_EVERY = 1
+    setattr(publisher, "PUBLISH_LOG_EVERY", 1)
     publisher._on_publish(DummyClient(), None, 1)
     assert publisher.publish_success == 1
 

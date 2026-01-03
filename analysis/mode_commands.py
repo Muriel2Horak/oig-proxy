@@ -21,6 +21,7 @@ Omezení (k ověření):
 
 Zachyceno: 7.-8. prosince 2025
 """
+# pylint: disable=missing-module-docstring,missing-function-docstring,line-too-long,f-string-without-interpolation
 
 # MODE=0 (vypnout FMT/No Limit) - 5 validních příkazů
 MODE_0_COMMANDS = [
@@ -101,10 +102,10 @@ PROTOCOL_NOTES = """
 ### Flow pro Setting příkaz:
 1. BOX → CLOUD: <Result>IsNewSet</Result> + Lat + ver + CRC
    "Máš pro mě nové nastavení?"
-   
+
 2. CLOUD → BOX: <Frame>...</Frame> s TblItem, NewValue, ver, CRC
    "Ano, nastav MODE na 3"
-   
+
 3. BOX → CLOUD: <Result>ACK</Result><Reason>Setting</Reason>
    "OK, hotovo"
 

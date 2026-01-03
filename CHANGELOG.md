@@ -2,6 +2,14 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.28] - 2026-01-03
+
+### Changed
+
+- Pylint konfig a úpravy kódu pro čistý lint.
+- Úpravy test double/MQTT helperů kvůli cache a state topicům.
+- Úpravy DNS helperu a capture queue hooků pro testy a coverage běh.
+
 ## [1.3.27] - 2026-01-03
 
 ### Added
