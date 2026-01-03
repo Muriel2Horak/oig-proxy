@@ -9,6 +9,7 @@ Scénář:
 
 Běží jako MITM proxy - vše forwarduje, injektuje naše framy.
 """
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,logging-fstring-interpolation,broad-exception-caught,unspecified-encoding,import-outside-toplevel,unused-import,unused-argument,too-many-locals,too-many-statements,too-many-branches,too-many-instance-attributes,f-string-without-interpolation,line-too-long,too-many-nested-blocks,too-many-return-statements,no-else-return,unused-variable,no-else-continue,duplicate-code
 
 import asyncio
 import json
@@ -92,20 +93,20 @@ class TestStep:
     completed_at: Optional[datetime] = None
 
 
-@dataclass 
+@dataclass
 class TestState:
     steps: List[TestStep] = field(default_factory=list)
     current_step_idx: int = 0
     waiting_for_isnewset: bool = True
     test_completed: bool = False
     captured_frames: List[dict] = field(default_factory=list)
-    
+
     @property
     def current_step(self) -> Optional[TestStep]:
         if 0 <= self.current_step_idx < len(self.steps):
             return self.steps[self.current_step_idx]
         return None
-    
+
     def advance_step(self):
         self.current_step_idx += 1
         self.waiting_for_isnewset = True
@@ -115,21 +116,21 @@ class TestState:
 
 def create_test_steps() -> List[TestStep]:
     steps = []
-    
+
     steps.append(TestStep(
         name="A: MANUAL→1",
         frame=FRAME_BOILER_MANUAL_1,
         description="Boiler MANUAL=1 (použit MODE frame s upravenou tabulkou)",
         pause_after=60
     ))
-    
+
     steps.append(TestStep(
-        name="B: MANUAL→0", 
+        name="B: MANUAL→0",
         frame=FRAME_BOILER_MANUAL_0,
         description="Boiler MANUAL=0 (zpět)",
         pause_after=10
     ))
-    
+
     return steps
 
 
@@ -138,15 +139,15 @@ class BoilerTest:
         self.listen_port = listen_port
         self.state = TestState(steps=create_test_steps())
         self.frame_counter = 0
-        
+
         self.stats = defaultdict(int)
         self.last_stats_time = datetime.now()
         self.stats_interval = 15
-        
+
     def log_stats(self, force: bool = False):
         now = datetime.now()
         elapsed = (now - self.last_stats_time).total_seconds()
-        
+
         if force or elapsed >= self.stats_interval:
             if self.stats:
                 parts = [f"{k}:{v}" for k, v in sorted(self.stats.items())]
@@ -155,11 +156,11 @@ class BoilerTest:
                 logger.info(f"📊 {step_info} {', '.join(parts)}")
                 self.stats.clear()
             self.last_stats_time = now
-        
+
     def save_frame(self, direction: str, data: str, frame_type: str = ""):
         self.frame_counter += 1
         ts = datetime.now().isoformat()
-        
+
         self.state.captured_frames.append({
             "id": self.frame_counter,
             "timestamp": ts,
@@ -167,21 +168,21 @@ class BoilerTest:
             "type": frame_type,
             "data": data[:500]
         })
-        
+
         filename = f"{OUTPUT_DIR}/frame_{self.frame_counter:04d}_{direction}.xml"
         with open(filename, "w") as f:
             f.write(f"<!-- {ts} | {direction} | {frame_type} -->\n")
             f.write(data)
-            
+
         self.stats[frame_type] += 1
         self.log_stats()
-            
+
     def save_results(self):
         results = {
             "test_time": datetime.now().isoformat(),
             "steps": []
         }
-        
+
         for step in self.state.steps:
             results["steps"].append({
                 "name": step.name,
@@ -192,11 +193,11 @@ class BoilerTest:
                 "event_content": step.event_content,
                 "success": step.ack_received and step.event_received
             })
-            
+
         filename = f"{OUTPUT_DIR}/results.json"
         with open(filename, "w") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        
+
         print("\n" + "="*60)
         print("📊 SHRNUTÍ VÝSLEDKŮ")
         print("="*60)
@@ -208,11 +209,11 @@ class BoilerTest:
             if step.event_content:
                 print(f"   └─ {step.event_content}")
         print("="*60)
-        
+
     async def handle_box(self, box_reader, box_writer):
         addr = box_writer.get_extra_info('peername')
         logger.info(f"🔌 BOX připojen: {addr}")
-        
+
         try:
             cloud_reader, cloud_writer = await asyncio.wait_for(
                 asyncio.open_connection(CLOUD_HOST, CLOUD_PORT),
@@ -223,7 +224,7 @@ class BoilerTest:
             logger.error(f"❌ Cloud connection failed: {e}")
             box_writer.close()
             return
-            
+
         try:
             await asyncio.gather(
                 self.forward_box_to_cloud(box_reader, cloud_writer, box_writer),
@@ -237,29 +238,29 @@ class BoilerTest:
             box_writer.close()
             self.log_stats(force=True)
             self.save_results()
-            
+
     async def forward_box_to_cloud(self, box_reader, cloud_writer, box_writer):
         """BOX → Cloud. Detekuje IsNewSet, injektuje, sleduje ACK a Events."""
         buffer = b""
-        
+
         while True:
             try:
                 data = await asyncio.wait_for(box_reader.read(4096), timeout=300)
                 if not data:
                     break
-                    
+
                 buffer += data
                 text = buffer.decode('utf-8', errors='replace')
-                
+
                 while '<Frame>' in text and '</Frame>' in text:
                     start = text.find('<Frame>')
                     end = text.find('</Frame>') + len('</Frame>')
                     frame = text[start:end]
                     text = text[end:]
                     buffer = text.encode('utf-8')
-                    
+
                     frame_type = self.detect_frame_type(frame)
-                    
+
                     # Loguj jen důležité
                     should_log = frame_type in ('IsNewSet', 'ACK', 'Events', 'Setting')
                     if should_log:
@@ -267,7 +268,7 @@ class BoilerTest:
                     else:
                         self.stats[frame_type] += 1
                         self.log_stats()
-                    
+
                     # === IsNewSet - ZACHYTÍME, nepošleme cloudu ===
                     if '<Result>IsNewSet</Result>' in frame:
                         step = self.state.current_step
@@ -278,18 +279,18 @@ class BoilerTest:
                             logger.info(f"💉 INJEKTUJI: {step.name}")
                             logger.info(f"   {step.description}")
                             logger.info("="*50)
-                            
+
                             step.started_at = datetime.now()
                             step.injected = True
                             self.state.waiting_for_isnewset = False
-                            
+
                             box_writer.write(step.frame.encode())
                             await box_writer.drain()
                             self.save_frame("INJECT→box", step.frame, "Setting")
-                            
+
                             # NEPŘEPOSÍLEJ IsNewSet na cloud!
                             continue
-                    
+
                     # === ACK od BOXu ===
                     if '<Result>ACK</Result>' in frame and 'Setting' in frame:
                         step = self.state.current_step
@@ -299,11 +300,11 @@ class BoilerTest:
                             logger.info("="*50)
                             logger.info(f"✅ ACK PŘIJAT: {step.name}")
                             logger.info("="*50)
-                    
+
                     # === tbl_events s MANUAL změnou ===
                     if 'tbl_events' in frame:
                         logger.info(f"📋 Events: {frame[:200]}...")
-                        
+
                         step = self.state.current_step
                         if step and step.injected and not step.event_received:
                             match = re.search(r'<Content>([^<]+)</Content>', frame)
@@ -313,70 +314,70 @@ class BoilerTest:
                                     step.event_received = True
                                     step.event_content = content
                                     step.completed_at = datetime.now()
-                                    
+
                                     logger.info("")
                                     logger.info("="*50)
                                     logger.info(f"✅ EVENT PŘIJAT: {step.name}")
                                     logger.info(f"   {content}")
                                     logger.info("="*50)
-                                    
+
                                     asyncio.create_task(
                                         self.schedule_next_step(step.pause_after)
                                     )
-                    
+
                     # Forward na cloud
                     cloud_writer.write((frame + '\r\n').encode())
                     await cloud_writer.drain()
-                    
+
             except asyncio.TimeoutError:
                 logger.warning("⏰ Timeout BOX read")
                 break
             except Exception as e:
                 logger.error(f"Error box→cloud: {e}")
                 break
-                
+
     async def forward_cloud_to_box(self, cloud_reader, box_writer):
         """Cloud → BOX. Forwarduje, loguje jen důležité."""
         buffer = b""
-        
+
         while True:
             try:
                 data = await asyncio.wait_for(cloud_reader.read(4096), timeout=300)
                 if not data:
                     break
-                    
+
                 buffer += data
                 text = buffer.decode('utf-8', errors='replace')
-                
+
                 while '<Frame>' in text and '</Frame>' in text:
                     start = text.find('<Frame>')
                     end = text.find('</Frame>') + len('</Frame>')
                     frame = text[start:end]
                     text = text[end:]
                     buffer = text.encode('utf-8')
-                    
+
                     frame_type = self.detect_frame_type(frame)
-                    
+
                     should_log = frame_type in ('Setting', 'END', 'Events')
                     if should_log:
                         self.save_frame("cloud→box", frame, frame_type)
                         logger.info(f"☁️→📦 {frame_type}: {frame[:150]}...")
-                    
+
                     box_writer.write((frame + '\r\n').encode())
                     await box_writer.drain()
-                    
+
             except asyncio.TimeoutError:
                 break
             except Exception as e:
                 logger.error(f"Error cloud→box: {e}")
                 break
-                
+
     async def schedule_next_step(self, pause_seconds: int):
         logger.info(f"⏳ Pauza {pause_seconds}s...")
         await asyncio.sleep(pause_seconds)
-        
+
         self.state.advance_step()
-        
+
         if self.state.test_completed:
             logger.info("")
             logger.info("="*50)
@@ -387,7 +388,7 @@ class BoilerTest:
             if step:
                 logger.info("")
                 logger.info(f"➡️ DALŠÍ: {step.name} - {step.description}")
-        
+
     def detect_frame_type(self, frame: str) -> str:
         if '<Result>ACK</Result>' in frame:
             return "ACK"
@@ -409,25 +410,25 @@ class BoilerTest:
                 tbl = match.group(1)
                 return tbl.replace('tbl_', '').replace('_prms', 'P')
         return "other"
-        
+
     async def run(self):
         server = await asyncio.start_server(
             self.handle_box, '0.0.0.0', self.listen_port
         )
-        
+
         logger.info(f"🚀 Server na portu {self.listen_port}")
         logger.info("⏱️ Čekám na BOX připojení...")
-        
+
         print("\n" + "="*60)
         print("📋 TESTOVACÍ SEKVENCE:")
         for i, step in enumerate(self.state.steps):
             print(f"  {i+1}. {step.name}: {step.description}")
         print("="*60)
-        
+
         step = self.state.current_step
         if step:
             logger.info(f"➡️ První test: {step.name}")
-        
+
         try:
             async with server:
                 while not self.state.test_completed:
@@ -450,5 +451,5 @@ if __name__ == "__main__":
     print("   Testuje změnu tbl_boiler_prms/MANUAL")
     print("   pomocí upraveného MODE frame")
     print("="*60 + "\n")
-    
+
     asyncio.run(main())

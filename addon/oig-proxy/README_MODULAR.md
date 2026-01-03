@@ -11,7 +11,7 @@ addon/oig-proxy/
 ├── models.py            # Data modely a enums (75 lines)
 ├── utils.py             # Helper funkce (291 lines)
 ├── parser.py            # XML frame parser (100 lines)
-├── cloud_manager.py     # CloudQueue, CloudHealthChecker, ACKLearner (360 lines)
+├── cloud_manager.py     # CloudQueue, CloudHealthChecker (360 lines)
 ├── mqtt_publisher.py    # MQTTPublisher s frontou (568 lines)
 └── proxy.py             # OIGProxy orchestrace (300 lines)
 ```
@@ -26,11 +26,11 @@ addon/oig-proxy/
 - Cloud dostupný + fronta prázdná
 - Transparentní forward: BOX ↔ Proxy ↔ Cloud
 - ACK od cloudu
-- Učení ACK patterns z cloud responses
+- Lokální ACK/END fallback s fixním CRC
 
 ### 🔴 OFFLINE  
 - Cloud nedostupný
-- Lokální ACK generování (naučené patterns)
+- Lokální ACK generování (fixní ACK/END s CRC)
 - Frames do CloudQueue (SQLite)
 - MQTT data do MQTTQueue pokud broker offline
 

@@ -237,7 +237,6 @@ class OIGProxy:
         self.health_checker = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
         self.health_checker.set_mode_callback(self._on_cloud_state_change)
         self.cloud_queue = CloudQueue()
-        self.ack_learner = ACKLearner()
         
         # Proxy mode
         self.mode = ProxyMode.ONLINE  # Start optimisticky
@@ -576,7 +575,7 @@ PROXY → BOX: forward ACK
 
 ✅ Transparentní forward
 ✅ Žádné frontování
-✅ Učení ACK patternů
+✅ Lokální ACK/END fallback (fixní CRC)
 ```
 
 ### REŽIM 2: OFFLINE (Cloud ❌)
@@ -590,7 +589,7 @@ BOX → PROXY: frame
        ↓
     CloudQueue.add(frame) 📦
        ↓
-PROXY → BOX: local ACK (learned)
+PROXY → BOX: local ACK (fixed)
 
 ❌ Cloud nedostupný
 📦 Vše se ukládá do CloudQueue
@@ -623,7 +622,7 @@ BOX → PROXY: new_frame
        ↓
     CloudQueue.add(new_frame) 📦 (na konec!)
        ↓
-PROXY → BOX: local ACK (learned)
+PROXY → BOX: local ACK (fixed)
 ```
 
 **Klíčové:**

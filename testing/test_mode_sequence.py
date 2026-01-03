@@ -6,7 +6,7 @@ Scénář:
 1. Test A: Replay MODE→3 (starý frame) → čekej na ACK + tbl_events
 2. Pauza 60s
 3. Test B: Replay MODE→0 (starý frame) → čekej na ACK + tbl_events
-4. Pauza 60s  
+4. Pauza 60s
 5. Test C: Modifikovaný frame (změň NewValue, zachovej CRC)
 6. Pauza 60s
 7. Test D: Návrat na MODE→0
@@ -14,6 +14,7 @@ Scénář:
 Běží jako MITM proxy - vše forwarduje, injektuje naše framy.
 Loguje jen důležité eventy + statistiku každých 15s.
 """
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,logging-fstring-interpolation,broad-exception-caught,unspecified-encoding,import-outside-toplevel,unused-import,unused-argument,too-many-locals,too-many-statements,too-many-branches,too-many-instance-attributes,f-string-without-interpolation,line-too-long,too-many-nested-blocks,too-many-return-statements,no-else-return,unused-variable,no-else-continue,duplicate-code
 
 import asyncio
 import json
@@ -83,20 +84,20 @@ class TestStep:
     completed_at: Optional[datetime] = None
 
 
-@dataclass 
+@dataclass
 class TestState:
     steps: List[TestStep] = field(default_factory=list)
     current_step_idx: int = 0
     waiting_for_isnewset: bool = True
     test_completed: bool = False
     captured_frames: List[dict] = field(default_factory=list)
-    
+
     @property
     def current_step(self) -> Optional[TestStep]:
         if 0 <= self.current_step_idx < len(self.steps):
             return self.steps[self.current_step_idx]
         return None
-    
+
     def advance_step(self):
         self.current_step_idx += 1
         self.waiting_for_isnewset = True
@@ -115,21 +116,21 @@ def modify_frame(base_frame: str, **changes) -> str:
 
 def create_test_steps() -> List[TestStep]:
     steps = []
-    
+
     steps.append(TestStep(
         name="A: Replay MODE→3",
         frame=FRAME_MODE_3,
         description="Starý frame z 7.12., MODE=3",
         pause_after=60
     ))
-    
+
     steps.append(TestStep(
-        name="B: Replay MODE→0", 
+        name="B: Replay MODE→0",
         frame=FRAME_MODE_0,
         description="Starý frame z 7.12., MODE=0",
         pause_after=60
     ))
-    
+
     # Test C: Modifikovaný frame - změň NewValue ale zachovej CRC
     modified_c = modify_frame(FRAME_MODE_3, NewValue="5")
     steps.append(TestStep(
@@ -138,14 +139,14 @@ def create_test_steps() -> List[TestStep]:
         description="Změněn NewValue na 5, původní CRC",
         pause_after=60
     ))
-    
+
     steps.append(TestStep(
         name="D: Cleanup MODE→0",
         frame=FRAME_MODE_0,
         description="Návrat na MODE=0",
         pause_after=10
     ))
-    
+
     return steps
 
 
@@ -154,17 +155,17 @@ class ModeSequenceTest:
         self.listen_port = listen_port
         self.state = TestState(steps=create_test_steps())
         self.frame_counter = 0
-        
+
         # Statistiky pro tiché logování
         self.stats = defaultdict(int)
         self.last_stats_time = datetime.now()
         self.stats_interval = 15  # sekund
-        
+
     def log_stats(self, force: bool = False):
         """Vypíše statistiku každých N sekund."""
         now = datetime.now()
         elapsed = (now - self.last_stats_time).total_seconds()
-        
+
         if force or elapsed >= self.stats_interval:
             if self.stats:
                 parts = [f"{k}:{v}" for k, v in sorted(self.stats.items())]
@@ -173,11 +174,11 @@ class ModeSequenceTest:
                 logger.info(f"📊 {step_info} {', '.join(parts)}")
                 self.stats.clear()
             self.last_stats_time = now
-        
+
     def save_frame(self, direction: str, data: str, frame_type: str = ""):
         self.frame_counter += 1
         ts = datetime.now().isoformat()
-        
+
         self.state.captured_frames.append({
             "id": self.frame_counter,
             "timestamp": ts,
@@ -186,23 +187,23 @@ class ModeSequenceTest:
             "length": len(data),
             "data": data[:500] + ("..." if len(data) > 500 else "")
         })
-        
+
         # Uložit do souboru
         filename = f"{OUTPUT_DIR}/frame_{self.frame_counter:04d}_{direction}.xml"
         with open(filename, "w") as f:
             f.write(f"<!-- {ts} | {direction} | {frame_type} -->\n")
             f.write(data)
-            
+
         # Statistika - neloguj jednotlivě
         self.stats[frame_type] += 1
         self.log_stats()
-            
+
     def save_results(self):
         results = {
             "test_time": datetime.now().isoformat(),
             "steps": []
         }
-        
+
         for step in self.state.steps:
             results["steps"].append({
                 "name": step.name,
@@ -213,11 +214,11 @@ class ModeSequenceTest:
                 "event_content": step.event_content,
                 "success": step.ack_received and step.event_received
             })
-            
+
         filename = f"{OUTPUT_DIR}/results.json"
         with open(filename, "w") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        
+
         # Shrnutí na konzoli
         print("\n" + "="*60)
         print("📊 SHRNUTÍ VÝSLEDKŮ")
@@ -232,11 +233,11 @@ class ModeSequenceTest:
         print("="*60)
         print(f"📁 Výsledky: {filename}")
         print(f"📁 Framy: {OUTPUT_DIR}/frame_*.xml")
-        
+
     async def handle_box(self, box_reader, box_writer):
         addr = box_writer.get_extra_info('peername')
         logger.info(f"🔌 BOX připojen: {addr}")
-        
+
         try:
             cloud_reader, cloud_writer = await asyncio.wait_for(
                 asyncio.open_connection(CLOUD_HOST, CLOUD_PORT),
@@ -247,7 +248,7 @@ class ModeSequenceTest:
             logger.error(f"❌ Cloud connection failed: {e}")
             box_writer.close()
             return
-            
+
         try:
             await asyncio.gather(
                 self.forward_box_to_cloud(box_reader, cloud_writer, box_writer),
@@ -261,39 +262,39 @@ class ModeSequenceTest:
             box_writer.close()
             self.log_stats(force=True)
             self.save_results()
-            
+
     async def forward_box_to_cloud(self, box_reader, cloud_writer, box_writer):
         """BOX → Cloud. Detekuje IsNewSet, injektuje, sleduje ACK a Events."""
         buffer = b""
-        
+
         while True:
             try:
                 data = await asyncio.wait_for(box_reader.read(4096), timeout=300)
                 if not data:
                     break
-                    
+
                 buffer += data
                 text = buffer.decode('utf-8', errors='replace')
-                
+
                 while '<Frame>' in text and '</Frame>' in text:
                     start = text.find('<Frame>')
                     end = text.find('</Frame>') + len('</Frame>')
                     frame = text[start:end]
                     text = text[end:]
                     buffer = text.encode('utf-8')
-                    
+
                     frame_type = self.detect_frame_type(frame)
-                    
+
                     # === LOGOVÁNÍ - jen důležité eventy ===
                     should_log = frame_type in ('IsNewSet', 'ACK', 'Events', 'Setting')
-                    
+
                     if should_log:
                         self.save_frame("box→cloud", frame, frame_type)
                     else:
                         # Tiše počítej statistiku
                         self.stats[frame_type] += 1
                         self.log_stats()
-                    
+
                     # === IsNewSet - ZACHYTÍME, nepošleme cloudu ===
                     if '<Result>IsNewSet</Result>' in frame:
                         step = self.state.current_step
@@ -304,19 +305,19 @@ class ModeSequenceTest:
                             logger.info(f"💉 INJEKTUJI: {step.name}")
                             logger.info(f"   {step.description}")
                             logger.info(f"{'='*50}")
-                            
+
                             step.started_at = datetime.now()
                             step.injected = True
                             self.state.waiting_for_isnewset = False
-                            
+
                             # Pošli Setting frame BOXu
                             box_writer.write(step.frame.encode())
                             await box_writer.drain()
                             self.save_frame("INJECT→box", step.frame, "Setting")
-                            
+
                             # NEPŘEPOSÍLEJ IsNewSet na cloud!
                             continue
-                    
+
                     # === ACK od BOXu na náš Setting ===
                     if '<Result>ACK</Result>' in frame and 'Setting' in frame:
                         step = self.state.current_step
@@ -327,12 +328,12 @@ class ModeSequenceTest:
                             logger.info(f"✅ ACK PŘIJAT: {step.name}")
                             logger.info(f"{'='*50}")
                         # ACK normálně forwardujeme na cloud (i když cloud o Setting neví)
-                    
+
                     # === tbl_events s MODE změnou ===
                     if 'tbl_events' in frame:
                         # Loguj všechny events
                         logger.info(f"📋 Events frame: {frame[:200]}...")
-                        
+
                         step = self.state.current_step
                         if step and step.injected and not step.event_received:
                             match = re.search(r'<Content>([^<]+)</Content>', frame)
@@ -342,72 +343,72 @@ class ModeSequenceTest:
                                     step.event_received = True
                                     step.event_content = content
                                     step.completed_at = datetime.now()
-                                    
+
                                     logger.info(f"")
                                     logger.info(f"{'='*50}")
                                     logger.info(f"✅ EVENT PŘIJAT: {step.name}")
                                     logger.info(f"   {content}")
                                     logger.info(f"{'='*50}")
-                                    
+
                                     # Naplánuj další krok
                                     asyncio.create_task(
                                         self.schedule_next_step(step.pause_after)
                                     )
-                    
+
                     # Forward na cloud (pokud jsme nedali continue výše)
                     cloud_writer.write((frame + '\r\n').encode())
                     await cloud_writer.drain()
-                                    
+
             except asyncio.TimeoutError:
                 logger.warning("⏰ Timeout BOX read")
                 break
             except Exception as e:
                 logger.error(f"Error box→cloud: {e}")
                 break
-                
+
     async def forward_cloud_to_box(self, cloud_reader, box_writer):
         """Cloud → BOX. Forwarduje, loguje jen důležité."""
         buffer = b""
-        
+
         while True:
             try:
                 data = await asyncio.wait_for(cloud_reader.read(4096), timeout=300)
                 if not data:
                     break
-                    
+
                 buffer += data
                 text = buffer.decode('utf-8', errors='replace')
-                
+
                 while '<Frame>' in text and '</Frame>' in text:
                     start = text.find('<Frame>')
                     end = text.find('</Frame>') + len('</Frame>')
                     frame = text[start:end]
                     text = text[end:]
                     buffer = text.encode('utf-8')
-                    
+
                     frame_type = self.detect_frame_type(frame)
-                    
+
                     # Loguj jen důležité (Setting, END, Events)
                     should_log = frame_type in ('Setting', 'END', 'Events')
                     if should_log:
                         self.save_frame("cloud→box", frame, frame_type)
                         logger.info(f"☁️→📦 {frame_type}: {frame[:150]}...")
-                    
+
                     box_writer.write((frame + '\r\n').encode())
                     await box_writer.drain()
-                    
+
             except asyncio.TimeoutError:
                 break
             except Exception as e:
                 logger.error(f"Error cloud→box: {e}")
                 break
-                
+
     async def schedule_next_step(self, pause_seconds: int):
         logger.info(f"⏳ Pauza {pause_seconds}s...")
         await asyncio.sleep(pause_seconds)
-        
+
         self.state.advance_step()
-        
+
         if self.state.test_completed:
             logger.info(f"")
             logger.info(f"{'='*50}")
@@ -418,7 +419,7 @@ class ModeSequenceTest:
             if step:
                 logger.info(f"")
                 logger.info(f"➡️ DALŠÍ: {step.name} - {step.description}")
-        
+
     def detect_frame_type(self, frame: str) -> str:
         if '<Result>ACK</Result>' in frame:
             return "ACK"
@@ -441,25 +442,25 @@ class ModeSequenceTest:
                 # Zkrať název
                 return tbl.replace('tbl_', '').replace('_prms', 'P')
         return "other"
-        
+
     async def run(self):
         server = await asyncio.start_server(
             self.handle_box, '0.0.0.0', self.listen_port
         )
-        
+
         logger.info(f"🚀 Server na portu {self.listen_port}")
         logger.info("⏱️ Běží dokud nedokončí všechny testy (Ctrl+C pro ukončení)")
-        
+
         print("\n" + "="*60)
         print("📋 TESTOVACÍ SEKVENCE:")
         for i, step in enumerate(self.state.steps):
             print(f"  {i+1}. {step.name}: {step.description}")
         print("="*60)
-        
+
         step = self.state.current_step
         if step:
             logger.info(f"➡️ Čekám na BOX, první test: {step.name}")
-        
+
         try:
             async with server:
                 # Běž dokud test neskončí
@@ -483,5 +484,5 @@ if __name__ == "__main__":
     print("   Testuje replay starých framů pro změnu MODE")
     print("   + test modifikace NewValue se zachováním CRC")
     print("="*60 + "\n")
-    
+
     asyncio.run(main())

@@ -14,7 +14,7 @@ addon/oig-proxy/
 ├── models.py          (75 lines)  - ProxyMode enum + data modely
 ├── utils.py           (291 lines) - Pomocné funkce, sensor map
 ├── parser.py          (100 lines) - XML parser
-├── cloud_manager.py   (360 lines) - CloudQueue + ACKLearner + HealthChecker
+├── cloud_manager.py   (360 lines) - CloudQueue + HealthChecker
 ├── mqtt_publisher.py  (568 lines) - MQTT publikování + queue
 ├── proxy.py           (300 lines) - Hlavní orchestrace + 3 módy
 ├── main.py            (80 lines)  - Entry point (zjednodušený)
@@ -316,17 +316,7 @@ grep "Cloud queue:" /data/proxy.log
 grep "MQTT queue:" /data/proxy.log
 ```
 
-#### 3. ACK learning
-```bash
-# Kontrola že se učí ACK odpovědi
-grep "Learned" /data/proxy.log
-
-# Očekávané:
-# ✅ Learned ACK_STANDARD (během prvních minut)
-# ✅ Learned END_NO_SETTINGS
-```
-
-#### 4. Connection duration
+#### 3. Connection duration
 ```bash
 # Sleduj jak dlouho drží spojení s BOXem
 grep "Connection duration" /data/proxy.log
@@ -464,7 +454,7 @@ docker restart oig-proxy
 - ✅ Modulární architektura (8 souborů místo 1)
 - ✅ 3 proxy módy (ONLINE/OFFLINE/REPLAY)
 - ✅ SQLite persistence pro queues
-- ✅ ACK learning z cloudu
+- ✅ Lokální ACK/END fallback s fixním CRC
 - ✅ Automatické mode transitions
 - ✅ MQTT publikování
 - ✅ Testovací infrastruktura

@@ -385,7 +385,7 @@ ssh ha "ha addons logs local_oig_proxy_test -f"
 - ✅ Modulární architektura (8 souborů místo 1)
 - ✅ SQLite queues pro OFFLINE mode
 - ✅ Automatické mode transitions
-- ✅ ACK learning
+- ✅ Lokální ACK/END fallback (fixní CRC)
 - ⚠️ Nový parameter: `device_id` (povinný)
 
 ### Co zůstává stejné:

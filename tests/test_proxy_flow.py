@@ -1,6 +1,8 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
 import asyncio
 
 import proxy as proxy_module
+from tests.mqtt_dummy_helpers import DummyMQTTMixin
 from models import ProxyMode
 
 
@@ -33,14 +35,6 @@ class DummyReader:
         return self._payload
 
 
-class DummyAckLearner:
-    def __init__(self):
-        self.learned = []
-
-    def learn_from_cloud(self, ack_str, table_name):
-        self.learned.append((ack_str, table_name))
-
-
 class DummyCloudQueue:
     def __init__(self):
         self.added = []
@@ -52,13 +46,14 @@ class DummyCloudQueue:
         return len(self.added)
 
 
-class DummyMQTT:
+class DummyMQTT(DummyMQTTMixin):
     def __init__(self):
         self.device_id = "AUTO"
         self.discovery_sent = {"x"}
         self.published = []
         self.handlers = []
         self.connected = False
+        self._last_payload_by_topic = {}
         self.queue = type("Q", (), {"size": lambda self: 0})()
 
     def publish_availability(self):
@@ -76,12 +71,6 @@ class DummyMQTT:
     def is_ready(self):
         return True
 
-    def _state_topic(self, device_id, table):
-        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
-
-    def _map_data_for_publish(self, data, *, table, target_device_id):
-        payload = {k: v for k, v in data.items() if not k.startswith("_")}
-        return payload, len(payload)
 
 
 class DummyParser:
@@ -111,7 +100,6 @@ def _make_proxy(tmp_path):
     proxy.cloud_health = type("H", (), {"is_online": True, "fail_threshold": 1, "consecutive_successes": 0, "consecutive_failures": 0, "last_check_time": 0.0})()
     proxy.cloud_queue = DummyCloudQueue()
     proxy.mqtt_publisher = DummyMQTT()
-    proxy.ack_learner = DummyAckLearner()
     proxy.parser = DummyParser({})
     proxy._active_box_peer = None
     proxy._control_inflight = None
@@ -332,7 +320,6 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
 
     asyncio.run(run_success())
     assert proxy.stats["acks_cloud"] == 1
-    assert proxy.ack_learner.learned
 
     async def fake_ensure_eof(*_args, **_kwargs):
         return DummyReader(b""), cloud_writer

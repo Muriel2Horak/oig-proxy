@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Configure SonarQube quality gate conditions via API."""
 import base64
 import json
 import os
@@ -12,6 +13,7 @@ ENV_PATH = ROOT_DIR / ".env"
 
 
 def load_env(path: Path) -> None:
+    """Načte proměnné prostředí z .env souboru (pokud existuje)."""
     if not path.exists():
         return
     for raw in path.read_text().splitlines():
@@ -35,6 +37,7 @@ def api_request(
     auth_header: str,
     params: dict[str, str] | None = None,
 ) -> dict:
+    """Provádí HTTP request na Sonar API a vrací JSON odpověď."""
     url = base_url.rstrip("/") + path
     data = None
     if params:
@@ -51,12 +54,16 @@ def api_request(
         return json.loads(payload) if payload else {}
 
 
-def main() -> int:
+def main() -> int:  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    """Spustí konfiguraci quality gate pro projekt."""
     load_env(ENV_PATH)
 
     base_url = os.getenv("SONAR_HOST_URL") or os.getenv("SONAR_URL")
     if not base_url:
-        print("Missing SONAR_HOST_URL or SONAR_URL for quality gate config.", file=sys.stderr)
+        print(
+            "Missing SONAR_HOST_URL or SONAR_URL for quality gate config.",
+            file=sys.stderr,
+        )
         return 2
     project_key = os.getenv("SONAR_PROJECT_KEY", "oig_proxy")
     gate_name = os.getenv("SONAR_QUALITY_GATE_NAME", "Security A +0")
@@ -69,28 +76,55 @@ def main() -> int:
     elif login and password:
         auth_raw = f"{login}:{password}"
     else:
-        print("Missing Sonar credentials. Set SONAR_TOKEN or SONAR_LOGIN/SONAR_PASS.", file=sys.stderr)
+        print(
+            "Missing Sonar credentials. Set SONAR_TOKEN or SONAR_LOGIN/SONAR_PASS.",
+            file=sys.stderr,
+        )
         return 2
 
     auth_header = "Basic " + base64.b64encode(auth_raw.encode("utf-8")).decode("ascii")
 
     try:
-        metrics_resp = api_request("GET", base_url, "/api/metrics/search", auth_header, {"ps": "500"})
+        metrics_resp = api_request(
+            "GET",
+            base_url,
+            "/api/metrics/search",
+            auth_header,
+            {"ps": "500"},
+        )
         metrics = {m.get("key") for m in metrics_resp.get("metrics", [])}
 
         qg_list = api_request("GET", base_url, "/api/qualitygates/list", auth_header)
-        gate = next((g for g in qg_list.get("qualitygates", []) if g.get("name") == gate_name), None)
+        gate = next(
+            (g for g in qg_list.get("qualitygates", []) if g.get("name") == gate_name),
+            None,
+        )
         if gate is None:
-            created = api_request("POST", base_url, "/api/qualitygates/create", auth_header, {"name": gate_name})
+            created = api_request(
+                "POST",
+                base_url,
+                "/api/qualitygates/create",
+                auth_header,
+                {"name": gate_name},
+            )
             gate_id = created.get("id") or created.get("qualityGate", {}).get("id")
         else:
             gate_id = gate.get("id")
 
         if not gate_id:
-            print(f"Failed to resolve quality gate id for '{gate_name}'.", file=sys.stderr)
+            print(
+                f"Failed to resolve quality gate id for '{gate_name}'.",
+                file=sys.stderr,
+            )
             return 2
 
-        gate_detail = api_request("GET", base_url, "/api/qualitygates/show", auth_header, {"id": str(gate_id)})
+        gate_detail = api_request(
+            "GET",
+            base_url,
+            "/api/qualitygates/show",
+            auth_header,
+            {"id": str(gate_id)},
+        )
         existing_conditions = {
             c.get("metric"): c for c in gate_detail.get("conditions", []) if c.get("metric")
         }
@@ -171,7 +205,7 @@ def main() -> int:
         if body:
             print(body, file=sys.stderr)
         return 2
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         print(f"Unexpected error: {exc}", file=sys.stderr)
         return 2
 

@@ -28,13 +28,14 @@ _DEFAULT_ACK_MAX_BYTES = 4096
 
 @dataclass
 class CloudStats:
+    """Statistiky cloud spojení."""
     connects: int = 0
     disconnects: int = 0
     errors: int = 0
     timeouts: int = 0
 
 
-class CloudSessionManager:
+class CloudSessionManager:  # pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments
     """Udržuje jedno TCP spojení na cloud a umožňuje synchronní send+recv."""
 
     def __init__(
@@ -63,14 +64,17 @@ class CloudSessionManager:
         self._rx_buf = bytearray()
 
     def is_connected(self) -> bool:
+        """Vrátí True, pokud je aktivní TCP spojení."""
         writer = self._writer
         return writer is not None and not writer.is_closing()
 
     async def close(self, *, count_disconnect: bool = False) -> None:
+        """Uzavře cloud spojení (bez vyhazování výjimek)."""
         async with self._conn_lock:
             await self._close_locked(count_disconnect=count_disconnect)
 
     async def _close_locked(self, *, count_disconnect: bool = False) -> None:
+        """Uzavře spojení uvnitř locku a vynuluje interní stav."""
         writer = self._writer
         if writer is not None:
             if count_disconnect and not writer.is_closing():
@@ -132,7 +136,8 @@ class CloudSessionManager:
                 if frame is not None:
                     return frame
                 if len(self._rx_buf) > ack_max_bytes:
-                    # Fallback: vratíme, co máme (pro kompatibilitu), ale nenecháme buffer růst donekonečna.
+                    # Fallback: vratíme, co máme (pro kompatibilitu), ale
+                    # nenecháme buffer růst donekonečna.
                     data = bytes(self._rx_buf)
                     self._rx_buf.clear()
                     return data
@@ -140,6 +145,7 @@ class CloudSessionManager:
         return await asyncio.wait_for(_read_until_frame(), timeout=ack_timeout_s)
 
     async def ensure_connected(self) -> None:
+        """Zajistí připojení k cloudu; při chybě vyhodí výjimku."""
         if self.is_connected():
             return
         async with self._conn_lock:
@@ -183,7 +189,7 @@ class CloudSessionManager:
                     )
                     self._last_warn_ts = now
                 raise
-            except Exception as e:
+            except (OSError, ConnectionError, RuntimeError) as exc:
                 self.stats.errors += 1
                 await self._close_locked()
                 self._backoff_s = min(self.max_reconnect_s, self._backoff_s * 2.0)
@@ -191,7 +197,7 @@ class CloudSessionManager:
                 if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning(
                         "☁️ Cloud connect failed: %s (backoff=%.1fs)",
-                        e,
+                        exc,
                         self._backoff_s,
                     )
                     self._last_warn_ts = now

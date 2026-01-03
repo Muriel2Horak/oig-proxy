@@ -1,8 +1,10 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
 import asyncio
 import time
 from collections import deque
 
 import proxy as proxy_module
+from tests.mqtt_dummy_helpers import DummyMQTTMixin
 from models import ProxyMode
 
 
@@ -38,15 +40,7 @@ class DummyCloudQueue:
         return True
 
 
-class DummyAckLearner:
-    def __init__(self) -> None:
-        self.learned = []
-
-    def learn_from_cloud(self, ack_str, table_name):
-        self.learned.append((ack_str, table_name))
-
-
-class DummyMQTT:
+class DummyMQTT(DummyMQTTMixin):
     def __init__(self) -> None:
         self.queue = DummyQueue()
         self.device_id = "DEV1"
@@ -74,14 +68,6 @@ class DummyMQTT:
     def add_message_handler(self, *, topic, handler, qos):
         return None
 
-    def _state_topic(self, device_id, table):
-        if table:
-            return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
-        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/state"
-
-    def _map_data_for_publish(self, data, *, table, target_device_id):
-        payload = {k: v for k, v in data.items() if not k.startswith("_")}
-        return payload, len(payload)
 
 
 class DummyParser:
@@ -155,7 +141,6 @@ def make_proxy(tmp_path):
         {"is_online": True, "fail_threshold": 1, "consecutive_successes": 0, "consecutive_failures": 0, "last_check_time": 0.0},
     )()
     proxy.cloud_queue = DummyCloudQueue()
-    proxy.ack_learner = DummyAckLearner()
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy._active_box_peer = "1.2.3.4:1234"
@@ -476,7 +461,6 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     )
     assert proxy.stats["frames_forwarded"] == 1
     assert proxy.stats["acks_cloud"] == 1
-    assert proxy.ack_learner.learned
 
 
 def test_forward_frame_online_timeout_end(tmp_path, monkeypatch):
