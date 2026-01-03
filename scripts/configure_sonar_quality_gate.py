@@ -54,7 +54,10 @@ def api_request(
 def main() -> int:
     load_env(ENV_PATH)
 
-    base_url = os.getenv("SONAR_HOST_URL") or os.getenv("SONAR_URL") or "http://host.docker.internal:9001"
+    base_url = os.getenv("SONAR_HOST_URL") or os.getenv("SONAR_URL")
+    if not base_url:
+        print("Missing SONAR_HOST_URL or SONAR_URL for quality gate config.", file=sys.stderr)
+        return 2
     project_key = os.getenv("SONAR_PROJECT_KEY", "oig_proxy")
     gate_name = os.getenv("SONAR_QUALITY_GATE_NAME", "Security A +0")
 

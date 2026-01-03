@@ -280,7 +280,7 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
     monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: ["8.8.8.8"])
     ip, ttl = utils._resolve_public_dns("example.com")
     assert ip == "1.2.3.4"
-    assert ttl == 60.0
+    assert ttl == pytest.approx(60.0)
 
 
 def test_resolve_public_dns_error(monkeypatch):

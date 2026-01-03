@@ -1,5 +1,7 @@
 import re
 
+import pytest
+
 from oig_frame import compute_frame_checksum
 import proxy as proxy_module
 from config import MQTT_NAMESPACE
@@ -141,5 +143,5 @@ def test_control_coerce_value():
     assert coerce("true") is True
     assert coerce("false") is False
     assert coerce("12") == 12
-    assert coerce("12.5") == 12.5
+    assert coerce("12.5") == pytest.approx(12.5)
     assert coerce(" text ") == " text "

@@ -1,3 +1,5 @@
+import pytest
+
 from parser import OIGDataParser
 
 
@@ -18,7 +20,7 @@ def test_parse_xml_frame_basic():
     assert parsed["_device_id"] == "123"
     assert parsed["_dt"] == "2025-01-01 00:00:00"
     assert parsed["Foo"] == 1
-    assert parsed["Bar"] == 2.5
+    assert parsed["Bar"] == pytest.approx(2.5)
     assert parsed["Baz"] == "text"
 
 

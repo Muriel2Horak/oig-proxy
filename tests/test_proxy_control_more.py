@@ -3,6 +3,8 @@ import json
 import time
 from collections import deque
 
+import pytest
+
 import proxy as proxy_module
 from models import SensorConfig
 
@@ -177,7 +179,7 @@ def test_control_normalize_and_coerce(tmp_path):
 
     assert proxy._control_coerce_value("true") is True
     assert proxy._control_coerce_value("10") == 10
-    assert proxy._control_coerce_value("10.5") == 10.5
+    assert proxy._control_coerce_value("10.5") == pytest.approx(10.5)
     assert proxy._control_coerce_value("text") == "text"
 
 
