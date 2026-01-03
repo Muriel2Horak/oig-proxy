@@ -2,6 +2,7 @@
 import asyncio
 
 import proxy as proxy_module
+from tests.mqtt_dummy_helpers import DummyMQTTMixin
 from models import ProxyMode
 
 
@@ -45,7 +46,7 @@ class DummyCloudQueue:
         return len(self.added)
 
 
-class DummyMQTT:
+class DummyMQTT(DummyMQTTMixin):
     def __init__(self):
         self.device_id = "AUTO"
         self.discovery_sent = {"x"}
@@ -70,24 +71,6 @@ class DummyMQTT:
     def is_ready(self):
         return True
 
-    def _state_topic(self, device_id, table):
-        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
-
-    def _map_data_for_publish(self, data, *, table, target_device_id):
-        payload = {k: v for k, v in data.items() if not k.startswith("_")}
-        return payload, len(payload)
-
-    def state_topic(self, device_id, table):
-        return self._state_topic(device_id, table)
-
-    def map_data_for_publish(self, data, *, table, target_device_id):
-        return self._map_data_for_publish(data, table=table, target_device_id=target_device_id)
-
-    def get_cached_payload(self, topic):
-        return self._last_payload_by_topic.get(topic)
-
-    def set_cached_payload(self, topic, payload):
-        self._last_payload_by_topic[topic] = payload
 
 
 class DummyParser:
