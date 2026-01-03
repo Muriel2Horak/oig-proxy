@@ -545,8 +545,8 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=MEMORY")
             conn.execute("PRAGMA busy_timeout=2000")
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.debug("Capture DB pragma setup failed: %s", exc)
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS frames (
@@ -577,8 +577,8 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
                     f"ALTER TABLE frames ADD COLUMN {col_name} {col_type}"
                 )
                 conn.commit()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.debug("Capture DB column %s add skipped: %s", col_name, exc)
         
         cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
         return conn, cols
@@ -643,7 +643,9 @@ def _capture_worker(db_path: str) -> None:
             "VALUES (?,?,?,?,?,?,?,?,?,?)"
         )
 
-        assert _capture_queue is not None
+        if _capture_queue is None:
+            logger.warning("Capture worker started without queue")
+            return
         _capture_loop(conn, sql, _capture_queue)
     except Exception as e:
         logger.warning(f"Capture worker crashed: {e}")
@@ -675,8 +677,8 @@ def capture_payload(
         _capture_cols = cols
         try:
             conn.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Capture DB close failed: %s", exc)
         _capture_queue = queue.Queue(maxsize=5000)
         _capture_thread = threading.Thread(
             target=_capture_worker,
@@ -703,7 +705,9 @@ def capture_payload(
             peer,
             length,
         )
-        assert _capture_queue is not None
+        if _capture_queue is None:
+            logger.debug("Capture queue missing; dropping payload")
+            return
         try:
             _capture_queue.put_nowait(values)
         except queue.Full:
@@ -717,5 +721,5 @@ _conn, _capture_cols = init_capture_db()
 try:
     if _conn is not None:
         _conn.close()
-except Exception:
-    pass
+except Exception as exc:
+    logger.debug("Capture DB cleanup failed: %s", exc)

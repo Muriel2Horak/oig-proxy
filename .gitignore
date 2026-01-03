@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 .DS_Store
 .pytest_cache/
+.coverage
+.env
 proxy/.mypy_cache/
 logs/
 analysis/ha_latency_analysis.py
@@ -32,4 +34,5 @@ deploy_to_ha.sh
 *.log
 .vscode/
 .scannerwork/
+.sonar_cache/
 reports/

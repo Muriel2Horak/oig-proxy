@@ -9,10 +9,12 @@ Simuluje chování oigservis.cz:5710:
 - Loguje všechny frames pro validaci
 """
 
+import argparse
 import asyncio
 import datetime
 import json
 import logging
+import os
 import re
 import sys
 from typing import Optional
@@ -168,8 +170,22 @@ class MockCloudServer:
 async def main():
     """Spustí mock cloud server."""
     import signal
-    
-    server = MockCloudServer(host="0.0.0.0", port=5710)
+
+    parser = argparse.ArgumentParser(description="Mock OIG Cloud Server")
+    parser.add_argument(
+        "--host",
+        default=os.getenv("MOCK_CLOUD_HOST", "0.0.0.0"),
+        help="Listen host (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MOCK_CLOUD_PORT", "5710")),
+        help="Listen port (default: 5710)",
+    )
+    args = parser.parse_args()
+
+    server = MockCloudServer(host=args.host, port=args.port)
     
     # Graceful shutdown
     def signal_handler(sig, frame):

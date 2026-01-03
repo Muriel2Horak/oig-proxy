@@ -20,12 +20,38 @@ from config import (
 from utils import load_sensor_map
 from proxy import OIGProxy
 
+def _sanitize_log_value(value: object) -> object:
+    if isinstance(value, str):
+        return value.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    if isinstance(value, dict):
+        return {key: _sanitize_log_value(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_sanitize_log_value(val) for val in value)
+    return value
+
+
+class LogSanitizerFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _sanitize_log_value(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {
+                    key: _sanitize_log_value(val) for key, val in record.args.items()
+                }
+            else:
+                record.args = tuple(_sanitize_log_value(arg) for arg in record.args)
+        return True
+
+
 # Logging setup
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
+_root_logger = logging.getLogger()
+for _handler in _root_logger.handlers:
+    _handler.addFilter(LogSanitizerFilter())
 
 logger = logging.getLogger(__name__)
 

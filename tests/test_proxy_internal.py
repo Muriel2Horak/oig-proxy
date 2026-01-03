@@ -1,0 +1,510 @@
+import asyncio
+import json
+import time
+from collections import deque
+
+import proxy as proxy_module
+from models import ProxyMode, SensorConfig
+
+
+class DummyCloudHealth:
+    def __init__(self, is_online: bool = True, fail_threshold: int = 2) -> None:
+        self.is_online = is_online
+        self.fail_threshold = fail_threshold
+        self.consecutive_successes = 0
+        self.consecutive_failures = 0
+        self.last_check_time = 0.0
+
+
+class DummyCloudQueue:
+    def __init__(self, size: int = 0, next_item=None) -> None:
+        self._size = size
+        self._next_item = next_item
+        self.deferred = []
+        self.removed = []
+
+    def size(self) -> int:
+        return self._size
+
+    async def get_next(self):
+        return self._next_item
+
+    async def next_ready_in(self):
+        return None
+
+    async def defer(self, frame_id: int, delay_s: float = 60.0) -> bool:
+        self.deferred.append((frame_id, delay_s))
+        return True
+
+    async def remove(self, frame_id: int) -> bool:
+        self.removed.append(frame_id)
+        return True
+
+
+class DummyMQTTQueue:
+    def __init__(self, size: int = 0) -> None:
+        self._size = size
+
+    def size(self) -> int:
+        return self._size
+
+
+class DummyMQTT:
+    def __init__(self) -> None:
+        self.queue = DummyMQTTQueue()
+        self.device_id = "DEV1"
+        self._last_payload_by_topic = {}
+        self.published_data = []
+        self.published_raw = []
+        self._ready = True
+
+    def is_ready(self) -> bool:
+        return self._ready
+
+    async def publish_data(self, payload: dict):
+        self.published_data.append(payload)
+
+    async def publish_raw(self, *, topic: str, payload: str, qos: int, retain: bool):
+        self.published_raw.append((topic, payload, qos, retain))
+
+    def _state_topic(self, device_id: str, table: str) -> str:
+        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
+
+    def _map_data_for_publish(self, data, *, table, target_device_id):
+        payload = {k: v for k, v in data.items() if not k.startswith("_")}
+        return payload, len(payload)
+
+
+class DummyParser:
+    def __init__(self, mode_value: int | None = None) -> None:
+        self._mode_value = mode_value
+
+    def parse_mode_from_event(self, content: str):
+        return self._mode_value
+
+
+def _make_proxy(tmp_path):
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy.device_id = "DEV1"
+    proxy.mode = ProxyMode.ONLINE
+    proxy.mode_lock = asyncio.Lock()
+    proxy.stats = {
+        "mode_changes": 0,
+        "frames_received": 0,
+        "frames_forwarded": 0,
+        "frames_queued": 0,
+        "acks_local": 0,
+        "acks_cloud": 0,
+    }
+    proxy.cloud_health = DummyCloudHealth()
+    proxy.cloud_queue = DummyCloudQueue()
+    proxy.cloud_connects = 0
+    proxy.cloud_disconnects = 0
+    proxy.cloud_timeouts = 0
+    proxy.cloud_errors = 0
+    proxy.cloud_session_connected = False
+    proxy.mqtt_publisher = DummyMQTT()
+    proxy.parser = DummyParser()
+    proxy.box_connected = False
+    proxy.box_connections = 0
+    proxy._last_data_epoch = None
+    proxy._last_data_iso = None
+    proxy._isnew_polls = 0
+    proxy._isnew_last_poll_iso = None
+    proxy._isnew_last_response = None
+    proxy._isnew_last_rtt_ms = None
+    proxy._control_session_id = "sess"
+    proxy._control_inflight = None
+    proxy._control_queue = deque()
+    proxy._control_last_result = None
+    proxy._control_qos = 1
+    proxy._control_retain = False
+    proxy._control_status_retain = False
+    proxy._control_result_topic = "oig/control/result"
+    proxy._control_status_prefix = "oig/control/status"
+    proxy._control_log_enabled = False
+    proxy._control_log_path = str(tmp_path / "control.log")
+    proxy._control_whitelist = {"tbl_box_prms": {"MODE"}}
+    proxy._control_key_state = {}
+    proxy._control_lock = asyncio.Lock()
+    proxy._control_pending_path = str(tmp_path / "pending.json")
+    proxy._control_pending_keys = set()
+    proxy._control_max_attempts = 2
+    proxy._control_retry_delay_s = 0.01
+    proxy._control_ack_timeout_s = 0.01
+    proxy._control_applied_timeout_s = 0.01
+    proxy._control_mode_quiet_s = 0.01
+    proxy._control_retry_task = None
+    proxy._control_ack_task = None
+    proxy._control_applied_task = None
+    proxy._control_quiet_task = None
+    proxy._control_post_drain_refresh_pending = False
+    proxy._control_mqtt_enabled = False
+    proxy._last_values = {}
+    proxy._prms_tables = {}
+    proxy._prms_device_id = None
+    proxy._mode_value = None
+    proxy._mode_device_id = None
+    proxy._mode_pending_publish = False
+    proxy._prms_pending_publish = False
+    proxy._table_cache = {}
+    proxy._mqtt_cache_device_id = None
+    proxy._mqtt_was_ready = False
+    proxy._replay_failures = {}
+    proxy._replay_task = None
+    proxy._status_task = None
+    proxy._box_conn_lock = asyncio.Lock()
+    proxy._active_box_writer = None
+    proxy._active_box_peer = None
+    proxy._conn_seq = 0
+    proxy._control_set_topic = "oig/control/set"
+    proxy._control_result_topic = "oig/control/result"
+    proxy._control_status_prefix = "oig/control/status"
+    proxy._control_status_retain = False
+    proxy._control_retain = False
+    proxy._control_log_enabled = False
+    proxy._control_log_path = str(tmp_path / "control.log")
+    proxy._control_box_ready_s = 0.0
+    proxy._box_connected_since_epoch = None
+    proxy._hb_interval_s = 0.0
+    proxy._last_hb_ts = 0.0
+    proxy._force_offline_config = False
+    proxy._proxy_status_attrs_topic = "oig/status/attrs"
+    return proxy
+
+
+def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    proxy.box_connected = True
+    proxy.box_connections = 2
+    proxy._last_data_epoch = time.time()
+    proxy._last_data_iso = "2025-01-01T00:00:00Z"
+    proxy._isnew_polls = 1
+    proxy._isnew_last_poll_iso = "2025-01-01T00:00:01Z"
+    proxy._control_inflight = {"request_key": "k1", "tbl_name": "tbl", "tbl_item": "MODE"}
+    proxy._control_queue = deque([{"request_key": "k2"}])
+    proxy._control_last_result = {"status": "ok"}
+
+    payload = proxy._build_status_payload()
+    assert payload["status"] == ProxyMode.ONLINE.value
+    assert payload["box_connected"] == 1
+    assert payload["cloud_queue"] == 0
+    assert payload["mqtt_queue"] == 0
+    assert payload["control_queue_len"] == 1
+    assert payload["control_inflight_key"] == "k1"
+
+    attrs = proxy._build_status_attrs_payload()
+    assert attrs["control_inflight_key"] == "k1"
+    assert attrs["control_queue_keys"] == ["k2"]
+
+    proxy._mode_value = 2
+    proxy._mode_device_id = "DEV2"
+
+    async def run():
+        await proxy._publish_mode_if_ready()
+
+    asyncio.run(run())
+    assert proxy.mqtt_publisher.published_data
+    assert proxy.mqtt_publisher.published_data[0]["MODE"] == 2
+
+
+def test_mode_update_and_processing(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    calls = []
+
+    async def fake_publish(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(proxy, "_publish_mode_if_ready", fake_publish)
+    monkeypatch.setattr(proxy_module, "save_mode_state", lambda mode, dev: calls.append(("save", mode, dev)))
+
+    async def run():
+        await proxy._handle_mode_update("bad", None, "src")
+        await proxy._handle_mode_update("6", None, "src")
+        await proxy._handle_mode_update("3", "DEV1", "src")
+        proxy.parser = DummyParser(mode_value=1)
+        await proxy._maybe_process_mode({"Content": "event"}, "tbl_events", "DEV1")
+
+    asyncio.run(run())
+    assert proxy._mode_value == 1
+    assert ("save", 3, "DEV1") in calls
+
+
+def test_prms_publish_flow(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy._prms_tables = {"tbl_box_prms": {"MODE": 1}}
+
+    async def run():
+        proxy.mqtt_publisher._ready = False
+        await proxy._publish_prms_if_ready(reason="startup")
+        assert proxy._prms_pending_publish is True
+
+        proxy.mqtt_publisher._ready = True
+        proxy.device_id = "AUTO"
+        await proxy._publish_prms_if_ready(reason="startup")
+        assert proxy._prms_pending_publish is True
+
+        proxy.device_id = "DEV1"
+        async def fail_publish(_payload):
+            raise RuntimeError("fail")
+        proxy.mqtt_publisher.publish_data = fail_publish
+        await proxy._publish_prms_if_ready(reason="startup")
+        assert proxy._prms_pending_publish is True
+
+        async def ok_publish(payload):
+            proxy.mqtt_publisher.published_data.append(payload)
+        proxy.mqtt_publisher.publish_data = ok_publish
+        await proxy._publish_prms_if_ready(reason="startup")
+        assert proxy._prms_pending_publish is False
+
+    asyncio.run(run())
+
+
+def test_replay_defers_then_drops(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy.cloud_queue = DummyCloudQueue()
+
+    async def run():
+        await proxy._defer_or_drop_after_retries(1, "tbl", reason="timeout")
+        await proxy._defer_or_drop_after_retries(1, "tbl", reason="timeout")
+        assert proxy.cloud_queue.deferred
+        await proxy._defer_or_drop_after_retries(1, "tbl", reason="timeout")
+        assert 1 in proxy.cloud_queue.removed
+
+    asyncio.run(run())
+
+
+def test_replay_cloud_queue_empty_switches_online(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy.mode = ProxyMode.REPLAY
+    proxy.cloud_health.is_online = True
+    proxy.cloud_queue = DummyCloudQueue(size=0, next_item=None)
+
+    async def fake_publish():
+        return None
+
+    proxy.publish_proxy_status = fake_publish
+
+    async def run():
+        await proxy._replay_cloud_queue()
+
+    asyncio.run(run())
+    assert proxy.mode == ProxyMode.ONLINE
+
+
+def test_register_and_unregister_box_connection(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    closed = []
+
+    async def fake_close(writer):
+        closed.append(writer)
+
+    proxy._close_writer = fake_close
+
+    class DummyWriter:
+        def __init__(self, closing: bool = False) -> None:
+            self._closing = closing
+
+        def is_closing(self):
+            return self._closing
+
+    old = DummyWriter()
+    proxy._active_box_writer = old
+    writer = DummyWriter()
+
+    async def run():
+        conn_id = await proxy._register_box_connection(writer, ("1.2.3.4", 1234))
+        assert conn_id == 1
+        assert proxy._active_box_peer == "1.2.3.4:1234"
+        await proxy._unregister_box_connection(writer)
+
+    asyncio.run(run())
+    assert closed and closed[0] is old
+    assert proxy._active_box_writer is None
+
+
+def test_note_cloud_failure_switches_offline(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy.mode = ProxyMode.ONLINE
+    events = []
+
+    async def fake_on_cloud(event):
+        events.append(event)
+
+    proxy._on_cloud_state_change = fake_on_cloud
+
+    async def run():
+        await proxy._note_cloud_failure("test")
+
+    asyncio.run(run())
+    assert events == ["cloud_down"]
+
+
+def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    proxy.mqtt_publisher.device_id = "DEV1"
+    proxy.device_id = "DEV1"
+
+    cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
+    monkeypatch.setattr(proxy_module, "get_sensor_config", lambda key, table=None: (cfg, key))
+
+    updated = []
+
+    def fake_update(*, tbl_name, tbl_item, raw_value, update_mode):
+        updated.append((tbl_name, tbl_item, raw_value, update_mode))
+
+    proxy._update_cached_value = fake_update
+    monkeypatch.setattr(proxy_module, "save_prms_state", lambda *_: None)
+
+    payload = json.dumps({"MODE": "B"})
+
+    async def run():
+        await proxy._handle_mqtt_state_message(
+            topic=f"{proxy_module.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state",
+            payload_text=payload,
+            retain=False,
+        )
+
+    asyncio.run(run())
+    assert updated[0][2] == 1
+    assert "tbl_box_prms" in proxy._prms_tables
+
+
+def test_control_message_validation_and_accept(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    results = []
+
+    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+        results.append((status, error, detail))
+
+    async def fake_maybe_start():
+        results.append(("start", None, None))
+
+    proxy._control_publish_result = fake_publish_result
+    proxy._control_maybe_start_next = fake_maybe_start
+
+    async def run():
+        await proxy._control_on_mqtt_message(
+            topic="t",
+            payload=b"{invalid",
+            retain=False,
+        )
+        await proxy._control_on_mqtt_message(
+            topic="t",
+            payload=json.dumps({"tx_id": "1"}).encode("utf-8"),
+            retain=False,
+        )
+        await proxy._control_on_mqtt_message(
+            topic="t",
+            payload=json.dumps({
+                "tx_id": "1",
+                "tbl_name": "tbl_box_prms",
+                "tbl_item": "UNKNOWN",
+                "new_value": 1,
+            }).encode("utf-8"),
+            retain=False,
+        )
+        await proxy._control_on_mqtt_message(
+            topic="t",
+            payload=json.dumps({
+                "tx_id": "1",
+                "tbl_name": "tbl_box_prms",
+                "tbl_item": "MODE",
+                "new_value": 3,
+            }).encode("utf-8"),
+            retain=False,
+        )
+
+    asyncio.run(run())
+    assert ("accepted", None, None) in results
+    assert ("start", None, None) in results
+
+
+def test_control_start_inflight_paths(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    results = []
+    finished = []
+    deferred = []
+
+    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+        results.append(status)
+
+    async def fake_finish():
+        finished.append(True)
+
+    async def fake_defer(*, reason):
+        deferred.append(reason)
+
+    proxy._control_publish_result = fake_publish_result
+    proxy._control_finish_inflight = fake_finish
+    proxy._control_defer_inflight = fake_defer
+
+    async def run():
+        proxy._control_inflight = {"_attempts": 2}
+        await proxy._control_start_inflight()
+
+        proxy._control_inflight = {
+            "_attempts": 0,
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "MODE",
+            "new_value": "1",
+            "tx_id": "t1",
+        }
+
+        async def fake_send(**_):
+            return {"ok": False, "error": "box_not_connected"}
+
+        proxy._send_setting_to_box = fake_send
+        await proxy._control_start_inflight()
+
+        async def ok_send(**_):
+            return {"ok": True, "id": 1, "id_set": 2}
+
+        proxy._send_setting_to_box = ok_send
+        proxy._control_inflight = {
+            "_attempts": 0,
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "MODE",
+            "new_value": "1",
+            "tx_id": "t2",
+        }
+
+        async def fake_ack_timeout():
+            return None
+
+        proxy._control_ack_timeout = fake_ack_timeout
+        await proxy._control_start_inflight()
+
+    asyncio.run(run())
+    assert "error" in results
+    assert deferred == ["box_not_connected"]
+
+
+def test_control_on_box_setting_ack(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    results = []
+
+    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+        results.append((status, error))
+
+    async def fake_finish():
+        results.append(("finish", None))
+
+    proxy._control_publish_result = fake_publish_result
+    proxy._control_finish_inflight = fake_finish
+
+    async def run():
+        proxy._control_inflight = {"tx_id": "t1"}
+        await proxy._control_on_box_setting_ack(tx_id="t1", ack=False)
+
+        proxy._control_inflight = {"tx_id": "t2"}
+
+        async def fake_applied():
+            return None
+
+        proxy._control_applied_timeout = fake_applied
+        await proxy._control_on_box_setting_ack(tx_id="t2", ack=True)
+
+    asyncio.run(run())
+    assert ("error", "box_nack") in results
+    assert ("box_ack", None) in results
