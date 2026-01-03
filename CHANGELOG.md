@@ -2,6 +2,17 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.27] - 2026-01-03
+
+### Added
+
+- Log sanitizace citlivých hodnot (tokeny/hesla) v logování.
+
+### Changed
+
+- Rozšířené unit testy a drobná zlepšení spolehlivosti testů.
+- Sonar/SonarCloud: doplněné parametry skriptů a dokumentace pro běh analýz.
+
 ## [1.3.18] - 2025-12-22
 
 - Opravy chyb a drobná vylepšení.
