@@ -13,6 +13,14 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
 fi
 
 SONAR_HOST_URL="${SONAR_HOST_URL:-${SONAR_URL:-http://host.docker.internal:9001}}"
+SONAR_ORGANIZATION="${SONAR_ORGANIZATION:-}"
+SONAR_PR_KEY="${SONAR_PR_KEY:-}"
+SONAR_PR_BRANCH="${SONAR_PR_BRANCH:-}"
+SONAR_PR_BASE="${SONAR_PR_BASE:-}"
+SONAR_IS_CLOUD=0
+if [[ "${SONAR_HOST_URL}" == *"sonarcloud.io"* ]]; then
+  SONAR_IS_CLOUD=1
+fi
 SONAR_DOCKER_HOST_URL="${SONAR_HOST_URL}"
 if [[ "${SONAR_HOST_URL}" =~ ^(https?://)(localhost|127\.0\.0\.1)(:[0-9]+)?(.*)?$ ]]; then
   SONAR_DOCKER_HOST_URL="${BASH_REMATCH[1]}host.docker.internal${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
@@ -39,7 +47,9 @@ SONAR_DOCKER_PROJECT_ROOT="${SONAR_DOCKER_PROJECT_ROOT:-/usr/src}"
 
 SONAR_LOGIN_VALUE=""
 SONAR_PASSWORD_VALUE=""
-if [[ -n "${SONAR_TOKEN:-}" ]]; then
+if [[ "${SONAR_IS_CLOUD}" == "1" && -n "${SONAR_CLOUD_TOKEN:-}" ]]; then
+  SONAR_LOGIN_VALUE="${SONAR_CLOUD_TOKEN}"
+elif [[ -n "${SONAR_TOKEN:-}" ]]; then
   SONAR_LOGIN_VALUE="${SONAR_TOKEN}"
 elif [[ -n "${SONAR_LOGIN:-}" ]]; then
   SONAR_LOGIN_VALUE="${SONAR_LOGIN}"
@@ -53,6 +63,7 @@ if [[ -z "${SONAR_LOGIN_VALUE}" ]]; then
   echo "Optional env overrides:" >&2
   echo "  SONAR_HOST_URL=http://host.docker.internal:9001" >&2
   echo "  SONAR_URL=http://host.docker.internal:9001" >&2
+  echo "  SONAR_ORGANIZATION=your-org (required for SonarCloud)" >&2
   echo "  SONAR_PROJECT_KEY=oig_proxy" >&2
   echo "  SONAR_PROJECT_NAME=oig_proxy" >&2
   echo "  SONAR_PROJECT_VERSION=1.2.3" >&2
@@ -76,7 +87,11 @@ export SONAR_HOST_URL
 export SONAR_PROJECT_KEY
 
 if [[ "${SONAR_CONFIGURE_QG}" == "1" ]]; then
-  "${PYTHON_BIN}" "${ROOT_DIR}/scripts/configure_sonar_quality_gate.py"
+  if [[ "${SONAR_IS_CLOUD}" == "1" ]]; then
+    echo "Skipping quality gate configuration for SonarCloud." >&2
+  else
+    "${PYTHON_BIN}" "${ROOT_DIR}/scripts/configure_sonar_quality_gate.py"
+  fi
 fi
 
 if [[ "${RUN_TESTS}" == "1" ]]; then
@@ -152,11 +167,21 @@ scan_args=(
   -Dsonar.qualitygate.wait="${SONAR_QUALITY_GATE_WAIT}"
   -Dsonar.qualitygate.timeout="${SONAR_QUALITY_GATE_TIMEOUT}"
 )
+if [[ -n "${SONAR_ORGANIZATION}" ]]; then
+  scan_args+=(-Dsonar.organization="${SONAR_ORGANIZATION}")
+fi
 if [[ -n "${SONAR_PASSWORD_VALUE}" ]]; then
   scan_args+=(-Dsonar.password="${SONAR_PASSWORD_VALUE}")
 fi
 if [[ -n "${SONAR_PROJECT_VERSION}" ]]; then
   scan_args+=(-Dsonar.projectVersion="${SONAR_PROJECT_VERSION}")
+fi
+if [[ -n "${SONAR_PR_KEY}" && -n "${SONAR_PR_BRANCH}" && -n "${SONAR_PR_BASE}" ]]; then
+  scan_args+=(
+    -Dsonar.pullrequest.key="${SONAR_PR_KEY}"
+    -Dsonar.pullrequest.branch="${SONAR_PR_BRANCH}"
+    -Dsonar.pullrequest.base="${SONAR_PR_BASE}"
+  )
 fi
 
 exec docker run "${docker_args[@]}" \

@@ -42,10 +42,12 @@ def test_cloud_queue_defer_and_remove(tmp_path):
         msg_id, table, _payload = item
         assert table == "t1"
 
-        assert await queue.defer(msg_id, delay_s=60) is True
+        deferred = await queue.defer(msg_id, delay_s=60)
+        assert deferred is True
         assert await queue.get_next() is None
 
-        assert await queue.remove(msg_id) is True
+        removed = await queue.remove(msg_id)
+        assert removed is True
         assert queue.size() == 0
 
     try:
@@ -180,6 +182,7 @@ def test_cloud_health_check_loop_runs(monkeypatch):
     try:
         asyncio.run(checker.health_check_loop())
     except RuntimeError:
+        # Expected: fake_sleep raises RuntimeError("stop") to break the loop.
         pass
 
     assert calls["check"] == 1

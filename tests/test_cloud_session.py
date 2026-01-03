@@ -57,6 +57,7 @@ def test_ensure_connected_timeout(monkeypatch):
     try:
         asyncio.run(manager.ensure_connected())
     except asyncio.TimeoutError:
+        # Expected timeout during connection attempt; verify stats and backoff below.
         pass
     assert manager.stats.timeouts == 1
     assert manager.stats.errors == 1

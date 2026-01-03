@@ -1,5 +1,4 @@
 import json
-import os
 import queue
 import sqlite3
 import time

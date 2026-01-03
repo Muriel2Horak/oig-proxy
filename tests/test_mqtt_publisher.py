@@ -25,7 +25,8 @@ def test_mqtt_queue_add_get_remove(tmp_path):
         assert payload == "p2"
         assert retain is False
 
-        assert await queue.remove(msg_id) is True
+        removed = await queue.remove(msg_id)
+        assert removed is True
         assert queue.size() == 1
 
     try:

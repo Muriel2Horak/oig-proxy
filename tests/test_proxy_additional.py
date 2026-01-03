@@ -290,6 +290,7 @@ def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
     try:
         asyncio.run(proxy._full_refresh_loop())
     except RuntimeError:
+        # Expected: fake_sleep raises RuntimeError("stop") to break the loop.
         pass
     assert calls["send"] == 1
 
@@ -331,6 +332,7 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     try:
         asyncio.run(proxy._proxy_status_loop())
     except RuntimeError:
+        # Expected: fake_sleep raises RuntimeError("stop") to break the loop.
         pass
 
     assert calls["status"] == 1
@@ -810,6 +812,7 @@ def test_replay_cloud_queue_waits_for_next(tmp_path, monkeypatch):
     try:
         asyncio.run(proxy._replay_cloud_queue())
     except RuntimeError:
+        # Expected: fake_sleep raises RuntimeError("stop") to break the loop.
         pass
     assert calls["sleep"] == 1
 
@@ -845,6 +848,7 @@ def test_replay_cloud_queue_sends_item(tmp_path, monkeypatch):
     try:
         asyncio.run(proxy._replay_cloud_queue())
     except RuntimeError:
+        # Expected: fake_sleep raises RuntimeError("stop") to break the loop.
         pass
     assert proxy.cloud_queue.calls == 1
 
@@ -926,6 +930,7 @@ def test_local_getactual_loop_sends_and_logs(tmp_path, monkeypatch):
     try:
         asyncio.run(proxy._local_getactual_loop(writer, conn_id=1))
     except RuntimeError:
+        # Expected: fake_sleep/fake_send raise RuntimeError to stop the loop.
         pass
 
 

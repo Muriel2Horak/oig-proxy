@@ -1,6 +1,4 @@
 import asyncio
-import json
-import time
 
 import proxy as proxy_module
 from models import ProxyMode
