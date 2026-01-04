@@ -59,7 +59,7 @@ Otestovat všechny režimy (ONLINE/OFFLINE/REPLAY) lokálně před nasazením na
 
 **Expected:**
 - ✅ Proxy přechod ONLINE → OFFLINE
-- ✅ BOX dostává local ACK (learned patterns)
+- ✅ BOX dostává local ACK (fixní ACK/END s CRC)
 - ✅ Frames se ukládají do CloudQueue (SQLite)
 - ✅ MQTT publikování (pokud broker online)
 - ✅ Health check běží (každých 30s)
@@ -157,7 +157,7 @@ SELECT COUNT(*) FROM cloud_queue.queue;
 Simuluje OIG cloud server:
 - Přijímá TCP spojení na portu 5710
 - Přijímá frames
-- Posílá ACK responses (learned patterns)
+- Posílá ACK responses (fixní ACK/END s CRC)
 - Loguje všechny frames pro validaci
 """
 ```

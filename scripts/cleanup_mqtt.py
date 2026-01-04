@@ -24,7 +24,9 @@ DEVICE_ID = "2206237016"
 # Topics k vyčištění
 TOPICS_TO_CLEAR = []
 
-def on_connect(client, userdata, flags, rc):
+
+def on_connect(client, _userdata, _flags, rc):
+    """MQTT on_connect callback."""
     if rc == 0:
         print(f"✅ Připojeno k MQTT {MQTT_HOST}")
         # Subscribe na discovery topics
@@ -34,31 +36,35 @@ def on_connect(client, userdata, flags, rc):
     else:
         print(f"❌ Připojení selhalo: {rc}")
 
-def on_message(client, userdata, msg):
+
+def on_message(_client, _userdata, msg):
+    """MQTT on_message callback pro retained zprávy."""
     if msg.retain:
         TOPICS_TO_CLEAR.append(msg.topic)
         print(f"  Found: {msg.topic}")
 
+
 def main():
+    """Spustí cleanup retained topics pro OIG proxy."""
     print("=== OIG MQTT Cleanup ===")
     print(f"Host: {MQTT_HOST}, Device: {DEVICE_ID}")
     print()
-    
+
     # Krok 1: Zjistíme retained messages
     print("1. Hledám retained messages...")
-    
+
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.on_connect = on_connect
     client.on_message = on_message
-    
+
     client.connect(MQTT_HOST, MQTT_PORT, 60)
     client.loop_start()
-    
+
     # Počkáme na messages
     time.sleep(3)
     client.loop_stop()
-    
+
     # Přidáme známé topics
     known_topics = [
         f"oig_local/{DEVICE_ID}/availability",
@@ -72,26 +78,26 @@ def main():
     for t in known_topics:
         if t not in TOPICS_TO_CLEAR:
             TOPICS_TO_CLEAR.append(t)
-    
+
     print(f"\nNalezeno {len(TOPICS_TO_CLEAR)} topics k vyčištění")
-    
+
     if not TOPICS_TO_CLEAR:
         print("Nic k vyčištění.")
         return
-    
+
     # Krok 2: Smažeme (pošleme prázdnou retained message)
     print("\n2. Mažu retained messages...")
-    
+
     client2 = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     client2.username_pw_set(MQTT_USER, MQTT_PASS)
     client2.connect(MQTT_HOST, MQTT_PORT, 60)
-    
+
     for topic in TOPICS_TO_CLEAR:
         client2.publish(topic, "", retain=True)
         print(f"  Cleared: {topic}")
-    
+
     client2.disconnect()
-    
+
     print(f"\n✅ Vyčištěno {len(TOPICS_TO_CLEAR)} topics")
     print("\nTeď restartuj MQTT integraci v HA:")
     print("  Settings → Devices & Services → MQTT → ⋮ → Reload")

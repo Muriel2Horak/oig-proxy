@@ -25,15 +25,19 @@ from config import (
     PRMS_STATE_PATH,
     SENSOR_MAP_PATH,
 )
-from models import SensorConfig, WarningEntry
+from models import SensorConfig
 
 logger = logging.getLogger(__name__)
 
 # Public DNS resolver for cloud target (bypass local override)
 try:
     import dns.resolver  # type: ignore
-except Exception:  # pragma: no cover - optional dependency guard
-    dns = None
+except ImportError:  # pragma: no cover - optional dependency guard
+    DNS = None
+else:
+    DNS = dns
+
+dns = DNS  # pylint: disable=invalid-name
 
 _PUBLIC_DNS_HOSTS = {"oigservis.cz"}
 _PUBLIC_DNS_DEFAULT = ("8.8.8.8", "1.1.1.1")
@@ -46,10 +50,10 @@ _PUBLIC_DNS_TTL_MAX_S = 3600.0
 # Globální state
 SENSORS: dict[str, SensorConfig] = {}
 WARNING_MAP: dict[str, list[dict[str, Any]]] = {}
-_last_map_load = 0.0
-_capture_queue: queue.Queue[tuple[Any, ...]] | None = None
-_capture_thread: threading.Thread | None = None
-_capture_cols: set[str] = set()
+_last_map_load = 0.0  # pylint: disable=invalid-name
+_capture_queue: queue.Queue[tuple[Any, ...]] | None = None  # pylint: disable=invalid-name
+_capture_thread: threading.Thread | None = None  # pylint: disable=invalid-name
+_capture_cols: set[str] = set()  # pylint: disable=invalid-name
 
 
 def iso_now() -> str:
@@ -112,7 +116,7 @@ def _resolve_public_dns(host: str) -> tuple[str | None, float]:
         ip = str(answer[0])
         ttl = float(getattr(answer.rrset, "ttl", _PUBLIC_DNS_TTL_DEFAULT_S))
         return ip, ttl
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return None, _PUBLIC_DNS_TTL_DEFAULT_S
 
 
@@ -146,33 +150,35 @@ def resolve_cloud_host(host: str) -> str:
 
 def load_mode_state() -> tuple[int | None, str | None]:
     """Načte uložený MODE stav z perzistentního souboru.
-    
+
     Returns:
         (mode_value, device_id) – device_id může být None pokud nebyl uložen.
     """
     try:
         if os.path.exists(MODE_STATE_PATH):
-            with open(MODE_STATE_PATH, "r") as f:
+            with open(MODE_STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 mode_value = data.get("mode")
                 device_id = data.get("device_id")
                 if mode_value is not None:
                     try:
                         mode_int = int(mode_value)
-                    except Exception:
+                    except (TypeError, ValueError):
                         mode_int = None
                     if mode_int is None or mode_int < 0 or mode_int > 5:
                         logger.warning(
-                            f"MODE: Stored value {mode_value} is out of range 0-5, ignoring"
+                            "MODE: Stored value %s is out of range 0-5, ignoring",
+                            mode_value,
                         )
                         return None, device_id
                     logger.info(
-                        f"MODE: Loaded saved state: {mode_int} "
-                        f"(device_id={device_id})"
+                        "MODE: Loaded saved state: %s (device_id=%s)",
+                        mode_int,
+                        device_id,
                     )
                     return mode_int, device_id
-    except Exception as e:
-        logger.warning(f"MODE: Failed to load state: {e}")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning("MODE: Failed to load state: %s", exc)
     return None, None
 
 
@@ -180,24 +186,26 @@ def save_mode_state(mode_value: int, device_id: str | None) -> None:
     """Uloží MODE stav do perzistentního souboru."""
     try:
         os.makedirs(os.path.dirname(MODE_STATE_PATH), exist_ok=True)
-        with open(MODE_STATE_PATH, "w") as f:
+        with open(MODE_STATE_PATH, "w", encoding="utf-8") as f:
             json.dump({
                 "mode": mode_value,
                 "device_id": device_id,
                 "timestamp": iso_now()
-            }, f)
+            }, f, ensure_ascii=False)
         logger.debug(
-            f"MODE: State saved: {mode_value} (device_id={device_id})"
+            "MODE: State saved: %s (device_id=%s)",
+            mode_value,
+            device_id,
         )
-    except Exception as e:
-        logger.error(f"MODE: Failed to save state: {e}")
+    except (OSError, TypeError, ValueError) as exc:
+        logger.error("MODE: Failed to save state: %s", exc)
 
 
 def _load_json_file(path: str) -> Any | None:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -243,8 +251,8 @@ def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
         if not isinstance(loaded, dict):
             return {}, None
         return _split_prms_state(loaded)
-    except Exception as e:
-        logger.warning(f"STATE: Failed to load table state: {e}")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning("STATE: Failed to load table state: %s", exc)
         return {}, None
 
 
@@ -298,8 +306,12 @@ def save_prms_state(
         }
         with open(PRMS_STATE_PATH, "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False)
-    except Exception as e:
-        logger.debug(f"STATE: Failed to save table state ({table_name}): {e}")
+    except (OSError, TypeError, ValueError) as exc:
+        logger.debug(
+            "STATE: Failed to save table state (%s): %s",
+            table_name,
+            exc,
+        )
 
 
 def get_sensor_config(
@@ -307,11 +319,11 @@ def get_sensor_config(
     table: str | None = None
 ) -> tuple[SensorConfig | None, str]:
     """Vrátí konfiguraci senzoru a jeho unikátní klíč.
-    
+
     Pořadí vyhledávání:
     1. table:sensor_id (specifické mapování pro tabulku)
     2. sensor_id (obecné mapování, fallback)
-    
+
     Returns:
         tuple: (SensorConfig nebo None, unikátní klíč pro senzor)
     """
@@ -320,12 +332,12 @@ def get_sensor_config(
         config = SENSORS.get(table_key)
         if config:
             return config, table_key
-    
+
     config = SENSORS.get(sensor_id)
     if config:
         unique_key = f"{table}:{sensor_id}" if table else sensor_id
         return config, unique_key
-    
+
     return None, sensor_id
 
 
@@ -335,9 +347,9 @@ def decode_warnings(key: str, value: Any) -> list[str]:
         return []
     try:
         val_int = int(value)
-    except Exception:
+    except (TypeError, ValueError):
         return []
-    
+
     texts: list[str] = []
     for item in WARNING_MAP.get(key, []):
         bit = item.get("bit")
@@ -421,7 +433,16 @@ def _builtin_sensors() -> dict[str, SensorConfig]:
             "IsNewSet - RTT", "ms", None, "measurement", None, "proxy", "diagnostic"
         ),
         "proxy_status:control_queue_len": SensorConfig(
-            "Control - fronta (počet)", "", None, "measurement", None, "proxy", "diagnostic", None, False, "state"
+            "Control - fronta (počet)",
+            "",
+            None,
+            "measurement",
+            None,
+            "proxy",
+            "diagnostic",
+            None,
+            False,
+            "state",
         ),
         "proxy_status:control_inflight": SensorConfig(
             "Control - běžící příkaz", "", None, None, None, "proxy", "diagnostic"
@@ -432,7 +453,7 @@ def _builtin_sensors() -> dict[str, SensorConfig]:
     }
 
 
-def _add_sensors_from_mapping(mapping: dict[str, Any]) -> int:
+def _add_sensors_from_mapping(mapping: dict[str, Any]) -> int:  # pylint: disable=too-many-locals
     sensors = mapping.get("sensors", {})
     if not isinstance(sensors, dict):
         return 0
@@ -503,18 +524,16 @@ def _build_warning_map(mapping: dict[str, Any]) -> dict[str, list[dict[str, Any]
 
 def load_sensor_map() -> None:
     """Načte mapping z JSON (vygenerovaný z Excelu) a doplní SENSORS."""
-    global _last_map_load, WARNING_MAP
-    
+    global _last_map_load, WARNING_MAP  # pylint: disable=global-statement
+
     now = time.time()
     if MAP_RELOAD_SECONDS > 0 and (now - _last_map_load) < MAP_RELOAD_SECONDS:
         return
-    
+
     if not os.path.exists(SENSOR_MAP_PATH):
-        logger.info(
-            f"JSON mapping not found, skipped ({SENSOR_MAP_PATH})"
-        )
+        logger.info("JSON mapping not found, skipped (%s)", SENSOR_MAP_PATH)
         return
-    
+
     try:
         loaded = _load_json_file(SENSOR_MAP_PATH)
         if not isinstance(loaded, dict):
@@ -522,21 +541,25 @@ def load_sensor_map() -> None:
 
         added = _add_sensors_from_mapping(loaded)
         if added:
-            logger.info(f"Sensor map: Loaded {added} sensors from {SENSOR_MAP_PATH}")
+            logger.info(
+                "Sensor map: Loaded %s sensors from %s",
+                added,
+                SENSOR_MAP_PATH,
+            )
             sample = list(SENSORS.keys())[:5]
-            logger.debug(f"Sensor map sample: {sample}")
+            logger.debug("Sensor map sample: %s", sample)
 
         WARNING_MAP = _build_warning_map(loaded)
         _last_map_load = now
-    except Exception as e:
-        logger.warning(f"Sensor map load failed: {e}")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Sensor map load failed: %s", exc)
 
 
 def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
     """Inicializuje SQLite DB pro capture."""
     if not CAPTURE_PAYLOADS:
         return None, set()
-    
+
     try:
         conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
         # PRAGMA pro lepší výkon a menší blokování (writer poběží v background threadu)
@@ -545,8 +568,8 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=MEMORY")
             conn.execute("PRAGMA busy_timeout=2000")
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.debug("Capture DB pragma setup failed: %s", exc)
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS frames (
@@ -577,13 +600,13 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
                     f"ALTER TABLE frames ADD COLUMN {col_name} {col_type}"
                 )
                 conn.commit()
-            except Exception:
-                pass
-        
+            except sqlite3.Error as exc:
+                logger.debug("Capture DB column %s add skipped: %s", col_name, exc)
+
         cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
         return conn, cols
-    except Exception as e:
-        logger.warning(f"Init capture DB failed: {e}")
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("Init capture DB failed: %s", exc)
         return None, set()
 
 
@@ -603,8 +626,8 @@ def _commit_capture_batch(
     try:
         conn.executemany(sql, batch)
         conn.commit()
-    except Exception as e:
-        logger.debug(f"Capture worker write failed (dropping batch): {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.debug("Capture worker write failed (dropping batch): %s", exc)
         with suppress(Exception):
             conn.rollback()
 
@@ -643,13 +666,15 @@ def _capture_worker(db_path: str) -> None:
             "VALUES (?,?,?,?,?,?,?,?,?,?)"
         )
 
-        assert _capture_queue is not None
+        if _capture_queue is None:
+            logger.warning("Capture worker started without queue")
+            return
         _capture_loop(conn, sql, _capture_queue)
-    except Exception as e:
-        logger.warning(f"Capture worker crashed: {e}")
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("Capture worker crashed: %s", exc)
 
 
-def capture_payload(
+def capture_payload(  # pylint: disable=too-many-arguments,too-many-positional-arguments,global-statement
     device_id: str | None,
     table: str | None,
     raw: str,
@@ -675,8 +700,8 @@ def capture_payload(
         _capture_cols = cols
         try:
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.debug("Capture DB close failed: %s", exc)
         _capture_queue = queue.Queue(maxsize=5000)
         _capture_thread = threading.Thread(
             target=_capture_worker,
@@ -703,13 +728,15 @@ def capture_payload(
             peer,
             length,
         )
-        assert _capture_queue is not None
+        if _capture_queue is None:
+            logger.debug("Capture queue missing; dropping payload")
+            return
         try:
             _capture_queue.put_nowait(values)
         except queue.Full:
             logger.debug("Capture queue full - dropping payload")
-    except Exception as e:
-        logger.debug(f"Capture payload failed: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.debug("Capture payload failed: %s", exc)
 
 
 # Initialize capture DB at module load
@@ -717,5 +744,5 @@ _conn, _capture_cols = init_capture_db()
 try:
     if _conn is not None:
         _conn.close()
-except Exception:
-    pass
+except sqlite3.Error as exc:
+    logger.debug("Capture DB cleanup failed: %s", exc)

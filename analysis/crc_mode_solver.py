@@ -7,6 +7,7 @@ preset parametry (poly/init/refin/refout/xorout) přes různé vstupní reprezen
 Poznámka: Nepokrývá plný prostor 16bit CRC (to by bylo ~miliony kombinací);
 zaměřuje se na standardní polynomy. Slouží jako rychlý sanity-check.
 """
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,too-many-locals,too-many-branches,dangerous-default-value,too-many-nested-blocks,too-many-statements,too-many-return-statements,invalid-name,line-too-long,duplicate-value,broad-exception-caught,too-many-arguments,too-many-positional-arguments,unused-import
 
 from __future__ import annotations
 

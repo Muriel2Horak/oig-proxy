@@ -76,7 +76,10 @@ CLOUD_ACK_TIMEOUT = float(os.getenv("CLOUD_ACK_TIMEOUT", "3.0"))
 # Proxy Configuration
 # ============================================================================
 DEVICE_ID = os.getenv("DEVICE_ID", "")  # Povinné!
-PROXY_LISTEN_HOST = os.getenv("PROXY_LISTEN_HOST", "0.0.0.0")
+PROXY_LISTEN_HOST = os.getenv(
+    "PROXY_LISTEN_HOST",
+    "0.0.0.0",
+)  # nosec B104 - needs LAN binding for appliance mode
 PROXY_LISTEN_PORT = int(os.getenv("PROXY_PORT", "5710"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 PROXY_STATUS_INTERVAL = _get_int_env("PROXY_STATUS_INTERVAL", 60)

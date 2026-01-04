@@ -14,6 +14,7 @@ _FRAME_INNER_RE = re.compile(rb"^<Frame>(.*)</Frame>\r?\n?$", re.DOTALL)
 
 
 def _reflect_bits(x: int, width: int) -> int:
+    """Bitově zrcadlí `width` bitů hodnoty `x`."""
     out = 0
     for _ in range(width):
         out = (out << 1) | (x & 1)
@@ -23,6 +24,7 @@ def _reflect_bits(x: int, width: int) -> int:
 
 @functools.lru_cache(maxsize=16)
 def _crc16_table_modbus() -> tuple[int, ...]:
+    """Předpočítaná tabulka pro CRC16/Modbus."""
     poly = 0x8005
     poly_r = _reflect_bits(poly, 16) & 0xFFFF
     table: list[int] = []
@@ -35,6 +37,7 @@ def _crc16_table_modbus() -> tuple[int, ...]:
 
 
 def crc16_modbus(data: bytes) -> int:
+    """Spočítá CRC16/Modbus pro zadaná data."""
     table = _crc16_table_modbus()
     crc = 0xFFFF
     for b in data:
@@ -43,11 +46,13 @@ def crc16_modbus(data: bytes) -> int:
 
 
 def frame_inner_bytes(frame_bytes: bytes) -> bytes:
+    """Vrátí vnitřek `<Frame>...</Frame>` bez CR/LF."""
     m = _FRAME_INNER_RE.match(frame_bytes.rstrip(b"\r\n"))
     return m.group(1) if m else frame_bytes
 
 
 def compute_frame_checksum(frame_bytes: bytes) -> int:
+    """Spočítá checksum z `<Frame>` bytes (bez CRC tagu)."""
     inner = frame_inner_bytes(frame_bytes)
     inner_wo_crc = _CRC_TAG_RE.sub(b"", inner)
     return crc16_modbus(inner_wo_crc)
@@ -67,4 +72,3 @@ def build_frame(inner_xml: str, *, add_crlf: bool = True) -> str:
     if add_crlf:
         out += "\r\n"
     return out
-

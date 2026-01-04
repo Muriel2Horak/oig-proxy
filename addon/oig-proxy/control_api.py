@@ -16,10 +16,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
-class _Handler(BaseHTTPRequestHandler):
+class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
+    """HTTP handler pro Control API."""
     server_version = "OIGProxyControlAPI/0.1"
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+        """Odešle JSON odpověď se zadaným HTTP statusem."""
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -27,7 +29,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def do_GET(self) -> None:
+    def do_GET(self) -> None:  # pylint: disable=invalid-name
+        """Zpracuje GET requesty Control API."""
         if self.path.rstrip("/") == "/api/health":
             proxy = self.server.proxy  # type: ignore[attr-defined]
             payload = proxy.get_control_api_health()
@@ -36,7 +39,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._send_json(404, {"error": "not_found"})
 
-    def do_POST(self) -> None:
+    def do_POST(self) -> None:  # pylint: disable=invalid-name
+        """Zpracuje POST /api/setting pro odeslání Setting do BOXu."""
         if self.path.rstrip("/") != "/api/setting":
             self._send_json(404, {"error": "not_found"})
             return
@@ -47,7 +51,7 @@ class _Handler(BaseHTTPRequestHandler):
         # JSON preferred, but allow minimal XML snippet containing just the tags.
         try:
             data = json.loads(body.decode("utf-8") if body else "{}")
-        except Exception:
+        except json.JSONDecodeError:
             text = body.decode("utf-8", errors="ignore")
             def _tag(name: str) -> str | None:
                 m = re.search(rf"<{name}>([^<]+)</{name}>", text)
@@ -85,13 +89,17 @@ class _Handler(BaseHTTPRequestHandler):
         status = 200 if res.get("ok") else 409
         self._send_json(status, res)
 
-    def log_message(self, fmt: str, *args: Any) -> None:
+    def log_message(self, _fmt: str, *args: Any) -> None:  # pylint: disable=arguments-differ
+        """Potlačí výpisy do stdout."""
         # Keep stdout clean; proxy logs are elsewhere.
         return
 
 
 class ControlAPIServer:
+    """Thin wrapper pro ThreadingHTTPServer s control API handlerem."""
+
     def __init__(self, *, host: str, port: int, proxy: Any):
+        """Inicializuje Control API server (bez spuštění)."""
         self.host = host
         self.port = port
         self.proxy = proxy
@@ -99,6 +107,7 @@ class ControlAPIServer:
         self._httpd: ThreadingHTTPServer | None = None
 
     def start(self) -> None:
+        """Spustí HTTP server v background threadu."""
         httpd = ThreadingHTTPServer((self.host, self.port), _Handler)
         httpd.proxy = self.proxy  # type: ignore[attr-defined]
         self._httpd = httpd
@@ -108,6 +117,7 @@ class ControlAPIServer:
         self._thread = t
 
     def stop(self) -> None:
+        """Bezpečně zastaví server."""
         if self._httpd is not None:
             self._httpd.shutdown()
             self._httpd.server_close()

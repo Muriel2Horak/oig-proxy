@@ -3,11 +3,13 @@
 OIG Proxy - hlavní orchestrace s ONLINE/OFFLINE/REPLAY režimy.
 """
 
+# pylint: disable=too-many-lines,too-many-instance-attributes,too-many-statements,too-many-branches,too-many-locals,too-many-arguments,too-many-positional-arguments,too-many-return-statements,broad-exception-caught,deprecated-module
+
 import asyncio
 import logging
 import socket
 import time
-import random
+import secrets
 import json
 import uuid
 from collections import deque
@@ -16,7 +18,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from cloud_manager import ACKLearner, CloudHealthChecker, CloudQueue
+from parser import OIGDataParser
+from cloud_manager import CloudHealthChecker, CloudQueue
 from config import (
     CLOUD_REPLAY_RATE,
     CLOUD_ACK_TIMEOUT,
@@ -56,7 +59,6 @@ from control_api import ControlAPIServer
 from oig_frame import build_frame
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
-from parser import OIGDataParser
 from utils import (
     capture_payload,
     get_sensor_config,
@@ -76,14 +78,13 @@ logger = logging.getLogger(__name__)
 
 class OIGProxy:
     """OIG Proxy s podporou ONLINE/OFFLINE/REPLAY režimů."""
-    
+
     def __init__(self, device_id: str):
         self.device_id = device_id
-        
+
         # Komponenty
         self.cloud_queue = CloudQueue()
         self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
-        self.ack_learner = ACKLearner()
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
         loaded_mode, loaded_dev = load_mode_state()
@@ -95,11 +96,11 @@ class OIGProxy:
         self._table_cache: dict[str, dict[str, Any]] = {}
         self._mqtt_cache_device_id: str | None = None
         self._mqtt_was_ready: bool = False
-        
+
         # Režim
         self.mode = ProxyMode.ONLINE
         self.mode_lock = asyncio.Lock()
-        
+
         # Background tasky
         self._replay_task: asyncio.Task[Any] | None = None
         self._replay_failures: dict[int, int] = {}
@@ -153,7 +154,7 @@ class OIGProxy:
 
         self._box_connected_since_epoch: float | None = None
         self._last_values: dict[tuple[str, str], Any] = {}
-        
+
         # Statistiky
         self.stats = {
             "frames_received": 0,
@@ -181,7 +182,7 @@ class OIGProxy:
         self.cloud_session_connected = False
         self._last_hb_ts: float = 0.0
         self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
-    
+
     async def start(self):
         """Spustí proxy server."""
         self._loop = asyncio.get_running_loop()
@@ -196,17 +197,19 @@ class OIGProxy:
                 )
                 self._control_api.start()
                 logger.info(
-                    f"🧪 Control API listening on http://{CONTROL_API_HOST}:{CONTROL_API_PORT}"
+                    "🧪 Control API listening on http://%s:%s",
+                    CONTROL_API_HOST,
+                    CONTROL_API_PORT,
                 )
             except Exception as e:
-                logger.error(f"Control API start failed: {e}")
+                logger.error("Control API start failed: %s", e)
 
         # Nastavíme callback pro cloud health změny
         self.cloud_health.set_mode_callback(self._on_cloud_state_change)
-        
+
         # Spustíme background tasky
         await self.cloud_health.start()
-        
+
         # MQTT connect
         if self.mqtt_publisher.connect():
             await self.mqtt_publisher.start_health_check()
@@ -225,7 +228,8 @@ class OIGProxy:
                 self.device_id = restored_device_id
                 self.mqtt_publisher.device_id = restored_device_id
                 logger.info(
-                    f"🔑 Restoring device_id from saved state: {self.device_id}"
+                    "🔑 Restoring device_id from saved state: %s",
+                    self.device_id,
                 )
                 self.mqtt_publisher.publish_availability()
                 self._setup_mqtt_state_cache()
@@ -243,19 +247,19 @@ class OIGProxy:
             self._status_task = asyncio.create_task(self._proxy_status_loop())
         if self._full_refresh_task is None or self._full_refresh_task.done():
             self._full_refresh_task = asyncio.create_task(self._full_refresh_loop())
-        
+
         # Spustíme TCP server
         server = await asyncio.start_server(
             self.handle_connection,
             PROXY_LISTEN_HOST,
             PROXY_LISTEN_PORT
         )
-        
+
         addr = server.sockets[0].getsockname()
-        logger.info(f"🚀 OIG Proxy listening on {addr[0]}:{addr[1]}")
-        logger.info(f"📡 Cloud target: {TARGET_SERVER}:{TARGET_PORT}")
-        logger.info(f"🔄 Mode: {self.mode.value}")
-        
+        logger.info("🚀 OIG Proxy listening on %s:%s", addr[0], addr[1])
+        logger.info("📡 Cloud target: %s:%s", TARGET_SERVER, TARGET_PORT)
+        logger.info("🔄 Mode: %s", self.mode.value)
+
         async with server:
             await server.serve_forever()
 
@@ -301,8 +305,14 @@ class OIGProxy:
         return payload
 
     def _build_status_attrs_payload(self) -> dict[str, Any]:
-        inflight_key = str(self._control_inflight.get("request_key") or "") if self._control_inflight else ""
-        queue_keys = [str(tx.get("request_key") or "") for tx in list(self._control_queue)]
+        if self._control_inflight:
+            inflight_key = str(self._control_inflight.get("request_key") or "")
+        else:
+            inflight_key = ""
+        queue_keys = [
+            str(tx.get("request_key") or "")
+            for tx in list(self._control_queue)
+        ]
         return {
             "control_inflight_key": inflight_key,
             "control_queue_keys": [k for k in queue_keys if k],
@@ -342,7 +352,7 @@ class OIGProxy:
         try:
             await self.mqtt_publisher.publish_proxy_status(payload)
         except Exception as e:
-            logger.debug(f"Proxy status publish failed: {e}")
+            logger.debug("Proxy status publish failed: %s", e)
         try:
             await self.mqtt_publisher.publish_raw(
                 topic=self._proxy_status_attrs_topic,
@@ -351,7 +361,7 @@ class OIGProxy:
                 retain=True,
             )
         except Exception as e:
-            logger.debug(f"Proxy status attrs publish failed: {e}")
+            logger.debug("Proxy status attrs publish failed: %s", e)
 
     @staticmethod
     def _build_getactual_frame() -> bytes:
@@ -411,7 +421,7 @@ class OIGProxy:
             try:
                 await self._send_getactual_to_box(writer, conn_id=conn_id)
             except Exception as e:
-                logger.debug(f"GetActual poll failed (conn={conn_id}): {e}")
+                logger.debug("GetActual poll failed (conn=%s): %s", conn_id, e)
             await asyncio.sleep(self._local_getactual_interval_s)
 
     def _force_offline_enabled(self) -> bool:
@@ -422,7 +432,7 @@ class OIGProxy:
             return
         old_mode = await self._switch_mode(ProxyMode.OFFLINE)
         if old_mode != ProxyMode.OFFLINE:
-            logger.warning(f"🔴 Forced OFFLINE ({reason})")
+            logger.warning("🔴 Forced OFFLINE (%s)", reason)
         self.cloud_session_connected = False
         await self.publish_proxy_status()
 
@@ -447,7 +457,7 @@ class OIGProxy:
                     confirm="New",
                 )
             except Exception as e:
-                logger.debug(f"Full refresh (SA) failed: {e}")
+                logger.debug("Full refresh (SA) failed: %s", e)
 
     async def _publish_mode_if_ready(
         self,
@@ -478,10 +488,12 @@ class OIGProxy:
             await self.mqtt_publisher.publish_data(payload)
             if reason:
                 logger.info(
-                    f"MODE: Published state {self._mode_value} ({reason})"
+                    "MODE: Published state %s (%s)",
+                    self._mode_value,
+                    reason,
                 )
         except Exception as e:
-            logger.debug(f"MODE publish failed: {e}")
+            logger.debug("MODE publish failed: %s", e)
 
     @staticmethod
     def _should_persist_table(table_name: str | None) -> bool:
@@ -497,9 +509,9 @@ class OIGProxy:
 
     def _maybe_persist_table_state(
         self,
-        parsed: dict[str, Any] | None,
-        table_name: str | None,
-        device_id: str | None,
+        _parsed: dict[str, Any] | None,
+        _table_name: str | None,
+        _device_id: str | None,
     ) -> None:
         """Uloží poslední známé hodnoty pro vybrané tabulky (pro obnovu po restartu)."""
         return
@@ -528,13 +540,13 @@ class OIGProxy:
             try:
                 await self.mqtt_publisher.publish_data(payload)
             except Exception as e:
-                logger.debug(f"STATE publish failed ({table_name}): {e}")
+                logger.debug("STATE publish failed (%s): %s", table_name, e)
                 self._prms_pending_publish = True
                 return
 
         self._prms_pending_publish = False
         if reason:
-            logger.info(f"STATE: Published snapshot ({reason})")
+            logger.info("STATE: Published snapshot (%s)", reason)
 
     async def _handle_mode_update(
         self,
@@ -551,14 +563,16 @@ class OIGProxy:
             return
         if mode_int < 0 or mode_int > 5:
             logger.debug(
-                f"MODE: Value {mode_int} out of range 0-5, source {source}, ignoring"
+                "MODE: Value %s out of range 0-5, source %s, ignoring",
+                mode_int,
+                source,
             )
             return
 
         if mode_int != self._mode_value:
             self._mode_value = mode_int
             save_mode_state(mode_int, device_id or self.device_id or self._mode_device_id)
-            logger.info(f"MODE: {source} → {mode_int}")
+            logger.info("MODE: %s → %s", source, mode_int)
         if device_id:
             self._mode_device_id = device_id
 
@@ -666,8 +680,8 @@ class OIGProxy:
             return
 
         logger.info(
-            f"Proxy status: periodic publish every "
-            f"{PROXY_STATUS_INTERVAL}s"
+            "Proxy status: periodic publish every %ss",
+            PROXY_STATUS_INTERVAL,
         )
         while True:
             await asyncio.sleep(PROXY_STATUS_INTERVAL)
@@ -685,7 +699,7 @@ class OIGProxy:
                 await self._maybe_switch_online_to_replay(reason="periodic")
                 self._log_status_heartbeat()
             except Exception as e:
-                logger.debug(f"Proxy status loop publish failed: {e}")
+                logger.debug("Proxy status loop publish failed: %s", e)
 
     async def _on_cloud_state_change(self, event: str):
         """Callback při změně stavu cloudu."""
@@ -693,7 +707,9 @@ class OIGProxy:
             old_mode = await self._switch_mode(ProxyMode.OFFLINE)
             if old_mode != ProxyMode.OFFLINE:
                 logger.warning(
-                    f"🔴 Mode changed: {old_mode.value} → {ProxyMode.OFFLINE.value}"
+                    "🔴 Mode changed: %s → %s",
+                    old_mode.value,
+                    ProxyMode.OFFLINE.value,
                 )
             await self.publish_proxy_status()
             return
@@ -705,13 +721,17 @@ class OIGProxy:
             if old_mode != new_mode:
                 if new_mode == ProxyMode.REPLAY:
                     logger.info(
-                        f"🟡 Mode changed: {old_mode.value} → {new_mode.value} "
-                        f"({queue_size} frames in queue)"
+                        "🟡 Mode changed: %s → %s (%s frames in queue)",
+                        old_mode.value,
+                        new_mode.value,
+                        queue_size,
                     )
                     self._ensure_replay_task_running()
                 else:
                     logger.info(
-                        f"🟢 Mode changed: {old_mode.value} → {new_mode.value}"
+                        "🟢 Mode changed: %s → %s",
+                        old_mode.value,
+                        new_mode.value,
                     )
             await self.publish_proxy_status()
 
@@ -741,7 +761,9 @@ class OIGProxy:
             if replayed % 10 == 0:
                 remaining = self.cloud_queue.size()
                 logger.debug(
-                    f"🔄 Replay progress: {replayed} sent, {remaining} remaining"
+                    "🔄 Replay progress: %s sent, %s remaining",
+                    replayed,
+                    remaining,
                 )
             return True
         except asyncio.TimeoutError:
@@ -852,7 +874,7 @@ class OIGProxy:
 
             await asyncio.sleep(interval)
 
-        logger.info(f"🏁 Replay task finished (replayed={replayed})")
+        logger.info("🏁 Replay task finished (replayed=%s)", replayed)
 
     async def _register_box_connection(
         self, writer: asyncio.StreamWriter, addr: Any
@@ -929,7 +951,7 @@ class OIGProxy:
         try:
             await self._handle_box_connection(reader, writer, conn_id)
         except Exception as e:
-            logger.error(f"❌ Error handling connection from {addr}: {e}")
+            logger.error("❌ Error handling connection from %s: %s", addr, e)
         finally:
             if self._local_getactual_task and not self._local_getactual_task.done():
                 self._local_getactual_task.cancel()
@@ -941,7 +963,7 @@ class OIGProxy:
                 await self._control_note_box_disconnect()
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
-    
+
     async def _handle_online_mode_connection(
         self,
         box_reader: asyncio.StreamReader,
@@ -959,7 +981,7 @@ class OIGProxy:
         self.cloud_health.consecutive_failures = self.cloud_health.fail_threshold
         self.cloud_health.last_check_time = time.time()
         if was_online:
-            logger.warning(f"☁️ Cloud forced OFFLINE ({reason})")
+            logger.warning("☁️ Cloud forced OFFLINE (%s)", reason)
 
         async with self.mode_lock:
             current_mode = self.mode
@@ -991,16 +1013,18 @@ class OIGProxy:
             return None
         except asyncio.TimeoutError:
             logger.warning(
-                f"⏱️ BOX idle timeout (15 min) - closing session (conn={conn_id})"
+                "⏱️ BOX idle timeout (15 min) - closing session (conn=%s)",
+                conn_id,
             )
             return None
 
         if not data:
             logger.info(
-                f"🔌 BOX closed the connection (EOF, conn={conn_id}, "
-                f"frames_rx={self.stats['frames_received']}, "
-                f"frames_tx={self.stats['frames_forwarded']}, "
-                f"queue={self.cloud_queue.size()})"
+                "🔌 BOX closed the connection (EOF, conn=%s, frames_rx=%s, frames_tx=%s, queue=%s)",
+                conn_id,
+                self.stats["frames_received"],
+                self.stats["frames_forwarded"],
+                self.cloud_queue.size(),
             )
             await self.publish_proxy_status()
             return None
@@ -1033,7 +1057,7 @@ class OIGProxy:
         self.mqtt_publisher.device_id = device_id
         self.mqtt_publisher.discovery_sent.clear()
         self.mqtt_publisher.publish_availability()
-        logger.info(f"🔑 Device ID detected: {device_id}")
+        logger.info("🔑 Device ID detected: %s", device_id)
         self._setup_mqtt_state_cache()
 
     async def _fallback_offline_from_cloud_issue(
@@ -1096,8 +1120,10 @@ class OIGProxy:
             return cloud_reader, cloud_writer
         except Exception as e:
             logger.warning(
-                f"⚠️ Cloud unavailable: {e} - offline mode "
-                f"(conn={conn_id}, table={table_name})"
+                "⚠️ Cloud unavailable: %s - offline mode (conn=%s, table=%s)",
+                e,
+                conn_id,
+                table_name,
             )
             self.cloud_errors += 1
             self.cloud_session_connected = False
@@ -1153,8 +1179,9 @@ class OIGProxy:
             )
             if not ack_data:
                 logger.warning(
-                    f"⚠️ Cloud closed the connection - offline mode "
-                    f"(conn={conn_id}, table={table_name})"
+                    "⚠️ Cloud closed the connection - offline mode (conn=%s, table=%s)",
+                    conn_id,
+                    table_name,
                 )
                 self.cloud_disconnects += 1
                 return await self._fallback_offline_from_cloud_issue(
@@ -1185,9 +1212,6 @@ class OIGProxy:
                         (time.time() - self._isnew_last_poll_epoch) * 1000, 1
                     )
 
-            if table_name:
-                self.ack_learner.learn_from_cloud(ack_str, table_name)
-
             box_writer.write(ack_data)
             await box_writer.drain()
             self.stats["acks_cloud"] += 1
@@ -1196,8 +1220,9 @@ class OIGProxy:
         except asyncio.TimeoutError:
             if table_name == "END":
                 logger.warning(
-                    f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) on END - "
-                    f"sending local END to box (conn={conn_id})"
+                    "⏱️ Cloud ACK timeout (%.1fs) on END - sending local END to box (conn=%s)",
+                    CLOUD_ACK_TIMEOUT,
+                    conn_id,
                 )
                 end_frame = self._build_end_time_frame()
                 box_writer.write(end_frame)
@@ -1209,8 +1234,10 @@ class OIGProxy:
                 return cloud_reader, cloud_writer
 
             logger.warning(
-                f"⏱️ Cloud ACK timeout ({CLOUD_ACK_TIMEOUT:.1f}s) - "
-                f"offline mode (conn={conn_id}, table={table_name})"
+                "⏱️ Cloud ACK timeout (%.1fs) - offline mode (conn=%s, table=%s)",
+                CLOUD_ACK_TIMEOUT,
+                conn_id,
+                table_name,
             )
             self.cloud_timeouts += 1
             return await self._fallback_offline_from_cloud_issue(
@@ -1224,8 +1251,10 @@ class OIGProxy:
             )
         except Exception as e:
             logger.warning(
-                f"⚠️ Cloud error: {e} - offline mode "
-                f"(conn={conn_id}, table={table_name})"
+                "⚠️ Cloud error: %s - offline mode (conn=%s, table=%s)",
+                e,
+                conn_id,
+                table_name,
             )
             self.cloud_errors += 1
             return await self._fallback_offline_from_cloud_issue(
@@ -1291,7 +1320,7 @@ class OIGProxy:
 
     @staticmethod
     def _infer_device_id(frame: str) -> str | None:
-        m = re.search(r"<ID_Device>(\\d+)</ID_Device>", frame)
+        m = re.search(r"<ID_Device>(\d+)</ID_Device>", frame)
         return m.group(1) if m else None
 
     async def _get_current_mode(self) -> ProxyMode:
@@ -1315,9 +1344,10 @@ class OIGProxy:
         if self.stats["frames_queued"] % 100 == 0:
             queue_size = self.cloud_queue.size()
             logger.info(
-                f"📦 {self.mode.value}: "
-                f"{self.stats['frames_queued']} frames queued "
-                f"({queue_size} in queue)"
+                "📦 %s: %s frames queued (%s in queue)",
+                self.mode.value,
+                self.stats["frames_queued"],
+                queue_size,
             )
         return None, None
 
@@ -1328,8 +1358,8 @@ class OIGProxy:
         conn_id: int,
     ) -> None:
         """Jednotný handler pro BOX session, který respektuje změny režimu během spojení."""
-        BOX_IDLE_TIMEOUT = 900  # 15 minut
-        CLOUD_CONNECT_TIMEOUT = 5.0
+        box_idle_timeout_s = 900  # 15 minut
+        cloud_connect_timeout_s = 5.0
 
         cloud_reader: asyncio.StreamReader | None = None
         cloud_writer: asyncio.StreamWriter | None = None
@@ -1337,7 +1367,7 @@ class OIGProxy:
         try:
             while True:
                 data = await self._read_box_bytes(
-                    box_reader, conn_id=conn_id, idle_timeout_s=BOX_IDLE_TIMEOUT
+                    box_reader, conn_id=conn_id, idle_timeout_s=box_idle_timeout_s
                 )
                 if data is None:
                     break
@@ -1379,7 +1409,7 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_reader=cloud_reader,
                     cloud_writer=cloud_writer,
-                    connect_timeout_s=CLOUD_CONNECT_TIMEOUT,
+                    connect_timeout_s=cloud_connect_timeout_s,
                 )
 
         except ConnectionResetError:
@@ -1398,7 +1428,7 @@ class OIGProxy:
         finally:
             await self._close_writer(cloud_writer)
             self.cloud_session_connected = False
-    
+
     async def _process_frame_offline(
         self,
         frame_bytes: bytes,
@@ -1414,7 +1444,7 @@ class OIGProxy:
             box_writer.write(ack_response)
             await box_writer.drain()
             self.stats["acks_local"] += 1
-        
+
         if table_name and table_name != "tbl_handshake":
             if table_name == "END":
                 frame = frame_bytes.decode("utf-8", errors="replace")
@@ -1425,16 +1455,19 @@ class OIGProxy:
                     return
             await self.cloud_queue.add(frame_bytes, table_name, device_id)
             self.stats["frames_queued"] += 1
-    
+
     async def _handle_offline_mode_connection(
         self,
         box_reader: asyncio.StreamReader,
         box_writer: asyncio.StreamWriter,
         conn_id: int
     ) -> None:
-        """Zpětná kompatibilita: OFFLINE/REPLAY režim je řešen per-frame v `_handle_box_connection()`."""
+        """Zpětná kompatibilita: OFFLINE/REPLAY režim je řešen per-frame.
+
+        Vše se odbavuje v `_handle_box_connection()`.
+        """
         await self._handle_box_connection(box_reader, box_writer, conn_id)
-    
+
     def get_stats(self) -> dict[str, Any]:
         """Vrátí statistiky proxy."""
         return {
@@ -1460,7 +1493,7 @@ class OIGProxy:
             return
         topic = f"{MQTT_NAMESPACE}/{device_id}/+/state"
 
-        def _handler(msg_topic: str, payload: bytes, qos: int, retain: bool) -> None:
+        def _handler(msg_topic: str, payload: bytes, _qos: int, retain: bool) -> None:
             if self._loop is None:
                 return
             try:
@@ -1488,7 +1521,7 @@ class OIGProxy:
         if self._loop is None:
             return
 
-        def _handler(topic: str, payload: bytes, qos: int, retain: bool) -> None:
+        def _handler(topic: str, payload: bytes, _qos: int, retain: bool) -> None:
             if self._loop is None:
                 return
             asyncio.run_coroutine_threadsafe(
@@ -1545,6 +1578,7 @@ class OIGProxy:
         payload_text: str,
         retain: bool,
     ) -> None:
+        _ = retain
         device_id, table_name = self._parse_mqtt_state_topic(topic)
         if not device_id or not table_name:
             return
@@ -1583,7 +1617,7 @@ class OIGProxy:
             try:
                 save_prms_state(table_name, raw_values, device_id)
             except Exception as e:
-                logger.debug(f"STATE: snapshot update failed ({table_name}): {e}")
+                logger.debug("STATE: snapshot update failed (%s): %s", table_name, e)
             existing = self._prms_tables.get(table_name, {})
             merged: dict[str, Any] = {}
             if isinstance(existing, dict):
@@ -1627,18 +1661,18 @@ class OIGProxy:
                 with open(self._control_log_path, "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
             except Exception as e:
-                logger.debug(f"CONTROL: Log write failed: {e}")
+                logger.debug("CONTROL: Log write failed: %s", e)
         try:
             await self.publish_proxy_status()
         except Exception as e:
-            logger.debug(f"CONTROL: Status publish failed: {e}")
+            logger.debug("CONTROL: Status publish failed: %s", e)
 
         key_state = self._control_result_key_state(status=status, detail=detail)
         if key_state:
             try:
                 await self._control_publish_key_status(tx=tx, state=key_state, detail=detail)
             except Exception as e:
-                logger.debug(f"CONTROL: Key status publish failed: {e}")
+                logger.debug("CONTROL: Key status publish failed: %s", e)
 
         # SA only after real applied/completed change (avoid noop/duplicate)
         if status in ("applied", "completed") and not error:
@@ -1738,7 +1772,7 @@ class OIGProxy:
         except FileNotFoundError:
             return set()
         except Exception as e:
-            logger.debug(f"CONTROL: Pending load failed: {e}")
+            logger.debug("CONTROL: Pending load failed: %s", e)
             return set()
         if isinstance(data, list):
             return {str(item) for item in data if item}
@@ -1749,7 +1783,7 @@ class OIGProxy:
             with open(self._control_pending_path, "w", encoding="utf-8") as fh:
                 json.dump(sorted(self._control_pending_keys), fh, ensure_ascii=True)
         except Exception as e:
-            logger.debug(f"CONTROL: Pending save failed: {e}")
+            logger.debug("CONTROL: Pending save failed: %s", e)
 
     def _control_update_pending_keys(self, *, request_key: str, state: str) -> None:
         if state in ("queued", "sent", "acked", "applied"):
@@ -1825,7 +1859,7 @@ class OIGProxy:
             source="tbl_events",
         )
 
-    def _cache_last_values(self, parsed: dict[str, Any], table_name: str | None) -> None:
+    def _cache_last_values(self, _parsed: dict[str, Any], _table_name: str | None) -> None:
         return
 
     def _update_cached_value(
@@ -1896,7 +1930,11 @@ class OIGProxy:
                 tx["next_attempt_at"] = time.monotonic() + self._control_retry_delay_s
                 self._control_queue.appendleft(tx)
                 self._control_inflight = None
-            for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
+            for task in (
+                self._control_ack_task,
+                self._control_applied_task,
+                self._control_quiet_task,
+            ):
                 if task and not task.done():
                     task.cancel()
             self._control_ack_task = None
@@ -1960,6 +1998,8 @@ class OIGProxy:
     async def _control_on_mqtt_message(
         self, *, topic: str, payload: bytes, retain: bool
     ) -> None:
+        _ = topic
+        _ = retain
         try:
             data = json.loads(payload.decode("utf-8", errors="strict"))
         except Exception:
@@ -1982,8 +2022,14 @@ class OIGProxy:
         tbl_name = str(data.get("tbl_name") or "").strip()
         tbl_item = str(data.get("tbl_item") or "").strip()
         if not tx_id or not tbl_name or not tbl_item or "new_value" not in data:
+            tx_payload = {
+                "tx_id": tx_id or None,
+                "tbl_name": tbl_name,
+                "tbl_item": tbl_item,
+                "new_value": data.get("new_value"),
+            }
             await self._control_publish_result(
-                tx={"tx_id": tx_id or None, "tbl_name": tbl_name, "tbl_item": tbl_item, "new_value": data.get("new_value")},
+                tx=tx_payload,
                 status="error",
                 error="missing_fields",
             )
@@ -2256,7 +2302,12 @@ class OIGProxy:
         try:
             save_prms_state(tbl_name, {tbl_item: raw_value}, resolved_device_id)
         except Exception as e:
-            logger.debug(f"STATE: snapshot update failed ({tbl_name}/{tbl_item}): {e}")
+            logger.debug(
+                "STATE: snapshot update failed (%s/%s): %s",
+                tbl_name,
+                tbl_item,
+                e,
+            )
 
         existing = self._prms_tables.get(tbl_name, {})
         merged: dict[str, Any] = {}
@@ -2287,8 +2338,8 @@ class OIGProxy:
             )
         if not target_device_id:
             return
-        topic = self.mqtt_publisher._state_topic(target_device_id, tbl_name)
-        cached = self.mqtt_publisher._last_payload_by_topic.get(topic)
+        topic = self.mqtt_publisher.state_topic(target_device_id, tbl_name)
+        cached = self.mqtt_publisher.get_cached_payload(topic)
         payload: dict[str, Any] = {}
         try:
             if cached:
@@ -2303,7 +2354,7 @@ class OIGProxy:
             if isinstance(table_values, dict) and table_values:
                 raw_payload = dict(table_values)
                 raw_payload[tbl_item] = raw_value
-                payload, _ = self.mqtt_publisher._map_data_for_publish(
+                payload, _ = self.mqtt_publisher.map_data_for_publish(
                     {"_table": tbl_name, **raw_payload},
                     table=tbl_name,
                     target_device_id=target_device_id,
@@ -2316,7 +2367,7 @@ class OIGProxy:
         )
 
         updated = json.dumps(payload, ensure_ascii=True)
-        self.mqtt_publisher._last_payload_by_topic[topic] = updated
+        self.mqtt_publisher.set_cached_payload(topic, updated)
         await self.mqtt_publisher.publish_raw(
             topic=topic,
             payload=updated,
@@ -2385,7 +2436,11 @@ class OIGProxy:
         async with self._control_lock:
             tx = self._control_inflight
             self._control_inflight = None
-            for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
+            for task in (
+                self._control_ack_task,
+                self._control_applied_task,
+                self._control_quiet_task,
+            ):
                 if task and not task.done():
                     task.cancel()
             self._control_ack_task = None
@@ -2444,7 +2499,7 @@ class OIGProxy:
         await self._control_maybe_start_next()
 
     async def _control_observe_box_frame(
-        self, parsed: dict[str, Any], table_name: str | None, frame: str
+        self, parsed: dict[str, Any], table_name: str | None, _frame: str
     ) -> None:
         async with self._control_lock:
             tx = self._control_inflight
@@ -2490,7 +2545,12 @@ class OIGProxy:
                 tx2["applied_at_mono"] = time.monotonic()
                 tx2["last_inv_ack_mono"] = tx2["applied_at_mono"]
             await self._control_publish_result(
-                tx=tx, status="applied", extra={"old_value": old_v, "observed_new_value": new_v}
+                tx=tx,
+                status="applied",
+                extra={
+                    "old_value": old_v,
+                    "observed_new_value": new_v,
+                },
             )
 
             if (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "MODE"):
@@ -2503,7 +2563,10 @@ class OIGProxy:
             self._control_quiet_task = asyncio.create_task(self._control_quiet_wait())
             return
 
-        if "Invertor ACK" in content and (tx.get("tbl_name"), tx.get("tbl_item")) == ("tbl_box_prms", "MODE"):
+        if (
+            "Invertor ACK" in content
+            and (tx.get("tbl_name"), tx.get("tbl_item")) == ("tbl_box_prms", "MODE")
+        ):
             async with self._control_lock:
                 tx2 = self._control_inflight
                 if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
@@ -2520,6 +2583,7 @@ class OIGProxy:
     # ---------------------------------------------------------------------
 
     def get_control_api_health(self) -> dict[str, Any]:
+        """Vrátí stavové info pro Control API health endpoint."""
         now = time.time()
         last_age_s: float | None = None
         if self._last_data_epoch is not None:
@@ -2540,6 +2604,7 @@ class OIGProxy:
         new_value: str,
         confirm: str = "New",
     ) -> dict[str, Any]:
+        """Odešle Setting do BOXu přes event loop a vrátí výsledek."""
         if self._loop is None:
             return {"ok": False, "error": "event_loop_not_ready"}
 
@@ -2578,7 +2643,7 @@ class OIGProxy:
         if writer is None:
             return {"ok": False, "error": "no_active_box_writer"}
 
-        msg_id = random.randint(10_000_000, 99_999_999)
+        msg_id = secrets.randbelow(90_000_000) + 10_000_000
         id_set = int(time.time())
         now_local = datetime.now()
         now_utc = datetime.now(timezone.utc)
@@ -2659,13 +2724,18 @@ class OIGProxy:
         box_writer.write(end_frame)
         try:
             asyncio.create_task(box_writer.drain())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("CONTROL: Failed to schedule END drain: %s", exc)
 
         try:
-            asyncio.create_task(self._control_on_box_setting_ack(tx_id=str(tx_id) if tx_id else None, ack=ack_ok))
-        except Exception:
-            pass
+            asyncio.create_task(
+                self._control_on_box_setting_ack(
+                    tx_id=str(tx_id) if tx_id else None,
+                    ack=ack_ok,
+                )
+            )
+        except Exception as exc:
+            logger.debug("CONTROL: Failed to schedule ACK handling: %s", exc)
 
         logger.info(
             "CONTROL: BOX responded to local Setting (sent END), last=%s/%s=%s",
