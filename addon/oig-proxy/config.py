@@ -64,6 +64,9 @@ LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "true").lower() =
 LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 FORCE_OFFLINE = os.getenv("FORCE_OFFLINE", "false").lower() == "true"
+CLEAR_CLOUD_QUEUE_ON_START = (
+    os.getenv("CLEAR_CLOUD_QUEUE_ON_START", "false").lower() == "true"
+)
 
 # ============================================================================
 # Cloud Configuration

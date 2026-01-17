@@ -773,10 +773,34 @@ class OIGProxy:
                 frame_id,
                 table_name,
             )
+            logger.debug(
+                "Replay failed payload (timeout, frame=%s, table=%s): %s",
+                frame_id,
+                table_name,
+                self._format_replay_payload_for_log(frame_bytes),
+            )
             if self._should_drop_replay_frame(table_name, frame_bytes):
                 await self._drop_replay_frame(frame_id, table_name, reason="timeout")
                 return False
             await self._defer_or_drop_after_retries(frame_id, table_name, reason="timeout")
+            return False
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as exc:
+            logger.warning(
+                "❌ Replay failed for frame %s (table=%s): %s",
+                frame_id,
+                table_name,
+                repr(exc),
+            )
+            logger.debug(
+                "Replay failed payload (socket, frame=%s, table=%s): %s",
+                frame_id,
+                table_name,
+                self._format_replay_payload_for_log(frame_bytes),
+            )
+            if self._should_drop_replay_frame(table_name, frame_bytes):
+                await self._drop_replay_frame(frame_id, table_name, reason="error")
+                return False
+            await self._defer_or_drop_after_retries(frame_id, table_name, reason="error")
             return False
         except Exception as e:
             logger.exception(
@@ -784,6 +808,12 @@ class OIGProxy:
                 frame_id,
                 table_name,
                 repr(e),
+            )
+            logger.debug(
+                "Replay failed payload (error, frame=%s, table=%s): %s",
+                frame_id,
+                table_name,
+                self._format_replay_payload_for_log(frame_bytes),
             )
             if self._should_drop_replay_frame(table_name, frame_bytes):
                 await self._drop_replay_frame(frame_id, table_name, reason="error")
@@ -799,6 +829,13 @@ class OIGProxy:
     @staticmethod
     def _looks_like_all_data_sent_end(frame: str) -> bool:
         return "<Result>END</Result>" in frame and "<Reason>All data sent</Reason>" in frame
+
+    @staticmethod
+    def _format_replay_payload_for_log(frame_bytes: bytes, limit: int = 512) -> str:
+        text = frame_bytes.decode("utf-8", errors="backslashreplace")
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit]}...[truncated,{len(text)}]"
 
     async def _drop_replay_frame(self, frame_id: int, table_name: str, *, reason: str) -> None:
         logger.warning(

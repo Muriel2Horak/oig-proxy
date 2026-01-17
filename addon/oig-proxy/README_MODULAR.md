@@ -97,6 +97,7 @@ Nové/změněné:
 - `MQTT_REPLAY_RATE` - Default: `10.0` (msg/s)
 - `CLOUD_QUEUE_MAX_SIZE` - Default: `10000`
 - `MQTT_QUEUE_MAX_SIZE` - Default: `5000`
+- `CLEAR_CLOUD_QUEUE_ON_START` - Default: `false` (vymaže cloud frontu při startu)
 
 Více viz `config.py`.
 

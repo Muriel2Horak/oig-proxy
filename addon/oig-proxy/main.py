@@ -16,6 +16,7 @@ from config import (
     TARGET_PORT,
     TARGET_SERVER,
     DATA_DIR,
+    CLEAR_CLOUD_QUEUE_ON_START,
 )
 from utils import load_sensor_map
 from proxy import OIGProxy
@@ -100,6 +101,9 @@ async def main():
 
     # Vytvoř a spusť proxy
     proxy = OIGProxy(device_id)
+    if CLEAR_CLOUD_QUEUE_ON_START:
+        logger.warning("🧹 Clearing cloud queue on startup (config)")
+        proxy.cloud_queue.clear()
 
     try:
         await proxy.start()
