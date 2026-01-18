@@ -797,6 +797,7 @@ class OIGProxy:
                 table_name,
                 self._format_replay_payload_for_log(frame_bytes),
             )
+            await self._note_cloud_failure("replay_socket_error")
             if self._should_drop_replay_frame(table_name, frame_bytes):
                 await self._drop_replay_frame(frame_id, table_name, reason="error")
                 return False
@@ -1022,7 +1023,7 @@ class OIGProxy:
 
         async with self.mode_lock:
             current_mode = self.mode
-        if current_mode == ProxyMode.ONLINE:
+        if current_mode in (ProxyMode.ONLINE, ProxyMode.REPLAY):
             await self._on_cloud_state_change("cloud_down")
 
     async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
