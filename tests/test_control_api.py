@@ -113,3 +113,9 @@ def test_control_api_xml_fallback():
         assert payload["ok"] is True
     finally:
         server.stop()
+
+
+def test_control_api_stop_without_start():
+    proxy = DummyProxy()
+    server = ControlAPIServer(host="127.0.0.1", port=0, proxy=proxy)
+    server.stop()

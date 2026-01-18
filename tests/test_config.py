@@ -1,4 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+import importlib
+import importlib.util
+
 import pytest
 
 import config
@@ -36,3 +39,12 @@ def test_get_float_env_parsing(monkeypatch):
 
     monkeypatch.setenv("TEST_FLOAT", "2.5")
     assert config._get_float_env("TEST_FLOAT", 1.5) == pytest.approx(2.5)
+
+
+def test_mqtt_available_handles_missing_module(monkeypatch):
+    def _raise_module_not_found(_name: str):
+        raise ModuleNotFoundError("missing")
+
+    monkeypatch.setattr(importlib.util, "find_spec", _raise_module_not_found)
+    reloaded = importlib.reload(config)
+    assert reloaded.MQTT_AVAILABLE is False

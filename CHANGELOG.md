@@ -2,6 +2,18 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.29] - 2026-01-17
+
+### Added
+
+- Add-on volba `clear_cloud_queue_on_start` pro vymazání cloud fronty při startu.
+- REPLAY: debug log payloadu pro neúspěšné odeslání (truncated).
+
+### Changed
+
+- REPLAY: při resetu cloud spojení přepíná proxy do OFFLINE a čeká na HC.
+- REPLAY: běžné socket chyby nelogují traceback (jen warning).
+
 ## [1.3.28] - 2026-01-03
 
 ### Changed

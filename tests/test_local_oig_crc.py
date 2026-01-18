@@ -20,3 +20,8 @@ def test_build_frame_includes_crc():
     assert built.startswith("<Frame>")
     assert "<CRC>" in built
     assert built.endswith("</Frame>")
+
+
+def test_build_frame_adds_crlf_by_default():
+    built = local_oig_crc.build_frame("<Result>ACK</Result>")
+    assert built.endswith("\r\n")

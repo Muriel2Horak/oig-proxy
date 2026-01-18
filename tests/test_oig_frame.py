@@ -38,3 +38,10 @@ def test_build_frame_injects_crc_and_crlf():
 
     computed = compute_frame_checksum(frame.encode("utf-8"))
     assert int(match.group(1)) == computed
+
+
+def test_build_frame_without_crlf():
+    inner_xml = "<Result>ACK</Result>"
+    frame = build_frame(inner_xml, add_crlf=False)
+    assert frame.endswith("</Frame>")
+    assert not frame.endswith("\r\n")
