@@ -23,6 +23,8 @@ def _make_proxy(mode: ProxyMode, queue_size: int, *, cloud_online: bool = True):
     proxy.mode_lock = asyncio.Lock()
     proxy.mode = mode
     proxy.stats = {"mode_changes": 0}
+    proxy._cloud_queue_enabled = True
+    proxy._cloud_queue_disabled_warned = False
     proxy.cloud_queue = DummyCloudQueue(queue_size)
     proxy.cloud_health = DummyCloudHealth(is_online=cloud_online)
 

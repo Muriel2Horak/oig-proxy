@@ -17,9 +17,11 @@ from config import (
     TARGET_SERVER,
     DATA_DIR,
     CLEAR_CLOUD_QUEUE_ON_START,
+    CLOUD_QUEUE_ENABLED,
 )
 from utils import load_sensor_map
 from proxy import OIGProxy
+from cloud_manager import CloudQueue
 
 
 def _sanitize_log_value(value: object) -> object:
@@ -98,6 +100,16 @@ async def main():
     logger.info("   Data directory: %s", DATA_DIR)
     logger.info("   Log level: %s", LOG_LEVEL)
     logger.info("   MQTT: %s", "Enabled" if MQTT_AVAILABLE else "Disabled")
+    logger.info(
+        "   Cloud queue/replay: %s",
+        "Enabled" if CLOUD_QUEUE_ENABLED else "Disabled (offline frames dropped)",
+    )
+
+    if not CLOUD_QUEUE_ENABLED:
+        cleanup_queue = CloudQueue()
+        if cleanup_queue.size() > 0:
+            logger.warning("🧹 Clearing cloud queue on startup (replay disabled)")
+            cleanup_queue.clear()
 
     # Vytvoř a spusť proxy
     proxy = OIGProxy(device_id)

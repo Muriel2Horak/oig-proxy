@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
-from cloud_manager import CloudHealthChecker, CloudQueue
+from cloud_manager import CloudHealthChecker, CloudQueue, DisabledCloudQueue
 from config import (
     CLOUD_REPLAY_RATE,
     CLOUD_ACK_TIMEOUT,
@@ -43,6 +43,7 @@ from config import (
     LOCAL_GETACTUAL_ENABLED,
     LOCAL_GETACTUAL_INTERVAL_S,
     FULL_REFRESH_INTERVAL_H,
+    CLOUD_QUEUE_ENABLED,
     FORCE_OFFLINE,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
@@ -83,7 +84,9 @@ class OIGProxy:
         self.device_id = device_id
 
         # Komponenty
-        self.cloud_queue = CloudQueue()
+        self._cloud_queue_enabled: bool = bool(CLOUD_QUEUE_ENABLED)
+        self._cloud_queue_disabled_warned: bool = False
+        self.cloud_queue = CloudQueue() if self._cloud_queue_enabled else DisabledCloudQueue()
         self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
@@ -613,11 +616,15 @@ class OIGProxy:
             return old_mode
 
     def _ensure_replay_task_running(self) -> None:
+        if not self._cloud_queue_enabled:
+            return
         if self._replay_task is None or self._replay_task.done():
             self._replay_task = asyncio.create_task(self._replay_cloud_queue())
 
     async def _maybe_switch_online_to_replay(self, *, reason: str) -> None:
         """Pokud běží ONLINE a cloud fronta není prázdná, přepni do REPLAY."""
+        if not self._cloud_queue_enabled:
+            return
         if not self.cloud_health.is_online:
             return
         queue_size = self.cloud_queue.size()
@@ -715,6 +722,16 @@ class OIGProxy:
             return
 
         if event == "cloud_recovered":
+            if not self._cloud_queue_enabled:
+                old_mode = await self._switch_mode(ProxyMode.ONLINE)
+                if old_mode != ProxyMode.ONLINE:
+                    logger.info(
+                        "🟢 Mode changed: %s → %s (replay disabled)",
+                        old_mode.value,
+                        ProxyMode.ONLINE.value,
+                    )
+                await self.publish_proxy_status()
+                return
             queue_size = self.cloud_queue.size()
             new_mode = ProxyMode.REPLAY if queue_size > 0 else ProxyMode.ONLINE
             old_mode = await self._switch_mode(new_mode)
@@ -875,6 +892,9 @@ class OIGProxy:
 
     async def _replay_cloud_queue(self) -> None:
         """Background task pro replay cloud fronty (rate limited)."""
+        if not self._cloud_queue_enabled:
+            logger.info("🔕 Cloud replay disabled - skipping replay task")
+            return
         logger.info("🔄 Starting cloud queue replay...")
         replayed = 0
         interval = 1.0 / CLOUD_REPLAY_RATE if CLOUD_REPLAY_RATE > 0 else 1.0
@@ -1482,6 +1502,19 @@ class OIGProxy:
             box_writer.write(ack_response)
             await box_writer.drain()
             self.stats["acks_local"] += 1
+
+        if not self._cloud_queue_enabled:
+            if (
+                not self._cloud_queue_disabled_warned
+                and table_name
+                and table_name != "tbl_handshake"
+            ):
+                logger.warning(
+                    "OFFLINE: cloud queue disabled - dropping frames (table=%s)",
+                    table_name,
+                )
+                self._cloud_queue_disabled_warned = True
+            return
 
         if table_name and table_name != "tbl_handshake":
             if table_name == "END":

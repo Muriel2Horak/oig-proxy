@@ -101,6 +101,8 @@ def _make_proxy(tmp_path):
     proxy.device_id = "DEV1"
     proxy.mode = ProxyMode.ONLINE
     proxy.mode_lock = asyncio.Lock()
+    proxy._cloud_queue_enabled = True
+    proxy._cloud_queue_disabled_warned = False
     proxy.stats = {
         "mode_changes": 0,
         "frames_received": 0,

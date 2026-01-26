@@ -29,6 +29,37 @@ logger = logging.getLogger(__name__)
 # Cloud Queue - Persistentní fronta pro offline režim
 # ============================================================================
 
+class DisabledCloudQueue:  # pylint: disable=missing-function-docstring,unused-argument
+    """No-op CloudQueue when replay/queueing is disabled."""
+
+    def __init__(self):
+        self.lock = asyncio.Lock()
+
+    async def add(self, frame_data: bytes, table_name: str, device_id: str | None) -> bool:
+        return False
+
+    async def get_next(self) -> tuple[int, str, bytes] | None:
+        return None
+
+    async def next_ready_in(self) -> float | None:
+        return None
+
+    async def defer(self, frame_id: int, delay_s: float = 60.0) -> bool:
+        return False
+
+    async def remove(self, frame_id: int) -> bool:
+        return False
+
+    def size(self) -> int:
+        return 0
+
+    def oldest_age(self) -> float | None:
+        return None
+
+    def clear(self) -> None:
+        return None
+
+
 class CloudQueue:
     """Persistentní fronta pro cloud frames (SQLite)."""
 
