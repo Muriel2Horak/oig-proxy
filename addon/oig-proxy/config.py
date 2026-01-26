@@ -67,6 +67,7 @@ FORCE_OFFLINE = os.getenv("FORCE_OFFLINE", "false").lower() == "true"
 CLEAR_CLOUD_QUEUE_ON_START = (
     os.getenv("CLEAR_CLOUD_QUEUE_ON_START", "false").lower() == "true"
 )
+CLOUD_QUEUE_ENABLED = os.getenv("CLOUD_QUEUE_ENABLED", "false").lower() == "true"
 
 # ============================================================================
 # Cloud Configuration

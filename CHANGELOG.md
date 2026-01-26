@@ -2,6 +2,19 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.30] - 2026-01-26
+
+### Added
+
+- Add-on volba `cloud_queue_enabled` (defaultně vypnuto) pro úplné vypnutí ukládání/replay do cloudu.
+- CI: nový workflow pro unit testy + coverage, Bandit security scan a SonarCloud.
+
+### Changed
+
+- Pokud je `cloud_queue_enabled` vypnuto, fronta se při startu automaticky vyčistí.
+- Pylint workflow běží i na `pull_request`.
+- Sonar config: `sonar.python.version` sjednoceno na 3.11.
+
 ## [1.3.29] - 2026-01-17
 
 ### Added
