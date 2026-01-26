@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Cloud Queue - Persistentní fronta pro offline režim
 # ============================================================================
 
-class DisabledCloudQueue:
+class DisabledCloudQueue:  # pylint: disable=missing-function-docstring,unused-argument
     """No-op CloudQueue when replay/queueing is disabled."""
 
     def __init__(self):

@@ -1504,7 +1504,11 @@ class OIGProxy:
             self.stats["acks_local"] += 1
 
         if not self._cloud_queue_enabled:
-            if not self._cloud_queue_disabled_warned and table_name and table_name != "tbl_handshake":
+            if (
+                not self._cloud_queue_disabled_warned
+                and table_name
+                and table_name != "tbl_handshake"
+            ):
                 logger.warning(
                     "OFFLINE: cloud queue disabled - dropping frames (table=%s)",
                     table_name,
