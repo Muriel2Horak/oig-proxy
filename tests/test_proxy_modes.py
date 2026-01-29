@@ -92,4 +92,3 @@ def test_on_cloud_state_change_recovered_empty_queue():
         assert calls["status"] == 1
 
     asyncio.run(run())
-

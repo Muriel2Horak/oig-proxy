@@ -19,7 +19,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
-from cloud_manager import CloudHealthChecker, CloudQueue, DisabledCloudQueue, DisabledCloudHealthChecker
+from cloud_manager import (
+    CloudHealthChecker,
+    CloudQueue,
+    DisabledCloudHealthChecker,
+    DisabledCloudQueue,
+)
 from config import (
     CLOUD_ACK_TIMEOUT,
     CONTROL_API_HOST,
