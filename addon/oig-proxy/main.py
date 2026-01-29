@@ -101,14 +101,14 @@ async def main():
     logger.info("   Log level: %s", LOG_LEVEL)
     logger.info("   MQTT: %s", "Enabled" if MQTT_AVAILABLE else "Disabled")
     logger.info(
-        "   Cloud queue/replay: %s",
+        "   Cloud queue: %s",
         "Enabled" if CLOUD_QUEUE_ENABLED else "Disabled (offline frames dropped)",
     )
 
     if not CLOUD_QUEUE_ENABLED:
         cleanup_queue = CloudQueue()
         if cleanup_queue.size() > 0:
-            logger.warning("🧹 Clearing cloud queue on startup (replay disabled)")
+            logger.warning("🧹 Clearing cloud queue on startup")
             cleanup_queue.clear()
 
     # Vytvoř a spusť proxy

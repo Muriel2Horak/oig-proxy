@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OIG Proxy - hlavní orchestrace s ONLINE/OFFLINE/REPLAY režimy.
+OIG Proxy - hlavní orchestrace s ONLINE/OFFLINE režimy.
 """
 
 # pylint: disable=too-many-lines,too-many-instance-attributes,too-many-statements,too-many-branches,too-many-locals,too-many-arguments,too-many-positional-arguments,too-many-return-statements,broad-exception-caught,deprecated-module
@@ -19,9 +19,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
-from cloud_manager import CloudHealthChecker, CloudQueue, DisabledCloudQueue
+from cloud_manager import CloudHealthChecker, CloudQueue, DisabledCloudQueue, DisabledCloudHealthChecker
 from config import (
-    CLOUD_REPLAY_RATE,
     CLOUD_ACK_TIMEOUT,
     CONTROL_API_HOST,
     CONTROL_API_PORT,
@@ -43,6 +42,7 @@ from config import (
     LOCAL_GETACTUAL_ENABLED,
     LOCAL_GETACTUAL_INTERVAL_S,
     FULL_REFRESH_INTERVAL_H,
+    CLOUD_HEALTH_CHECK_ENABLED,
     CLOUD_QUEUE_ENABLED,
     FORCE_OFFLINE,
     PROXY_LISTEN_HOST,
@@ -52,7 +52,6 @@ from config import (
     MQTT_NAMESPACE,
     MQTT_PUBLISH_QOS,
     MQTT_STATE_RETAIN,
-    REPLAY_ACK_TIMEOUT,
     TARGET_PORT,
     TARGET_SERVER,
 )
@@ -78,7 +77,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 class OIGProxy:
-    """OIG Proxy s podporou ONLINE/OFFLINE/REPLAY režimů."""
+    """OIG Proxy s podporou ONLINE/OFFLINE režimů."""
 
     def __init__(self, device_id: str):
         self.device_id = device_id
@@ -87,7 +86,12 @@ class OIGProxy:
         self._cloud_queue_enabled: bool = bool(CLOUD_QUEUE_ENABLED)
         self._cloud_queue_disabled_warned: bool = False
         self.cloud_queue = CloudQueue() if self._cloud_queue_enabled else DisabledCloudQueue()
-        self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
+        self._cloud_health_enabled: bool = bool(CLOUD_HEALTH_CHECK_ENABLED)
+        self.cloud_health: CloudHealthChecker | DisabledCloudHealthChecker
+        if self._cloud_health_enabled:
+            self.cloud_health = CloudHealthChecker(TARGET_SERVER, TARGET_PORT)
+        else:
+            self.cloud_health = DisabledCloudHealthChecker()
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
         loaded_mode, loaded_dev = load_mode_state()
@@ -105,8 +109,6 @@ class OIGProxy:
         self.mode_lock = asyncio.Lock()
 
         # Background tasky
-        self._replay_task: asyncio.Task[Any] | None = None
-        self._replay_failures: dict[int, int] = {}
         self._status_task: asyncio.Task[Any] | None = None
         self._box_conn_lock = asyncio.Lock()
         self._active_box_writer: asyncio.StreamWriter | None = None
@@ -615,36 +617,6 @@ class OIGProxy:
                 self.stats["mode_changes"] += 1
             return old_mode
 
-    def _ensure_replay_task_running(self) -> None:
-        if not self._cloud_queue_enabled:
-            return
-        if self._replay_task is None or self._replay_task.done():
-            self._replay_task = asyncio.create_task(self._replay_cloud_queue())
-
-    async def _maybe_switch_online_to_replay(self, *, reason: str) -> None:
-        """Pokud běží ONLINE a cloud fronta není prázdná, přepni do REPLAY."""
-        if not self._cloud_queue_enabled:
-            return
-        if not self.cloud_health.is_online:
-            return
-        queue_size = self.cloud_queue.size()
-        if queue_size <= 0:
-            return
-
-        async with self.mode_lock:
-            if self.mode != ProxyMode.ONLINE:
-                return
-            self.mode = ProxyMode.REPLAY
-            self.stats["mode_changes"] += 1
-
-        logger.info(
-            "🟡 Mode changed: ONLINE → REPLAY (%s frames in queue, %s)",
-            queue_size,
-            reason,
-        )
-        self._ensure_replay_task_running()
-        await self.publish_proxy_status()
-
     def _log_status_heartbeat(self) -> None:
         if self._hb_interval_s <= 0:
             return
@@ -703,7 +675,6 @@ class OIGProxy:
                     if current_mode == ProxyMode.OFFLINE and self.cloud_health.is_online:
                         await self._on_cloud_state_change("cloud_recovered")
                 await self.publish_proxy_status()
-                await self._maybe_switch_online_to_replay(reason="periodic")
                 self._log_status_heartbeat()
             except Exception as e:
                 logger.debug("Proxy status loop publish failed: %s", e)
@@ -722,217 +693,18 @@ class OIGProxy:
             return
 
         if event == "cloud_recovered":
-            if not self._cloud_queue_enabled:
-                old_mode = await self._switch_mode(ProxyMode.ONLINE)
-                if old_mode != ProxyMode.ONLINE:
-                    logger.info(
-                        "🟢 Mode changed: %s → %s (replay disabled)",
-                        old_mode.value,
-                        ProxyMode.ONLINE.value,
-                    )
-                await self.publish_proxy_status()
-                return
-            queue_size = self.cloud_queue.size()
-            new_mode = ProxyMode.REPLAY if queue_size > 0 else ProxyMode.ONLINE
-            old_mode = await self._switch_mode(new_mode)
-            if old_mode != new_mode:
-                if new_mode == ProxyMode.REPLAY:
-                    logger.info(
-                        "🟡 Mode changed: %s → %s (%s frames in queue)",
-                        old_mode.value,
-                        new_mode.value,
-                        queue_size,
-                    )
-                    self._ensure_replay_task_running()
-                else:
-                    logger.info(
-                        "🟢 Mode changed: %s → %s",
-                        old_mode.value,
-                        new_mode.value,
-                    )
-            await self.publish_proxy_status()
-
-    async def _replay_send_one_frame(
-        self,
-        frame_id: int,
-        table_name: str,
-        frame_bytes: bytes,
-        *,
-        replayed: int,
-    ) -> bool:
-        reader: asyncio.StreamReader | None = None
-        writer: asyncio.StreamWriter | None = None
-        try:
-            target_host = resolve_cloud_host(TARGET_SERVER)
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(target_host, TARGET_PORT),
-                timeout=5.0,
-            )
-            writer.write(frame_bytes)
-            await writer.drain()
-            await asyncio.wait_for(reader.read(4096), timeout=REPLAY_ACK_TIMEOUT)
-
-            await self.cloud_queue.remove(frame_id)
-            self._replay_failures.pop(frame_id, None)
-
-            if replayed % 10 == 0:
-                remaining = self.cloud_queue.size()
-                logger.debug(
-                    "🔄 Replay progress: %s sent, %s remaining",
-                    replayed,
-                    remaining,
+            old_mode = await self._switch_mode(ProxyMode.ONLINE)
+            if old_mode != ProxyMode.ONLINE:
+                logger.info(
+                    "🟢 Mode changed: %s → %s",
+                    old_mode.value,
+                    ProxyMode.ONLINE.value,
                 )
-            return True
-        except asyncio.TimeoutError:
-            logger.warning(
-                "⏱️ Replay ACK timeout (%.1fs) for frame %s (table=%s)",
-                REPLAY_ACK_TIMEOUT,
-                frame_id,
-                table_name,
-            )
-            logger.debug(
-                "Replay failed payload (timeout, frame=%s, table=%s): %s",
-                frame_id,
-                table_name,
-                self._format_replay_payload_for_log(frame_bytes),
-            )
-            if self._should_drop_replay_frame(table_name, frame_bytes):
-                await self._drop_replay_frame(frame_id, table_name, reason="timeout")
-                return False
-            await self._defer_or_drop_after_retries(frame_id, table_name, reason="timeout")
-            return False
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as exc:
-            logger.warning(
-                "❌ Replay failed for frame %s (table=%s): %s",
-                frame_id,
-                table_name,
-                repr(exc),
-            )
-            logger.debug(
-                "Replay failed payload (socket, frame=%s, table=%s): %s",
-                frame_id,
-                table_name,
-                self._format_replay_payload_for_log(frame_bytes),
-            )
-            await self._note_cloud_failure("replay_socket_error")
-            if self._should_drop_replay_frame(table_name, frame_bytes):
-                await self._drop_replay_frame(frame_id, table_name, reason="error")
-                return False
-            await self._defer_or_drop_after_retries(frame_id, table_name, reason="error")
-            return False
-        except Exception as e:
-            logger.exception(
-                "❌ Replay failed for frame %s (table=%s): %s",
-                frame_id,
-                table_name,
-                repr(e),
-            )
-            logger.debug(
-                "Replay failed payload (error, frame=%s, table=%s): %s",
-                frame_id,
-                table_name,
-                self._format_replay_payload_for_log(frame_bytes),
-            )
-            if self._should_drop_replay_frame(table_name, frame_bytes):
-                await self._drop_replay_frame(frame_id, table_name, reason="error")
-                return False
-            await self._defer_or_drop_after_retries(frame_id, table_name, reason="error")
-            return False
-        finally:
-            if writer is not None:
-                writer.close()
-                with suppress(Exception):
-                    await writer.wait_closed()
+            await self.publish_proxy_status()
 
     @staticmethod
     def _looks_like_all_data_sent_end(frame: str) -> bool:
         return "<Result>END</Result>" in frame and "<Reason>All data sent</Reason>" in frame
-
-    @staticmethod
-    def _format_replay_payload_for_log(frame_bytes: bytes, limit: int = 512) -> str:
-        text = frame_bytes.decode("utf-8", errors="backslashreplace")
-        if len(text) <= limit:
-            return text
-        return f"{text[:limit]}...[truncated,{len(text)}]"
-
-    async def _drop_replay_frame(self, frame_id: int, table_name: str, *, reason: str) -> None:
-        logger.warning(
-            "🗑️ Dropping replay frame %s (table=%s, reason=%s)",
-            frame_id,
-            table_name,
-            reason,
-        )
-        self._replay_failures.pop(frame_id, None)
-        await self.cloud_queue.remove(frame_id)
-
-    def _should_drop_replay_frame(self, table_name: str, frame_bytes: bytes) -> bool:
-        if table_name == "END":
-            frame = frame_bytes.decode("utf-8", errors="replace")
-            if self._looks_like_all_data_sent_end(frame):
-                return True
-        return False
-
-    async def _defer_or_drop_after_retries(
-        self,
-        frame_id: int,
-        table_name: str,
-        *,
-        reason: str,
-    ) -> None:
-        failures = self._replay_failures.get(frame_id, 0) + 1
-        self._replay_failures[frame_id] = failures
-        if failures >= 3:
-            await self._drop_replay_frame(
-                frame_id,
-                table_name,
-                reason=f"{reason}_max_retries",
-            )
-            return
-        await self.cloud_queue.defer(frame_id, delay_s=60.0)
-
-    async def _replay_cloud_queue(self) -> None:
-        """Background task pro replay cloud fronty (rate limited)."""
-        if not self._cloud_queue_enabled:
-            logger.info("🔕 Cloud replay disabled - skipping replay task")
-            return
-        logger.info("🔄 Starting cloud queue replay...")
-        replayed = 0
-        interval = 1.0 / CLOUD_REPLAY_RATE if CLOUD_REPLAY_RATE > 0 else 1.0
-
-        while True:
-            if not self.cloud_health.is_online:
-                logger.warning("⚠️ Replay interrupted - cloud offline")
-                old_mode = await self._switch_mode(ProxyMode.OFFLINE)
-                if old_mode != ProxyMode.OFFLINE:
-                    await self.publish_proxy_status()
-                break
-
-            item = await self.cloud_queue.get_next()
-            if item is None:
-                if self.cloud_queue.size() <= 0:
-                    logger.info(
-                        "✅ Replay complete (%s frames), switching to ONLINE mode",
-                        replayed,
-                    )
-                    old_mode = await self._switch_mode(ProxyMode.ONLINE)
-                    if old_mode != ProxyMode.ONLINE:
-                        await self.publish_proxy_status()
-                    break
-
-                delay = await self.cloud_queue.next_ready_in()
-                await asyncio.sleep(min(delay if delay is not None else 1.0, 5.0))
-                continue
-
-            frame_id, _table_name, frame_bytes = item
-            success = await self._replay_send_one_frame(
-                frame_id, _table_name, frame_bytes, replayed=replayed + 1
-            )
-            if success:
-                replayed += 1
-
-            await asyncio.sleep(interval)
-
-        logger.info("🏁 Replay task finished (replayed=%s)", replayed)
 
     async def _register_box_connection(
         self, writer: asyncio.StreamWriter, addr: Any
@@ -1032,7 +804,7 @@ class OIGProxy:
         await self._handle_box_connection(box_reader, box_writer, conn_id)
 
     async def _note_cloud_failure(self, reason: str) -> None:
-        """Zaznamená cloud selhání a přepne proxy do OFFLINE, aby se spustil REPLAY."""
+        """Zaznamená cloud selhání a přepne proxy do OFFLINE."""
         was_online = self.cloud_health.is_online
         self.cloud_health.is_online = False
         self.cloud_health.consecutive_successes = 0
@@ -1043,7 +815,7 @@ class OIGProxy:
 
         async with self.mode_lock:
             current_mode = self.mode
-        if current_mode in (ProxyMode.ONLINE, ProxyMode.REPLAY):
+        if current_mode == ProxyMode.ONLINE:
             await self._on_cloud_state_change("cloud_down")
 
     async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
@@ -1533,7 +1305,7 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter,
         conn_id: int
     ) -> None:
-        """Zpětná kompatibilita: OFFLINE/REPLAY režim je řešen per-frame.
+        """Zpětná kompatibilita: OFFLINE režim je řešen per-frame.
 
         Vše se odbavuje v `_handle_box_connection()`.
         """

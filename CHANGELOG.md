@@ -2,6 +2,18 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.31] - 2026-01-29
+
+### Removed
+
+- **REPLAY režim** kompletně odstraněn - proxy již neodesílá cached framy do cloudu.
+
+### Changed
+
+- **Stealth mode default**: `CLOUD_HEALTH_CHECK_ENABLED` nyní defaultně `false` - žádné TCP heartbeaty na cloud.
+- **Stealth mode default**: `LOCAL_GETACTUAL_ENABLED` nyní defaultně `false` - žádné extra dotazy na BOX.
+- Proxy je v základu plně transparentní a nedetektovatelná cloudem.
+
 ## [1.3.30] - 2026-01-26
 
 ### Added

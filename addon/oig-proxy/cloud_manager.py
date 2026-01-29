@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 class DisabledCloudQueue:  # pylint: disable=missing-function-docstring,unused-argument
-    """No-op CloudQueue when replay/queueing is disabled."""
+    """No-op CloudQueue when queueing is disabled."""
 
     def __init__(self):
         self.lock = asyncio.Lock()
@@ -266,6 +266,30 @@ class CloudQueue:
 # ============================================================================
 # Cloud Health Checker - Monitoring cloud dostupnosti
 # ============================================================================
+
+class DisabledCloudHealthChecker:
+    """No-op health checker when cloud health monitoring is disabled.
+
+    Vždy reportuje cloud jako online (is_online=True), ale neprovádí žádné
+    TCP spojení na cloud - cloud tak nevidí žádný síťový provoz.
+    """
+
+    is_online = True
+    last_check_time = 0.0
+    consecutive_failures = 0
+    consecutive_successes = 0
+    fail_threshold = 3
+
+    def set_mode_callback(self, callback):  # pylint: disable=unused-argument
+        """No-op - disabled checker nevyvolává callbacky."""
+
+    async def start(self):
+        """No-op - disabled checker nespouští background tasky."""
+        logger.info("CloudHealthChecker: Disabled (stealth mode)")
+
+    async def stop(self):
+        """No-op."""
+
 
 class CloudHealthChecker:  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-instance-attributes
     """Monitoruje zdraví cloud spojení a řídí režimy."""
