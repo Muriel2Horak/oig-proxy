@@ -102,18 +102,6 @@ def test_should_persist_table():
     assert proxy_module.OIGProxy._should_persist_table("other") is False
 
 
-def test_drop_replay_frame_detection():
-    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    end_frame = (
-        "<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>"
-    ).encode("utf-8")
-    other_end = "<Frame><Result>END</Result></Frame>".encode("utf-8")
-
-    assert proxy._should_drop_replay_frame("END", end_frame) is True
-    assert proxy._should_drop_replay_frame("END", other_end) is False
-    assert proxy._should_drop_replay_frame("tbl_actual", end_frame) is False
-
-
 def test_control_normalize_value():
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
 

@@ -165,8 +165,6 @@ def _make_proxy(tmp_path):
     proxy._table_cache = {}
     proxy._mqtt_cache_device_id = None
     proxy._mqtt_was_ready = False
-    proxy._replay_failures = {}
-    proxy._replay_task = None
     proxy._status_task = None
     proxy._box_conn_lock = asyncio.Lock()
     proxy._active_box_writer = None
@@ -273,38 +271,6 @@ def test_prms_publish_flow(tmp_path):
         assert proxy._prms_pending_publish is False
 
     asyncio.run(run())
-
-
-def test_replay_defers_then_drops(tmp_path):
-    proxy = _make_proxy(tmp_path)
-    proxy.cloud_queue = DummyCloudQueue()
-
-    async def run():
-        await proxy._defer_or_drop_after_retries(1, "tbl", reason="timeout")
-        await proxy._defer_or_drop_after_retries(1, "tbl", reason="timeout")
-        assert proxy.cloud_queue.deferred
-        await proxy._defer_or_drop_after_retries(1, "tbl", reason="timeout")
-        assert 1 in proxy.cloud_queue.removed
-
-    asyncio.run(run())
-
-
-def test_replay_cloud_queue_empty_switches_online(tmp_path):
-    proxy = _make_proxy(tmp_path)
-    proxy.mode = ProxyMode.REPLAY
-    proxy.cloud_health.is_online = True
-    proxy.cloud_queue = DummyCloudQueue(size=0, next_item=None)
-
-    async def fake_publish():
-        return None
-
-    proxy.publish_proxy_status = fake_publish
-
-    async def run():
-        await proxy._replay_cloud_queue()
-
-    asyncio.run(run())
-    assert proxy.mode == ProxyMode.ONLINE
 
 
 def test_register_and_unregister_box_connection(tmp_path):

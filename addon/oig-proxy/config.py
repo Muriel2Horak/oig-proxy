@@ -60,7 +60,7 @@ MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
 PROXY_STATUS_ATTRS_TOPIC = os.getenv(
     "PROXY_STATUS_ATTRS_TOPIC", "oig_local/oig_proxy/proxy_status/attrs"
 )
-LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "true").lower() == "true"
+LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "false").lower() == "true"
 LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 FORCE_OFFLINE = os.getenv("FORCE_OFFLINE", "false").lower() == "true"
@@ -169,6 +169,7 @@ MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
 # ============================================================================
 # Health Check Configuration
 # ============================================================================
+CLOUD_HEALTH_CHECK_ENABLED = os.getenv("CLOUD_HEALTH_CHECK_ENABLED", "false").lower() == "true"
 CLOUD_HEALTH_CHECK_INTERVAL = int(
     os.getenv("CLOUD_HEALTH_CHECK_INTERVAL", "30")
 )
@@ -183,15 +184,9 @@ CLOUD_HEALTH_SUCCESS_THRESHOLD = int(
 )
 
 # ============================================================================
-# Replay Configuration
-# ============================================================================
-CLOUD_REPLAY_RATE = float(os.getenv("CLOUD_REPLAY_RATE", "1.0"))  # frames/s
-MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
-REPLAY_ACK_TIMEOUT = float(os.getenv("REPLAY_ACK_TIMEOUT", "5.0"))  # seconds
-
-# ============================================================================
 # MQTT Publisher Configuration
 # ============================================================================
+MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
 MQTT_CONNECT_TIMEOUT = int(os.getenv("MQTT_CONNECT_TIMEOUT", "10"))
 MQTT_HEALTH_CHECK_INTERVAL = int(os.getenv("MQTT_HEALTH_CHECK_INTERVAL", "30"))
 MQTT_PUBLISH_LOG_EVERY = int(os.getenv("MQTT_PUBLISH_LOG_EVERY", "100"))

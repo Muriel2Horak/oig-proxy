@@ -14,9 +14,8 @@ from typing import Any
 
 class ProxyMode(Enum):
     """Režimy provozu proxy."""
-    ONLINE = "online"      # Cloud OK, fronta prázdná → direct forward
+    ONLINE = "online"      # Cloud OK → direct forward
     OFFLINE = "offline"    # Cloud DOWN → local ACK + queue
-    REPLAY = "replay"      # Cloud OK, fronta NEPRÁZDNÁ → vyprazdňování
 
 
 # ============================================================================
