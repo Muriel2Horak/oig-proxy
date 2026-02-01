@@ -16,30 +16,6 @@ class DummyQueue:
         return self._size
 
 
-class DummyCloudQueue:
-    def __init__(self) -> None:
-        self.added = []
-        self.deferred = []
-        self.removed = []
-
-    async def add(self, frame_bytes, table_name, device_id):
-        self.added.append((frame_bytes, table_name, device_id))
-
-    def size(self) -> int:
-        return len(self.added)
-
-    async def get_next(self):
-        return None
-
-    async def defer(self, frame_id, delay_s: float = 60.0) -> bool:
-        self.deferred.append((frame_id, delay_s))
-        return True
-
-    async def remove(self, frame_id) -> bool:
-        self.removed.append(frame_id)
-        return True
-
-
 class DummyMQTT(DummyMQTTMixin):
     def __init__(self) -> None:
         self.queue = DummyQueue()
@@ -127,22 +103,20 @@ def make_proxy(tmp_path):
     proxy.device_id = "DEV1"
     proxy.mode = ProxyMode.ONLINE
     proxy.mode_lock = asyncio.Lock()
-    proxy._cloud_queue_enabled = True
-    proxy._cloud_queue_disabled_warned = False
+    proxy._configured_mode = "online"
+    proxy._hybrid_fail_count = 0
+    proxy._hybrid_fail_threshold = 3
+    proxy._hybrid_retry_interval = 300.0
+    proxy._hybrid_connect_timeout = 5.0
+    proxy._hybrid_last_offline_time = 0.0
+    proxy._hybrid_in_offline = False
     proxy.stats = {
         "frames_received": 0,
         "frames_forwarded": 0,
-        "frames_queued": 0,
         "acks_local": 0,
         "acks_cloud": 0,
         "mode_changes": 0,
     }
-    proxy.cloud_health = type(
-        "H",
-        (),
-        {"is_online": True, "fail_threshold": 1, "consecutive_successes": 0, "consecutive_failures": 0, "last_check_time": 0.0},
-    )()
-    proxy.cloud_queue = DummyCloudQueue()
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy._active_box_peer = "1.2.3.4:1234"
@@ -211,7 +185,6 @@ def make_proxy(tmp_path):
     proxy._local_getactual_task = None
     proxy._full_refresh_interval_h = 1
     proxy._full_refresh_task = None
-    proxy._force_offline_config = False
     proxy._local_setting_pending = None
     return proxy
 
@@ -289,12 +262,11 @@ def test_proxy_status_loop_disabled(tmp_path, monkeypatch):
 def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     proxy.mode = ProxyMode.OFFLINE
-    proxy.cloud_health.is_online = True
     proxy._hb_interval_s = 0.01
     proxy._last_data_epoch = time.time() - 5
     proxy._box_connected_since_epoch = time.time() - 10
 
-    calls = {"sleep": 0, "status": 0, "switch": 0}
+    calls = {"sleep": 0, "status": 0}
 
     async def fake_sleep(_interval):
         calls["sleep"] += 1
@@ -305,12 +277,7 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     async def fake_status():
         calls["status"] += 1
 
-    async def fake_switch(*_args, **_kwargs):
-        calls["switch"] += 1
-
     proxy.publish_proxy_status = fake_status
-    proxy._maybe_switch_online_to_replay = fake_switch
-    proxy._on_cloud_state_change = fake_switch
     monkeypatch.setattr(proxy_module, "PROXY_STATUS_INTERVAL", 1)
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
@@ -321,7 +288,6 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
         pass
 
     assert calls["status"] == 1
-    assert calls["switch"] >= 1
 
 
 def test_read_box_bytes_timeout_and_reset(tmp_path, monkeypatch):
@@ -408,15 +374,16 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
 
 
 def test_ensure_cloud_connected_force_offline(tmp_path):
+    """Test that _ensure_cloud_connected returns None when configured as offline."""
     proxy = make_proxy(tmp_path)
     proxy.cloud_session_connected = True
+    proxy._configured_mode = "offline"  # Set to OFFLINE mode
     closed = {"called": False}
 
     async def fake_close(_writer):
         closed["called"] = True
 
     proxy._close_writer = fake_close
-    proxy._force_offline_enabled = lambda: True
 
     reader, writer = asyncio.run(
         proxy._ensure_cloud_connected(
@@ -463,8 +430,10 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     assert proxy.stats["acks_cloud"] == 1
 
 
-def test_forward_frame_online_timeout_end(tmp_path, monkeypatch):
+def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
+    """In ONLINE mode, END timeout does NOT send local ACK - fully transparent."""
     proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "online"  # ONLINE mode: transparent
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
@@ -492,12 +461,53 @@ def test_forward_frame_online_timeout_end(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
     )
+    # ONLINE: no local ACK, BOX times out
+    assert proxy.stats["acks_local"] == 0
+    assert proxy.cloud_timeouts == 1
+
+
+def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
+    """In HYBRID mode (after threshold), END timeout sends local END ACK."""
+    proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "hybrid"  # HYBRID mode
+    proxy._hybrid_in_offline = True  # Already reached threshold
+    box_writer = DummyWriter()
+    cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
+    cloud_writer = DummyWriter()
+
+    async def fake_ensure(_reader, _writer, **_kwargs):
+        return cloud_reader, cloud_writer
+
+    proxy._ensure_cloud_connected = fake_ensure
+
+    async def timeout_wait_for(coro, timeout):
+        coro.close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
+
+    asyncio.run(
+        proxy._forward_frame_online(
+            frame_bytes=b"<Frame>END</Frame>",
+            table_name="END",
+            device_id="DEV1",
+            conn_id=2,
+            box_writer=box_writer,
+            cloud_reader=None,
+            cloud_writer=None,
+            connect_timeout_s=0.1,
+        )
+    )
+    # HYBRID in offline: sends local END ACK
     assert proxy.stats["acks_local"] == 1
     assert proxy.cloud_timeouts == 1
 
 
 def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
+    """In HYBRID mode (after threshold), timeout on non-END frame triggers fallback to local ACK."""
     proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hybrid_in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
@@ -535,8 +545,54 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
     assert proxy.cloud_timeouts == 1
 
 
-def test_forward_frame_online_exception(tmp_path, monkeypatch):
+def test_forward_frame_online_timeout_non_end_online_mode(tmp_path, monkeypatch):
+    """In ONLINE mode, timeout on non-END frame does NOT trigger fallback - BOX times out."""
     proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "online"  # ONLINE mode: no fallback
+    box_writer = DummyWriter()
+    cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
+    cloud_writer = DummyWriter()
+    closed = {"called": False}
+
+    async def fake_ensure(_reader, _writer, **_kwargs):
+        return cloud_reader, cloud_writer
+
+    async def fake_close(_writer):
+        closed["called"] = True
+
+    proxy._ensure_cloud_connected = fake_ensure
+    proxy._close_writer = fake_close
+
+    async def timeout_wait_for(coro, timeout):
+        coro.close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
+
+    reader, writer = asyncio.run(
+        proxy._forward_frame_online(
+            frame_bytes=b"<Frame>DATA</Frame>",
+            table_name="tbl_actual",
+            device_id="DEV1",
+            conn_id=4,
+            box_writer=box_writer,
+            cloud_reader=None,
+            cloud_writer=None,
+            connect_timeout_s=0.1,
+        )
+    )
+    # ONLINE mode: no fallback, just return None
+    assert reader is None
+    assert writer is None
+    assert proxy.cloud_timeouts == 1
+    assert closed["called"] is True  # writer should be closed
+
+
+def test_forward_frame_online_exception(tmp_path, monkeypatch):
+    """In HYBRID mode (after threshold), cloud exception triggers fallback to local ACK."""
+    proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hybrid_in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
     cloud_reader = DummyReader([RuntimeError("boom")])
     cloud_writer = DummyWriter()
@@ -573,7 +629,10 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
 
 
 def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
+    """In HYBRID mode (after threshold), cloud EOF triggers fallback to local ACK."""
     proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hybrid_in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b""])
     cloud_writer = DummyWriter()
@@ -756,25 +815,21 @@ def test_local_getactual_loop_sends_and_logs(tmp_path, monkeypatch):
         pass
 
 
-def test_maybe_force_offline_switches(tmp_path):
+def test_force_offline_enabled_property(tmp_path):
+    """Test _force_offline_enabled property logic for OFFLINE mode detection."""
     proxy = make_proxy(tmp_path)
-    proxy._force_offline_config = True
-    proxy.mode = ProxyMode.ONLINE
-    calls = []
 
-    async def fake_switch(new_mode):
-        calls.append(new_mode)
-        proxy.mode = new_mode
-        return ProxyMode.ONLINE
+    # configured_mode = "offline" means force_offline enabled
+    proxy._configured_mode = "offline"
+    assert proxy._force_offline_enabled() is True
 
-    async def fake_status():
-        return None
+    # configured_mode = "hybrid" - not force_offline
+    proxy._configured_mode = "hybrid"
+    assert proxy._force_offline_enabled() is False
 
-    proxy._switch_mode = fake_switch
-    proxy.publish_proxy_status = fake_status
-
-    asyncio.run(proxy._maybe_force_offline("test"))
-    assert proxy.mode == ProxyMode.OFFLINE
+    # configured_mode = "online" - not force_offline
+    proxy._configured_mode = "online"
+    assert proxy._force_offline_enabled() is False
 
 
 def test_handle_setting_event_publishes(tmp_path):
@@ -792,21 +847,14 @@ def test_handle_setting_event_publishes(tmp_path):
 
 
 def test_process_frame_offline_skips_all_data_sent(tmp_path):
+    """Test that offline mode just sends local ACK without any queueing."""
     proxy = make_proxy(tmp_path)
-
-    class CQ:
-        def __init__(self) -> None:
-            self.added = []
-
-        async def add(self, frame_bytes, table_name, device_id):
-            self.added.append((frame_bytes, table_name, device_id))
-
-    proxy.cloud_queue = CQ()
     writer = DummyWriter()
 
     frame = b"<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>"
     asyncio.run(proxy._process_frame_offline(frame, "END", "DEV1", writer, send_ack=True))
-    assert proxy.cloud_queue.added == []
+    # Verify ACK was sent
+    assert proxy.stats["acks_local"] >= 1
 
 
 def test_extract_device_and_table_infers_result(tmp_path):

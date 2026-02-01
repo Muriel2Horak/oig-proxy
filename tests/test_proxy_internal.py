@@ -183,6 +183,13 @@ def _make_proxy(tmp_path):
     proxy._last_hb_ts = 0.0
     proxy._force_offline_config = False
     proxy._proxy_status_attrs_topic = "oig/status/attrs"
+    proxy._configured_mode = "online"
+    proxy._hybrid_fail_count = 0
+    proxy._hybrid_fail_threshold = 3
+    proxy._hybrid_retry_interval = 300.0
+    proxy._hybrid_connect_timeout = 5.0
+    proxy._hybrid_last_offline_time = 0.0
+    proxy._hybrid_in_offline = False
     return proxy
 
 
@@ -201,7 +208,6 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     payload = proxy._build_status_payload()
     assert payload["status"] == ProxyMode.ONLINE.value
     assert payload["box_connected"] == 1
-    assert payload["cloud_queue"] == 0
     assert payload["mqtt_queue"] == 0
     assert payload["control_queue_len"] == 1
     assert payload["control_inflight_key"] == "k1"
@@ -304,21 +310,26 @@ def test_register_and_unregister_box_connection(tmp_path):
     assert proxy._active_box_writer is None
 
 
-def test_note_cloud_failure_switches_offline(tmp_path):
+def test_note_cloud_failure_records_hybrid_failure(tmp_path):
+    """Test that _note_cloud_failure records failure for HYBRID mode tracking."""
     proxy = _make_proxy(tmp_path)
-    proxy.mode = ProxyMode.ONLINE
-    events = []
-
-    async def fake_on_cloud(event):
-        events.append(event)
-
-    proxy._on_cloud_state_change = fake_on_cloud
+    proxy._configured_mode = "hybrid"
+    proxy._hybrid_fail_count = 0
+    proxy._hybrid_fail_threshold = 3
 
     async def run():
         await proxy._note_cloud_failure("test")
 
     asyncio.run(run())
-    assert events == ["cloud_down"]
+    # In HYBRID mode, failure count should increase
+    assert proxy._hybrid_fail_count == 1
+    # Should not be in offline yet (threshold is 3)
+    assert proxy._hybrid_in_offline is False
+
+    # After reaching threshold, should switch to offline
+    proxy._hybrid_fail_count = 2
+    asyncio.run(run())
+    assert proxy._hybrid_in_offline is True
 
 
 def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):

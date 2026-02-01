@@ -63,11 +63,18 @@ PROXY_STATUS_ATTRS_TOPIC = os.getenv(
 LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "false").lower() == "true"
 LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
-FORCE_OFFLINE = os.getenv("FORCE_OFFLINE", "false").lower() == "true"
-CLEAR_CLOUD_QUEUE_ON_START = (
-    os.getenv("CLEAR_CLOUD_QUEUE_ON_START", "false").lower() == "true"
-)
-CLOUD_QUEUE_ENABLED = os.getenv("CLOUD_QUEUE_ENABLED", "false").lower() == "true"
+
+# ============================================================================
+# Proxy Mode Configuration
+# ============================================================================
+# ONLINE = transparent forward (default), HYBRID = smart fallback, OFFLINE = always local
+PROXY_MODE = os.getenv("PROXY_MODE", "online").lower()
+# For HYBRID mode: seconds to wait before retry online
+HYBRID_RETRY_INTERVAL = _get_int_env("HYBRID_RETRY_INTERVAL", 300)
+# For HYBRID mode: consecutive failures before switching to offline
+HYBRID_FAIL_THRESHOLD = _get_int_env("HYBRID_FAIL_THRESHOLD", 3)
+# For HYBRID mode: connect timeout when probing cloud
+HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
 
 # ============================================================================
 # Cloud Configuration
@@ -141,7 +148,6 @@ MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 MODE_STATE_PATH = os.path.join(DATA_DIR, "mode_state.json")
 PRMS_STATE_PATH = os.path.join(DATA_DIR, "prms_state.json")
-CLOUD_QUEUE_DB_PATH = os.path.join(DATA_DIR, "cloud_queue.db")
 MQTT_QUEUE_DB_PATH = os.path.join(DATA_DIR, "mqtt_queue.db")
 CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
 
@@ -161,27 +167,9 @@ CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
 CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
 
 # ============================================================================
-# Queue Configuration
+# MQTT Queue Configuration
 # ============================================================================
-CLOUD_QUEUE_MAX_SIZE = int(os.getenv("CLOUD_QUEUE_MAX_SIZE", "10000"))
 MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
-
-# ============================================================================
-# Health Check Configuration
-# ============================================================================
-CLOUD_HEALTH_CHECK_ENABLED = os.getenv("CLOUD_HEALTH_CHECK_ENABLED", "false").lower() == "true"
-CLOUD_HEALTH_CHECK_INTERVAL = int(
-    os.getenv("CLOUD_HEALTH_CHECK_INTERVAL", "30")
-)
-CLOUD_HEALTH_CHECK_TIMEOUT = float(
-    os.getenv("CLOUD_HEALTH_CHECK_TIMEOUT", "5.0")
-)
-CLOUD_HEALTH_FAIL_THRESHOLD = int(
-    os.getenv("CLOUD_HEALTH_FAIL_THRESHOLD", "3")
-)
-CLOUD_HEALTH_SUCCESS_THRESHOLD = int(
-    os.getenv("CLOUD_HEALTH_SUCCESS_THRESHOLD", "2")
-)
 
 # ============================================================================
 # MQTT Publisher Configuration

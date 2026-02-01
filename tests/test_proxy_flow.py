@@ -146,6 +146,13 @@ def _make_proxy(tmp_path):
     proxy._loop = None
     proxy._hb_interval_s = 0.0
     proxy._last_hb_ts = 0.0
+    proxy._configured_mode = "online"
+    proxy._hybrid_fail_count = 0
+    proxy._hybrid_fail_threshold = 3
+    proxy._hybrid_retry_interval = 300.0
+    proxy._hybrid_connect_timeout = 5.0
+    proxy._hybrid_last_offline_time = 0.0
+    proxy._hybrid_in_offline = False
     return proxy
 
 
@@ -208,28 +215,26 @@ def test_process_box_frame_common_infers_from_frame(tmp_path, monkeypatch):
 def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     writer = DummyWriter()
-    proxy.cloud_queue = DummyCloudQueue()
 
     async def run():
         await proxy._process_frame_offline(
-            frame_bytes=b"<Frame><TblName>tbl_actual</TblName></Frame>",
-            table_name="tbl_actual",
-            device_id="DEV1",
-            box_writer=writer,
+            b"<Frame><TblName>tbl_actual</TblName></Frame>",
+            "tbl_actual",
+            "DEV1",
+            writer,
             send_ack=True,
         )
 
         await proxy._process_frame_offline(
-            frame_bytes=b"<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>",
-            table_name="END",
-            device_id="DEV1",
-            box_writer=writer,
+            b"<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>",
+            "END",
+            "DEV1",
+            writer,
             send_ack=True,
         )
 
     asyncio.run(run())
     assert proxy.stats["acks_local"] >= 1
-    assert proxy.stats["frames_queued"] == 1
 
     called = []
 
@@ -322,6 +327,10 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
 
     asyncio.run(run_success())
     assert proxy.stats["acks_cloud"] == 1
+
+    # Test EOF scenario - fallback only happens in HYBRID mode after threshold
+    proxy._configured_mode = "hybrid"
+    proxy._hybrid_in_offline = True  # Already reached threshold
 
     async def fake_ensure_eof(*_args, **_kwargs):
         return DummyReader(b""), cloud_writer
