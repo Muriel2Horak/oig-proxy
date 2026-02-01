@@ -2,6 +2,19 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.0] - 2026-02-01
+
+### Added
+
+- **Network Diagnostic Tool** (`scripts/network_diagnostic.py`): Skript pro diagnostiku síťové konfigurace a připojení ke cloudu
+- **Mock Cloud Capture** (`scripts/mock_cloud_capture.py`): Zachytávání komunikace pro analýzu protokolu
+- **DIAGNOSTIC_TOOLS.md**: Dokumentace diagnostických nástrojů
+
+### Changed
+
+- Diagnostický cloud server přesunut do samostatného repozitáře `oig-diagnostic-cloud`
+- Vylepšená dokumentace 3-režimového systému (ONLINE/HYBRID/OFFLINE)
+
 ## [1.3.33] - 2026-01-30
 
 ### Changed
