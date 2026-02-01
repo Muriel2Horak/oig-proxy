@@ -363,7 +363,8 @@ class NetworkDiagnostic:
             else:
                 cmd = ["ping", "-c", "3", "-W", "5", target]
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -433,7 +434,8 @@ class NetworkDiagnostic:
             else:
                 cmd = ["traceroute", "-n", "-m", "15", "-w", "2", target]
 
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -646,7 +648,8 @@ class NetworkDiagnostic:
         # Platform specific firewall check
         if platform.system() == "Darwin":  # macOS
             try:
-                result = subprocess.run(
+                result = await asyncio.to_thread(
+                    subprocess.run,
                     ["/usr/libexec/ApplicationFirewall/socketfilterfw", "--getglobalstate"],
                     capture_output=True, text=True, timeout=5
                 )
@@ -657,7 +660,8 @@ class NetworkDiagnostic:
 
         elif platform.system() == "Linux":
             try:
-                result = subprocess.run(
+                result = await asyncio.to_thread(
+                    subprocess.run,
                     ["iptables", "-L", "-n"],
                     capture_output=True, text=True, timeout=5
                 )
@@ -777,8 +781,11 @@ async def main():
 
     if args.output:
         output_path = Path(args.output)
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(report.to_dict(), f, indent=2, ensure_ascii=False)
+        await asyncio.to_thread(
+            lambda: output_path.write_text(
+                json.dumps(report.to_dict(), indent=2, ensure_ascii=False), encoding='utf-8'
+            )
+        )
         print(f"\n📁 Report saved to: {output_path}")
 
     # Exit code

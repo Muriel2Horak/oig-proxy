@@ -116,6 +116,7 @@ class MockCloudServer:
         self._server: Optional[asyncio.Server] = None
         self._running = False
         self._connection_counter = 0
+        self._background_tasks: set = set()  # Prevent task GC
 
         # Statistics
         self._total_frames = 0
@@ -140,7 +141,9 @@ class MockCloudServer:
         self._print_banner()
 
         # Start periodic save task
-        asyncio.create_task(self._periodic_save())
+        task = asyncio.create_task(self._periodic_save())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     def _print_banner(self):
         """Print server banner."""
@@ -384,8 +387,11 @@ class MockCloudServer:
         # Save captures JSON
         captures_file = self.output_dir / f"captures_{ts}.json"
         captures_data = [asdict(c) for c in self._captures]
-        with open(captures_file, 'w', encoding='utf-8') as f:
-            json.dump(captures_data, f, indent=2, ensure_ascii=False)
+        await asyncio.to_thread(
+            lambda: captures_file.write_text(
+                json.dumps(captures_data, indent=2, ensure_ascii=False), encoding='utf-8'
+            )
+        )
 
         # Save connection stats
         stats_file = self.output_dir / f"connections_{ts}.json"
@@ -396,8 +402,11 @@ class MockCloudServer:
             "total_frames": self._total_frames,
             "connections": [c.to_dict() for c in self._connections.values()]
         }
-        with open(stats_file, 'w', encoding='utf-8') as f:
-            json.dump(stats_data, f, indent=2, ensure_ascii=False)
+        await asyncio.to_thread(
+            lambda: stats_file.write_text(
+                json.dumps(stats_data, indent=2, ensure_ascii=False), encoding='utf-8'
+            )
+        )
 
         logger.info(f"💾 Saved {len(self._captures)} captures to {captures_file}")
 
@@ -408,11 +417,15 @@ class MockCloudServer:
         for i, capture in enumerate(self._captures):
             if capture.direction == "received":
                 frame_file = frames_dir / f"{i:04d}_{capture.frame_type}.xml"
-                with open(frame_file, 'w', encoding='utf-8') as f:
-                    f.write(f"<!-- Connection: {capture.connection_id} -->\n")
-                    f.write(f"<!-- Timestamp: {capture.timestamp} -->\n")
-                    f.write(f"<!-- Client: {capture.client_ip}:{capture.client_port} -->\n")
-                    f.write(capture.frame_data)
+                content = (
+                    f"<!-- Connection: {capture.connection_id} -->\n"
+                    f"<!-- Timestamp: {capture.timestamp} -->\n"
+                    f"<!-- Client: {capture.client_ip}:{capture.client_port} -->\n"
+                    + capture.frame_data
+                )
+                await asyncio.to_thread(
+                    lambda c=content, f=frame_file: f.write_text(c, encoding='utf-8')
+                )
 
     def _print_summary(self):
         """Print capture summary."""
@@ -490,7 +503,8 @@ async def main():
     try:
         await server.run_forever()
     except asyncio.CancelledError:
-        pass
+        await server.stop()
+        raise  # Re-raise CancelledError after cleanup
     finally:
         await server.stop()
 
