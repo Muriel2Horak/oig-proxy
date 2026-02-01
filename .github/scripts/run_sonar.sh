@@ -90,12 +90,12 @@ if [[ "${SONAR_CONFIGURE_QG}" == "1" ]]; then
   if [[ "${SONAR_IS_CLOUD}" == "1" ]]; then
     echo "Skipping quality gate configuration for SonarCloud." >&2
   else
-    "${PYTHON_BIN}" "${ROOT_DIR}/scripts/configure_sonar_quality_gate.py"
+    "${PYTHON_BIN}" "${ROOT_DIR}/.github/scripts/configure_sonar_quality_gate.py"
   fi
 fi
 
 if [[ "${RUN_TESTS}" == "1" ]]; then
-  "${ROOT_DIR}/scripts/run_tests.sh"
+  "${ROOT_DIR}/.github/scripts/run_tests.sh"
 fi
 
 if [[ "${RUN_SECURITY}" == "1" ]]; then
@@ -120,7 +120,7 @@ if [[ "${RUN_SECURITY}" == "1" ]]; then
 fi
 
 if [[ ! -f "${REPORT_DIR}/coverage.xml" ]]; then
-  echo "Missing coverage report at ${REPORT_DIR}/coverage.xml. Run scripts/run_tests.sh or set RUN_TESTS=1." >&2
+  echo "Missing coverage report at ${REPORT_DIR}/coverage.xml. Run .github/scripts/run_tests.sh or set RUN_TESTS=1." >&2
   exit 2
 fi
 if [[ "${RUN_SECURITY}" == "1" && ! -f "${REPORT_DIR}/bandit.json" ]]; then
