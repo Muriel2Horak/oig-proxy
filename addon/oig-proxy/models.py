@@ -5,7 +5,6 @@ Datové modely pro OIG Proxy.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 
 # ============================================================================
