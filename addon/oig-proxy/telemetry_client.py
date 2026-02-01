@@ -87,7 +87,7 @@ class TelemetryBuffer:
                 )
             """, (BUFFER_MAX_MESSAGES,))
             self._conn.commit()
-        except Exception:
+        except Exception:  # nosec B110 - cleanup, failure is acceptable
             pass
 
     def store(self, topic: str, payload: dict) -> bool:
@@ -134,7 +134,7 @@ class TelemetryBuffer:
             try:
                 self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
                 self._conn.commit()
-            except Exception:
+            except Exception:  # nosec B110 - cleanup, failure is acceptable
                 pass
 
     def count(self) -> int:
@@ -151,7 +151,7 @@ class TelemetryBuffer:
         if self._conn:
             try:
                 self._conn.close()
-            except Exception:
+            except Exception:  # nosec B110 - cleanup, failure is acceptable
                 pass
             self._conn = None
 
@@ -396,7 +396,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             try:
                 self._client.loop_stop()
                 self._client.disconnect()
-            except Exception:
+            except Exception:  # nosec B110 - cleanup, failure is acceptable
                 pass
             self._client = None
             self._connected = False
