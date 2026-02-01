@@ -44,8 +44,11 @@ class ClientInfo:
     first_seen: str
     last_seen: str
     client_ips: set = field(default_factory=set)
+    client_ports: set = field(default_factory=set)  # Track source ports
     total_connections: int = 0
     total_frames: int = 0
+    total_bytes_rx: int = 0
+    total_bytes_tx: int = 0
     tables_seen: set = field(default_factory=set)
     
     def to_dict(self) -> dict:
@@ -54,8 +57,11 @@ class ClientInfo:
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
             "client_ips": list(self.client_ips),
+            "client_ports_seen": len(self.client_ports),  # How many unique source ports
             "total_connections": self.total_connections,
             "total_frames": self.total_frames,
+            "total_bytes_rx": self.total_bytes_rx,
+            "total_bytes_tx": self.total_bytes_tx,
             "tables_seen": list(self.tables_seen)
         }
 
@@ -92,8 +98,11 @@ class DiagnosticCloudServer:
                         first_seen=info["first_seen"],
                         last_seen=info["last_seen"],
                         client_ips=set(info.get("client_ips", [])),
+                        client_ports=set(),  # Not persisted, reset on restart
                         total_connections=info.get("total_connections", 0),
                         total_frames=info.get("total_frames", 0),
+                        total_bytes_rx=info.get("total_bytes_rx", 0),
+                        total_bytes_tx=info.get("total_bytes_tx", 0),
                         tables_seen=set(info.get("tables_seen", []))
                     )
                 logger.info(f"Loaded {len(self._clients)} existing clients")
@@ -164,13 +173,23 @@ class DiagnosticCloudServer:
         self._connection_counter += 1
         conn_id = self._connection_counter
         
+        # Connection info
         peer = writer.get_extra_info('peername')
         client_ip = peer[0] if peer else "unknown"
+        client_port = peer[1] if peer else 0
         
-        logger.info(f"[{conn_id}] Connection from {client_ip}")
+        # Session tracking
+        session_start = time.time()
+        last_frame_time = session_start
+        bytes_received = 0
+        bytes_sent = 0
+        frame_gaps = []  # Inter-frame delays
+        
+        logger.info(f"[{conn_id}] Connection from {client_ip}:{client_port}")
         
         device_id = None
         frames_in_connection = 0
+        close_reason = "normal"
         
         try:
             while self._running:
@@ -179,8 +198,20 @@ class DiagnosticCloudServer:
                     if not data:
                         break
                 except asyncio.TimeoutError:
+                    close_reason = "timeout"
+                    break
+                except ConnectionResetError:
+                    close_reason = "reset"
                     break
                     
+                # Timing
+                now = time.time()
+                if frames_in_connection > 0:
+                    gap = now - last_frame_time
+                    frame_gaps.append(gap)
+                last_frame_time = now
+                
+                bytes_received += len(data)
                 frame = data.decode('utf-8', errors='ignore')
                 self._total_frames += 1
                 frames_in_connection += 1
@@ -193,8 +224,8 @@ class DiagnosticCloudServer:
                 # Track device
                 if frame_device_id and frame_device_id != "0000000000":
                     device_id = frame_device_id
-                    self._track_client(device_id, client_ip, table_name)
-                    self._save_frame(device_id, frame, parsed, client_ip, conn_id)
+                    self._track_client(device_id, client_ip, client_port, table_name)
+                    self._save_frame(device_id, frame, parsed, client_ip, client_port, conn_id)
                     
                 # Log
                 logger.info(
@@ -207,8 +238,10 @@ class DiagnosticCloudServer:
                 ack = self._generate_ack(parsed)
                 writer.write(ack.encode('utf-8'))
                 await writer.drain()
+                bytes_sent += len(ack)
                 
         except Exception as e:
+            close_reason = f"error:{type(e).__name__}"
             logger.error(f"[{conn_id}] Error: {e}")
         finally:
             try:
@@ -216,14 +249,33 @@ class DiagnosticCloudServer:
                 await writer.wait_closed()
             except Exception:
                 pass
-                
+            
+            # Session stats
+            session_duration = time.time() - session_start
+            avg_gap = sum(frame_gaps) / len(frame_gaps) if frame_gaps else 0
+            
             logger.info(
                 f"[{conn_id}] Closed. Frames={frames_in_connection} "
-                f"Device={device_id or '?'}"
+                f"Device={device_id or '?'} Duration={session_duration:.1f}s "
+                f"Rx={bytes_received}B Tx={bytes_sent}B AvgGap={avg_gap*1000:.0f}ms "
+                f"Reason={close_reason}"
             )
             
-            # Save immediately on disconnect
+            # Save session summary
             if device_id:
+                self._track_session_end(device_id, bytes_received, bytes_sent)
+                self._save_session(device_id, {
+                    "conn_id": conn_id,
+                    "client_ip": client_ip,
+                    "client_port": client_port,
+                    "start": datetime.fromtimestamp(session_start).isoformat(),
+                    "duration_sec": round(session_duration, 2),
+                    "frames": frames_in_connection,
+                    "bytes_rx": bytes_received,
+                    "bytes_tx": bytes_sent,
+                    "avg_gap_ms": round(avg_gap * 1000, 1),
+                    "close_reason": close_reason
+                })
                 self._save_clients()
             
     def _parse_frame(self, frame: str) -> dict:
@@ -246,8 +298,8 @@ class DiagnosticCloudServer:
                 
         return result
         
-    def _track_client(self, device_id: str, client_ip: str, table_name: str):
-        """Track client activity."""
+    def _track_client(self, device_id: str, client_ip: str, client_port: int, table_name: str):
+        """Track client activity per frame."""
         now = datetime.now().isoformat()
         
         if device_id not in self._clients:
@@ -261,14 +313,19 @@ class DiagnosticCloudServer:
         client = self._clients[device_id]
         client.last_seen = now
         client.client_ips.add(client_ip)
+        client.client_ports.add(client_port)
         client.total_frames += 1
         client.tables_seen.add(table_name)
         
-        # Track "new connection" (simplified - based on frames)
-        if client.total_frames == 1 or (client.total_frames % 100 == 0):
+    def _track_session_end(self, device_id: str, bytes_rx: int, bytes_tx: int):
+        """Track session statistics at disconnect."""
+        if device_id in self._clients:
+            client = self._clients[device_id]
             client.total_connections += 1
+            client.total_bytes_rx += bytes_rx
+            client.total_bytes_tx += bytes_tx
             
-    def _save_frame(self, device_id: str, frame: str, parsed: dict, client_ip: str, conn_id: int):
+    def _save_frame(self, device_id: str, frame: str, parsed: dict, client_ip: str, client_port: int, conn_id: int):
         """Save frame to file."""
         # Create device directory
         device_dir = self.data_dir / "frames" / device_id
@@ -282,12 +339,25 @@ class DiagnosticCloudServer:
             "ts": datetime.now().isoformat(),
             "conn": conn_id,
             "ip": client_ip,
+            "port": client_port,
             "table": parsed.get("table_name", "unknown"),
+            "size": len(frame),
             "raw": frame  # Full frame - no truncation
         }
         
         with open(daily_file, 'a') as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            
+    def _save_session(self, device_id: str, session_info: dict):
+        """Save session summary."""
+        device_dir = self.data_dir / "sessions" / device_id
+        device_dir.mkdir(parents=True, exist_ok=True)
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        sessions_file = device_dir / f"{today}.jsonl"
+        
+        with open(sessions_file, 'a') as f:
+            f.write(json.dumps(session_info, ensure_ascii=False) + "\n")
             
     def _generate_ack(self, parsed: dict) -> str:
         """Generate ACK response."""
