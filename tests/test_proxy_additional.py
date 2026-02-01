@@ -186,6 +186,8 @@ def make_proxy(tmp_path):
     proxy._full_refresh_interval_h = 1
     proxy._full_refresh_task = None
     proxy._local_setting_pending = None
+    proxy._telemetry_client = None
+    proxy._set_commands_buffer = []
     return proxy
 
 

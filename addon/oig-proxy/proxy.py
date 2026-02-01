@@ -126,6 +126,7 @@ class OIGProxy:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._control_api: ControlAPIServer | None = None
         self._local_setting_pending: dict[str, Any] | None = None
+        self._set_commands_buffer: list[dict[str, str]] = []  # For telemetry
 
         # Control over MQTT (production)
         self._control_mqtt_enabled: bool = bool(CONTROL_MQTT_ENABLED)
@@ -794,6 +795,9 @@ class OIGProxy:
     def _collect_telemetry_metrics(self) -> dict[str, Any]:
         """Collect current proxy metrics for telemetry."""
         uptime_s = int(time.time() - self._start_time)
+        # Get and clear SET commands buffer
+        set_commands = self._set_commands_buffer[:]
+        self._set_commands_buffer.clear()
         return {
             "uptime_s": uptime_s,
             "mode": self.mode.value,
@@ -809,6 +813,7 @@ class OIGProxy:
             "cloud_online": not self._hybrid_in_offline,
             "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
             "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
+            "set_commands": set_commands,
         }
 
     def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
@@ -1088,8 +1093,8 @@ class OIGProxy:
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
         """Forward frame to cloud.
 
-        Both ONLINE and HYBRID modes: Fallback to local ACK if cloud fails.
-        This prevents the BOX from restarting its modem due to missing ACK.
+        HYBRID mode: Immediate offline switch + local ACK if cloud fails.
+        ONLINE mode: Transparent - no local ACK, BOX handles timeout itself.
         """
         # OFFLINE mode should not reach here, but just in case
         if self._force_offline_enabled():
@@ -1111,8 +1116,8 @@ class OIGProxy:
 
         # Connection failed
         if cloud_writer is None or cloud_reader is None:
-            if self._is_hybrid_mode() and self._hybrid_in_offline:
-                # HYBRID: threshold reached → fallback to local ACK
+            if self._is_hybrid_mode():
+                # HYBRID: immediate offline + local ACK (threshold=1)
                 return await self._fallback_offline_from_cloud_issue(
                     reason="connect_failed",
                     frame_bytes=frame_bytes,
@@ -1121,17 +1126,8 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
                 )
-            # ONLINE: fallback to local ACK to prevent BOX modem restart
-            logger.info("ONLINE: Cloud connect failed, sending local ACK (conn=%s)", conn_id)
-            return await self._fallback_offline_from_cloud_issue(
-                reason="connect_failed",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                note_cloud_failure=False,
-            )
+            # ONLINE: no local ACK, BOX will timeout
+            return None, None
 
         try:
             cloud_writer.write(frame_bytes)
@@ -1152,16 +1148,18 @@ class OIGProxy:
                 self._telemetry_fire_event("error_cloud_disconnect", reason="eof")
                 self._hybrid_record_failure()
                 await self._close_writer(cloud_writer)
-                # Fallback to local ACK to prevent BOX modem restart
-                return await self._fallback_offline_from_cloud_issue(
-                    reason="cloud_eof",
-                    frame_bytes=frame_bytes,
-                    table_name=table_name,
-                    device_id=device_id,
-                    box_writer=box_writer,
-                    cloud_writer=None,
-                    note_cloud_failure=self._is_hybrid_mode(),
-                )
+                # HYBRID: fallback to local ACK
+                if self._is_hybrid_mode():
+                    return await self._fallback_offline_from_cloud_issue(
+                        reason="cloud_eof",
+                        frame_bytes=frame_bytes,
+                        table_name=table_name,
+                        device_id=device_id,
+                        box_writer=box_writer,
+                        cloud_writer=None,
+                    )
+                # ONLINE: no local ACK
+                return None, None
 
             # Success - forward ACK to BOX
             self._hybrid_record_success()
@@ -1205,8 +1203,8 @@ class OIGProxy:
                 table_name,
             )
 
-            # HYBRID in offline mode: send local ACK (including END)
-            if self._is_hybrid_mode() and self._hybrid_in_offline:
+            # HYBRID: send local ACK (including END)
+            if self._is_hybrid_mode():
                 if table_name == "END":
                     logger.info(
                         "📤 HYBRID: Sending local END (conn=%s)",
@@ -1225,20 +1223,11 @@ class OIGProxy:
                     device_id=device_id,
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
-                    note_cloud_failure=False,
                 )
 
-            # ONLINE: fallback to local ACK to prevent BOX modem restart
-            logger.info("ONLINE: Cloud ACK timeout, sending local ACK (conn=%s)", conn_id)
-            return await self._fallback_offline_from_cloud_issue(
-                reason="ack_timeout",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                note_cloud_failure=False,
-            )
+            # ONLINE: no local ACK, close connection
+            await self._close_writer(cloud_writer)
+            return None, None
 
         except Exception as e:
             logger.warning(
@@ -1251,16 +1240,18 @@ class OIGProxy:
             self._hybrid_record_failure()
             await self._close_writer(cloud_writer)
 
-            # Fallback to local ACK to prevent BOX modem restart
-            return await self._fallback_offline_from_cloud_issue(
-                reason="cloud_error",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=None,
-                note_cloud_failure=self._is_hybrid_mode(),
-            )
+            # HYBRID: fallback to local ACK
+            if self._is_hybrid_mode():
+                return await self._fallback_offline_from_cloud_issue(
+                    reason="cloud_error",
+                    frame_bytes=frame_bytes,
+                    table_name=table_name,
+                    device_id=device_id,
+                    box_writer=box_writer,
+                    cloud_writer=None,
+                )
+            # ONLINE: no local ACK
+            return None, None
 
     async def _process_box_frame_common(
         self, *, frame_bytes: bytes, frame: str, conn_id: int
@@ -1829,6 +1820,13 @@ class OIGProxy:
         tbl_name, tbl_item, _old_value, new_value = ev
         if new_value is None:
             return
+        # Record for telemetry (cloud or local applied setting)
+        self._set_commands_buffer.append({
+            "key": f"{tbl_name}:{tbl_item}",
+            "value": str(new_value),
+            "result": "applied",
+            "source": "tbl_events",
+        })
         await self._publish_setting_event_state(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
@@ -2721,5 +2719,12 @@ class OIGProxy:
             pending.get("tbl_item"),
             pending.get("new_value"),
         )
+        # Record for telemetry (local control command)
+        self._set_commands_buffer.append({
+            "key": f"{pending.get('tbl_name')}:{pending.get('tbl_item')}",
+            "value": str(pending.get("new_value", "")),
+            "result": "ack" if ack_ok else "nack",
+            "source": "local",
+        })
         self._local_setting_pending = None
         return True

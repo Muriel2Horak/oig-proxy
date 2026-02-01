@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 import os
-import socket
 import sqlite3
 import time
 from pathlib import Path
@@ -69,7 +68,7 @@ class TelemetryBuffer:
             self._cleanup()
             count = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
             if count > 0:
-                logger.info("Telemetry buffer initialized with %d pending messages", count)
+                logger.debug("📡 Telemetry buffer: %d pending messages", count)
         except Exception as e:
             logger.warning("Failed to initialize telemetry buffer: %s", e)
             self._conn = None
@@ -178,8 +177,7 @@ class TelemetryClient:
         self._mqtt_host, self._mqtt_port = self._parse_mqtt_url(config.TELEMETRY_MQTT_BROKER)
 
         if self._enabled:
-            logger.info("Telemetry client initialized (device=%s, broker=%s:%s)",
-                       device_id, self._mqtt_host, self._mqtt_port)
+            logger.debug("📡 Telemetry enabled")
 
     @staticmethod
     def _parse_mqtt_url(url: str) -> tuple[str, int]:
@@ -206,9 +204,11 @@ class TelemetryClient:
                 if rc == 0:
                     self._connected = True
                     self._consecutive_errors = 0
+                    logger.debug("📡 Telemetry MQTT connected")
 
             def on_disconnect(client, userdata, rc, properties=None):
                 self._connected = False
+                logger.debug("📡 Telemetry MQTT disconnected")
 
             self._client.on_connect = on_connect
             self._client.on_disconnect = on_disconnect
@@ -258,7 +258,7 @@ class TelemetryClient:
             except Exception:
                 break
         if sent > 0:
-            logger.info("Flushed %d buffered telemetry messages", sent)
+            logger.debug("📡 Flushed %d buffered messages", sent)
         return sent
 
     async def send_telemetry(self, metrics: dict) -> bool:
@@ -284,6 +284,8 @@ class TelemetryClient:
             success = await loop.run_in_executor(None, self._publish_sync, topic, payload)
             if success:
                 self._consecutive_errors = 0
+                logger.debug("📡 Telemetry sent: mode=%s, uptime=%ss",
+                            metrics.get("mode", "-"), metrics.get("uptime_s", "-"))
                 now = time.time()
                 if self._buffer and now - self._last_buffer_flush > 60.0:
                     self._last_buffer_flush = now
@@ -293,6 +295,7 @@ class TelemetryClient:
                 self._consecutive_errors += 1
                 if self._buffer:
                     if self._buffer.store(topic, payload):
+                        logger.debug("📡 Telemetry buffered (MQTT unavailable)")
                         return True
                 return False
 
@@ -317,10 +320,12 @@ class TelemetryClient:
         async with self._lock:
             success = await loop.run_in_executor(None, self._publish_sync, topic, payload)
             if success:
+                logger.debug("📡 Event sent: %s", event_type)
                 return True
             else:
                 if self._buffer:
                     if self._buffer.store(topic, payload):
+                        logger.debug("📡 Event buffered: %s (MQTT unavailable)", event_type)
                         return True
                 return False
 
@@ -348,7 +353,9 @@ class TelemetryClient:
         """Send local MQTT error event."""
         return await self.send_event("error_mqtt_local", {"broker": broker, "error": error})
 
-    async def event_warning_mode_fallback(self, from_mode: str, to_mode: str, reason: str = "") -> bool:
+    async def event_warning_mode_fallback(
+        self, from_mode: str, to_mode: str, reason: str = ""
+    ) -> bool:
         """Send mode fallback warning event."""
         return await self.send_event("warning_mode_fallback", {
             "from_mode": from_mode, "to_mode": to_mode, "reason": reason

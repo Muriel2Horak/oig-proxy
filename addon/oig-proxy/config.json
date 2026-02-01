@@ -20,7 +20,7 @@
     "proxy_mode": "online",
     "cloud_ack_timeout": 3.0,
     "hybrid_retry_interval": 300,
-    "hybrid_fail_threshold": 3,
+    "hybrid_fail_threshold": 1,
     "mqtt_host": "core-mosquitto",
     "mqtt_port": 1883,
     "mqtt_username": "",

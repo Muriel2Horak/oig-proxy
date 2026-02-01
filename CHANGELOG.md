@@ -4,19 +4,23 @@
 
 ## [1.4.1] - 2026-02-01
 
+### Changed
+
+- **HYBRID režim**: Okamžité přepnutí do offline při selhání cloudu
+  - Při prvním selhání (timeout/connect error) přepne ihned do offline a pošle lokální ACK
+  - Předchází restartu modemu na BOXu (BOX restartoval modem když nedostal ACK)
+  - Po `hybrid_retry_interval` (default 300s) zkusí znovu cloud
+  - `hybrid_fail_threshold` změněn z 3 na 1 (bez čekání na více pokusů)
+
+- **ONLINE režim**: Beze změny - plně transparentní
+  - Při selhání cloudu se neposílá lokální ACK
+  - BOX řeší timeout sám (jako přímé připojení ke cloudu)
+
+- **run script**: Exportuje `PROXY_MODE` a `HYBRID_*` konfigurace do env proměnných
+
 ### Added
 
-- **Telemetry Client**: Automatický sběr anonymizovaných metrik pro diagnostiku
-  - Auto-provisioning s tokenem (device_id based)
-  - Fail-safe - při nedostupnosti serveru proxy běží normálně
-  - Nová konfigurace `telemetry_enabled` (default: true)
-  - Metrics: uptime, mode, frames, cloud/mqtt status
-
-### Technical
-
-- Nový modul `telemetry_client.py`
-- Telemetry endpoint: `http://telemetry.muriel-cz.cz:5720`
-- Interval odesílání: 5 minut (konfigurovatelné přes `TELEMETRY_INTERVAL_S`)
+- Telemetrie: interní diagnostická data (offline buffer, SET příkazy)
 
 ## [1.4.0] - 2026-02-01
 

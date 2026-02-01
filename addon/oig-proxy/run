@@ -39,6 +39,28 @@ cp /app/sensor_map.json /data/sensor_map.json
 export TARGET_SERVER=$(bashio::config 'target_server')
 export TARGET_PORT=$(bashio::config 'target_port')
 
+# PROXY_MODE: online (default), hybrid, offline
+PROXY_MODE_RAW=$(bashio::config 'proxy_mode')
+if [ -z "$PROXY_MODE_RAW" ] || [ "$PROXY_MODE_RAW" = "null" ]; then
+  PROXY_MODE_RAW="online"
+fi
+export PROXY_MODE=$PROXY_MODE_RAW
+
+# HYBRID mode settings
+HYBRID_RETRY_INTERVAL_RAW=$(bashio::config 'hybrid_retry_interval')
+if [ -z "$HYBRID_RETRY_INTERVAL_RAW" ] || [ "$HYBRID_RETRY_INTERVAL_RAW" = "null" ]; then
+  HYBRID_RETRY_INTERVAL_RAW=300
+fi
+export HYBRID_RETRY_INTERVAL=$HYBRID_RETRY_INTERVAL_RAW
+
+HYBRID_FAIL_THRESHOLD_RAW=$(bashio::config 'hybrid_fail_threshold')
+if [ -z "$HYBRID_FAIL_THRESHOLD_RAW" ] || [ "$HYBRID_FAIL_THRESHOLD_RAW" = "null" ]; then
+  HYBRID_FAIL_THRESHOLD_RAW=1
+fi
+export HYBRID_FAIL_THRESHOLD=$HYBRID_FAIL_THRESHOLD_RAW
+
+bashio::log.info "🚀 Proxy mode: $PROXY_MODE (hybrid_fail_threshold=$HYBRID_FAIL_THRESHOLD, hybrid_retry_interval=$HYBRID_RETRY_INTERVAL)"
+
 CLOUD_ACK_TIMEOUT_RAW=$(bashio::config 'cloud_ack_timeout')
 if [ -z "$CLOUD_ACK_TIMEOUT_RAW" ] || [ "$CLOUD_ACK_TIMEOUT_RAW" = "null" ]; then
   CLOUD_ACK_TIMEOUT_RAW=3.0
