@@ -194,7 +194,7 @@ class DiagnosticCloudServer:
                 if frame_device_id and frame_device_id != "0000000000":
                     device_id = frame_device_id
                     self._track_client(device_id, client_ip, table_name)
-                    self._save_frame(device_id, frame, parsed)
+                    self._save_frame(device_id, frame, parsed, client_ip, conn_id)
                     
                 # Log
                 logger.info(
@@ -221,6 +221,10 @@ class DiagnosticCloudServer:
                 f"[{conn_id}] Closed. Frames={frames_in_connection} "
                 f"Device={device_id or '?'}"
             )
+            
+            # Save immediately on disconnect
+            if device_id:
+                self._save_clients()
             
     def _parse_frame(self, frame: str) -> dict:
         """Parse OIG frame."""
@@ -264,7 +268,7 @@ class DiagnosticCloudServer:
         if client.total_frames == 1 or (client.total_frames % 100 == 0):
             client.total_connections += 1
             
-    def _save_frame(self, device_id: str, frame: str, parsed: dict):
+    def _save_frame(self, device_id: str, frame: str, parsed: dict, client_ip: str, conn_id: int):
         """Save frame to file."""
         # Create device directory
         device_dir = self.data_dir / "frames" / device_id
@@ -275,9 +279,11 @@ class DiagnosticCloudServer:
         daily_file = device_dir / f"{today}.jsonl"
         
         record = {
-            "timestamp": datetime.now().isoformat(),
-            "parsed": parsed,
-            "raw": frame[:500] if len(frame) > 500 else frame  # Truncate large frames
+            "ts": datetime.now().isoformat(),
+            "conn": conn_id,
+            "ip": client_ip,
+            "table": parsed.get("table_name", "unknown"),
+            "raw": frame  # Full frame - no truncation
         }
         
         with open(daily_file, 'a') as f:

@@ -5,8 +5,8 @@ services:
     build: .
     container_name: oig-diagnostic-cloud
     restart: unless-stopped
-    ports:
-      - "5710:5710"
+    # Host network to see real client IPs (not Docker NAT)
+    network_mode: host
     volumes:
       - ./data:/data
     environment:
