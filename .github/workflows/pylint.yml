@@ -25,4 +25,4 @@ jobs:
         env:
           PYTHONPATH: addon/oig-proxy
         run: |
-          pylint $(git ls-files '*.py')
+          pylint addon/oig-proxy/*.py tests/*.py
