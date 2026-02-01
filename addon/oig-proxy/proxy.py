@@ -59,8 +59,11 @@ from config import (
     MQTT_STATE_RETAIN,
     TARGET_PORT,
     TARGET_SERVER,
+    TELEMETRY_ENABLED,
+    TELEMETRY_INTERVAL_S,
 )
 from control_api import ControlAPIServer
+from telemetry_client import TelemetryClient
 from oig_frame import build_frame
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
@@ -150,6 +153,12 @@ class OIGProxy:
         self._local_getactual_task: asyncio.Task[Any] | None = None
         self._full_refresh_interval_h: int = int(FULL_REFRESH_INTERVAL_H)
         self._full_refresh_task: asyncio.Task[Any] | None = None
+
+        # Telemetry to diagnostic server (muriel-cz.cz)
+        self._telemetry_client: TelemetryClient | None = None
+        self._telemetry_task: asyncio.Task[Any] | None = None
+        self._telemetry_interval_s: int = TELEMETRY_INTERVAL_S
+        self._start_time: float = time.time()
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
@@ -252,6 +261,12 @@ class OIGProxy:
             self._status_task = asyncio.create_task(self._proxy_status_loop())
         if self._full_refresh_task is None or self._full_refresh_task.done():
             self._full_refresh_task = asyncio.create_task(self._full_refresh_loop())
+
+        # Initialize telemetry client (fail-safe, async provisioning)
+        if TELEMETRY_ENABLED:
+            self._init_telemetry()
+            if self._telemetry_task is None or self._telemetry_task.done():
+                self._telemetry_task = asyncio.create_task(self._telemetry_loop())
 
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -722,6 +737,88 @@ class OIGProxy:
             except Exception as e:
                 logger.debug("Proxy status loop publish failed: %s", e)
 
+    # ============================================================================
+    # Telemetry to diagnostic server
+    # ============================================================================
+
+    def _init_telemetry(self) -> None:
+        """Initialize telemetry client (fail-safe)."""
+        try:
+            from importlib.metadata import version as pkg_version
+            try:
+                proxy_version = pkg_version("oig-proxy")
+            except Exception:
+                proxy_version = "1.4.1"
+            device_id = self.device_id if self.device_id != "AUTO" else ""
+            self._telemetry_client = TelemetryClient(device_id, proxy_version)
+            logger.info("📊 Telemetry client initialized (interval=%ss)", self._telemetry_interval_s)
+        except Exception as e:
+            logger.warning("Telemetry init failed (disabled): %s", e)
+            self._telemetry_client = None
+
+    async def _telemetry_loop(self) -> None:
+        """Periodically send telemetry metrics to diagnostic server."""
+        if not self._telemetry_client:
+            return
+
+        # Wait a bit before first telemetry (let proxy initialize)
+        await asyncio.sleep(30)
+
+        # Try initial provisioning
+        try:
+            # Update device_id if it was detected later
+            if self._telemetry_client.device_id == "" and self.device_id != "AUTO":
+                self._telemetry_client.device_id = self.device_id
+            await self._telemetry_client.provision()
+        except Exception as e:
+            logger.debug("Initial telemetry provisioning failed: %s", e)
+
+        logger.info("📊 Telemetry loop started (every %ss)", self._telemetry_interval_s)
+
+        while True:
+            await asyncio.sleep(self._telemetry_interval_s)
+            try:
+                # Update device_id if needed
+                if self._telemetry_client.device_id == "" and self.device_id != "AUTO":
+                    self._telemetry_client.device_id = self.device_id
+
+                # Collect metrics
+                metrics = self._collect_telemetry_metrics()
+
+                # Send (fail-safe)
+                await self._telemetry_client.send_telemetry(metrics)
+
+            except Exception as e:
+                logger.debug("Telemetry send failed: %s", e)
+
+    def _collect_telemetry_metrics(self) -> dict[str, Any]:
+        """Collect current proxy metrics for telemetry."""
+        uptime_s = int(time.time() - self._start_time)
+        return {
+            "uptime_s": uptime_s,
+            "mode": self.mode.value,
+            "configured_mode": self._configured_mode,
+            "box_connected": self.box_connected,
+            "box_peer": self._active_box_peer,
+            "frames_received": self.stats.get("frames_received", 0),
+            "frames_forwarded": self.stats.get("frames_forwarded", 0),
+            "cloud_connects": self.cloud_connects,
+            "cloud_disconnects": self.cloud_disconnects,
+            "cloud_timeouts": self.cloud_timeouts,
+            "cloud_errors": self.cloud_errors,
+            "cloud_online": not self._hybrid_in_offline,
+            "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
+            "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
+        }
+
+    def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
+        """Fire telemetry event (non-blocking, fire and forget)."""
+        if not self._telemetry_client:
+            return
+        method = getattr(self._telemetry_client, f"event_{event_name}", None)
+        if method:
+            asyncio.create_task(method(**kwargs))
+
     @staticmethod
     def _looks_like_all_data_sent_end(frame: str) -> bool:
         return "<Result>END</Result>" in frame and "<Reason>All data sent</Reason>" in frame
@@ -809,6 +906,9 @@ class OIGProxy:
             await self._close_writer(writer)
             self.box_connected = False
             self._box_connected_since_epoch = None
+            self._telemetry_fire_event(
+                "error_box_disconnect", box_peer=self._active_box_peer or str(addr)
+            )
             if self._control_mqtt_enabled:
                 await self._control_note_box_disconnect()
             await self._unregister_box_connection(writer)
@@ -988,8 +1088,8 @@ class OIGProxy:
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
         """Forward frame to cloud.
 
-        ONLINE mode: No fallback to local ACK - BOX gets timeout if cloud fails.
-        HYBRID mode: Fallback to local ACK if cloud fails.
+        Both ONLINE and HYBRID modes: Fallback to local ACK if cloud fails.
+        This prevents the BOX from restarting its modem due to missing ACK.
         """
         # OFFLINE mode should not reach here, but just in case
         if self._force_offline_enabled():
@@ -1021,9 +1121,17 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
                 )
-            # ONLINE: no fallback, BOX times out
-            logger.debug("ONLINE: Cloud connect failed, no fallback (conn=%s)", conn_id)
-            return None, None
+            # ONLINE: fallback to local ACK to prevent BOX modem restart
+            logger.info("ONLINE: Cloud connect failed, sending local ACK (conn=%s)", conn_id)
+            return await self._fallback_offline_from_cloud_issue(
+                reason="connect_failed",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+                note_cloud_failure=False,
+            )
 
         try:
             cloud_writer.write(frame_bytes)
@@ -1041,19 +1149,19 @@ class OIGProxy:
                     table_name,
                 )
                 self.cloud_disconnects += 1
+                self._telemetry_fire_event("error_cloud_disconnect", reason="eof")
                 self._hybrid_record_failure()
                 await self._close_writer(cloud_writer)
-                if self._is_hybrid_mode() and self._hybrid_in_offline:
-                    # Threshold reached → fallback to local ACK
-                    return await self._fallback_offline_from_cloud_issue(
-                        reason="cloud_eof",
-                        frame_bytes=frame_bytes,
-                        table_name=table_name,
-                        device_id=device_id,
-                        box_writer=box_writer,
-                        cloud_writer=None,
-                    )
-                return None, None
+                # Fallback to local ACK to prevent BOX modem restart
+                return await self._fallback_offline_from_cloud_issue(
+                    reason="cloud_eof",
+                    frame_bytes=frame_bytes,
+                    table_name=table_name,
+                    device_id=device_id,
+                    box_writer=box_writer,
+                    cloud_writer=None,
+                    note_cloud_failure=self._is_hybrid_mode(),
+                )
 
             # Success - forward ACK to BOX
             self._hybrid_record_success()
@@ -1083,6 +1191,11 @@ class OIGProxy:
 
         except asyncio.TimeoutError:
             self.cloud_timeouts += 1
+            self._telemetry_fire_event(
+                "error_cloud_timeout",
+                cloud_host=TARGET_SERVER,
+                timeout_s=CLOUD_ACK_TIMEOUT,
+            )
             self._hybrid_record_failure()
 
             logger.warning(
@@ -1115,9 +1228,17 @@ class OIGProxy:
                     note_cloud_failure=False,
                 )
 
-            # ONLINE: no fallback, BOX times out (transparent)
-            await self._close_writer(cloud_writer)
-            return None, None
+            # ONLINE: fallback to local ACK to prevent BOX modem restart
+            logger.info("ONLINE: Cloud ACK timeout, sending local ACK (conn=%s)", conn_id)
+            return await self._fallback_offline_from_cloud_issue(
+                reason="ack_timeout",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+                note_cloud_failure=False,
+            )
 
         except Exception as e:
             logger.warning(
@@ -1130,17 +1251,16 @@ class OIGProxy:
             self._hybrid_record_failure()
             await self._close_writer(cloud_writer)
 
-            if self._is_hybrid_mode() and self._hybrid_in_offline:
-                # Threshold reached → fallback to local ACK
-                return await self._fallback_offline_from_cloud_issue(
-                    reason="cloud_error",
-                    frame_bytes=frame_bytes,
-                    table_name=table_name,
-                    device_id=device_id,
-                    box_writer=box_writer,
-                    cloud_writer=None,
-                )
-            return None, None
+            # Fallback to local ACK to prevent BOX modem restart
+            return await self._fallback_offline_from_cloud_issue(
+                reason="cloud_error",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=None,
+                note_cloud_failure=self._is_hybrid_mode(),
+            )
 
     async def _process_box_frame_common(
         self, *, frame_bytes: bytes, frame: str, conn_id: int

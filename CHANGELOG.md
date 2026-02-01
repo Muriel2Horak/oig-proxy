@@ -2,6 +2,22 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.1] - 2026-02-01
+
+### Added
+
+- **Telemetry Client**: Automatický sběr anonymizovaných metrik pro diagnostiku
+  - Auto-provisioning s tokenem (device_id based)
+  - Fail-safe - při nedostupnosti serveru proxy běží normálně
+  - Nová konfigurace `telemetry_enabled` (default: true)
+  - Metrics: uptime, mode, frames, cloud/mqtt status
+
+### Technical
+
+- Nový modul `telemetry_client.py`
+- Telemetry endpoint: `http://telemetry.muriel-cz.cz:5720`
+- Interval odesílání: 5 minut (konfigurovatelné přes `TELEMETRY_INTERVAL_S`)
+
 ## [1.4.0] - 2026-02-01
 
 ### Added

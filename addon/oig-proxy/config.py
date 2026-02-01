@@ -172,6 +172,13 @@ CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
 MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
 
 # ============================================================================
+# Telemetry Configuration (MQTT to muriel-cz.cz)
+# ============================================================================
+TELEMETRY_ENABLED = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
+TELEMETRY_MQTT_BROKER = os.getenv("TELEMETRY_MQTT_BROKER", "telemetry.muriel-cz.cz:1883")
+TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
+
+# ============================================================================
 # MQTT Publisher Configuration
 # ============================================================================
 MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
