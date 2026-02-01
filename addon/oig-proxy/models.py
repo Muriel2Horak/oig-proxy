@@ -14,8 +14,9 @@ from typing import Any
 
 class ProxyMode(Enum):
     """Režimy provozu proxy."""
-    ONLINE = "online"      # Cloud OK → direct forward
-    OFFLINE = "offline"    # Cloud DOWN → local ACK + queue
+    ONLINE = "online"      # Transparent forward - no local ACK, no HC
+    HYBRID = "hybrid"      # Smart fallback - timeout-based offline detection
+    OFFLINE = "offline"    # Always local ACK, never connect to cloud
 
 
 # ============================================================================
@@ -35,30 +36,6 @@ class SensorConfig:  # pylint: disable=too-many-instance-attributes
     options: list[str] | None = None  # Pro enum device_class
     is_binary: bool = False  # True pro binary_sensor
     json_attributes_topic: str | None = None
-
-
-# ============================================================================
-# Queue Models
-# ============================================================================
-
-@dataclass
-class QueuedFrame:
-    """Frame uložený ve frontě."""
-    id: int
-    timestamp: float
-    table_name: str
-    frame_data: str
-    device_id: str | None = None
-    queued_at: str | None = None
-
-
-@dataclass
-class QueuedMQTTMessage:
-    """MQTT message uložená ve frontě."""
-    id: int
-    timestamp: float
-    data: dict[str, Any]
-    queued_at: str | None = None
 
 
 # ============================================================================

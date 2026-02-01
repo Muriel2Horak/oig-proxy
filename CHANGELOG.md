@@ -2,6 +2,43 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.3.33] - 2026-01-30
+
+### Changed
+
+- **Nový 3-režimový systém**: `proxy_mode` konfigurace s hodnotami:
+  - `online` (default): Transparentní přeposílání BOX↔Cloud, žádná lokální logika
+  - `hybrid`: Chytrý fallback - při selhání cloudu přepne do offline, po intervalu zkusí znovu
+  - `offline`: Vždy lokální ACK, nikdy se nepřipojuje ke cloudu
+- **HYBRID režim**: Detekce offline na základě timeoutů a chyb připojení
+- **HYBRID fallback logika**: Lokální ACK se posílá až po dosažení `hybrid_fail_threshold` (default 3) chyb - BOX má šanci na retry
+- Nové konfigurace:
+  - `hybrid_retry_interval` (default 300s) - interval pro retry cloudu po přechodu do offline
+  - `hybrid_fail_threshold` (default 3) - počet chyb před fallbackem do offline
+
+### Fixed
+
+- **ONLINE režim je nyní plně transparentní**: END timeout již neposílá lokální ACK - BOX dostane timeout stejně jako by komunikoval přímo s cloudem
+- Lokální END ACK se posílá pouze v HYBRID režimu po dosažení threshold chyb
+
+### Removed
+
+- **CloudHealthChecker** odstraněn - nahrazen HYBRID logikou detekce na základě skutečných chyb
+- Konfigurace `cloud_health_check_enabled`, `cloud_health_check_interval`, `cloud_health_check_fail_threshold` odstraněny
+
+## [1.3.32] - 2026-01-29
+
+### Removed
+
+- **CloudQueue** kompletně odstraněn - žádné ukládání/queueování framů směr cloud.
+- Konfigurace `cloud_queue_enabled`, `clear_cloud_queue_on_start`, `CLOUD_QUEUE_DB_PATH`, `CLOUD_QUEUE_MAX_SIZE` odstraněny.
+
+### Changed
+
+- Offline režim pouze posílá lokální ACK - žádné další zpracování.
+- Proxy nyní transparentně forwarduje veškerou komunikaci bez úprav.
+- MQTTQueue pro offline buffering MQTT zpráv ponechán.
+
 ## [1.3.31] - 2026-01-29
 
 ### Removed

@@ -1,7 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
 import asyncio
 
-import cloud_manager
 import mqtt_publisher
 import proxy as proxy_module
 
@@ -25,13 +24,6 @@ class DummyServer:
 
 
 def test_proxy_init_and_start(tmp_path, monkeypatch):
-    class DummyCloudQueue:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def size(self) -> int:
-            return 0
-
     class DummyMQTTQueue:
         def __init__(self, *args, **kwargs) -> None:
             pass
@@ -39,20 +31,12 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
         def size(self) -> int:
             return 0
 
-    monkeypatch.setattr(cloud_manager, "CLOUD_QUEUE_DB_PATH", str(tmp_path / "cloud.db"))
     monkeypatch.setattr(mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(tmp_path / "mqtt.db"))
-    monkeypatch.setattr(proxy_module, "CloudQueue", DummyCloudQueue)
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
     monkeypatch.setattr(proxy_module, "CONTROL_MQTT_PENDING_PATH", str(tmp_path / "pending.json"))
     monkeypatch.setattr(proxy_module, "CONTROL_MQTT_LOG_PATH", str(tmp_path / "control.log"))
 
     proxy = proxy_module.OIGProxy("AUTO")
-
-    async def fake_health_start():
-        return None
-
-    proxy.cloud_health.start = fake_health_start
-    proxy.cloud_health.set_mode_callback = lambda *_: None
 
     proxy.mqtt_publisher.connect = lambda: True
 
@@ -89,13 +73,6 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
 
 
 def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
-    class DummyCloudQueue:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def size(self) -> int:
-            return 0
-
     class DummyMQTTQueue:
         def __init__(self, *args, **kwargs) -> None:
             pass
@@ -112,17 +89,10 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
 
     monkeypatch.setattr(proxy_module, "CONTROL_API_PORT", 123)
     monkeypatch.setattr(proxy_module, "ControlAPIServer", DummyControlAPI)
-    monkeypatch.setattr(proxy_module, "CloudQueue", DummyCloudQueue)
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
 
     proxy = proxy_module.OIGProxy("AUTO")
     proxy._mode_device_id = "DEVX"
-
-    async def fake_health_start():
-        return None
-
-    proxy.cloud_health.start = fake_health_start
-    proxy.cloud_health.set_mode_callback = lambda *_: None
 
     proxy.mqtt_publisher.connect = lambda: False
 
