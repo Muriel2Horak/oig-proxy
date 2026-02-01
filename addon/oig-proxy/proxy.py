@@ -745,6 +745,7 @@ class OIGProxy:
     def _init_telemetry(self) -> None:
         """Initialize telemetry client (fail-safe)."""
         try:
+            # pylint: disable=import-outside-toplevel
             from importlib.metadata import version as pkg_version
             try:
                 proxy_version = pkg_version("oig-proxy")

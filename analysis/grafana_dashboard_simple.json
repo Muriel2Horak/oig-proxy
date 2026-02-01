@@ -1,0 +1,143 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["count"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._field == \"uptime_s\")\n  |> group()\n  |> distinct(column: \"topic\")\n  |> count()",
+          "refId": "A"
+        }
+      ],
+      "title": "Unique Devices",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["count"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mqtt_consumer\")\n  |> count()",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Data Points",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "unit": "s", "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._field == \"interval_s\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Telemetry Interval",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "auto", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "s"},
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 4,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._field == \"uptime_s\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Uptime per Device",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "auto", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 5,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._field == \"frames_received\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Frames Received",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 12},
+      "id": 6,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "_time"}]},
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "P951FEA4DE68E13C5"},
+          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._field == \"uptime_s\" or r._field == \"mode\" or r._field == \"version\" or r._field == \"interval_s\" or r._field == \"frames_received\")\n  |> pivot(rowKey: [\"_time\", \"topic\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 100)",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Telemetry Data",
+      "type": "table"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["oig", "telemetry"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "OIG Proxy Telemetry",
+  "uid": "oig-proxy-telemetry",
+  "version": 1,
+  "weekStart": ""
+}

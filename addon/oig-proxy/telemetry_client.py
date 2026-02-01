@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=broad-exception-caught
 """
 Telemetry client pro odesílání anonymizovaných metrik přes MQTT.
 
@@ -155,7 +156,7 @@ class TelemetryBuffer:
             self._conn = None
 
 
-class TelemetryClient:
+class TelemetryClient:  # pylint: disable=too-many-instance-attributes
     """
     MQTT telemetry client for sending metrics to central server.
 
@@ -200,13 +201,13 @@ class TelemetryClient:
             self._client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311,
                                        callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 
-            def on_connect(client, userdata, flags, rc, properties=None):
+            def on_connect(_client, _userdata, _flags, rc, _properties=None):
                 if rc == 0:
                     self._connected = True
                     self._consecutive_errors = 0
                     logger.debug("📡 Telemetry MQTT connected")
 
-            def on_disconnect(client, userdata, rc, properties=None):
+            def on_disconnect(_client, _userdata, _rc, _properties=None):
                 self._connected = False
                 logger.debug("📡 Telemetry MQTT disconnected")
 
@@ -291,13 +292,13 @@ class TelemetryClient:
                     self._last_buffer_flush = now
                     await loop.run_in_executor(None, self._flush_buffer_sync)
                 return True
-            else:
-                self._consecutive_errors += 1
-                if self._buffer:
-                    if self._buffer.store(topic, payload):
-                        logger.debug("📡 Telemetry buffered (MQTT unavailable)")
-                        return True
-                return False
+            # Failed to send - increment error count and buffer
+            self._consecutive_errors += 1
+            if self._buffer:
+                if self._buffer.store(topic, payload):
+                    logger.debug("📡 Telemetry buffered (MQTT unavailable)")
+                    return True
+            return False
 
     async def send_event(self, event_type: str, details: Optional[dict] = None) -> bool:
         """
@@ -322,12 +323,12 @@ class TelemetryClient:
             if success:
                 logger.debug("📡 Event sent: %s", event_type)
                 return True
-            else:
-                if self._buffer:
-                    if self._buffer.store(topic, payload):
-                        logger.debug("📡 Event buffered: %s (MQTT unavailable)", event_type)
-                        return True
-                return False
+            # Failed to send - buffer for later
+            if self._buffer:
+                if self._buffer.store(topic, payload):
+                    logger.debug("📡 Event buffered: %s (MQTT unavailable)", event_type)
+                    return True
+            return False
 
     # Convenience methods for common error events
 
@@ -413,16 +414,16 @@ class TelemetryClient:
         return self._enabled and not self._connected and self._buffer is not None
 
 
-_client: Optional[TelemetryClient] = None
+_TELEMETRY_CLIENT: Optional[TelemetryClient] = None
 
 
 def init_telemetry(device_id: str, version: str) -> TelemetryClient:
     """Initialize global telemetry client."""
-    global _client
-    _client = TelemetryClient(device_id, version)
-    return _client
+    global _TELEMETRY_CLIENT  # pylint: disable=global-statement
+    _TELEMETRY_CLIENT = TelemetryClient(device_id, version)
+    return _TELEMETRY_CLIENT
 
 
 def get_telemetry_client() -> Optional[TelemetryClient]:
     """Get global telemetry client instance."""
-    return _client
+    return _TELEMETRY_CLIENT
