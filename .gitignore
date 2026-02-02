@@ -13,9 +13,8 @@ analysis/ha_latency_analysis.py
 analysis/*.tsv
 *.pcap
 
-# Diagnostické skripty (lokální utility, ne součást add-onu)
-scripts/network_diagnostic.py
-scripts/mock_cloud_capture.py
+# Diagnostické a helper skripty (lokální utility)
+scripts/
 
 # Databáze s reálnými daty (obsahují ID_Device a komunikaci)
 *.db
