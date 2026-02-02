@@ -21,6 +21,10 @@ scripts/
 *.db-wal
 *.db-shm
 
+# Síťové zachycené pakety
+*.pcap
+*.pcapng
+
 # Testovací data (extrakt z reálné komunikace)
 testing/test_data/*.json
 
