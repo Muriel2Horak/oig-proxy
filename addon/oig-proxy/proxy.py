@@ -160,7 +160,7 @@ class OIGProxy:
         self._telemetry_task: asyncio.Task[Any] | None = None
         self._telemetry_interval_s: int = TELEMETRY_INTERVAL_S
         self._start_time: float = time.time()
-        self._background_tasks: set[asyncio.Task[Any]] = set()  # prevent GC of fire-and-forget tasks
+        self._background_tasks: set[asyncio.Task[Any]] = set()  # prevent task GC
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
