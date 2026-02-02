@@ -5,8 +5,11 @@
 ### Fixed
 
 - Docker build: added missing telemetry_client.py to the image.
-- Hybrid mode: immediate offline fallback after first cloud failure.
-- Telemetry: SQLite buffer for offline resilience.
+
+### Added
+
+- Hybrid mode: immediate offline fallback after first cloud failure (introduced in upstream 1.4.1, first available in this Home Assistant add-on release).
+- Telemetry: SQLite buffer for offline resilience (introduced in upstream 1.4.1, first available in this Home Assistant add-on release).
 
 ## [1.3.28] - 2026-01-03
 
