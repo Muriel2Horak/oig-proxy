@@ -160,6 +160,7 @@ class OIGProxy:
         self._telemetry_task: asyncio.Task[Any] | None = None
         self._telemetry_interval_s: int = TELEMETRY_INTERVAL_S
         self._start_time: float = time.time()
+        self._background_tasks: set[asyncio.Task[Any]] = set()  # prevent GC of fire-and-forget tasks
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
@@ -823,7 +824,9 @@ class OIGProxy:
             return
         method = getattr(self._telemetry_client, f"event_{event_name}", None)
         if method:
-            asyncio.create_task(method(**kwargs))
+            task = asyncio.create_task(method(**kwargs))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     @staticmethod
     def _looks_like_all_data_sent_end(frame: str) -> bool:
