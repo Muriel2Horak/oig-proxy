@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": [
