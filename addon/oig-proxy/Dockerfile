@@ -22,6 +22,7 @@ COPY oig_frame.py /app/oig_frame.py
 COPY cloud_session.py /app/cloud_session.py
 COPY cloud_manager.py /app/cloud_manager.py
 COPY mqtt_publisher.py /app/mqtt_publisher.py
+COPY telemetry_client.py /app/telemetry_client.py
 COPY sensor_map.json /app/sensor_map.json
 
 COPY run /run.sh
