@@ -751,7 +751,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.1"
+                proxy_version = "1.4.2"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info("📊 Telemetry client initialized (interval=%ss)", self._telemetry_interval_s)
