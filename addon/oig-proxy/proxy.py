@@ -778,6 +778,16 @@ class OIGProxy:
 
         logger.info("📊 Telemetry loop started (every %ss)", self._telemetry_interval_s)
 
+        # Send first telemetry immediately after startup
+        try:
+            if self._telemetry_client.device_id == "" and self.device_id != "AUTO":
+                self._telemetry_client.device_id = self.device_id
+            metrics = self._collect_telemetry_metrics()
+            await self._telemetry_client.send_telemetry(metrics)
+            logger.info("📊 First telemetry sent")
+        except Exception as e:
+            logger.debug("First telemetry send failed: %s", e)
+
         while True:
             await asyncio.sleep(self._telemetry_interval_s)
             try:
