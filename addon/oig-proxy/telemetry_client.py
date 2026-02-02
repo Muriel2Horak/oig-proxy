@@ -285,8 +285,8 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             success = await loop.run_in_executor(None, self._publish_sync, topic, payload)
             if success:
                 self._consecutive_errors = 0
-                logger.debug("📡 Telemetry sent: mode=%s, uptime=%ss",
-                            metrics.get("mode", "-"), metrics.get("uptime_s", "-"))
+                logger.info("📡 Telemetry sent: device=%s mode=%s uptime=%ss",
+                            self.device_id, metrics.get("mode", "-"), metrics.get("uptime_s", "-"))
                 now = time.time()
                 if self._buffer and now - self._last_buffer_flush > 60.0:
                     self._last_buffer_flush = now
@@ -296,8 +296,12 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             self._consecutive_errors += 1
             if self._buffer:
                 if self._buffer.store(topic, payload):
-                    logger.debug("📡 Telemetry buffered (MQTT unavailable)")
+                    logger.info("📡 Telemetry buffered (MQTT unavailable, errors=%d)", 
+                               self._consecutive_errors)
                     return True
+                logger.warning("📡 Telemetry buffer failed")
+            else:
+                logger.warning("📡 Telemetry send failed (no buffer available)")
             return False
 
     async def send_event(self, event_type: str, details: Optional[dict] = None) -> bool:
