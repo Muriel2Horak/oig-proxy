@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REPORT_DIR="${REPORT_DIR:-${ROOT_DIR}/reports}"
 DEFAULT_PYTHON_BIN="python3"
 if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
