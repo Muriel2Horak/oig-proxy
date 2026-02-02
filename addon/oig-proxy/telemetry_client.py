@@ -207,7 +207,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                     self._consecutive_errors = 0
                     logger.debug("📡 Telemetry MQTT connected")
 
-            def on_disconnect(_client, _userdata, _rc, _properties=None):
+            def on_disconnect(_client, _userdata, _disconnect_flags, _rc, _properties=None):
                 self._connected = False
                 logger.debug("📡 Telemetry MQTT disconnected")
 
