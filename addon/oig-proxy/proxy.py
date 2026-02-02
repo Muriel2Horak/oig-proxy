@@ -2703,17 +2703,21 @@ class OIGProxy:
 
         box_writer.write(end_frame)
         try:
-            asyncio.create_task(box_writer.drain())
+            task = asyncio.create_task(box_writer.drain())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except Exception as exc:
             logger.debug("CONTROL: Failed to schedule END drain: %s", exc)
 
         try:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._control_on_box_setting_ack(
                     tx_id=str(tx_id) if tx_id else None,
                     ack=ack_ok,
                 )
             )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except Exception as exc:
             logger.debug("CONTROL: Failed to schedule ACK handling: %s", exc)
 
