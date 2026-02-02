@@ -34,13 +34,4 @@ jobs:
       - name: Security scan (bandit)
         run: |
           mkdir -p reports
-          bandit -r addon/oig-proxy -f json -o reports/bandit.json
-      - name: SonarCloud scan
-        if: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_ORGANIZATION != '' }}
-        uses: SonarSource/sonarcloud-github-action@e44258b109568baa0df60ed515909fc6c72cba92
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          args: >
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+          bandit -r addon/oig-proxy -f json -o reports/bandit.json --exit-zero

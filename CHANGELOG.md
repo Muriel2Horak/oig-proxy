@@ -2,6 +2,26 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.1] - 2026-02-01
+
+### Changed
+
+- **HYBRID režim**: Okamžité přepnutí do offline při selhání cloudu
+  - Při prvním selhání (timeout/connect error) přepne ihned do offline a pošle lokální ACK
+  - Předchází restartu modemu na BOXu (BOX restartoval modem když nedostal ACK)
+  - Po `hybrid_retry_interval` (default 300s) zkusí znovu cloud
+  - `hybrid_fail_threshold` změněn z 3 na 1 (bez čekání na více pokusů)
+
+- **ONLINE režim**: Beze změny - plně transparentní
+  - Při selhání cloudu se neposílá lokální ACK
+  - BOX řeší timeout sám (jako přímé připojení ke cloudu)
+
+- **run script**: Exportuje `PROXY_MODE` a `HYBRID_*` konfigurace do env proměnných
+
+### Added
+
+- Telemetrie: interní diagnostická data (offline buffer, SET příkazy)
+
 ## [1.4.0] - 2026-02-01
 
 ### Added

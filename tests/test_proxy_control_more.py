@@ -105,6 +105,8 @@ def make_proxy(tmp_path):
     proxy._control_whitelist = {"tbl_box_prms": {"MODE", "SA", "BAT_AC"}}
     proxy._control_box_ready_s = 0.0
     proxy._control_mqtt_enabled = False
+    proxy._telemetry_client = None
+    proxy._set_commands_buffer = []
     proxy._prms_tables = {}
     proxy._prms_device_id = None
     proxy._table_cache = {}

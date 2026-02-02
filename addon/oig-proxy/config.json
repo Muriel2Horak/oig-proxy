@@ -1,8 +1,8 @@
 {
   "name": "OIG Proxy",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "slug": "oig_proxy",
-  "description": "TCP proxy OIG -> MQTT/HA (dek\u00f3dov\u00e1n\u00ed r\u00e1mc\u016f, warning\u016f, discovery)",
+  "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": [
     "amd64",
     "aarch64"
@@ -20,7 +20,7 @@
     "proxy_mode": "online",
     "cloud_ack_timeout": 3.0,
     "hybrid_retry_interval": 300,
-    "hybrid_fail_threshold": 3,
+    "hybrid_fail_threshold": 1,
     "mqtt_host": "core-mosquitto",
     "mqtt_port": 1883,
     "mqtt_username": "",

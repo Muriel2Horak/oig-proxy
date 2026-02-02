@@ -71,8 +71,8 @@ FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 PROXY_MODE = os.getenv("PROXY_MODE", "online").lower()
 # For HYBRID mode: seconds to wait before retry online
 HYBRID_RETRY_INTERVAL = _get_int_env("HYBRID_RETRY_INTERVAL", 300)
-# For HYBRID mode: consecutive failures before switching to offline
-HYBRID_FAIL_THRESHOLD = _get_int_env("HYBRID_FAIL_THRESHOLD", 3)
+# For HYBRID mode: consecutive failures before switching to offline (1 = immediate)
+HYBRID_FAIL_THRESHOLD = _get_int_env("HYBRID_FAIL_THRESHOLD", 1)
 # For HYBRID mode: connect timeout when probing cloud
 HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
 
@@ -170,6 +170,13 @@ CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
 # MQTT Queue Configuration
 # ============================================================================
 MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
+
+# ============================================================================
+# Telemetry Configuration (MQTT to muriel-cz.cz)
+# ============================================================================
+TELEMETRY_ENABLED = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
+TELEMETRY_MQTT_BROKER = os.getenv("TELEMETRY_MQTT_BROKER", "telemetry.muriel-cz.cz:1883")
+TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
 
 # ============================================================================
 # MQTT Publisher Configuration
