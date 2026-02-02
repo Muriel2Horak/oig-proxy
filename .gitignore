@@ -9,9 +9,8 @@ __pycache__/
 .env
 proxy/.mypy_cache/
 logs/
-analysis/ha_latency_analysis.py
-analysis/*.tsv
-*.pcap
+# Analysis files (lokální analýzy a dokumentace)
+analysis/
 
 # Diagnostické a helper skripty (lokální utility)
 scripts/
