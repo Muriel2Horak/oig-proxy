@@ -177,6 +177,8 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         self._last_buffer_flush = 0.0
         self._mqtt_host, self._mqtt_port = self._parse_mqtt_url(config.TELEMETRY_MQTT_BROKER)
 
+        logger.warning("📡 TelemetryClient init: enabled=%s (TELEMETRY_ENABLED=%s, device_id=%s, MQTT_AVAILABLE=%s)",
+                      self._enabled, config.TELEMETRY_ENABLED, device_id, MQTT_AVAILABLE)
         if self._enabled:
             logger.debug("📡 Telemetry enabled")
 
@@ -269,7 +271,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         If MQTT unavailable, stores in buffer for later retry.
         Returns True on success or successful buffering.
         """
+        logger.warning("📡 send_telemetry called: enabled=%s, device_id=%s, metrics=%s", 
+                      self._enabled, self.device_id, list(metrics.keys()))
         if not self._enabled:
+            logger.warning("📡 send_telemetry: telemetry is DISABLED, returning False")
             return False
         payload = {
             "device_id": self.device_id,
