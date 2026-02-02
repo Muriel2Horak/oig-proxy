@@ -2,6 +2,12 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.2] - 2026-02-02
+
+### Fixed
+
+- Docker build: přidán chybějící `telemetry_client.py` do image
+
 ## [1.4.1] - 2026-02-01
 
 ### Changed
