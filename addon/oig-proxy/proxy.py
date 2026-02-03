@@ -2129,9 +2129,10 @@ class OIGProxy:
                 return
             if not self._control_queue:
                 return
-            tx = self._control_queue[0]
-            next_at = float(tx.get("next_attempt_at") or 0.0)
+            tx_dict: dict[str, Any] = self._control_queue[0]
+            next_at = float(tx_dict.get("next_attempt_at") or 0.0)
             now = time.monotonic()
+            tx: dict[str, Any] | None
             if next_at and now < next_at:
                 schedule_delay = next_at - now
                 tx = None

@@ -58,7 +58,7 @@ _capture_cols: set[str] = set()  # pylint: disable=invalid-name
 
 def iso_now() -> str:
     """Vrátí aktuální čas v ISO formátu."""
-    return datetime.datetime.now(datetime.UTC).isoformat()
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 def friendly_name(sensor_id: str) -> str:

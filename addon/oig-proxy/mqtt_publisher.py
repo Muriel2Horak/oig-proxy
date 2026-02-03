@@ -484,6 +484,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             msg_id, topic, payload, retain = item
 
             try:
+                assert self.client is not None
                 result = self.client.publish(topic, payload, qos=1, retain=retain)
                 if result.rc == 0:
                     await self.queue.remove(msg_id)
@@ -740,6 +741,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self.publish_count += 1
 
         try:
+            assert self.client is not None
             result = self.client.publish(
                 topic, payload, qos=MQTT_PUBLISH_QOS, retain=MQTT_STATE_RETAIN
             )

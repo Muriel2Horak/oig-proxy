@@ -26,7 +26,7 @@ try:
     MQTT_AVAILABLE = True
 except ImportError:
     MQTT_AVAILABLE = False
-    mqtt = None
+    mqtt = None  # type: ignore[assignment]
 
 BUFFER_MAX_MESSAGES = 1000
 BUFFER_MAX_AGE_HOURS = 24
@@ -177,8 +177,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         self._last_buffer_flush = 0.0
         self._mqtt_host, self._mqtt_port = self._parse_mqtt_url(config.TELEMETRY_MQTT_BROKER)
 
-        logger.warning("📡 TelemetryClient init: enabled=%s (TELEMETRY_ENABLED=%s, device_id=%s, MQTT_AVAILABLE=%s)",
-                      self._enabled, config.TELEMETRY_ENABLED, device_id, MQTT_AVAILABLE)
+        logger.warning(
+            "📡 TelemetryClient init: enabled=%s (device_id=%s, MQTT=%s)",
+            self._enabled, device_id, MQTT_AVAILABLE
+        )
         if self._enabled:
             logger.debug("📡 Telemetry enabled")
 
@@ -238,6 +240,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             return False
         try:
             message = json.dumps(payload, ensure_ascii=False)
+            assert self._client is not None
             result = self._client.publish(topic, message, qos=1)
             return result.rc == 0
         except Exception:
@@ -252,6 +255,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         for msg_id, topic, payload in pending:
             try:
                 message = json.dumps(payload, ensure_ascii=False)
+                assert self._client is not None
                 result = self._client.publish(topic, message, qos=1)
                 if result.rc == 0:
                     self._buffer.remove(msg_id)
@@ -271,8 +275,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         If MQTT unavailable, stores in buffer for later retry.
         Returns True on success or successful buffering.
         """
-        logger.warning("📡 send_telemetry called: enabled=%s, device_id=%s, metrics=%s", 
-                      self._enabled, self.device_id, list(metrics.keys()))
+        logger.warning(
+            "📡 send_telemetry: enabled=%s, device_id=%s, metrics=%s",
+            self._enabled, self.device_id, list(metrics.keys())
+        )
         if not self._enabled:
             logger.warning("📡 send_telemetry: telemetry is DISABLED, returning False")
             return False
@@ -301,8 +307,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             self._consecutive_errors += 1
             if self._buffer:
                 if self._buffer.store(topic, payload):
-                    logger.info("📡 Telemetry buffered (MQTT unavailable, errors=%d)", 
-                               self._consecutive_errors)
+                    logger.info(
+                        "📡 Telemetry buffered (MQTT unavailable, errors=%d)",
+                        self._consecutive_errors
+                    )
                     return True
                 logger.warning("📡 Telemetry buffer failed")
             else:
