@@ -164,6 +164,7 @@ def make_proxy(tmp_path):
     proxy._mqtt_was_ready = False
     proxy._status_task = None
     proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
     proxy._last_data_epoch = None
     proxy._last_data_iso = None
     proxy._isnew_polls = 0
@@ -176,6 +177,8 @@ def make_proxy(tmp_path):
     proxy.cloud_timeouts = 0
     proxy.cloud_errors = 0
     proxy.cloud_session_connected = False
+    proxy._cloud_connected_since_epoch = None
+    proxy._cloud_peer = None
     proxy.box_connected = False
     proxy.box_connections = 0
     proxy._hb_interval_s = 0.0
@@ -188,6 +191,15 @@ def make_proxy(tmp_path):
     proxy._local_setting_pending = None
     proxy._telemetry_client = None
     proxy._set_commands_buffer = []
+    proxy._telemetry_interval_s = 300
+    proxy._telemetry_box_sessions = deque()
+    proxy._telemetry_cloud_sessions = deque()
+    proxy._telemetry_offline_events = deque()
+    proxy._telemetry_tbl_events = deque()
+    proxy._telemetry_error_context = deque()
+    proxy._telemetry_logs = deque()
+    proxy._telemetry_log_window_s = 60
+    proxy._telemetry_log_max = 1000
     return proxy
 
 

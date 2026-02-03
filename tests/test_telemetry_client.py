@@ -1,5 +1,5 @@
 """Tests for telemetry_client module."""
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,too-many-lines,wrong-import-position
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,too-many-lines,wrong-import-position,import-outside-toplevel,line-too-long,exec-used,redefined-builtin,unused-argument,invalid-name,too-few-public-methods,unspecified-encoding,use-implicit-booleaness-not-comparison
 
 import json
 import sys
@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "addon" / "oig-proxy"))
 
 import telemetry_client  # noqa: E402
+import config  # noqa: E402
 
 
 class TestGetInstanceHash:
@@ -242,7 +243,7 @@ class TestTelemetryClientMqtt:
 
     @patch('telemetry_client.config')
     @patch('telemetry_client.MQTT_AVAILABLE', True)
-    def test_ensure_connected_when_connected(self, mock_config, _mock_mqtt):
+    def test_ensure_connected_when_connected(self, mock_config, mock_mqtt):
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
 
@@ -803,3 +804,137 @@ class TestEdgeCases:
             on_disconnect = mock_client_inst.on_disconnect
             on_disconnect(None, None, None, 0, None)
             assert client._connected is False
+
+
+class TestTelemetryClientCoverage:
+    """Extra coverage for error branches and buffer handling."""
+
+    def test_import_error_branch_exec(self, monkeypatch):
+        import builtins
+        import pathlib
+
+        source = pathlib.Path(telemetry_client.__file__).read_text()
+        original_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("paho"):
+                raise ImportError("no mqtt")
+            return original_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        globs: dict = {"__name__": "telemetry_client_no_mqtt", "__file__": telemetry_client.__file__}
+        exec(compile(source, telemetry_client.__file__, "exec"), globs)
+        assert globs["MQTT_AVAILABLE"] is False
+        assert globs["mqtt"] is None
+
+    def test_buffer_branches_and_errors(self, tmp_path, caplog):
+        buf_path = tmp_path / "buffer.db"
+        buf = telemetry_client.TelemetryBuffer(db_path=buf_path)
+        buf.store("topic", {"a": 1})
+        buf.close()
+        with caplog.at_level("DEBUG", logger="oig.telemetry"):
+            telemetry_client.TelemetryBuffer(db_path=buf_path)
+        assert any("pending messages" in rec.message for rec in caplog.records)
+
+        # _cleanup no-conn branch
+        buf._conn = None
+        buf._cleanup()
+
+        class ExplodingConn:
+            def execute(self, *_args, **_kwargs):
+                raise RuntimeError("boom")
+
+            def commit(self):
+                return None
+
+            def close(self):
+                raise RuntimeError("boom")
+
+        buf._conn = ExplodingConn()
+        buf._cleanup()
+        assert buf.store("topic", {"a": 1}) is False
+        assert not buf.get_pending()
+        buf.remove(1)
+        assert buf.count() == 0
+        buf.close()
+
+        buf._conn = None
+        buf.remove(1)
+
+    def test_create_client_and_disconnect_branches(self, monkeypatch):
+        class DummyResult:
+            def __init__(self, rc):
+                self.rc = rc
+
+        class DummyClient:
+            def __init__(self):
+                self.on_connect = None
+                self.on_disconnect = None
+                self.published = []
+
+            def connect(self, *_args, **_kwargs):
+                if self.on_connect:
+                    self.on_connect(self, None, None, 0)
+
+            def loop_start(self):
+                return None
+
+            def publish(self, topic, message, qos=1):
+                self.published.append((topic, message, qos))
+                return DummyResult(0)
+
+            def loop_stop(self):
+                return None
+
+            def disconnect(self):
+                return None
+
+        class DummyMQTTModule:
+            MQTTv311 = 4
+
+            class CallbackAPIVersion:
+                VERSION2 = 2
+
+            def Client(self, *args, **kwargs):
+                return DummyClient()
+
+        monkeypatch.setattr(telemetry_client, "mqtt", DummyMQTTModule())
+        monkeypatch.setattr(telemetry_client, "MQTT_AVAILABLE", True)
+        monkeypatch.setattr(config, "TELEMETRY_ENABLED", True)
+        monkeypatch.setattr(config, "TELEMETRY_MQTT_BROKER", "test:1883")
+
+        client = telemetry_client.TelemetryClient("dev1", "1.0.0")
+        assert client._create_client() is True
+        if client._client and client._client.on_connect:
+            client._client.on_connect(client._client, None, None, 1)
+
+        # _flush_buffer_sync early return when buffer missing
+        client._buffer = None
+        assert client._flush_buffer_sync() == 0
+
+        # Disconnect branch with client present
+        client._client = DummyClient()
+        client._connected = True
+        client.disconnect()
+
+        # Disconnect branch with exception
+        class ExplodingClient(DummyClient):
+            def loop_stop(self):
+                raise RuntimeError("boom")
+
+        client._client = ExplodingClient()
+        client._connected = True
+        client.disconnect()
+
+        # Disconnect branch when client is None but buffer exists
+        class DummyBuffer:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        client._client = None
+        client._buffer = DummyBuffer()
+        client.disconnect()
+        assert client._buffer.closed is True

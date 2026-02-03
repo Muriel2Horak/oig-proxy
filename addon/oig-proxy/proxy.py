@@ -80,6 +80,16 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
+class _TelemetryLogHandler(logging.Handler):
+    def __init__(self, proxy: "OIGProxy") -> None:
+        super().__init__()
+        self._proxy = proxy
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # pylint: disable=protected-access
+        self._proxy._record_log_entry(record)
+
+
 # ============================================================================
 # OIG Proxy - hlavní proxy server
 # ============================================================================
@@ -161,6 +171,16 @@ class OIGProxy:
         self._telemetry_interval_s: int = TELEMETRY_INTERVAL_S
         self._start_time: float = time.time()
         self._background_tasks: set[asyncio.Task[Any]] = set()  # prevent task GC
+        self._telemetry_box_sessions: deque[dict[str, Any]] = deque()
+        self._telemetry_cloud_sessions: deque[dict[str, Any]] = deque()
+        self._telemetry_offline_events: deque[dict[str, Any]] = deque()
+        self._telemetry_tbl_events: deque[dict[str, Any]] = deque()
+        self._telemetry_error_context: deque[dict[str, Any]] = deque()
+        self._telemetry_logs: deque[dict[str, Any]] = deque()
+        self._telemetry_log_window_s: int = 60
+        self._telemetry_log_max: int = 1000
+        self._telemetry_log_handler = _TelemetryLogHandler(self)
+        logger.addHandler(self._telemetry_log_handler)
 
         self._control_queue: deque[dict[str, Any]] = deque()
         self._control_inflight: dict[str, Any] | None = None
@@ -174,6 +194,7 @@ class OIGProxy:
         self._control_post_drain_refresh_pending: bool = False
 
         self._box_connected_since_epoch: float | None = None
+        self._last_box_disconnect_reason: str | None = None
         self._last_values: dict[tuple[str, str], Any] = {}
 
         # Statistiky
@@ -200,6 +221,8 @@ class OIGProxy:
         self.cloud_timeouts = 0
         self.cloud_errors = 0
         self.cloud_session_connected = False
+        self._cloud_connected_since_epoch: float | None = None
+        self._cloud_peer: str | None = None
         self._last_hb_ts: float = 0.0
         self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
 
@@ -487,7 +510,12 @@ class OIGProxy:
             return True
         return False
 
-    def _hybrid_record_failure(self) -> None:
+    def _hybrid_record_failure(
+        self,
+        *,
+        reason: str | None = None,
+        local_ack: bool | None = None,
+    ) -> None:
         """Record a cloud failure for HYBRID mode."""
         if not self._is_hybrid_mode():
             return
@@ -496,6 +524,7 @@ class OIGProxy:
             if not self._hybrid_in_offline:
                 self._hybrid_in_offline = True
                 self._hybrid_last_offline_time = time.time()
+                self._record_offline_event(reason=reason, local_ack=local_ack)
                 logger.warning(
                     "☁️ HYBRID: %d failures → switching to offline mode",
                     self._hybrid_fail_count,
@@ -743,6 +772,135 @@ class OIGProxy:
     # Telemetry to diagnostic server
     # ============================================================================
 
+    @staticmethod
+    def _utc_iso(ts: float | None = None) -> str:
+        if ts is None:
+            ts = time.time()
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def _utc_log_ts(ts: float) -> str:
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _prune_log_buffer(self) -> None:
+        cutoff = time.time() - float(self._telemetry_log_window_s)
+        while self._telemetry_logs and self._telemetry_logs[0]["_epoch"] < cutoff:
+            self._telemetry_logs.popleft()
+        while len(self._telemetry_logs) > self._telemetry_log_max:
+            self._telemetry_logs.popleft()
+
+    def _record_log_entry(self, record: logging.LogRecord) -> None:
+        try:
+            entry = {
+                "_epoch": record.created,
+                "timestamp": self._utc_log_ts(record.created),
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "source": record.name,
+            }
+            self._telemetry_logs.append(entry)
+            self._prune_log_buffer()
+        except Exception:
+            pass
+
+    def _snapshot_logs(self) -> list[dict[str, Any]]:
+        self._prune_log_buffer()
+        return [
+            {k: v for k, v in item.items() if k != "_epoch"}
+            for item in list(self._telemetry_logs)
+        ]
+
+    def _flush_log_buffer(self) -> list[dict[str, Any]]:
+        logs = self._snapshot_logs()
+        self._telemetry_logs.clear()
+        return logs
+
+    def _record_error_context(self, *, event_type: str, details: dict[str, Any]) -> None:
+        try:
+            details_json = json.dumps(details, ensure_ascii=False)
+        except Exception:
+            details_json = json.dumps({"detail": str(details)}, ensure_ascii=False)
+        self._telemetry_error_context.append({
+            "timestamp": self._utc_iso(),
+            "event_type": event_type,
+            "details": details_json,
+            "logs": json.dumps(self._snapshot_logs(), ensure_ascii=False),
+        })
+
+    def _record_tbl_event(
+        self,
+        *,
+        parsed: dict[str, Any],
+        device_id: str | None,
+    ) -> None:
+        event_time = self._parse_frame_dt(parsed.get("_dt"))
+        if event_time is None:
+            event_time = self._utc_iso()
+        self._telemetry_tbl_events.append({
+            "timestamp": event_time,
+            "event_time": event_time,
+            "type": parsed.get("Type"),
+            "confirm": parsed.get("Confirm"),
+            "content": parsed.get("Content"),
+            "device_id": device_id,
+        })
+
+    @staticmethod
+    def _parse_frame_dt(value: Any) -> str | None:
+        if value is None:
+            return None
+        try:
+            text = str(value).strip()
+        except Exception:
+            return None
+        if not text:
+            return None
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            try:
+                dt = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _record_box_session_end(self, *, reason: str, peer: str | None) -> None:
+        if self._box_connected_since_epoch is None:
+            return
+        disconnected_at = time.time()
+        self._telemetry_box_sessions.append({
+            "timestamp": self._utc_iso(disconnected_at),
+            "connected_at": self._utc_iso(self._box_connected_since_epoch),
+            "disconnected_at": self._utc_iso(disconnected_at),
+            "duration_s": int(disconnected_at - self._box_connected_since_epoch),
+            "peer": peer,
+            "reason": reason,
+        })
+        self._box_connected_since_epoch = None
+
+    def _record_cloud_session_end(self, *, reason: str) -> None:
+        if self._cloud_connected_since_epoch is None:
+            return
+        disconnected_at = time.time()
+        self._telemetry_cloud_sessions.append({
+            "timestamp": self._utc_iso(disconnected_at),
+            "connected_at": self._utc_iso(self._cloud_connected_since_epoch),
+            "disconnected_at": self._utc_iso(disconnected_at),
+            "duration_s": int(disconnected_at - self._cloud_connected_since_epoch),
+            "reason": reason,
+        })
+        self._cloud_connected_since_epoch = None
+
+    def _record_offline_event(self, *, reason: str | None, local_ack: bool | None) -> None:
+        self._telemetry_offline_events.append({
+            "timestamp": self._utc_iso(),
+            "reason": reason or "unknown",
+            "local_ack": bool(local_ack),
+            "mode": self.mode.value,
+        })
+
     def _init_telemetry(self) -> None:
         """Initialize telemetry client (fail-safe)."""
         try:
@@ -810,7 +968,22 @@ class OIGProxy:
         # Get and clear SET commands buffer
         set_commands = self._set_commands_buffer[:]
         self._set_commands_buffer.clear()
+        window_metrics = {
+            "box_sessions": list(self._telemetry_box_sessions),
+            "cloud_sessions": list(self._telemetry_cloud_sessions),
+            "offline_events": list(self._telemetry_offline_events),
+            "tbl_events": list(self._telemetry_tbl_events),
+            "error_context": list(self._telemetry_error_context),
+            "logs": self._flush_log_buffer(),
+        }
+        self._telemetry_box_sessions.clear()
+        self._telemetry_cloud_sessions.clear()
+        self._telemetry_offline_events.clear()
+        self._telemetry_tbl_events.clear()
+        self._telemetry_error_context.clear()
         return {
+            "timestamp": self._utc_iso(),
+            "interval_s": int(self._telemetry_interval_s),
             "uptime_s": uptime_s,
             "mode": self.mode.value,
             "configured_mode": self._configured_mode,
@@ -826,12 +999,15 @@ class OIGProxy:
             "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
             "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
             "set_commands": set_commands,
+            "window_metrics": window_metrics,
         }
 
     def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
         """Fire telemetry event (non-blocking, fire and forget)."""
         if not self._telemetry_client:
             return
+        if event_name.startswith(("error_", "warning_")):
+            self._record_error_context(event_type=event_name, details=kwargs)
         method = getattr(self._telemetry_client, f"event_{event_name}", None)
         if method:
             task = asyncio.create_task(method(**kwargs))
@@ -848,6 +1024,11 @@ class OIGProxy:
         async with self._box_conn_lock:
             previous = self._active_box_writer
             if previous is not None and not previous.is_closing():
+                self._last_box_disconnect_reason = "forced"
+                self._record_box_session_end(
+                    reason="forced",
+                    peer=self._active_box_peer,
+                )
                 await self._close_writer(previous)
                 logger.info(
                     "BOX: closing previous connection due to new connection"
@@ -907,6 +1088,7 @@ class OIGProxy:
         self.box_connected = True
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
+        self._last_box_disconnect_reason = None
         await self.publish_proxy_status()
         if self._local_getactual_task and not self._local_getactual_task.done():
             self._local_getactual_task.cancel()
@@ -917,6 +1099,7 @@ class OIGProxy:
         try:
             await self._handle_box_connection(reader, writer, conn_id)
         except Exception as e:
+            self._last_box_disconnect_reason = "exception"
             logger.error("❌ Error handling connection from %s: %s", addr, e)
         finally:
             if self._local_getactual_task and not self._local_getactual_task.done():
@@ -924,7 +1107,11 @@ class OIGProxy:
             self._local_getactual_task = None
             await self._close_writer(writer)
             self.box_connected = False
-            self._box_connected_since_epoch = None
+            self._record_box_session_end(
+                reason=self._last_box_disconnect_reason or "unknown",
+                peer=self._active_box_peer or (f"{addr[0]}:{addr[1]}" if addr else None),
+            )
+            self._last_box_disconnect_reason = None
             self._telemetry_fire_event(
                 "error_box_disconnect", box_peer=self._active_box_peer or str(addr)
             )
@@ -942,10 +1129,10 @@ class OIGProxy:
         """Zpětná kompatibilita: ONLINE režim je řešen per-frame v `_handle_box_connection()`."""
         await self._handle_box_connection(box_reader, box_writer, conn_id)
 
-    async def _note_cloud_failure(self, reason: str) -> None:
+    async def _note_cloud_failure(self, *, reason: str, local_ack: bool | None = None) -> None:
         """Zaznamená cloud selhání. V HYBRID mode může přepnout do offline."""
         logger.debug("☁️ Cloud failure noted: %s", reason)
-        self._hybrid_record_failure()
+        self._hybrid_record_failure(reason=reason, local_ack=local_ack)
 
     async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
         if writer is None:
@@ -965,12 +1152,14 @@ class OIGProxy:
             data = await asyncio.wait_for(reader.read(8192), timeout=idle_timeout_s)
         except ConnectionResetError:
             # BOX (nebo síť) spojení tvrdě ukončil – bereme jako běžné odpojení.
+            self._last_box_disconnect_reason = "reset"
             logger.info(
                 "🔌 BOX reset the connection (conn=%s)", conn_id
             )
             await self.publish_proxy_status()
             return None
         except asyncio.TimeoutError:
+            self._last_box_disconnect_reason = "timeout"
             logger.warning(
                 "⏱️ BOX idle timeout (15 min) - closing session (conn=%s)",
                 conn_id,
@@ -978,6 +1167,7 @@ class OIGProxy:
             return None
 
         if not data:
+            self._last_box_disconnect_reason = "eof"
             logger.info(
                 "🔌 BOX closed the connection (EOF, conn=%s, frames_rx=%s, frames_tx=%s)",
                 conn_id,
@@ -1030,6 +1220,8 @@ class OIGProxy:
         note_cloud_failure: bool = True,
         send_box_ack: bool = True,
     ) -> tuple[None, None]:
+        if self.cloud_session_connected:
+            self._record_cloud_session_end(reason=reason)
         self.cloud_session_connected = False
         await self._close_writer(cloud_writer)
         await self._process_frame_offline(
@@ -1040,7 +1232,7 @@ class OIGProxy:
             send_ack=send_box_ack,
         )
         if note_cloud_failure:
-            await self._note_cloud_failure(reason)
+            await self._note_cloud_failure(reason=reason, local_ack=send_box_ack)
         return None, None
 
     async def _ensure_cloud_connected(
@@ -1055,6 +1247,8 @@ class OIGProxy:
         # Check if we should try to connect to cloud
         if not self._should_try_cloud():
             await self._close_writer(cloud_writer)
+            if self.cloud_session_connected:
+                self._record_cloud_session_end(reason="manual_offline")
             self.cloud_session_connected = False
             return None, None
         if cloud_writer is not None and not cloud_writer.is_closing():
@@ -1068,6 +1262,9 @@ class OIGProxy:
             self.cloud_connects += 1
             was_connected = self.cloud_session_connected
             self.cloud_session_connected = True
+            if not was_connected:
+                self._cloud_connected_since_epoch = time.time()
+                self._cloud_peer = f"{target_host}:{TARGET_PORT}"
             # Success - record for HYBRID mode
             self._hybrid_record_success()
             if not was_connected:
@@ -1089,8 +1286,6 @@ class OIGProxy:
             self.cloud_errors += 1
             self.cloud_session_connected = False
             await self._close_writer(cloud_writer)
-            # Record failure for HYBRID mode
-            self._hybrid_record_failure()
             return None, None
 
     async def _forward_frame_online(
@@ -1131,6 +1326,7 @@ class OIGProxy:
         # Connection failed
         if cloud_writer is None or cloud_reader is None:
             if self._is_hybrid_mode():
+                self._hybrid_record_failure(reason="connect_failed", local_ack=True)
                 # HYBRID: immediate offline + local ACK (threshold=1)
                 return await self._fallback_offline_from_cloud_issue(
                     reason="connect_failed",
@@ -1139,6 +1335,7 @@ class OIGProxy:
                     device_id=device_id,
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
+                    note_cloud_failure=False,
                 )
             # ONLINE: no local ACK, BOX will timeout
             return None, None
@@ -1159,8 +1356,13 @@ class OIGProxy:
                     table_name,
                 )
                 self.cloud_disconnects += 1
+                if self.cloud_session_connected:
+                    self._record_cloud_session_end(reason="eof")
                 self._telemetry_fire_event("error_cloud_disconnect", reason="eof")
-                self._hybrid_record_failure()
+                self._hybrid_record_failure(
+                    reason="cloud_eof",
+                    local_ack=self._is_hybrid_mode(),
+                )
                 await self._close_writer(cloud_writer)
                 # HYBRID: fallback to local ACK
                 if self._is_hybrid_mode():
@@ -1171,6 +1373,7 @@ class OIGProxy:
                         device_id=device_id,
                         box_writer=box_writer,
                         cloud_writer=None,
+                        note_cloud_failure=False,
                     )
                 # ONLINE: no local ACK
                 return None, None
@@ -1208,7 +1411,10 @@ class OIGProxy:
                 cloud_host=TARGET_SERVER,
                 timeout_s=CLOUD_ACK_TIMEOUT,
             )
-            self._hybrid_record_failure()
+            self._hybrid_record_failure(
+                reason="ack_timeout",
+                local_ack=self._is_hybrid_mode(),
+            )
 
             logger.warning(
                 "⏱️ Cloud ACK timeout (%.1fs) (conn=%s, table=%s)",
@@ -1237,9 +1443,12 @@ class OIGProxy:
                     device_id=device_id,
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
+                    note_cloud_failure=False,
                 )
 
             # ONLINE: no local ACK, close connection
+            if self.cloud_session_connected:
+                self._record_cloud_session_end(reason="timeout")
             await self._close_writer(cloud_writer)
             return None, None
 
@@ -1251,7 +1460,12 @@ class OIGProxy:
                 table_name,
             )
             self.cloud_errors += 1
-            self._hybrid_record_failure()
+            if self.cloud_session_connected:
+                self._record_cloud_session_end(reason="cloud_error")
+            self._hybrid_record_failure(
+                reason="cloud_error",
+                local_ack=self._is_hybrid_mode(),
+            )
             await self._close_writer(cloud_writer)
 
             # HYBRID: fallback to local ACK
@@ -1263,6 +1477,7 @@ class OIGProxy:
                     device_id=device_id,
                     box_writer=box_writer,
                     cloud_writer=None,
+                    note_cloud_failure=False,
                 )
             # ONLINE: no local ACK
             return None, None
@@ -1300,6 +1515,8 @@ class OIGProxy:
                 self._isnew_polls += 1
                 self._isnew_last_poll_epoch = time.time()
                 self._isnew_last_poll_iso = self._last_data_iso
+            if table_name == "tbl_events":
+                self._record_tbl_event(parsed=parsed, device_id=device_id)
             self._cache_last_values(parsed, table_name)
             await self._handle_setting_event(parsed, table_name, device_id)
             await self._control_observe_box_frame(parsed, table_name, frame)
@@ -1340,6 +1557,8 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
     ) -> tuple[None, None]:
         await self._close_writer(cloud_writer)
+        if self.cloud_session_connected:
+            self._record_cloud_session_end(reason="manual_offline")
         self.cloud_session_connected = False
         await self._process_frame_offline(frame_bytes, table_name, device_id, box_writer)
         return None, None
@@ -1420,6 +1639,8 @@ class OIGProxy:
             )
         finally:
             await self._close_writer(cloud_writer)
+            if self.cloud_session_connected:
+                self._record_cloud_session_end(reason="box_disconnect")
             self.cloud_session_connected = False
 
     async def _process_frame_offline(

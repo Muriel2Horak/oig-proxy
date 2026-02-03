@@ -34,6 +34,9 @@ def _make_proxy(mode: ProxyMode, queue_size: int, *, cloud_online: bool = True):
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._telemetry_offline_events = []
+    proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
 
     calls = {"status": 0}
 
@@ -56,6 +59,7 @@ def test_switch_mode_tracks_changes():
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._telemetry_offline_events = []
 
     async def run():
         old_mode = await proxy._switch_mode(ProxyMode.ONLINE)
@@ -78,12 +82,12 @@ def test_hybrid_record_failure_triggers_offline():
     proxy._hybrid_fail_threshold = 2
 
     # First failure - should not switch yet
-    proxy._hybrid_record_failure()
+    proxy._hybrid_record_failure(reason="test", local_ack=False)
     assert proxy._hybrid_fail_count == 1
     assert proxy._hybrid_in_offline is False
 
     # Second failure - should switch to offline
-    proxy._hybrid_record_failure()
+    proxy._hybrid_record_failure(reason="test", local_ack=False)
     assert proxy._hybrid_fail_count == 2
     assert proxy._hybrid_in_offline is True
 
@@ -107,8 +111,8 @@ def test_hybrid_no_fallback_before_threshold():
     proxy._hybrid_fail_threshold = 3
 
     # Simulate 2 failures (below threshold)
-    proxy._hybrid_record_failure()  # fail_count = 1
-    proxy._hybrid_record_failure()  # fail_count = 2
+    proxy._hybrid_record_failure(reason="test", local_ack=False)  # fail_count = 1
+    proxy._hybrid_record_failure(reason="test", local_ack=False)  # fail_count = 2
     assert proxy._hybrid_fail_count == 2
     assert proxy._hybrid_in_offline is False  # Not in offline yet
 
@@ -123,9 +127,9 @@ def test_hybrid_fallback_after_threshold():
     proxy._hybrid_fail_threshold = 3
 
     # Simulate 3 failures (at threshold)
-    proxy._hybrid_record_failure()  # fail_count = 1
-    proxy._hybrid_record_failure()  # fail_count = 2
-    proxy._hybrid_record_failure()  # fail_count = 3 → in_offline = True
+    proxy._hybrid_record_failure(reason="test", local_ack=False)  # fail_count = 1
+    proxy._hybrid_record_failure(reason="test", local_ack=False)  # fail_count = 2
+    proxy._hybrid_record_failure(reason="test", local_ack=False)  # fail_count = 3 → in_offline = True
     assert proxy._hybrid_fail_count == 3
     assert proxy._hybrid_in_offline is True  # Now in offline
 

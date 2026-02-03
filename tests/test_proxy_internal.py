@@ -118,10 +118,14 @@ def _make_proxy(tmp_path):
     proxy.cloud_timeouts = 0
     proxy.cloud_errors = 0
     proxy.cloud_session_connected = False
+    proxy._cloud_connected_since_epoch = None
+    proxy._cloud_peer = None
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy.box_connected = False
     proxy.box_connections = 0
+    proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
     proxy._last_data_epoch = None
     proxy._last_data_iso = None
     proxy._isnew_polls = 0
@@ -179,6 +183,7 @@ def _make_proxy(tmp_path):
     proxy._control_log_path = str(tmp_path / "control.log")
     proxy._control_box_ready_s = 0.0
     proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
     proxy._hb_interval_s = 0.0
     proxy._last_hb_ts = 0.0
     proxy._force_offline_config = False
@@ -190,6 +195,16 @@ def _make_proxy(tmp_path):
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._telemetry_interval_s = 300
+    proxy._set_commands_buffer = []
+    proxy._telemetry_box_sessions = deque()
+    proxy._telemetry_cloud_sessions = deque()
+    proxy._telemetry_offline_events = deque()
+    proxy._telemetry_tbl_events = deque()
+    proxy._telemetry_error_context = deque()
+    proxy._telemetry_logs = deque()
+    proxy._telemetry_log_window_s = 60
+    proxy._telemetry_log_max = 1000
     return proxy
 
 
@@ -218,6 +233,44 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
 
     proxy._mode_value = 2
     proxy._mode_device_id = "DEV2"
+
+
+def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy._start_time = time.time() - 123
+    proxy._telemetry_box_sessions.append({"timestamp": "t1"})
+    proxy._telemetry_cloud_sessions.append({"timestamp": "t2"})
+    proxy._telemetry_offline_events.append({"timestamp": "t3"})
+    proxy._telemetry_tbl_events.append({"timestamp": "t4", "event_time": "t4"})
+    proxy._telemetry_error_context.append({"timestamp": "t5"})
+    proxy._telemetry_logs.append({
+        "_epoch": time.time(),
+        "timestamp": "2026-02-03 10:00:00",
+        "level": "INFO",
+        "message": "Test log",
+        "source": "test",
+    })
+
+    metrics = proxy._collect_telemetry_metrics()
+    window_metrics = metrics["window_metrics"]
+
+    assert metrics["interval_s"] == 300
+    assert "timestamp" in metrics
+    assert window_metrics["box_sessions"] == [{"timestamp": "t1"}]
+    assert window_metrics["cloud_sessions"] == [{"timestamp": "t2"}]
+    assert window_metrics["offline_events"] == [{"timestamp": "t3"}]
+    assert window_metrics["tbl_events"] == [{"timestamp": "t4", "event_time": "t4"}]
+    assert window_metrics["error_context"] == [{"timestamp": "t5"}]
+    assert len(window_metrics["logs"]) == 1
+
+    assert not proxy._telemetry_box_sessions
+    assert not proxy._telemetry_cloud_sessions
+    assert not proxy._telemetry_offline_events
+    assert not proxy._telemetry_tbl_events
+    assert not proxy._telemetry_error_context
+    assert not proxy._telemetry_logs
+
+    proxy._mode_value = 2
 
     async def run():
         await proxy._publish_mode_if_ready()
@@ -318,7 +371,7 @@ def test_note_cloud_failure_records_hybrid_failure(tmp_path):
     proxy._hybrid_fail_threshold = 3
 
     async def run():
-        await proxy._note_cloud_failure("test")
+        await proxy._note_cloud_failure(reason="test", local_ack=False)
 
     asyncio.run(run())
     # In HYBRID mode, failure count should increase
