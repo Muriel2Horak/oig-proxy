@@ -13,6 +13,11 @@ import pytest
 from models import SensorConfig
 import utils
 
+TEST_IP = "192.0.2.1"  # NOSONAR - reserved TEST-NET-1 address for tests
+TEST_PEER = f"{TEST_IP}:1234"
+TEST_DNS_1 = "192.0.2.53"  # NOSONAR - reserved TEST-NET-1 address for tests
+TEST_DNS_2 = "192.0.2.54"  # NOSONAR - reserved TEST-NET-1 address for tests
+
 
 def test_friendly_name():
     assert utils.friendly_name("battery_soc") == "Battery Soc"
@@ -138,16 +143,16 @@ def test_resolve_cloud_host_cached(monkeypatch):
 
     def fake_resolve(host: str):
         calls.append(host)
-        return "1.2.3.4", 60.0
+        return TEST_IP, 60.0
 
     monkeypatch.setattr(utils, "_PUBLIC_DNS_HOSTS", {"oigservis.cz"})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_CACHE", {})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_LAST_LOG", {})
     monkeypatch.setattr(utils, "_resolve_public_dns", fake_resolve)
 
-    assert utils.resolve_cloud_host("oigservis.cz") == "1.2.3.4"
-    assert utils.resolve_cloud_host("oigservis.cz") == "1.2.3.4"
-    assert utils.resolve_cloud_host("1.2.3.4") == "1.2.3.4"
+    assert utils.resolve_cloud_host("oigservis.cz") == TEST_IP
+    assert utils.resolve_cloud_host("oigservis.cz") == TEST_IP
+    assert utils.resolve_cloud_host(TEST_IP) == TEST_IP
     assert calls == ["oigservis.cz"]
 
 
@@ -234,7 +239,7 @@ def test_capture_payload_creates_queue(tmp_path, monkeypatch):
         parsed={"MODE": 1},
         direction="proxy_to_cloud",
         conn_id=1,
-        peer="1.2.3.4:1234",
+        peer=TEST_PEER,
         length=15,
     )
 
@@ -245,10 +250,10 @@ def test_capture_payload_creates_queue(tmp_path, monkeypatch):
 
 
 def test_public_dns_nameservers_env(monkeypatch):
-    monkeypatch.setenv("CLOUD_PUBLIC_DNS", "8.8.8.8, bad, 1.1.1.1")
+    monkeypatch.setenv("CLOUD_PUBLIC_DNS", f"{TEST_DNS_1}, bad, {TEST_DNS_2}")
     servers = utils._public_dns_nameservers()
-    assert "8.8.8.8" in servers
-    assert "1.1.1.1" in servers
+    assert TEST_DNS_1 in servers
+    assert TEST_DNS_2 in servers
     assert "bad" not in servers
 
 
@@ -262,7 +267,7 @@ def test_public_dns_cache_expires(monkeypatch):
     monkeypatch.setattr(
         utils, "_PUBLIC_DNS_CACHE", {
             "host": (
-                "1.2.3.4", time.time() - 1)})
+                TEST_IP, time.time() - 1)})
     assert utils._public_dns_cache_get("host") is None
     assert utils._PUBLIC_DNS_CACHE == {}
 
@@ -277,7 +282,7 @@ def test_resolve_public_dns_without_module(monkeypatch):
 def test_resolve_public_dns_with_dummy(monkeypatch):
     class DummyAnswer(list):
         def __init__(self):
-            super().__init__(["1.2.3.4"])
+            super().__init__([TEST_IP])
             self.rrset = type("R", (), {"ttl": 60})()
 
     class DummyResolver:
@@ -292,9 +297,9 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
             Resolver = DummyResolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
-    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: ["8.8.8.8"])
+    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
     ip, ttl = utils._resolve_public_dns("example.com")
-    assert ip == "1.2.3.4"
+    assert ip == TEST_IP
     assert ttl == pytest.approx(60.0)
 
 
@@ -311,7 +316,7 @@ def test_resolve_public_dns_error(monkeypatch):
             Resolver = DummyResolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
-    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: ["8.8.8.8"])
+    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
     ip, ttl = utils._resolve_public_dns("example.com")
     assert ip is None
     assert ttl == utils._PUBLIC_DNS_TTL_DEFAULT_S
@@ -455,7 +460,7 @@ def test_capture_payload_queue_full(monkeypatch, tmp_path):
         parsed={"MODE": 1},
         direction="proxy_to_cloud",
         conn_id=1,
-        peer="1.2.3.4:1234",
+        peer=TEST_PEER,
         length=15,
     )
 
