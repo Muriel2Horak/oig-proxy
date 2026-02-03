@@ -69,6 +69,9 @@ FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 # ============================================================================
 # ONLINE = transparent forward (default), HYBRID = smart fallback, OFFLINE = always local
 PROXY_MODE = os.getenv("PROXY_MODE", "online").lower()
+if PROXY_MODE == "online":
+    PROXY_MODE = "hybrid"  # Force upgrade: treat legacy 'online' as 'hybrid'
+
 # For HYBRID mode: seconds to wait before retry online
 HYBRID_RETRY_INTERVAL = _get_int_env("HYBRID_RETRY_INTERVAL", 300)
 # For HYBRID mode: consecutive failures before switching to offline (1 = immediate)
