@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 
 import mqtt_publisher
@@ -105,7 +109,11 @@ def test_connect_timeout_and_exception_paths(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTT_AVAILABLE", True)
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
 
-    monkeypatch.setattr(mqtt_publisher, "mqtt", DummyMQTTTimeout, raising=False)
+    monkeypatch.setattr(
+        mqtt_publisher,
+        "mqtt",
+        DummyMQTTTimeout,
+        raising=False)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
     assert publisher.connect(timeout=0.0) is False
 
@@ -206,7 +214,11 @@ def test_send_discovery_skips_when_disconnected(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
     cfg = SensorConfig(name="Mode", unit="")
-    publisher.send_discovery("MODE", cfg, table="tbl_box_prms", device_id="DEV1")
+    publisher.send_discovery(
+        "MODE",
+        cfg,
+        table="tbl_box_prms",
+        device_id="DEV1")
     assert publisher.discovery_sent == set()
 
 
@@ -216,7 +228,11 @@ def test_send_discovery_connected(monkeypatch):
     publisher.client = DummyClient()
     publisher.connected = True
     cfg = SensorConfig(name="Mode", unit="")
-    publisher.send_discovery("MODE", cfg, table="tbl_box_prms", device_id="DEV1")
+    publisher.send_discovery(
+        "MODE",
+        cfg,
+        table="tbl_box_prms",
+        device_id="DEV1")
     assert "MODE" in publisher.discovery_sent
     assert publisher.client.published
 
@@ -250,8 +266,11 @@ def test_on_message_handler_exception(monkeypatch):
 
     publisher._message_handlers["t"] = (1, bad_handler)
 
-    msg = type("Msg", (), {"topic": "t", "payload": b"x", "qos": 1, "retain": False})()
+    msg = type(
+        "Msg", (), {
+            "topic": "t", "payload": b"x", "qos": 1, "retain": False})()
     publisher._on_message(None, None, msg)
+
 
 def test_on_connect_error_sets_status(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)

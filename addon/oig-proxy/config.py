@@ -60,18 +60,23 @@ MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
 PROXY_STATUS_ATTRS_TOPIC = os.getenv(
     "PROXY_STATUS_ATTRS_TOPIC", "oig_local/oig_proxy/proxy_status/attrs"
 )
-LOCAL_GETACTUAL_ENABLED = os.getenv("LOCAL_GETACTUAL_ENABLED", "false").lower() == "true"
+LOCAL_GETACTUAL_ENABLED = os.getenv(
+    "LOCAL_GETACTUAL_ENABLED",
+    "false").lower() == "true"
 LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 
 # ============================================================================
 # Proxy Mode Configuration
 # ============================================================================
-# ONLINE = transparent forward (default), HYBRID = smart fallback, OFFLINE = always local
+# ONLINE = transparent forward (default; explicit online is respected),
+# HYBRID = smart fallback, OFFLINE = always local
 PROXY_MODE = os.getenv("PROXY_MODE", "online").lower()
+
 # For HYBRID mode: seconds to wait before retry online
 HYBRID_RETRY_INTERVAL = _get_int_env("HYBRID_RETRY_INTERVAL", 300)
-# For HYBRID mode: consecutive failures before switching to offline (1 = immediate)
+# For HYBRID mode: consecutive failures before switching to offline (1 =
+# immediate)
 HYBRID_FAIL_THRESHOLD = _get_int_env("HYBRID_FAIL_THRESHOLD", 1)
 # For HYBRID mode: connect timeout when probing cloud
 HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
@@ -105,7 +110,9 @@ CONTROL_API_PORT = _get_int_env("CONTROL_API_PORT", 0)
 # ============================================================================
 # Control over MQTT (production)
 # ============================================================================
-CONTROL_MQTT_ENABLED = os.getenv("CONTROL_MQTT_ENABLED", "false").lower() == "true"
+CONTROL_MQTT_ENABLED = os.getenv(
+    "CONTROL_MQTT_ENABLED",
+    "false").lower() == "true"
 CONTROL_MQTT_SET_TOPIC = os.getenv(
     "CONTROL_MQTT_SET_TOPIC", "oig_local/oig_proxy/control/set"
 )
@@ -116,12 +123,20 @@ CONTROL_MQTT_STATUS_PREFIX = os.getenv(
     "CONTROL_MQTT_STATUS_PREFIX", "oig_local/oig_proxy/control/status"
 )
 CONTROL_MQTT_QOS = _get_int_env("CONTROL_MQTT_QOS", 1)
-CONTROL_MQTT_RETAIN = os.getenv("CONTROL_MQTT_RETAIN", "false").lower() == "true"
-CONTROL_MQTT_STATUS_RETAIN = os.getenv("CONTROL_MQTT_STATUS_RETAIN", "true").lower() == "true"
-CONTROL_MQTT_BOX_READY_SECONDS = _get_int_env("CONTROL_MQTT_BOX_READY_SECONDS", 10)
-CONTROL_MQTT_ACK_TIMEOUT_S = float(os.getenv("CONTROL_MQTT_ACK_TIMEOUT_S", "30"))
-CONTROL_MQTT_APPLIED_TIMEOUT_S = float(os.getenv("CONTROL_MQTT_APPLIED_TIMEOUT_S", "120"))
-CONTROL_MQTT_MODE_QUIET_SECONDS = float(os.getenv("CONTROL_MQTT_MODE_QUIET_SECONDS", "20"))
+CONTROL_MQTT_RETAIN = os.getenv(
+    "CONTROL_MQTT_RETAIN",
+    "false").lower() == "true"
+CONTROL_MQTT_STATUS_RETAIN = os.getenv(
+    "CONTROL_MQTT_STATUS_RETAIN",
+    "true").lower() == "true"
+CONTROL_MQTT_BOX_READY_SECONDS = _get_int_env(
+    "CONTROL_MQTT_BOX_READY_SECONDS", 10)
+CONTROL_MQTT_ACK_TIMEOUT_S = float(
+    os.getenv("CONTROL_MQTT_ACK_TIMEOUT_S", "30"))
+CONTROL_MQTT_APPLIED_TIMEOUT_S = float(
+    os.getenv("CONTROL_MQTT_APPLIED_TIMEOUT_S", "120"))
+CONTROL_MQTT_MODE_QUIET_SECONDS = float(
+    os.getenv("CONTROL_MQTT_MODE_QUIET_SECONDS", "20"))
 
 # Default whitelist (deny-by-default for everything else)
 CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
@@ -152,7 +167,9 @@ MQTT_QUEUE_DB_PATH = os.path.join(DATA_DIR, "mqtt_queue.db")
 CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
 
 # Control MQTT logging
-CONTROL_MQTT_LOG_ENABLED = os.getenv("CONTROL_MQTT_LOG_ENABLED", "false").lower() == "true"
+CONTROL_MQTT_LOG_ENABLED = os.getenv(
+    "CONTROL_MQTT_LOG_ENABLED",
+    "false").lower() == "true"
 CONTROL_MQTT_LOG_PATH = os.getenv(
     "CONTROL_MQTT_LOG_PATH", os.path.join(DATA_DIR, "control_results.jsonl")
 )
@@ -175,7 +192,9 @@ MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
 # Telemetry Configuration (MQTT to muriel-cz.cz)
 # ============================================================================
 TELEMETRY_ENABLED = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
-TELEMETRY_MQTT_BROKER = os.getenv("TELEMETRY_MQTT_BROKER", "telemetry.muriel-cz.cz:1883")
+TELEMETRY_MQTT_BROKER = os.getenv(
+    "TELEMETRY_MQTT_BROKER",
+    "telemetry.muriel-cz.cz:1883")
 TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
 
 # ============================================================================

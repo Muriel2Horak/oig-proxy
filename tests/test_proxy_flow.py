@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 
 import proxy as proxy_module
@@ -72,7 +76,6 @@ class DummyMQTT(DummyMQTTMixin):
         return True
 
 
-
 class DummyParser:
     def __init__(self, parsed):
         self._parsed = parsed
@@ -99,7 +102,13 @@ def _make_proxy(tmp_path):
         "acks_cloud": 0,
         "mode_changes": 0,
     }
-    proxy.cloud_health = type("H", (), {"is_online": True, "fail_threshold": 1, "consecutive_successes": 0, "consecutive_failures": 0, "last_check_time": 0.0})()
+    proxy.cloud_health = type("H",
+                              (),
+                              {"is_online": True,
+                               "fail_threshold": 1,
+                               "consecutive_successes": 0,
+                               "consecutive_failures": 0,
+                               "last_check_time": 0.0})()
     proxy.cloud_queue = DummyCloudQueue()
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser({})
@@ -158,7 +167,8 @@ def _make_proxy(tmp_path):
 
 def test_extract_and_autodetect_device_id(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
-    proxy.parser = DummyParser({"_device_id": "DEV2", "_table": "tbl_box_prms", "MODE": 1})
+    proxy.parser = DummyParser(
+        {"_device_id": "DEV2", "_table": "tbl_box_prms", "MODE": 1})
     called = []
 
     async def fake_handle(*_args, **_kwargs):
@@ -177,7 +187,11 @@ def test_extract_and_autodetect_device_id(tmp_path, monkeypatch):
     proxy._control_observe_box_frame = fake_observe
     proxy._maybe_process_mode = fake_mode
     proxy._control_maybe_start_next = fake_start
-    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *_args,
+        **_kwargs: None)
 
     async def run():
         device_id, table = await proxy._process_box_frame_common(
@@ -197,7 +211,11 @@ def test_extract_and_autodetect_device_id(tmp_path, monkeypatch):
 def test_process_box_frame_common_infers_from_frame(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     proxy.parser = DummyParser({})
-    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *_args,
+        **_kwargs: None)
 
     async def run():
         device_id, table = await proxy._process_box_frame_common(
@@ -311,7 +329,11 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
         return DummyReader(b"<ACK/>"), cloud_writer
 
     proxy._ensure_cloud_connected = fake_ensure
-    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *_args,
+        **_kwargs: None)
 
     async def run_success():
         return await proxy._forward_frame_online(
@@ -364,7 +386,13 @@ def test_control_observe_box_frame_setting(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append((status, detail))
 
     async def fake_finish():

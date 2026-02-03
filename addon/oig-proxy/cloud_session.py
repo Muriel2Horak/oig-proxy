@@ -35,7 +35,8 @@ class CloudStats:
     timeouts: int = 0
 
 
-class CloudSessionManager:  # pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments
+# pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments
+class CloudSessionManager:
     """Udržuje jedno TCP spojení na cloud a umožňuje synchronní send+recv."""
 
     def __init__(
@@ -102,7 +103,8 @@ class CloudSessionManager:  # pylint: disable=too-many-instance-attributes,too-m
             elif buf[frame_end:frame_end + 1] == b"\n":
                 frame_end += 1
             elif buf[frame_end:frame_end + 1] == b"\r":
-                # Pokud máme jen '\r' bez dalšího bajtu, počkáme (může být rozseknuté CRLF)
+                # Pokud máme jen '\r' bez dalšího bajtu, počkáme (může být
+                # rozseknuté CRLF)
                 if len(buf) < frame_end + 2:
                     return None
                 frame_end += 1
@@ -180,7 +182,8 @@ class CloudSessionManager:  # pylint: disable=too-many-instance-attributes,too-m
                 self.stats.timeouts += 1
                 self.stats.errors += 1
                 await self._close_locked()
-                self._backoff_s = min(self.max_reconnect_s, self._backoff_s * 2.0)
+                self._backoff_s = min(
+                    self.max_reconnect_s, self._backoff_s * 2.0)
                 now = time.monotonic()
                 if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning(
@@ -192,7 +195,8 @@ class CloudSessionManager:  # pylint: disable=too-many-instance-attributes,too-m
             except (OSError, ConnectionError, RuntimeError) as exc:
                 self.stats.errors += 1
                 await self._close_locked()
-                self._backoff_s = min(self.max_reconnect_s, self._backoff_s * 2.0)
+                self._backoff_s = min(
+                    self.max_reconnect_s, self._backoff_s * 2.0)
                 now = time.monotonic()
                 if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning(

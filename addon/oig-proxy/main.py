@@ -24,7 +24,13 @@ from proxy import OIGProxy
 def _sanitize_log_value(value: object) -> object:
     """Očistí logované hodnoty od řídicích znaků a zachová strukturu."""
     if isinstance(value, str):
-        return value.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+        return value.replace(
+            "\r",
+            "\\r").replace(
+            "\n",
+            "\\n").replace(
+            "\t",
+            "\\t")
     if isinstance(value, dict):
         return {key: _sanitize_log_value(val) for key, val in value.items()}
     if isinstance(value, (list, tuple)):
@@ -34,15 +40,17 @@ def _sanitize_log_value(value: object) -> object:
 
 class LogSanitizerFilter(logging.Filter):  # pylint: disable=too-few-public-methods
     """Sanitizuje log recordy před zapsáním do logu."""
+
     def filter(self, record: logging.LogRecord) -> bool:
         record.msg = _sanitize_log_value(record.msg)
         if record.args:
             if isinstance(record.args, dict):
                 record.args = {
-                    key: _sanitize_log_value(val) for key, val in record.args.items()
-                }
+                    key: _sanitize_log_value(val) for key,
+                    val in record.args.items()}
             else:
-                record.args = tuple(_sanitize_log_value(arg) for arg in record.args)
+                record.args = tuple(_sanitize_log_value(arg)
+                                    for arg in record.args)
         return True
 
 

@@ -26,7 +26,7 @@ try:
     MQTT_AVAILABLE = True
 except ImportError:
     MQTT_AVAILABLE = False
-    mqtt = None
+    mqtt = None  # type: ignore[assignment]
 
 BUFFER_MAX_MESSAGES = 1000
 BUFFER_MAX_AGE_HOURS = 24
@@ -54,7 +54,8 @@ class TelemetryBuffer:
         """Initialize SQLite database."""
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            self._conn = sqlite3.connect(
+                str(self._db_path), check_same_thread=False)
             self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,10 +65,12 @@ class TelemetryBuffer:
                     retries INTEGER DEFAULT 0
                 )
             """)
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)")
             self._conn.commit()
             self._cleanup()
-            count = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM messages").fetchone()[0]
             if count > 0:
                 logger.debug("📡 Telemetry buffer: %d pending messages", count)
         except Exception as e:
@@ -80,7 +83,8 @@ class TelemetryBuffer:
             return
         try:
             cutoff = time.time() - (BUFFER_MAX_AGE_HOURS * 3600)
-            self._conn.execute("DELETE FROM messages WHERE timestamp < ?", (cutoff,))
+            self._conn.execute(
+                "DELETE FROM messages WHERE timestamp < ?", (cutoff,))
             self._conn.execute("""
                 DELETE FROM messages WHERE id NOT IN (
                     SELECT id FROM messages ORDER BY timestamp DESC LIMIT ?
@@ -101,7 +105,8 @@ class TelemetryBuffer:
                 (topic, payload_json, time.time())
             )
             self._conn.commit()
-            count = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM messages").fetchone()[0]
             if count > BUFFER_MAX_MESSAGES:
                 self._cleanup()
             return True
@@ -118,12 +123,17 @@ class TelemetryBuffer:
                 (limit,)
             )
             results = []
+            deleted = False
             for row in cursor:
                 try:
                     payload = json.loads(row[2])
                     results.append((row[0], row[1], payload))
                 except json.JSONDecodeError:
-                    self._conn.execute("DELETE FROM messages WHERE id = ?", (row[0],))
+                    self._conn.execute(
+                        "DELETE FROM messages WHERE id = ?", (row[0],))
+                    deleted = True
+            if deleted:
+                self._conn.commit()
             return results
         except Exception:
             return []
@@ -132,7 +142,8 @@ class TelemetryBuffer:
         """Remove message from buffer after successful send."""
         if self._conn:
             try:
-                self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+                self._conn.execute(
+                    "DELETE FROM messages WHERE id = ?", (message_id,))
                 self._conn.commit()
             except Exception:  # nosec B110 - cleanup, failure is acceptable
                 pass
@@ -142,7 +153,8 @@ class TelemetryBuffer:
         if not self._conn:
             return 0
         try:
-            return self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM messages").fetchone()[0]
         except Exception:
             return 0
 
@@ -168,17 +180,21 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         self.device_id = device_id
         self.version = version
         self.instance_hash = _get_instance_hash()
-        self._enabled = config.TELEMETRY_ENABLED and bool(device_id) and MQTT_AVAILABLE
+        self._enabled = config.TELEMETRY_ENABLED and bool(
+            device_id) and MQTT_AVAILABLE
         self._consecutive_errors = 0
         self._client: Optional[Any] = None
         self._connected = False
         self._lock = asyncio.Lock()
         self._buffer = TelemetryBuffer() if self._enabled else None
         self._last_buffer_flush = 0.0
-        self._mqtt_host, self._mqtt_port = self._parse_mqtt_url(config.TELEMETRY_MQTT_BROKER)
+        self._mqtt_host, self._mqtt_port = self._parse_mqtt_url(
+            config.TELEMETRY_MQTT_BROKER)
 
-        logger.warning("📡 TelemetryClient init: enabled=%s (TELEMETRY_ENABLED=%s, device_id=%s, MQTT_AVAILABLE=%s)",
-                      self._enabled, config.TELEMETRY_ENABLED, device_id, MQTT_AVAILABLE)
+        logger.info(
+            "📡 TelemetryClient init: enabled=%s (device_id=%s, MQTT=%s)",
+            self._enabled, device_id, MQTT_AVAILABLE
+        )
         if self._enabled:
             logger.debug("📡 Telemetry enabled")
 
@@ -200,8 +216,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             return False
         try:
             client_id = f"oig-proxy-{self.device_id}-{self.instance_hash[:8]}"
-            self._client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311,
-                                       callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            self._client = mqtt.Client(
+                client_id=client_id,
+                protocol=mqtt.MQTTv311,
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 
             def on_connect(_client, _userdata, _flags, rc, _properties=None):
                 if rc == 0:
@@ -209,13 +227,21 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                     self._consecutive_errors = 0
                     logger.debug("📡 Telemetry MQTT connected")
 
-            def on_disconnect(_client, _userdata, _disconnect_flags, _rc, _properties=None):
+            def on_disconnect(
+                    _client,
+                    _userdata,
+                    _disconnect_flags,
+                    _rc,
+                    _properties=None):
                 self._connected = False
                 logger.debug("📡 Telemetry MQTT disconnected")
 
             self._client.on_connect = on_connect
             self._client.on_disconnect = on_disconnect
-            self._client.connect(self._mqtt_host, self._mqtt_port, keepalive=60)
+            self._client.connect(
+                self._mqtt_host,
+                self._mqtt_port,
+                keepalive=60)
             self._client.loop_start()
 
             for _ in range(50):
@@ -238,6 +264,8 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             return False
         try:
             message = json.dumps(payload, ensure_ascii=False)
+            if not self._client:
+                return False
             result = self._client.publish(topic, message, qos=1)
             return result.rc == 0
         except Exception:
@@ -252,6 +280,8 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         for msg_id, topic, payload in pending:
             try:
                 message = json.dumps(payload, ensure_ascii=False)
+                if not self._client:
+                    break
                 result = self._client.publish(topic, message, qos=1)
                 if result.rc == 0:
                     self._buffer.remove(msg_id)
@@ -271,10 +301,13 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         If MQTT unavailable, stores in buffer for later retry.
         Returns True on success or successful buffering.
         """
-        logger.warning("📡 send_telemetry called: enabled=%s, device_id=%s, metrics=%s", 
-                      self._enabled, self.device_id, list(metrics.keys()))
+        logger.debug(
+            "📡 send_telemetry: enabled=%s, device_id=%s, metrics=%s",
+            self._enabled, self.device_id, list(metrics.keys())
+        )
         if not self._enabled:
-            logger.warning("📡 send_telemetry: telemetry is DISABLED, returning False")
+            logger.info(
+                "📡 send_telemetry: telemetry is DISABLED, returning False")
             return False
         payload = {
             "device_id": self.device_id,
@@ -290,8 +323,15 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             success = await loop.run_in_executor(None, self._publish_sync, topic, payload)
             if success:
                 self._consecutive_errors = 0
-                logger.info("📡 Telemetry sent: device=%s mode=%s uptime=%ss",
-                            self.device_id, metrics.get("mode", "-"), metrics.get("uptime_s", "-"))
+                logger.info(
+                    "📡 Telemetry sent: device=%s mode=%s uptime=%ss",
+                    self.device_id,
+                    metrics.get(
+                        "mode",
+                        "-"),
+                    metrics.get(
+                        "uptime_s",
+                        "-"))
                 now = time.time()
                 if self._buffer and now - self._last_buffer_flush > 60.0:
                     self._last_buffer_flush = now
@@ -301,15 +341,20 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             self._consecutive_errors += 1
             if self._buffer:
                 if self._buffer.store(topic, payload):
-                    logger.info("📡 Telemetry buffered (MQTT unavailable, errors=%d)", 
-                               self._consecutive_errors)
+                    logger.info(
+                        "📡 Telemetry buffered (MQTT unavailable, errors=%d)",
+                        self._consecutive_errors
+                    )
                     return True
                 logger.warning("📡 Telemetry buffer failed")
             else:
                 logger.warning("📡 Telemetry send failed (no buffer available)")
             return False
 
-    async def send_event(self, event_type: str, details: Optional[dict] = None) -> bool:
+    async def send_event(
+            self,
+            event_type: str,
+            details: Optional[dict] = None) -> bool:
         """
         Send one-time event via MQTT.
 
@@ -335,19 +380,22 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             # Failed to send - buffer for later
             if self._buffer:
                 if self._buffer.store(topic, payload):
-                    logger.debug("📡 Event buffered: %s (MQTT unavailable)", event_type)
+                    logger.debug(
+                        "📡 Event buffered: %s (MQTT unavailable)", event_type)
                     return True
             return False
 
     # Convenience methods for common error events
 
-    async def event_error_cloud_timeout(self, cloud_host: str, timeout_s: float) -> bool:
+    async def event_error_cloud_timeout(
+            self, cloud_host: str, timeout_s: float) -> bool:
         """Send cloud timeout error event."""
         return await self.send_event("error_cloud_timeout", {
             "cloud_host": cloud_host, "timeout_s": timeout_s
         })
 
-    async def event_error_cloud_disconnect(self, reason: str = "unknown") -> bool:
+    async def event_error_cloud_disconnect(
+            self, reason: str = "unknown") -> bool:
         """Send cloud disconnect error event."""
         return await self.send_event("error_cloud_disconnect", {"reason": reason})
 

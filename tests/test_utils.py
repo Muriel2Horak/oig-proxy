@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import json
 import queue
 import sqlite3
@@ -8,6 +12,11 @@ import pytest
 
 from models import SensorConfig
 import utils
+
+TEST_IP = "192.0.2.1"  # NOSONAR - reserved TEST-NET-1 address for tests
+TEST_PEER = f"{TEST_IP}:1234"
+TEST_DNS_1 = "192.0.2.53"  # NOSONAR - reserved TEST-NET-1 address for tests
+TEST_DNS_2 = "192.0.2.54"  # NOSONAR - reserved TEST-NET-1 address for tests
 
 
 def test_friendly_name():
@@ -30,7 +39,8 @@ def test_mode_state_out_of_range(tmp_path, monkeypatch):
     path = tmp_path / "mode.json"
     monkeypatch.setattr(utils, "MODE_STATE_PATH", str(path))
 
-    path.write_text(json.dumps({"mode": 99, "device_id": "DEV2"}), encoding="utf-8")
+    path.write_text(json.dumps(
+        {"mode": 99, "device_id": "DEV2"}), encoding="utf-8")
     mode, device_id = utils.load_mode_state()
 
     assert mode is None
@@ -41,7 +51,8 @@ def test_mode_state_invalid_value(tmp_path, monkeypatch):
     path = tmp_path / "mode.json"
     monkeypatch.setattr(utils, "MODE_STATE_PATH", str(path))
 
-    path.write_text(json.dumps({"mode": "bad", "device_id": "DEV3"}), encoding="utf-8")
+    path.write_text(json.dumps(
+        {"mode": "bad", "device_id": "DEV3"}), encoding="utf-8")
     mode, device_id = utils.load_mode_state()
 
     assert mode is None
@@ -132,16 +143,16 @@ def test_resolve_cloud_host_cached(monkeypatch):
 
     def fake_resolve(host: str):
         calls.append(host)
-        return "1.2.3.4", 60.0
+        return TEST_IP, 60.0
 
     monkeypatch.setattr(utils, "_PUBLIC_DNS_HOSTS", {"oigservis.cz"})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_CACHE", {})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_LAST_LOG", {})
     monkeypatch.setattr(utils, "_resolve_public_dns", fake_resolve)
 
-    assert utils.resolve_cloud_host("oigservis.cz") == "1.2.3.4"
-    assert utils.resolve_cloud_host("oigservis.cz") == "1.2.3.4"
-    assert utils.resolve_cloud_host("1.2.3.4") == "1.2.3.4"
+    assert utils.resolve_cloud_host("oigservis.cz") == TEST_IP
+    assert utils.resolve_cloud_host("oigservis.cz") == TEST_IP
+    assert utils.resolve_cloud_host(TEST_IP) == TEST_IP
     assert calls == ["oigservis.cz"]
 
 
@@ -149,7 +160,12 @@ def test_resolve_cloud_host_failure(monkeypatch):
     monkeypatch.setattr(utils, "_PUBLIC_DNS_HOSTS", {"oigservis.cz"})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_CACHE", {})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_LAST_LOG", {})
-    monkeypatch.setattr(utils, "_resolve_public_dns", lambda host: (None, 30.0))
+    monkeypatch.setattr(
+        utils,
+        "_resolve_public_dns",
+        lambda host: (
+            None,
+            30.0))
 
     with pytest.raises(RuntimeError):
         utils.resolve_cloud_host("oigservis.cz")
@@ -223,7 +239,7 @@ def test_capture_payload_creates_queue(tmp_path, monkeypatch):
         parsed={"MODE": 1},
         direction="proxy_to_cloud",
         conn_id=1,
-        peer="1.2.3.4:1234",
+        peer=TEST_PEER,
         length=15,
     )
 
@@ -234,10 +250,10 @@ def test_capture_payload_creates_queue(tmp_path, monkeypatch):
 
 
 def test_public_dns_nameservers_env(monkeypatch):
-    monkeypatch.setenv("CLOUD_PUBLIC_DNS", "8.8.8.8, bad, 1.1.1.1")
+    monkeypatch.setenv("CLOUD_PUBLIC_DNS", f"{TEST_DNS_1}, bad, {TEST_DNS_2}")
     servers = utils._public_dns_nameservers()
-    assert "8.8.8.8" in servers
-    assert "1.1.1.1" in servers
+    assert TEST_DNS_1 in servers
+    assert TEST_DNS_2 in servers
     assert "bad" not in servers
 
 
@@ -248,7 +264,10 @@ def test_public_dns_nameservers_default(monkeypatch):
 
 
 def test_public_dns_cache_expires(monkeypatch):
-    monkeypatch.setattr(utils, "_PUBLIC_DNS_CACHE", {"host": ("1.2.3.4", time.time() - 1)})
+    monkeypatch.setattr(
+        utils, "_PUBLIC_DNS_CACHE", {
+            "host": (
+                TEST_IP, time.time() - 1)})
     assert utils._public_dns_cache_get("host") is None
     assert utils._PUBLIC_DNS_CACHE == {}
 
@@ -263,7 +282,7 @@ def test_resolve_public_dns_without_module(monkeypatch):
 def test_resolve_public_dns_with_dummy(monkeypatch):
     class DummyAnswer(list):
         def __init__(self):
-            super().__init__(["1.2.3.4"])
+            super().__init__([TEST_IP])
             self.rrset = type("R", (), {"ttl": 60})()
 
     class DummyResolver:
@@ -278,9 +297,9 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
             Resolver = DummyResolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
-    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: ["8.8.8.8"])
+    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
     ip, ttl = utils._resolve_public_dns("example.com")
-    assert ip == "1.2.3.4"
+    assert ip == TEST_IP
     assert ttl == pytest.approx(60.0)
 
 
@@ -297,7 +316,7 @@ def test_resolve_public_dns_error(monkeypatch):
             Resolver = DummyResolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
-    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: ["8.8.8.8"])
+    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
     ip, ttl = utils._resolve_public_dns("example.com")
     assert ip is None
     assert ttl == utils._PUBLIC_DNS_TTL_DEFAULT_S
@@ -313,7 +332,9 @@ def test_resolve_cloud_host_empty():
 
 
 def test_load_prms_state_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(utils, "PRMS_STATE_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(
+        utils, "PRMS_STATE_PATH", str(
+            tmp_path / "missing.json"))
     tables, device_id = utils.load_prms_state()
     assert tables == {}
     assert device_id is None
@@ -439,7 +460,7 @@ def test_capture_payload_queue_full(monkeypatch, tmp_path):
         parsed={"MODE": 1},
         direction="proxy_to_cloud",
         conn_id=1,
-        peer="1.2.3.4:1234",
+        peer=TEST_PEER,
         length=15,
     )
 

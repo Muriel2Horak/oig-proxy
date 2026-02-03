@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 import json
 import time
@@ -9,7 +13,10 @@ from models import ProxyMode, SensorConfig
 
 
 class DummyCloudHealth:
-    def __init__(self, is_online: bool = True, fail_threshold: int = 2) -> None:
+    def __init__(
+            self,
+            is_online: bool = True,
+            fail_threshold: int = 2) -> None:
         self.is_online = is_online
         self.fail_threshold = fail_threshold
         self.consecutive_successes = 0
@@ -65,7 +72,13 @@ class DummyMQTT:
     async def publish_data(self, payload: dict):
         self.published_data.append(payload)
 
-    async def publish_raw(self, *, topic: str, payload: str, qos: int, retain: bool):
+    async def publish_raw(
+            self,
+            *,
+            topic: str,
+            payload: str,
+            qos: int,
+            retain: bool):
         self.published_raw.append((topic, payload, qos, retain))
 
     def _state_topic(self, device_id: str, table: str) -> str:
@@ -79,7 +92,8 @@ class DummyMQTT:
         return self._state_topic(device_id, table)
 
     def map_data_for_publish(self, data, *, table, target_device_id):
-        return self._map_data_for_publish(data, table=table, target_device_id=target_device_id)
+        return self._map_data_for_publish(
+            data, table=table, target_device_id=target_device_id)
 
     def get_cached_payload(self, topic: str):
         return self._last_payload_by_topic.get(topic)
@@ -118,10 +132,14 @@ def _make_proxy(tmp_path):
     proxy.cloud_timeouts = 0
     proxy.cloud_errors = 0
     proxy.cloud_session_connected = False
+    proxy._cloud_connected_since_epoch = None
+    proxy._cloud_peer = None
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy.box_connected = False
     proxy.box_connections = 0
+    proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
     proxy._last_data_epoch = None
     proxy._last_data_iso = None
     proxy._isnew_polls = 0
@@ -179,6 +197,7 @@ def _make_proxy(tmp_path):
     proxy._control_log_path = str(tmp_path / "control.log")
     proxy._control_box_ready_s = 0.0
     proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
     proxy._hb_interval_s = 0.0
     proxy._last_hb_ts = 0.0
     proxy._force_offline_config = False
@@ -190,6 +209,16 @@ def _make_proxy(tmp_path):
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._telemetry_interval_s = 300
+    proxy._set_commands_buffer = []
+    proxy._telemetry_box_sessions = deque()
+    proxy._telemetry_cloud_sessions = deque()
+    proxy._telemetry_offline_events = deque()
+    proxy._telemetry_tbl_events = deque()
+    proxy._telemetry_error_context = deque()
+    proxy._telemetry_logs = deque()
+    proxy._telemetry_log_window_s = 60
+    proxy._telemetry_log_max = 1000
     return proxy
 
 
@@ -201,7 +230,10 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     proxy._last_data_iso = "2025-01-01T00:00:00Z"
     proxy._isnew_polls = 1
     proxy._isnew_last_poll_iso = "2025-01-01T00:00:01Z"
-    proxy._control_inflight = {"request_key": "k1", "tbl_name": "tbl", "tbl_item": "MODE"}
+    proxy._control_inflight = {
+        "request_key": "k1",
+        "tbl_name": "tbl",
+        "tbl_item": "MODE"}
     proxy._control_queue = deque([{"request_key": "k2"}])
     proxy._control_last_result = {"status": "ok"}
 
@@ -219,6 +251,45 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     proxy._mode_value = 2
     proxy._mode_device_id = "DEV2"
 
+
+def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy._start_time = time.time() - 123
+    proxy._telemetry_box_sessions.append({"timestamp": "t1"})
+    proxy._telemetry_cloud_sessions.append({"timestamp": "t2"})
+    proxy._telemetry_offline_events.append({"timestamp": "t3"})
+    proxy._telemetry_tbl_events.append({"timestamp": "t4", "event_time": "t4"})
+    proxy._telemetry_error_context.append({"timestamp": "t5"})
+    proxy._telemetry_logs.append({
+        "_epoch": time.time(),
+        "timestamp": "2026-02-03 10:00:00",
+        "level": "INFO",
+        "message": "Test log",
+        "source": "test",
+    })
+
+    metrics = proxy._collect_telemetry_metrics()
+    window_metrics = metrics["window_metrics"]
+
+    assert metrics["interval_s"] == 300
+    assert "timestamp" in metrics
+    assert window_metrics["box_sessions"] == [{"timestamp": "t1"}]
+    assert window_metrics["cloud_sessions"] == [{"timestamp": "t2"}]
+    assert window_metrics["offline_events"] == [{"timestamp": "t3"}]
+    assert window_metrics["tbl_events"] == [
+        {"timestamp": "t4", "event_time": "t4"}]
+    assert window_metrics["error_context"] == [{"timestamp": "t5"}]
+    assert len(window_metrics["logs"]) == 1
+
+    assert not proxy._telemetry_box_sessions
+    assert not proxy._telemetry_cloud_sessions
+    assert not proxy._telemetry_offline_events
+    assert not proxy._telemetry_tbl_events
+    assert not proxy._telemetry_error_context
+    assert not proxy._telemetry_logs
+
+    proxy._mode_value = 2
+
     async def run():
         await proxy._publish_mode_if_ready()
 
@@ -235,7 +306,14 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
         calls.append((args, kwargs))
 
     monkeypatch.setattr(proxy, "_publish_mode_if_ready", fake_publish)
-    monkeypatch.setattr(proxy_module, "save_mode_state", lambda mode, dev: calls.append(("save", mode, dev)))
+    monkeypatch.setattr(
+        proxy_module,
+        "save_mode_state",
+        lambda mode,
+        dev: calls.append(
+            ("save",
+             mode,
+             dev)))
 
     async def run():
         await proxy._handle_mode_update("bad", None, "src")
@@ -264,6 +342,7 @@ def test_prms_publish_flow(tmp_path):
         assert proxy._prms_pending_publish is True
 
         proxy.device_id = "DEV1"
+
         async def fail_publish(_payload):
             raise RuntimeError("fail")
         proxy.mqtt_publisher.publish_data = fail_publish
@@ -318,7 +397,7 @@ def test_note_cloud_failure_records_hybrid_failure(tmp_path):
     proxy._hybrid_fail_threshold = 3
 
     async def run():
-        await proxy._note_cloud_failure("test")
+        await proxy._note_cloud_failure(reason="test", local_ack=False)
 
     asyncio.run(run())
     # In HYBRID mode, failure count should increase
@@ -338,7 +417,13 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
     proxy.device_id = "DEV1"
 
     cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
-    monkeypatch.setattr(proxy_module, "get_sensor_config", lambda key, table=None: (cfg, key))
+    monkeypatch.setattr(
+        proxy_module,
+        "get_sensor_config",
+        lambda key,
+        table=None: (
+            cfg,
+            key))
 
     updated = []
 
@@ -366,7 +451,13 @@ def test_control_message_validation_and_accept(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append((status, error, detail))
 
     async def fake_maybe_start():
@@ -418,7 +509,13 @@ def test_control_start_inflight_paths(tmp_path):
     finished = []
     deferred = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append(status)
 
     async def fake_finish():
@@ -476,7 +573,13 @@ def test_control_on_box_setting_ack(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append((status, error))
 
     async def fake_finish():

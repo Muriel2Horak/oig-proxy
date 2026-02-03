@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import proxy as proxy_module
 
 
@@ -16,7 +20,8 @@ class DummyMQTTMixin:
         return self._state_topic(device_id, table)
 
     def map_data_for_publish(self, data, *, table, target_device_id):
-        return self._map_data_for_publish(data, table=table, target_device_id=target_device_id)
+        return self._map_data_for_publish(
+            data, table=table, target_device_id=target_device_id)
 
     def get_cached_payload(self, topic):
         return self._last_payload_by_topic.get(topic)

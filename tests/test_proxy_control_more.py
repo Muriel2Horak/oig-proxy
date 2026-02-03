@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 import json
 import time
@@ -22,7 +26,13 @@ class DummyMQTT:
         self.published_raw = []
         self.queue = DummyQueue()
 
-    async def publish_raw(self, *, topic: str, payload: str, qos: int, retain: bool):
+    async def publish_raw(
+            self,
+            *,
+            topic: str,
+            payload: str,
+            qos: int,
+            retain: bool):
         self.published_raw.append((topic, payload, qos, retain))
         return True
 
@@ -39,7 +49,8 @@ class DummyMQTT:
         return self._state_topic(device_id, table)
 
     def map_data_for_publish(self, data, *, table, target_device_id):
-        return self._map_data_for_publish(data, table=table, target_device_id=target_device_id)
+        return self._map_data_for_publish(
+            data, table=table, target_device_id=target_device_id)
 
     def get_cached_payload(self, topic: str):
         return self._last_payload_by_topic.get(topic)
@@ -134,7 +145,11 @@ def test_control_publish_result_and_key_status(tmp_path):
         "new_value": "1",
     }
 
-    asyncio.run(proxy._control_publish_result(tx=tx, status="applied", detail="ok"))
+    asyncio.run(
+        proxy._control_publish_result(
+            tx=tx,
+            status="applied",
+            detail="ok"))
     assert proxy._control_last_result["status"] == "applied"
     assert proxy._control_post_drain_refresh_pending is True
     assert "tbl_box_prms/MODE/1" in proxy._control_key_state
@@ -201,14 +216,18 @@ def test_control_normalize_and_coerce(tmp_path):
 def test_control_map_optimistic_value_and_snapshot(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
-    monkeypatch.setattr(proxy_module, "get_sensor_config", lambda *_: (cfg, "MODE"))
+    monkeypatch.setattr(proxy_module, "get_sensor_config",
+                        lambda *_: (cfg, "MODE"))
 
     assert proxy._control_map_optimistic_value(
         tbl_name="tbl_box_prms", tbl_item="MODE", value="1"
     ) == "B"
 
     calls = []
-    monkeypatch.setattr(proxy_module, "save_prms_state", lambda *args: calls.append(args))
+    monkeypatch.setattr(
+        proxy_module,
+        "save_prms_state",
+        lambda *args: calls.append(args))
     proxy._control_update_persisted_snapshot(
         tbl_name="tbl_box_prms", tbl_item="MODE", raw_value=1
     )
@@ -281,7 +300,11 @@ def test_control_on_mqtt_message_accepts(tmp_path):
         }
     ).encode("utf-8")
 
-    asyncio.run(proxy._control_on_mqtt_message(topic="t", payload=payload, retain=False))
+    asyncio.run(
+        proxy._control_on_mqtt_message(
+            topic="t",
+            payload=payload,
+            retain=False))
     assert "accepted" in results
     assert proxy._control_queue
     assert "request_key_raw" in proxy._control_queue[0]
@@ -340,7 +363,9 @@ def test_control_ack_and_applied_timeouts(tmp_path):
 
 def test_control_quiet_wait_completes(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_inflight = {"stage": "applied", "applied_at_mono": time.monotonic() - 1}
+    proxy._control_inflight = {
+        "stage": "applied",
+        "applied_at_mono": time.monotonic() - 1}
     results = []
 
     async def fake_publish(*, tx, status, **_kwargs):
@@ -366,7 +391,8 @@ def test_control_maybe_queue_post_drain_refresh(tmp_path):
 
     proxy._control_enqueue_internal_sa = fake_enqueue
 
-    asyncio.run(proxy._control_maybe_queue_post_drain_refresh(last_tx={"tbl_name": "tbl_box_prms", "tbl_item": "MODE"}))
+    asyncio.run(proxy._control_maybe_queue_post_drain_refresh(
+        last_tx={"tbl_name": "tbl_box_prms", "tbl_item": "MODE"}))
     assert called == ["queue_drained"]
 
 
@@ -395,7 +421,11 @@ def test_control_observe_box_frame_setting(tmp_path):
         "Content": "Remotely : tbl_box_prms / BAT_AC: [0]->[1]",
     }
 
-    asyncio.run(proxy._control_observe_box_frame(parsed, "tbl_events", "<Frame></Frame>"))
+    asyncio.run(
+        proxy._control_observe_box_frame(
+            parsed,
+            "tbl_events",
+            "<Frame></Frame>"))
     assert "applied" in results
     assert "completed" in results
     assert "finish" in results

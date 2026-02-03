@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 import logging
 import runpy
@@ -26,7 +30,10 @@ def test_main_runs_with_device_id(monkeypatch):
     async def run():
         monkeypatch.setattr(main_module, "OIGProxy", DummyProxy)
         monkeypatch.setattr(main_module, "load_sensor_map", lambda: None)
-        monkeypatch.setattr(main_module.os, "getenv", lambda key: "DEVX" if key == "DEVICE_ID" else None)
+        monkeypatch.setattr(
+            main_module.os,
+            "getenv",
+            lambda key: "DEVX" if key == "DEVICE_ID" else None)
         await main_module.main()
 
     asyncio.run(run())
@@ -66,7 +73,12 @@ def test_main_handles_exception(monkeypatch):
     monkeypatch.setattr(main_module, "load_sensor_map", lambda: None)
     monkeypatch.setattr(main_module.os, "getenv", lambda key: "DEVX")
 
-    monkeypatch.setattr(main_module.sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    monkeypatch.setattr(
+        main_module.sys,
+        "exit",
+        lambda code=0: (
+            _ for _ in ()).throw(
+            SystemExit(code)))
 
     async def run():
         with pytest.raises(SystemExit) as exc:
@@ -82,7 +94,12 @@ def test_main_module_interrupts(monkeypatch):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(main_module.asyncio, "run", fake_run)
-    monkeypatch.setattr(main_module.sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    monkeypatch.setattr(
+        main_module.sys,
+        "exit",
+        lambda code=0: (
+            _ for _ in ()).throw(
+            SystemExit(code)))
 
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("main", run_name="__main__")

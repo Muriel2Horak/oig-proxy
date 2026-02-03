@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.3] - 2026-02-03
+
+### Fixed
+
+- Proxy mode now respects explicit `online` configuration (no forced upgrade to `hybrid`).
+
 ## [1.4.2] - 2026-02-02
 
 ### Fixed

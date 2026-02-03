@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 import datetime
 import json
@@ -94,7 +98,9 @@ def test_build_discovery_payload_binary(monkeypatch):
     assert "unit_of_measurement" not in payload
     assert payload["state_topic"].endswith("/tbl_batt/state")
     assert payload["json_attributes_topic"] == payload["state_topic"]
-    assert payload["device"]["via_device"] == f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    assert payload["device"]["via_device"] == (
+        f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    )
 
 
 def test_publish_raw_queues_when_offline(monkeypatch):
@@ -102,7 +108,11 @@ def test_publish_raw_queues_when_offline(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
+        async def add(
+                self,
+                topic: str,
+                payload: str,
+                retain: bool = False) -> bool:
             self.added.append((topic, payload, retain))
             return True
 
@@ -134,7 +144,11 @@ def test_publish_data_offline_queues_and_dedupes(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
+        async def add(
+                self,
+                topic: str,
+                payload: str,
+                retain: bool = False) -> bool:
             self.added.append((topic, payload, retain))
             return True
 
@@ -158,7 +172,9 @@ def test_publish_data_offline_queues_and_dedupes(monkeypatch):
         assert ok2 is True
         assert len(publisher.queue.added) == 1
         topic, payload, retain = publisher.queue.added[0]
-        assert topic == f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_actual/state"
+        assert topic == (
+            f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_actual/state"
+        )
         assert json.loads(payload) == {"POWER": 5}
         assert retain is mqtt_publisher.MQTT_STATE_RETAIN
         assert publisher.publish_failed == 1
@@ -171,7 +187,11 @@ def test_publish_data_online_success_maps_and_calls_discovery(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
+        async def add(
+                self,
+                topic: str,
+                payload: str,
+                retain: bool = False) -> bool:
             self.added.append((topic, payload, retain))
             return True
 
@@ -199,7 +219,10 @@ def test_publish_data_online_success_maps_and_calls_discovery(monkeypatch):
         return None, sensor_id
 
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
-    monkeypatch.setattr(mqtt_publisher, "get_sensor_config", fake_get_sensor_config)
+    monkeypatch.setattr(
+        mqtt_publisher,
+        "get_sensor_config",
+        fake_get_sensor_config)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
     publisher.client = DummyClient()
     publisher.connected = True
@@ -218,11 +241,14 @@ def test_publish_data_online_success_maps_and_calls_discovery(monkeypatch):
         assert ok is True
         assert publisher.publish_count == 1
         assert publisher.queue.added == []
-        assert discovery_calls == [("tbl_box_prms:MODE", cfg, "tbl_box_prms", "DEV1")]
+        assert discovery_calls == [
+            ("tbl_box_prms:MODE", cfg, "tbl_box_prms", "DEV1")]
 
         assert len(publisher.client.published) == 1
         topic, payload, qos, retain = publisher.client.published[0]
-        assert topic == f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state"
+        assert topic == (
+            f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state"
+        )
         assert json.loads(payload) == {"MODE": "B", "OTHER": 5}
         assert qos == mqtt_publisher.MQTT_PUBLISH_QOS
         assert retain is mqtt_publisher.MQTT_STATE_RETAIN
@@ -235,7 +261,11 @@ def test_publish_data_online_failure_queues(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
+        async def add(
+                self,
+                topic: str,
+                payload: str,
+                retain: bool = False) -> bool:
             self.added.append((topic, payload, retain))
             return True
 
@@ -350,7 +380,11 @@ def test_add_message_handler_subscribes_when_connected(monkeypatch):
 
 
 def test_replay_queue_sends_and_clears(tmp_path, monkeypatch):
-    queue = mqtt_publisher.MQTTQueue(db_path=str(tmp_path / "queue.db"), max_size=10)
+    queue = mqtt_publisher.MQTTQueue(
+        db_path=str(
+            tmp_path /
+            "queue.db"),
+        max_size=10)
 
     def fake_queue(*args, **kwargs):
         return queue
@@ -417,4 +451,6 @@ def test_build_discovery_payload_with_options(monkeypatch):
     assert payload["options"] == ["A", "B", "C"]
     assert payload["state_class"] == "measurement"
     assert payload["json_attributes_topic"] == "oig/attrs"
-    assert payload["device"]["via_device"] == f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    assert payload["device"]["via_device"] == (
+        f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    )

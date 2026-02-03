@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import re
 
 import pytest
@@ -87,8 +91,10 @@ def test_control_helpers_and_setting_event():
     )
     assert request_key == "tbl_box_prms/MODE/3"
 
-    assert proxy_module.OIGProxy._control_result_key_state("accepted", None) == "queued"
-    assert proxy_module.OIGProxy._control_result_key_state("completed", "noop_already_set") is None
+    assert proxy_module.OIGProxy._control_result_key_state(
+        "accepted", None) == "queued"
+    assert proxy_module.OIGProxy._control_result_key_state(
+        "completed", "noop_already_set") is None
 
     event = "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
     parsed = proxy_module.OIGProxy._parse_setting_event(event)

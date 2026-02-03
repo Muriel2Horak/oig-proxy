@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 import time
 from collections import deque
@@ -33,7 +37,13 @@ class DummyMQTT(DummyMQTTMixin):
     def publish_availability(self):
         self.published_raw.append(("availability", None))
 
-    async def publish_raw(self, *, topic: str, payload: str, qos: int, retain: bool):
+    async def publish_raw(
+            self,
+            *,
+            topic: str,
+            payload: str,
+            qos: int,
+            retain: bool):
         self.published_raw.append((topic, payload, qos, retain))
         return True
 
@@ -43,7 +53,6 @@ class DummyMQTT(DummyMQTTMixin):
 
     def add_message_handler(self, *, topic, handler, qos):
         return None
-
 
 
 class DummyParser:
@@ -164,6 +173,7 @@ def make_proxy(tmp_path):
     proxy._mqtt_was_ready = False
     proxy._status_task = None
     proxy._box_connected_since_epoch = None
+    proxy._last_box_disconnect_reason = None
     proxy._last_data_epoch = None
     proxy._last_data_iso = None
     proxy._isnew_polls = 0
@@ -176,6 +186,8 @@ def make_proxy(tmp_path):
     proxy.cloud_timeouts = 0
     proxy.cloud_errors = 0
     proxy.cloud_session_connected = False
+    proxy._cloud_connected_since_epoch = None
+    proxy._cloud_peer = None
     proxy.box_connected = False
     proxy.box_connections = 0
     proxy._hb_interval_s = 0.0
@@ -188,6 +200,15 @@ def make_proxy(tmp_path):
     proxy._local_setting_pending = None
     proxy._telemetry_client = None
     proxy._set_commands_buffer = []
+    proxy._telemetry_interval_s = 300
+    proxy._telemetry_box_sessions = deque()
+    proxy._telemetry_cloud_sessions = deque()
+    proxy._telemetry_offline_events = deque()
+    proxy._telemetry_tbl_events = deque()
+    proxy._telemetry_error_context = deque()
+    proxy._telemetry_logs = deque()
+    proxy._telemetry_log_window_s = 60
+    proxy._telemetry_log_max = 1000
     return proxy
 
 
@@ -205,7 +226,11 @@ def test_publish_proxy_status_handles_errors(tmp_path):
 
 def test_getactual_frames_and_send(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
-    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *_args,
+        **_kwargs: None)
     writer = DummyWriter()
 
     asyncio.run(proxy._send_getactual_to_box(writer, conn_id=1))
@@ -305,7 +330,12 @@ def test_read_box_bytes_timeout_and_reset(tmp_path, monkeypatch):
         raise asyncio.TimeoutError
 
     monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
-    res = asyncio.run(proxy._read_box_bytes(DummyReader([b"data"]), conn_id=1, idle_timeout_s=0.1))
+    res = asyncio.run(
+        proxy._read_box_bytes(
+            DummyReader(
+                [b"data"]),
+            conn_id=1,
+            idle_timeout_s=0.1))
     assert res is None
 
     async def reset_wait_for(coro, timeout):
@@ -313,7 +343,12 @@ def test_read_box_bytes_timeout_and_reset(tmp_path, monkeypatch):
         raise ConnectionResetError
 
     monkeypatch.setattr(asyncio, "wait_for", reset_wait_for)
-    res = asyncio.run(proxy._read_box_bytes(DummyReader([b"data"]), conn_id=2, idle_timeout_s=0.1))
+    res = asyncio.run(
+        proxy._read_box_bytes(
+            DummyReader(
+                [b"data"]),
+            conn_id=2,
+            idle_timeout_s=0.1))
     assert res is None
 
 
@@ -329,7 +364,12 @@ def test_read_box_bytes_eof(tmp_path, monkeypatch):
         return await coro
 
     monkeypatch.setattr(asyncio, "wait_for", passthrough_wait_for)
-    res = asyncio.run(proxy._read_box_bytes(DummyReader([b""]), conn_id=3, idle_timeout_s=0.1))
+    res = asyncio.run(
+        proxy._read_box_bytes(
+            DummyReader(
+                [b""]),
+            conn_id=3,
+            idle_timeout_s=0.1))
     assert res is None
 
 
@@ -414,7 +454,11 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
         return cloud_reader, cloud_writer
 
     proxy._ensure_cloud_connected = fake_ensure
-    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *_args,
+        **_kwargs: None)
 
     asyncio.run(
         proxy._forward_frame_online(
@@ -547,7 +591,8 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
     assert proxy.cloud_timeouts == 1
 
 
-def test_forward_frame_online_timeout_non_end_online_mode(tmp_path, monkeypatch):
+def test_forward_frame_online_timeout_non_end_online_mode(
+        tmp_path, monkeypatch):
     """In ONLINE mode, timeout on non-END frame does NOT trigger fallback - BOX times out."""
     proxy = make_proxy(tmp_path)
     proxy._configured_mode = "online"  # ONLINE mode: no fallback
@@ -842,7 +887,9 @@ def test_handle_setting_event_publishes(tmp_path):
         called.append(kwargs)
 
     proxy._publish_setting_event_state = fake_publish
-    parsed = {"Type": "Setting", "Content": "Remotely : tbl_box_prms / MODE: [0]->[1]"}
+    parsed = {
+        "Type": "Setting",
+        "Content": "Remotely : tbl_box_prms / MODE: [0]->[1]"}
 
     asyncio.run(proxy._handle_setting_event(parsed, "tbl_events", "DEV1"))
     assert called
@@ -854,7 +901,13 @@ def test_process_frame_offline_skips_all_data_sent(tmp_path):
     writer = DummyWriter()
 
     frame = b"<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>"
-    asyncio.run(proxy._process_frame_offline(frame, "END", "DEV1", writer, send_ack=True))
+    asyncio.run(
+        proxy._process_frame_offline(
+            frame,
+            "END",
+            "DEV1",
+            writer,
+            send_ack=True))
     # Verify ACK was sent
     assert proxy.stats["acks_local"] >= 1
 
@@ -882,7 +935,11 @@ def test_process_box_frame_common_isnew_updates(tmp_path, monkeypatch):
     proxy._control_observe_box_frame = async_noop
     proxy._maybe_process_mode = async_noop
     proxy._control_maybe_start_next = async_noop
-    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *_args,
+        **_kwargs: None)
 
     proxy.parser = DummyParser({"Result": "IsNewSet"})
     frame = "<Frame><ID_Device>123</ID_Device><Result>IsNewSet</Result></Frame>"

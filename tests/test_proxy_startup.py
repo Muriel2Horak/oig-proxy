@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 
 import mqtt_publisher
@@ -31,10 +35,16 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
         def size(self) -> int:
             return 0
 
-    monkeypatch.setattr(mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(tmp_path / "mqtt.db"))
+    monkeypatch.setattr(
+        mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(
+            tmp_path / "mqtt.db"))
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
-    monkeypatch.setattr(proxy_module, "CONTROL_MQTT_PENDING_PATH", str(tmp_path / "pending.json"))
-    monkeypatch.setattr(proxy_module, "CONTROL_MQTT_LOG_PATH", str(tmp_path / "control.log"))
+    monkeypatch.setattr(
+        proxy_module, "CONTROL_MQTT_PENDING_PATH", str(
+            tmp_path / "pending.json"))
+    monkeypatch.setattr(
+        proxy_module, "CONTROL_MQTT_LOG_PATH", str(
+            tmp_path / "control.log"))
 
     proxy = proxy_module.OIGProxy("AUTO")
 
