@@ -172,8 +172,9 @@ def test_publish_data_offline_queues_and_dedupes(monkeypatch):
         assert ok2 is True
         assert len(publisher.queue.added) == 1
         topic, payload, retain = publisher.queue.added[0]
-        assert topic == f"{
-            mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_actual/state"
+        assert topic == (
+            f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_actual/state"
+        )
         assert json.loads(payload) == {"POWER": 5}
         assert retain is mqtt_publisher.MQTT_STATE_RETAIN
         assert publisher.publish_failed == 1
@@ -245,8 +246,9 @@ def test_publish_data_online_success_maps_and_calls_discovery(monkeypatch):
 
         assert len(publisher.client.published) == 1
         topic, payload, qos, retain = publisher.client.published[0]
-        assert topic == f"{
-            mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state"
+        assert topic == (
+            f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state"
+        )
         assert json.loads(payload) == {"MODE": "B", "OTHER": 5}
         assert qos == mqtt_publisher.MQTT_PUBLISH_QOS
         assert retain is mqtt_publisher.MQTT_STATE_RETAIN
@@ -449,5 +451,6 @@ def test_build_discovery_payload_with_options(monkeypatch):
     assert payload["options"] == ["A", "B", "C"]
     assert payload["state_class"] == "measurement"
     assert payload["json_attributes_topic"] == "oig/attrs"
-    assert payload["device"]["via_device"] == f"{
-        mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    assert payload["device"]["via_device"] == (
+        f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    )
