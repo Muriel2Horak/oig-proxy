@@ -1,0 +1,163 @@
+{
+  "uid": "oig-box-influx",
+  "title": "OIG BOX Detail",
+  "tags": ["oig", "telemetry"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "links": [{"title": "< Back to Fleet", "type": "link", "url": "/d/oig-fleet-influx", "icon": "arrow-left"}],
+  "templating": {
+    "list": [
+      {
+        "name": "device_id",
+        "label": "Device",
+        "type": "query",
+        "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r._field == \"uptime_s\") |> last() |> keep(columns: [\"device_id\"]) |> distinct(column: \"device_id\")",
+        "refresh": 1,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Mode",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 0, "y": 0},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"mode_value\") |> last() |> drop(columns: [\"_start\", \"_stop\", \"_time\"])"
+      }],
+      "fieldConfig": {"defaults": {}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value"}
+    },
+    {
+      "id": 2,
+      "title": "BOX",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 4, "y": 0},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"box_connected\") |> last() |> toString() |> drop(columns: [\"_start\", \"_stop\", \"_time\"])"
+      }],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"true": {"text": "Connected", "color": "green"}, "false": {"text": "Disconnected", "color": "red"}}}]}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value"}
+    },
+    {
+      "id": 3,
+      "title": "Cloud",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 0},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"cloud_online\") |> last() |> toString() |> drop(columns: [\"_start\", \"_stop\", \"_time\"])"
+      }],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"true": {"text": "Online", "color": "green"}, "false": {"text": "Offline", "color": "red"}}}]}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value"}
+    },
+    {
+      "id": 4,
+      "title": "Uptime",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 0},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"uptime_s\") |> last() |> drop(columns: [\"_start\", \"_stop\", \"_time\"])"
+      }],
+      "fieldConfig": {"defaults": {"unit": "dtdurations", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "blue", "value": null}]}}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value"}
+    },
+    {
+      "id": 5,
+      "title": "Version",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 16, "y": 0},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"version_value\") |> last() |> drop(columns: [\"_start\", \"_stop\", \"_time\"])"
+      }],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "purple", "value": null}]}}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value"}
+    },
+    {
+      "id": 10,
+      "title": "Errors",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 0},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: -24h) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"cloud_errors\") |> last() |> drop(columns: [\"_start\", \"_stop\", \"_time\"])"
+      }],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}, "noValue": "0"}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value"}
+    },
+    {
+      "id": 6,
+      "title": "Uptime History",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"uptime_s\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+      }],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}, "unit": "dtdurations", "color": {"mode": "fixed", "fixedColor": "blue"}}}
+    },
+    {
+      "id": 7,
+      "title": "Connection Status",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"box_connected\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        },
+        {
+          "refId": "B",
+          "query": "from(bucket: \"telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"cloud_online\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}, "min": 0, "max": 1, "color": {"mode": "palette-classic"}}}
+    },
+    {
+      "id": 8,
+      "title": "Cloud Errors & Timeouts",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"cloud_errors\") |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)"
+        },
+        {
+          "refId": "B",
+          "query": "from(bucket: \"telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"cloud_timeouts\") |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}, "color": {"mode": "palette-classic"}}}
+    },
+    {
+      "id": 9,
+      "title": "Frames Received",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "datasource": {"type": "influxdb", "uid": "afc1e5763y6f4d"},
+      "targets": [{
+        "refId": "A",
+        "query": "from(bucket: \"telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r.device_id == \"${device_id}\") |> filter(fn: (r) => r._field == \"frames_received\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+      }],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}, "color": {"mode": "fixed", "fixedColor": "green"}}}
+    }
+  ],
+  "schemaVersion": 39
+}

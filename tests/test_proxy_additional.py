@@ -188,6 +188,9 @@ def make_proxy(tmp_path):
     proxy._local_setting_pending = None
     proxy._telemetry_client = None
     proxy._set_commands_buffer = []
+    proxy._tbl_events_buffer = []
+    proxy._log_buffer = deque(maxlen=100)
+    proxy._state_changes_buffer = []
     return proxy
 
 

@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": [
@@ -31,7 +31,8 @@
     "log_level": "INFO",
     "capture_payloads": false,
     "capture_raw_bytes": false,
-    "control_mqtt_enabled": false
+    "control_mqtt_enabled": false,
+    "telemetry_mqtt_broker": "telemetry.muriel-cz.cz:1883"
   },
   "schema": {
     "target_server": "str",
@@ -53,7 +54,8 @@
     "capture_raw_bytes": "bool?",
     "control_mqtt_enabled": "bool?",
     "ha_ip": "str?",
-    "dns_upstream": "str?"
+    "dns_upstream": "str?",
+    "telemetry_mqtt_broker": "str?"
   },
   "ports": {
     "5710/tcp": 5710,

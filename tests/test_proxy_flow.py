@@ -1,5 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
 import asyncio
+from collections import deque
 
 import proxy as proxy_module
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
@@ -153,6 +154,10 @@ def _make_proxy(tmp_path):
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._set_commands_buffer = []
+    proxy._tbl_events_buffer = []
+    proxy._log_buffer = deque(maxlen=100)
+    proxy._state_changes_buffer = []
     return proxy
 
 

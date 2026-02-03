@@ -2,6 +2,27 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.5.0] - 2026-02-02
+
+### Added
+
+- **Rozší řená telemetrie**: Nové metriky pro diagnostiku a monitoring
+  - `window_metrics.tbl_events`: Buffer událostí z BOX (Type, Confirm, Content) za 5-minutové okno
+  - `window_metrics.logs`: Buffer WARNING a ERROR logů s kontextem (timestamp, level, message, module)
+  - `window_metrics.state_changes`: Timeline změn připojení BOX/Cloud (timestamp, entity, state)
+- **Tracking stavů**: Automatické sledování změn připojení BOX a Cloud
+  - `_track_state_change()`: Zaznamenává změny s ISO timestampem
+  - `_set_box_connected()`: Nastavuje box_connected a trackuje změnu
+  - `_set_cloud_connected()`: Nastavuje cloud_session_connected a trackuje změnu  
+- **Log capturing**: Custom logging handler pro zachytávání WARNING/ERROR úrovně
+  - Ring buffer s max 100 položkami
+  - Automatické čištění každých 5 minut při odeslání telemetrie
+
+### Changed
+
+- **Telemetrie payload**: Rozš tříeno o `window_metrics` objekt se třemi sub-objekty
+- **Test coverage**: Přidáno 9 nových testů pro telemetry funkcionalitu (193 testů celkem)
+
 ## [1.4.2] - 2026-02-02
 
 ### Fixed

@@ -172,11 +172,21 @@ CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
 MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
 
 # ============================================================================
-# Telemetry Configuration (MQTT to muriel-cz.cz)
+# Telemetry Configuration (MQTT to telemetry broker)
 # ============================================================================
 TELEMETRY_ENABLED = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
 TELEMETRY_MQTT_BROKER = os.getenv("TELEMETRY_MQTT_BROKER", "telemetry.muriel-cz.cz:1883")
 TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
+
+# Registration API for JWT token provisioning
+TELEMETRY_REGISTRATION_URL = os.getenv(
+    "TELEMETRY_REGISTRATION_URL", "http://telemetry.muriel-cz.cz:5720/api/provision"
+)
+# Shared secret for registration (compile-time, not configurable by user)
+# This authenticates that the request comes from legitimate OIG Proxy
+TELEMETRY_CLIENT_SECRET = "oig-proxy-2026-telemetry-Kj8mN2xP4qR7tV9zX3"
+# Token storage path
+TELEMETRY_TOKEN_PATH = os.path.join(DATA_DIR, "telemetry_token.json")
 
 # ============================================================================
 # MQTT Publisher Configuration

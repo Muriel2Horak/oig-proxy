@@ -74,6 +74,13 @@ export MQTT_USERNAME=$(bashio::config 'mqtt_username')
 export MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 export MAP_RELOAD_SECONDS=$(bashio::config 'map_reload_seconds')
 
+# Telemetry MQTT broker configuration
+TELEMETRY_MQTT_BROKER_RAW=$(bashio::config 'telemetry_mqtt_broker')
+if [ -z "$TELEMETRY_MQTT_BROKER_RAW" ] || [ "$TELEMETRY_MQTT_BROKER_RAW" = "null" ]; then
+  TELEMETRY_MQTT_BROKER_RAW="telemetry.muriel-cz.cz:1883"
+fi
+export TELEMETRY_MQTT_BROKER=$TELEMETRY_MQTT_BROKER_RAW
+
 PROXY_STATUS_INTERVAL_RAW=$(bashio::config 'proxy_status_interval')
 if [ -z "$PROXY_STATUS_INTERVAL_RAW" ] || [ "$PROXY_STATUS_INTERVAL_RAW" = "null" ]; then
   PROXY_STATUS_INTERVAL_RAW=60
