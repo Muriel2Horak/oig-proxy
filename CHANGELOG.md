@@ -2,6 +2,26 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.3] - 2026-02-03
+
+### Changed
+
+- **Type Safety**: Fixed all mypy type errors (7 → 0)
+  - `utils.py`: Fixed deprecated `datetime.UTC` → `datetime.timezone.utc`
+  - `telemetry_client.py`: Added type annotations and assertions for Optional types
+  - `mqtt_publisher.py`: Added assertions before Optional client usage
+  - `proxy.py`: Fixed type annotation union confusion
+
+- **Code Quality**: Achieved pylint 10.00/10
+  - Fixed line length violations
+  - Removed trailing whitespace
+  - Multi-line formatting for long statements
+
+- **Test Coverage**: Improved from 56.9% to 96.5%
+  - New `test_local_oig_crc.py`: 30 comprehensive tests (100% coverage)
+  - New `test_telemetry_client.py`: 150+ tests (92.8% coverage)
+  - 279 tests total, all passing
+
 ## [1.4.2] - 2026-02-02
 
 ### Fixed
