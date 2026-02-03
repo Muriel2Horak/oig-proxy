@@ -2,6 +2,12 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.4] - 2026-02-03
+
+### Changed
+
+- Zvýšeno výchozí `CLOUD_ACK_TIMEOUT` na 1800s (30 min).
+
 ## [1.4.3] - 2026-02-03
 
 ### Changed
