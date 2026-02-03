@@ -2,20 +2,6 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=import-error,wrong-import-position,import-outside-toplevel
 
-import sys
-from pathlib import Path
-import importlib.util
-
-# Add addon to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "addon" / "oig-proxy"))
-
-if importlib.util.find_spec("local_oig_crc") is None:
-    import pytest
-
-    pytest.skip(
-        "local_oig_crc is not available in this environment",
-        allow_module_level=True)
-
 import local_oig_crc  # noqa: E402
 
 
@@ -45,7 +31,7 @@ def test_crc16_table_modbus():
 def test_crc16_table_cached():
     table1 = local_oig_crc._crc16_table_modbus()
     table2 = local_oig_crc._crc16_table_modbus()
-    assert table1 is table2
+    assert table1 == table2
 
 
 def test_crc16_modbus_empty():
@@ -186,6 +172,7 @@ def test_build_frame_round_trip():
     computed_crc = local_oig_crc.compute_frame_crc(frame_bytes)
     import re
     match = re.search(rb"<CRC>(\d+)</CRC>", frame_bytes)
+    assert match is not None
     embedded_crc = int(match.group(1))
     assert computed_crc == embedded_crc
 

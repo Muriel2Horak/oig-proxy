@@ -495,8 +495,12 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             msg_id, topic, payload, retain = item
 
             try:
-                assert self.client is not None
-                result = self.client.publish(
+                client = self.client
+                if client is None:
+                    logger.error(
+                        "MQTT: Replay aborted - MQTT client is not initialized")
+                    break
+                result = client.publish(
                     topic, payload, qos=1, retain=retain)
                 if result.rc == 0:
                     await self.queue.remove(msg_id)
@@ -759,8 +763,13 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self.publish_count += 1
 
         try:
-            assert self.client is not None
-            result = self.client.publish(
+            client = self.client
+            if client is None:
+                await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
+                self.publish_failed += 1
+                logger.error("MQTT: Publish aborted - MQTT client is not initialized")
+                return False
+            result = client.publish(
                 topic, payload, qos=MQTT_PUBLISH_QOS, retain=MQTT_STATE_RETAIN
             )
             if result.rc == 0:

@@ -6,10 +6,9 @@
 
 ### Changed
 
-- **Upgrade Legacy Mode**: Režim `online` se nyní v kódu automaticky chová jako `hybrid`
-  - Všichni uživatelé (kromě `offline`) získají "smart fallback" funkci
-  - Není nutná změna konfigurace
-- **Default režim**: `proxy_mode` je nyní `hybrid` (místo `online`) pro nové instalace
+- **Proxy mode**: Explicitní `online` zůstává transparentní (žádné vynucené
+  přepnutí na `hybrid`). Default zůstává `online`, pokud není nakonfigurováno
+  jinak.
 - **Type Safety**: Fixed all mypy type errors (7 → 0)
   - `utils.py`: Fixed deprecated `datetime.UTC` → `datetime.timezone.utc`
   - `telemetry_client.py`: Added type annotations and assertions for Optional types

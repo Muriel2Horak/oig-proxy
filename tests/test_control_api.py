@@ -37,6 +37,7 @@ class DummyProxy:
 class _TestHandler(_Handler):
     def __init__(self, request_bytes: bytes, server):
         # pylint: disable=super-init-not-called
+        # BaseRequestHandler.__init__ requires a real socket; tests use in-memory streams.
         self.rfile = io.BytesIO(request_bytes)
         self.wfile = io.BytesIO()
         self.raw_requestline = self.rfile.readline()

@@ -3,13 +3,7 @@
 # pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
-import os
 import re
-import sys
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-ADDON_DIR = os.path.join(ROOT_DIR, "addon", "oig-proxy")
-sys.path.insert(0, ADDON_DIR)
 
 from oig_frame import build_frame, compute_frame_checksum  # noqa: E402
 

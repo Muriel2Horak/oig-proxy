@@ -187,6 +187,10 @@ class OIGProxy:
         self._telemetry_logs: deque[dict[str, Any]] = deque()
         self._telemetry_log_window_s: int = 60
         self._telemetry_log_max: int = 1000
+        self._telemetry_log_error: bool = False
+        for handler in list(logger.handlers):
+            if isinstance(handler, _TelemetryLogHandler):
+                logger.removeHandler(handler)
         self._telemetry_log_handler = _TelemetryLogHandler(self)
         logger.addHandler(self._telemetry_log_handler)
 
@@ -812,6 +816,8 @@ class OIGProxy:
             self._telemetry_logs.popleft()
 
     def _record_log_entry(self, record: logging.LogRecord) -> None:
+        if getattr(self, "_telemetry_log_error", False):
+            return
         try:
             entry = {
                 "_epoch": record.created,
@@ -822,8 +828,15 @@ class OIGProxy:
             }
             self._telemetry_logs.append(entry)
             self._prune_log_buffer()
-        except Exception:
-            pass
+        except Exception:  # pylint: disable=broad-exception-caught
+            self._telemetry_log_error = True
+            try:
+                logger.exception(
+                    "Failed to record telemetry log entry for record %r",
+                    record,
+                )
+            finally:
+                self._telemetry_log_error = False
 
     def _snapshot_logs(self) -> list[dict[str, Any]]:
         self._prune_log_buffer()

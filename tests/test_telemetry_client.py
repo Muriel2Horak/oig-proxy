@@ -5,7 +5,7 @@
 # pylint: disable=use-implicit-booleaness-not-comparison
 
 import json
-import sys
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -13,10 +13,17 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "addon" / "oig-proxy"))
-
 import telemetry_client  # noqa: E402
 import config  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _buffer_db_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        telemetry_client,
+        "BUFFER_DB_PATH",
+        tmp_path / "telemetry_buffer.db",
+    )
 
 
 class TestGetInstanceHash:
@@ -137,14 +144,17 @@ class TestTelemetryBuffer:
     def test_operations_after_close(self, temp_db):
         buffer = telemetry_client.TelemetryBuffer(temp_db)
         buffer.close()
+        buffer.close()
         assert buffer.store("topic", {}) is False
         assert not buffer.get_pending()
         assert buffer.count() == 0
 
     def test_init_db_error(self):
-        # Create buffer with invalid path
-        invalid_path = Path("/nonexistent/path/to/db")
-        buffer = telemetry_client.TelemetryBuffer(invalid_path)
+        with patch(
+            "telemetry_client.sqlite3.connect",
+            side_effect=sqlite3.OperationalError("forced init failure"),
+        ):
+            buffer = telemetry_client.TelemetryBuffer(Path("buffer.db"))
         # Should handle error gracefully
         assert buffer._conn is None
 
@@ -262,6 +272,20 @@ class TestTelemetryClientMqtt:
         result = client._ensure_connected()
         assert result is True
 
+    @patch('telemetry_client.config')
+    @patch('telemetry_client.MQTT_AVAILABLE', True)
+    def test_ensure_connected_calls_create(self, mock_config, mock_mqtt):
+        mock_config.TELEMETRY_ENABLED = True
+        mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
+
+        client = telemetry_client.TelemetryClient("12345", "1.0.0")
+        client._connected = False
+        client._client = None
+        client._create_client = MagicMock(return_value=True)
+
+        assert client._ensure_connected() is True
+        client._create_client.assert_called_once()
+
 
 class TestTelemetryClientPublish:
     """Test publish operations."""
@@ -302,7 +326,15 @@ class TestTelemetryClientPublish:
         assert result is False
 
     def test_publish_sync_no_connection(self, client):
+        client._ensure_connected = MagicMock(return_value=False)
         client._connected = False
+        result = client._publish_sync("test/topic", {"key": "value"})
+        assert result is False
+
+    def test_publish_sync_missing_client(self, client):
+        client._ensure_connected = MagicMock(return_value=True)
+        client._client = None
+        client._connected = True
         result = client._publish_sync("test/topic", {"key": "value"})
         assert result is False
 
@@ -510,6 +542,7 @@ class TestTelemetryClientBuffer:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
+                    client._ensure_connected = MagicMock(return_value=False)
                     client._connected = False
                     client._enabled = True
 
@@ -610,6 +643,7 @@ class TestEdgeCases:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 client = telemetry_client.TelemetryClient("12345", "1.0.0")
                 client._buffer = None
+                client._ensure_connected = MagicMock(return_value=False)
                 client._connected = False
                 client._enabled = True
 
@@ -624,6 +658,7 @@ class TestEdgeCases:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 client = telemetry_client.TelemetryClient("12345", "1.0.0")
                 client._buffer = None
+                client._ensure_connected = MagicMock(return_value=False)
                 client._connected = False
                 client._enabled = True
 
@@ -658,6 +693,21 @@ class TestEdgeCases:
                     mock_client.publish.side_effect = Exception(
                         "Publish error")
                     client._client = mock_client
+                    client._connected = True
+
+                    sent = client._flush_buffer_sync()
+                    assert sent == 0
+
+    def test_flush_buffer_missing_client(self, temp_db):
+        with patch('telemetry_client.config') as mock_config:
+            mock_config.TELEMETRY_ENABLED = True
+            mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
+            with patch('telemetry_client.MQTT_AVAILABLE', True):
+                with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
+                    client = telemetry_client.TelemetryClient("12345", "1.0.0")
+                    client._buffer.store("test/topic", {"test": "data"})
+                    client._ensure_connected = MagicMock(return_value=True)
+                    client._client = None
                     client._connected = True
 
                     sent = client._flush_buffer_sync()
@@ -714,7 +764,8 @@ class TestEdgeCases:
 
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     # Never set _connected to True, so timeout occurs
-                    result = client._create_client()
+                    with patch("telemetry_client.time.sleep", return_value=None):
+                        result = client._create_client()
                     assert result is False
 
     @pytest.mark.asyncio
@@ -726,6 +777,7 @@ class TestEdgeCases:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
+                    client._ensure_connected = MagicMock(return_value=False)
                     client._connected = False
                     client._enabled = True
 
@@ -743,6 +795,7 @@ class TestEdgeCases:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
+                    client._ensure_connected = MagicMock(return_value=False)
                     client._connected = False
                     client._enabled = True
 
@@ -760,6 +813,7 @@ class TestEdgeCases:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
+                    client._ensure_connected = MagicMock(return_value=False)
                     client._connected = False
                     client._enabled = True
 
@@ -782,13 +836,14 @@ class TestEdgeCases:
             mock_mqtt.MQTTv311 = 4
             mock_mqtt.CallbackAPIVersion = MagicMock()
             mock_mqtt.CallbackAPIVersion.VERSION2 = 2
+            mock_client_inst.loop_start.side_effect = lambda: (
+                mock_client_inst.on_connect
+                and mock_client_inst.on_connect(mock_client_inst, None, None, 0, None)
+            )
 
             client = telemetry_client.TelemetryClient("12345", "1.0.0")
-            client._create_client()
-
-            # Simulate successful connection callback
-            on_connect = mock_client_inst.on_connect
-            on_connect(None, None, None, 0, None)
+            with patch("telemetry_client.time.sleep", return_value=None):
+                assert client._create_client() is True
             assert client._connected is True
             assert client._consecutive_errors == 0
 
@@ -821,9 +876,8 @@ class TestTelemetryClientCoverage:
 
     def test_import_error_branch_exec(self, monkeypatch):
         import builtins
-        import pathlib
 
-        source = pathlib.Path(telemetry_client.__file__).read_text()
+        source = Path(telemetry_client.__file__).read_text()
         original_import = builtins.__import__
 
         def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
