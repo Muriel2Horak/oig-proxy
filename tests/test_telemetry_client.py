@@ -1,15 +1,12 @@
 """Tests for telemetry_client module."""
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,too-many-lines
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,too-many-lines,wrong-import-position
 
-import asyncio
 import json
-import os
-import sqlite3
 import sys
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
@@ -137,10 +134,10 @@ class TestTelemetryBuffer:
         buffer = telemetry_client.TelemetryBuffer(temp_db)
         buffer.close()
         assert buffer.store("topic", {}) is False
-        assert buffer.get_pending() == []
+        assert not buffer.get_pending()
         assert buffer.count() == 0
 
-    def test_init_db_error(self, monkeypatch):
+    def test_init_db_error(self):
         # Create buffer with invalid path
         invalid_path = Path("/nonexistent/path/to/db")
         buffer = telemetry_client.TelemetryBuffer(invalid_path)
@@ -157,7 +154,7 @@ class TestTelemetryClientInit:
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "mqtt://test:1883"
         mock_config.TELEMETRY_INTERVAL_S = 300
-        
+
         client = telemetry_client.TelemetryClient("12345", "1.0.0")
         assert client.device_id == "12345"
         assert client.version == "1.0.0"
@@ -232,12 +229,12 @@ class TestTelemetryClientMqtt:
     def test_create_client_success(self, mock_config, mock_mqtt):
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-        
-        mqtt_mock, mock_client = mock_mqtt
+
+        _, mock_client = mock_mqtt
         mock_client.connect.return_value = None
-        
+
         client = telemetry_client.TelemetryClient("12345", "1.0.0")
-        
+
         # Simulate connection
         client._connected = True
         result = client._create_client()
@@ -245,14 +242,14 @@ class TestTelemetryClientMqtt:
 
     @patch('telemetry_client.config')
     @patch('telemetry_client.MQTT_AVAILABLE', True)
-    def test_ensure_connected_when_connected(self, mock_config, mock_mqtt):
+    def test_ensure_connected_when_connected(self, mock_config, _mock_mqtt):
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-        
+
         client = telemetry_client.TelemetryClient("12345", "1.0.0")
         client._connected = True
         client._client = MagicMock()
-        
+
         result = client._ensure_connected()
         assert result is True
 
@@ -276,10 +273,10 @@ class TestTelemetryClientPublish:
         mock_result = MagicMock()
         mock_result.rc = 0
         mock_client.publish.return_value = mock_result
-        
+
         client._client = mock_client
         client._connected = True
-        
+
         result = client._publish_sync("test/topic", {"key": "value"})
         assert result is True
 
@@ -288,10 +285,10 @@ class TestTelemetryClientPublish:
         mock_result = MagicMock()
         mock_result.rc = 1
         mock_client.publish.return_value = mock_result
-        
+
         client._client = mock_client
         client._connected = True
-        
+
         result = client._publish_sync("test/topic", {"key": "value"})
         assert result is False
 
@@ -306,11 +303,11 @@ class TestTelemetryClientPublish:
         mock_result = MagicMock()
         mock_result.rc = 0
         mock_client.publish.return_value = mock_result
-        
+
         client._client = mock_client
         client._connected = True
         client._enabled = True
-        
+
         result = await client.send_telemetry({"mode": "online", "uptime_s": 100})
         assert result is True
 
@@ -326,11 +323,11 @@ class TestTelemetryClientPublish:
         mock_result = MagicMock()
         mock_result.rc = 0
         mock_client.publish.return_value = mock_result
-        
+
         client._client = mock_client
         client._connected = True
         client._enabled = True
-        
+
         result = await client.send_event("test_event", {"detail": "value"})
         assert result is True
 
@@ -478,7 +475,7 @@ class TestTelemetryClientProperties:
         mock_buffer = MagicMock()
         client._client = mock_client
         client._buffer = mock_buffer
-        
+
         client.disconnect()
         mock_client.loop_stop.assert_called_once()
         mock_client.disconnect.assert_called_once()
@@ -506,8 +503,8 @@ class TestTelemetryClientBuffer:
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     client._connected = False
                     client._enabled = True
-                    
-                    result = await client.send_telemetry({"mode": "online"})
+
+                    await client.send_telemetry({"mode": "online"})
                     # Should buffer when MQTT unavailable
                     assert client._buffer.count() >= 1
 
@@ -520,11 +517,11 @@ class TestTelemetryClientBuffer:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
-                    
+
                     # Add message to buffer
                     client._buffer.store("test/topic", {"test": "data"})
                     assert client._buffer.count() == 1
-                    
+
                     # Setup mock for successful publish
                     mock_client = MagicMock()
                     mock_result = MagicMock()
@@ -534,10 +531,10 @@ class TestTelemetryClientBuffer:
                     client._connected = True
                     client._enabled = True
                     client._last_buffer_flush = 0
-                    
+
                     # Send telemetry - should flush buffer
                     await client.send_telemetry({"mode": "online"})
-                    
+
                     # Buffer should be flushed
                     assert client._buffer.count() == 0
 
@@ -579,7 +576,7 @@ class TestEdgeCases:
     def test_create_client_exception(self, mock_config):
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-        
+
         with patch('telemetry_client.mqtt') as mock_mqtt:
             mock_mqtt.Client.side_effect = Exception("Connection error")
             client = telemetry_client.TelemetryClient("12345", "1.0.0")
@@ -596,7 +593,7 @@ class TestEdgeCases:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_send_telemetry_no_buffer(self, temp_db):
+    async def test_send_telemetry_no_buffer(self):
         with patch('telemetry_client.config') as mock_config:
             mock_config.TELEMETRY_ENABLED = True
             mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
@@ -606,7 +603,7 @@ class TestEdgeCases:
                 client._buffer = None
                 client._connected = False
                 client._enabled = True
-                
+
                 result = await client.send_telemetry({"mode": "online"})
                 assert result is False
 
@@ -620,7 +617,7 @@ class TestEdgeCases:
                 client._buffer = None
                 client._connected = False
                 client._enabled = True
-                
+
                 result = await client.send_event("test_event")
                 assert result is False
 
@@ -634,7 +631,7 @@ class TestEdgeCases:
                 mock_client.publish.side_effect = Exception("Publish error")
                 client._client = mock_client
                 client._connected = True
-                
+
                 result = client._publish_sync("test/topic", {"key": "value"})
                 assert result is False
 
@@ -646,13 +643,13 @@ class TestEdgeCases:
                 with patch('telemetry_client.BUFFER_DB_PATH', temp_db):
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     client._buffer.store("test/topic", {"test": "data"})
-                    
+
                     # Mock client to fail on publish
                     mock_client = MagicMock()
                     mock_client.publish.side_effect = Exception("Publish error")
                     client._client = mock_client
                     client._connected = True
-                    
+
                     sent = client._flush_buffer_sync()
                     assert sent == 0
 
@@ -665,7 +662,7 @@ class TestEdgeCases:
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     client._buffer.store("topic1", {"a": 1})
                     client._buffer.store("topic2", {"b": 2})
-                    
+
                     # Mock client to succeed first, fail second
                     mock_client = MagicMock()
                     mock_result = MagicMock()
@@ -673,7 +670,7 @@ class TestEdgeCases:
                     mock_client.publish.return_value = mock_result
                     client._client = mock_client
                     client._connected = True
-                    
+
                     sent = client._flush_buffer_sync()
                     assert sent == 0  # Stops on first failure
 
@@ -687,7 +684,7 @@ class TestEdgeCases:
                 mock_client.loop_stop.side_effect = Exception("Stop error")
                 mock_client.disconnect.side_effect = Exception("Disconnect error")
                 client._client = mock_client
-                
+
                 # Should not raise exception
                 client.disconnect()
                 assert client._client is None
@@ -703,7 +700,7 @@ class TestEdgeCases:
                     mock_mqtt.MQTTv311 = 4
                     mock_mqtt.CallbackAPIVersion = MagicMock()
                     mock_mqtt.CallbackAPIVersion.VERSION2 = 2
-                    
+
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     # Never set _connected to True, so timeout occurs
                     result = client._create_client()
@@ -720,10 +717,10 @@ class TestEdgeCases:
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     client._connected = False
                     client._enabled = True
-                    
+
                     # Make buffer.store return False
                     client._buffer.store = MagicMock(return_value=False)
-                    
+
                     result = await client.send_telemetry({"mode": "online"})
                     assert result is False
 
@@ -737,10 +734,10 @@ class TestEdgeCases:
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     client._connected = False
                     client._enabled = True
-                    
+
                     # Make buffer.store return False
                     client._buffer.store = MagicMock(return_value=False)
-                    
+
                     result = await client.send_event("test_event", {"detail": "value"})
                     assert result is False
 
@@ -754,10 +751,10 @@ class TestEdgeCases:
                     client = telemetry_client.TelemetryClient("12345", "1.0.0")
                     client._connected = False
                     client._enabled = True
-                    
+
                     # Make buffer.store return True
                     client._buffer.store = MagicMock(return_value=True)
-                    
+
                     result = await client.send_event("test_event", {"detail": "value"})
                     assert result is True
 
@@ -767,17 +764,17 @@ class TestEdgeCases:
         """Test MQTT connect callback."""
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-        
+
         with patch('telemetry_client.mqtt') as mock_mqtt:
             mock_client_inst = MagicMock()
             mock_mqtt.Client.return_value = mock_client_inst
             mock_mqtt.MQTTv311 = 4
             mock_mqtt.CallbackAPIVersion = MagicMock()
             mock_mqtt.CallbackAPIVersion.VERSION2 = 2
-            
+
             client = telemetry_client.TelemetryClient("12345", "1.0.0")
             client._create_client()
-            
+
             # Simulate successful connection callback
             on_connect = mock_client_inst.on_connect
             on_connect(None, None, None, 0, None)
@@ -790,20 +787,19 @@ class TestEdgeCases:
         """Test MQTT disconnect callback."""
         mock_config.TELEMETRY_ENABLED = True
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-        
+
         with patch('telemetry_client.mqtt') as mock_mqtt:
             mock_client_inst = MagicMock()
             mock_mqtt.Client.return_value = mock_client_inst
             mock_mqtt.MQTTv311 = 4
             mock_mqtt.CallbackAPIVersion = MagicMock()
             mock_mqtt.CallbackAPIVersion.VERSION2 = 2
-            
+
             client = telemetry_client.TelemetryClient("12345", "1.0.0")
             client._connected = True
             client._create_client()
-            
+
             # Simulate disconnect callback
             on_disconnect = mock_client_inst.on_disconnect
             on_disconnect(None, None, None, 0, None)
             assert client._connected is False
-

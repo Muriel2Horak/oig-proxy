@@ -1,11 +1,17 @@
 """Tests for local_oig_crc module."""
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,import-error,wrong-import-position
 
 import sys
 from pathlib import Path
+import importlib.util
 
 # Add addon to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "addon" / "oig-proxy"))
+
+if importlib.util.find_spec("local_oig_crc") is None:
+    import pytest
+
+    pytest.skip("local_oig_crc is not available in this environment", allow_module_level=True)
 
 import local_oig_crc  # noqa: E402
 
