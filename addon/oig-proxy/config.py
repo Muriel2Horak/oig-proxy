@@ -86,7 +86,7 @@ HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
 # ============================================================================
 TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
-CLOUD_ACK_TIMEOUT = float(os.getenv("CLOUD_ACK_TIMEOUT", "3.0"))
+CLOUD_ACK_TIMEOUT = float(os.getenv("CLOUD_ACK_TIMEOUT", "1800.0"))
 
 # ============================================================================
 # Proxy Configuration

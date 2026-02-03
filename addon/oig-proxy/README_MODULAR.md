@@ -92,7 +92,7 @@ Nové/změněné:
 - `PROXY_LISTEN_HOST` - default `0.0.0.0`
 - `PROXY_LISTEN_PORT` - default `5710`
 - `PROXY_DEVICE_ID` - default `oig_proxy` (proxy/status/event senzory jdou sem)
-- `CLOUD_ACK_TIMEOUT` - Default: `3.0` (s) (max čekání na ACK z cloudu v ONLINE)
+- `CLOUD_ACK_TIMEOUT` - Default: `1800.0` (s) (max čekání na ACK z cloudu v ONLINE)
 - `CLOUD_REPLAY_RATE` - Default: `1.0` (frames/s)
 - `MQTT_REPLAY_RATE` - Default: `10.0` (msg/s)
 - `CLOUD_QUEUE_MAX_SIZE` - Default: `10000`

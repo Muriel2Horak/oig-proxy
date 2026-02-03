@@ -63,7 +63,7 @@ bashio::log.info "🚀 Proxy mode: $PROXY_MODE (hybrid_fail_threshold=$HYBRID_FA
 
 CLOUD_ACK_TIMEOUT_RAW=$(bashio::config 'cloud_ack_timeout')
 if [ -z "$CLOUD_ACK_TIMEOUT_RAW" ] || [ "$CLOUD_ACK_TIMEOUT_RAW" = "null" ]; then
-  CLOUD_ACK_TIMEOUT_RAW=3.0
+  CLOUD_ACK_TIMEOUT_RAW=1800.0
 fi
 export CLOUD_ACK_TIMEOUT=$CLOUD_ACK_TIMEOUT_RAW
 

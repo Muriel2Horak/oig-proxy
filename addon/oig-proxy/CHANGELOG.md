@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.4] - 2026-02-03
+
+### Changed
+
+- Default `cloud_ack_timeout` increased to 1800s (30 minutes).
+
 ## [1.4.3] - 2026-02-03
 
 ### Fixed
