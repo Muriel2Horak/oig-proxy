@@ -8,7 +8,9 @@ Modes:
 - OFFLINE: Always local ACK, never connects to cloud
 """
 
-# pylint: disable=too-many-lines,too-many-instance-attributes,too-many-statements,too-many-branches,too-many-locals,too-many-arguments,too-many-positional-arguments,too-many-return-statements,broad-exception-caught,deprecated-module
+# pylint: disable=too-many-lines,too-many-instance-attributes,too-many-statements,too-many-branches,too-many-locals
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-return-statements,broad-exception-caught
+# pylint: disable=deprecated-module
 
 import asyncio
 import logging

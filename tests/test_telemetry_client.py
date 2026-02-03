@@ -1,5 +1,8 @@
 """Tests for telemetry_client module."""
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,too-many-lines,wrong-import-position,import-outside-toplevel,line-too-long,exec-used,redefined-builtin,unused-argument,invalid-name,too-few-public-methods,unspecified-encoding,use-implicit-booleaness-not-comparison
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-many-lines,wrong-import-position,import-outside-toplevel,line-too-long,exec-used,redefined-builtin
+# pylint: disable=unused-argument,invalid-name,too-few-public-methods,unspecified-encoding
+# pylint: disable=use-implicit-booleaness-not-comparison
 
 import json
 import sys

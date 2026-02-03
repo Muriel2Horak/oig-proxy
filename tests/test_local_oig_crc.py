@@ -1,5 +1,6 @@
 """Tests for local_oig_crc module."""
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,import-error,wrong-import-position,import-outside-toplevel
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=import-error,wrong-import-position,import-outside-toplevel
 
 import sys
 from pathlib import Path

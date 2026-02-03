@@ -1,4 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access,unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order,deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg,duplicate-code
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
+# pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
+# pylint: disable=duplicate-code
 import asyncio
 import datetime
 import json
@@ -94,8 +98,9 @@ def test_build_discovery_payload_binary(monkeypatch):
     assert "unit_of_measurement" not in payload
     assert payload["state_topic"].endswith("/tbl_batt/state")
     assert payload["json_attributes_topic"] == payload["state_topic"]
-    assert payload["device"]["via_device"] == f"{
-        mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    assert payload["device"]["via_device"] == (
+        f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"
+    )
 
 
 def test_publish_raw_queues_when_offline(monkeypatch):

@@ -654,8 +654,9 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                 payload["json_attributes_topic"] = config.json_attributes_topic
 
         if device_type not in ("inverter", "proxy"):
-            payload["device"]["via_device"] = f"{MQTT_NAMESPACE}_{
-                self.device_id}_inverter"
+            payload["device"]["via_device"] = (
+                f"{MQTT_NAMESPACE}_{self.device_id}_inverter"
+            )
 
         if config.is_binary:
             payload["payload_on"] = "1"
