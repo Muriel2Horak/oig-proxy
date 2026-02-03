@@ -177,19 +177,6 @@ def _make_proxy(tmp_path):
     proxy._control_retain = False
     proxy._control_log_enabled = False
     proxy._control_log_path = str(tmp_path / "control.log")
-    proxy._configured_mode = "online"
-    proxy._hybrid_fail_count = 0
-    proxy._hybrid_fail_threshold = 3
-    proxy._hybrid_retry_interval = 300.0
-    proxy._hybrid_connect_timeout = 5.0
-    proxy._hybrid_last_offline_time = 0.0
-    proxy._hybrid_in_offline = False
-    proxy._proxy_status_attrs_topic = "oig/status/attrs"
-    proxy._set_commands_buffer = []
-    proxy._tbl_events_buffer = []
-    proxy._log_buffer = deque(maxlen=100)
-    proxy._state_changes_buffer = []
-    return proxy
     proxy._control_box_ready_s = 0.0
     proxy._box_connected_since_epoch = None
     proxy._hb_interval_s = 0.0

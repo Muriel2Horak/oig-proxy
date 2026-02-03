@@ -127,9 +127,6 @@ class OIGProxy:
         self._control_api: ControlAPIServer | None = None
         self._local_setting_pending: dict[str, Any] | None = None
         self._set_commands_buffer: list[dict[str, str]] = []  # For telemetry
-        self._tbl_events_buffer: list[dict[str, str]] = []  # tbl_events for telemetry
-        self._log_buffer: deque[dict[str, str]] = deque(maxlen=100)  # WARNING/ERROR logs
-        self._state_changes_buffer: list[dict[str, str]] = []  # Connection timeline
 
         # Control over MQTT (production)
         self._control_mqtt_enabled: bool = bool(CONTROL_MQTT_ENABLED)
@@ -206,52 +203,10 @@ class OIGProxy:
         self._last_hb_ts: float = 0.0
         self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
 
-    def _track_state_change(self, entity: str, new_state: bool) -> None:
-        """Track box/cloud connection state changes for telemetry timeline."""
-        state_str = "connected" if new_state else "disconnected"
-        self._state_changes_buffer.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "entity": entity,  # "box" or "cloud"
-            "state": state_str,
-        })
-        logger.debug("📊 State change tracked: %s -> %s", entity, state_str)
-        
-        # Track in telemetry window metrics
-        if hasattr(self, '_telemetry_client') and self._telemetry_client:
-            old_state_str = "disconnected" if new_state else "connected"
-            self._telemetry_client.track_state_change(entity, old_state_str, state_str)
-            
-            # Also track as event
-            event_type = f"{entity}_connect" if new_state else f"{entity}_disconnect"
-            self._telemetry_client.track_event(event_type, "")
-
-    def _set_box_connected(self, new_state: bool) -> None:
-        """Set box_connected with automatic timeline tracking."""
-        if self.box_connected != new_state:
-            self.box_connected = new_state
-            self._track_state_change("box", new_state)
-
-    def _set_cloud_connected(self, new_state: bool) -> None:
-        """Set cloud_session_connected with automatic timeline tracking."""
-        if self.cloud_session_connected != new_state:
-            self.cloud_session_connected = new_state
-            self._track_state_change("cloud", new_state)
-
     async def start(self):
         """Spustí proxy server."""
         self._loop = asyncio.get_running_loop()
         self.mqtt_publisher.attach_loop(self._loop)
-
-        # Attach log handler for telemetry
-        log_handler = logging.Handler()
-        log_handler.setLevel(logging.WARNING)
-        log_handler.emit = lambda record: self._log_buffer.append({
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "module": record.name,
-        })
-        logging.getLogger().addHandler(log_handler)
 
         if CONTROL_API_PORT and CONTROL_API_PORT > 0:
             try:
@@ -712,13 +667,6 @@ class OIGProxy:
             return
 
         if table_name == "tbl_events":
-            # Track event for telemetry
-            self._tbl_events_buffer.append({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "type": parsed.get("Type", ""),
-                "confirm": parsed.get("Confirm", ""),
-                "content": parsed.get("Content", ""),
-            })
             content = parsed.get("Content")
             if content:
                 new_mode = self.parser.parse_mode_from_event(str(content))
@@ -736,12 +684,6 @@ class OIGProxy:
             if old_mode != new_mode:
                 self.mode = new_mode
                 self.stats["mode_changes"] += 1
-                # Track mode change event
-                if hasattr(self, '_telemetry_client') and self._telemetry_client:
-                    self._telemetry_client.track_event(
-                        "mode_change",
-                        f"{old_mode.value} -> {new_mode.value}"
-                    )
             return old_mode
 
     def _log_status_heartbeat(self) -> None:
@@ -865,15 +807,9 @@ class OIGProxy:
     def _collect_telemetry_metrics(self) -> dict[str, Any]:
         """Collect current proxy metrics for telemetry."""
         uptime_s = int(time.time() - self._start_time)
-        # Get and clear all buffers
+        # Get and clear SET commands buffer
         set_commands = self._set_commands_buffer[:]
-        tbl_events = self._tbl_events_buffer[:]
-        logs = list(self._log_buffer)
-        state_changes = self._state_changes_buffer[:]
         self._set_commands_buffer.clear()
-        self._tbl_events_buffer.clear()
-        self._log_buffer.clear()
-        self._state_changes_buffer.clear()
         return {
             "uptime_s": uptime_s,
             "mode": self.mode.value,
@@ -890,11 +826,6 @@ class OIGProxy:
             "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
             "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
             "set_commands": set_commands,
-            "window_metrics": {
-                "tbl_events": tbl_events,
-                "logs": logs,
-                "state_changes": state_changes,
-            },
         }
 
     def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
@@ -973,7 +904,7 @@ class OIGProxy:
         self._tune_socket(writer)
 
         logger.info("🔌 BOX connected (conn=%s, peer=%s)", conn_id, addr)
-        self._set_box_connected(True)
+        self.box_connected = True
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
         await self.publish_proxy_status()
@@ -992,7 +923,7 @@ class OIGProxy:
                 self._local_getactual_task.cancel()
             self._local_getactual_task = None
             await self._close_writer(writer)
-            self._set_box_connected(False)
+            self.box_connected = False
             self._box_connected_since_epoch = None
             self._telemetry_fire_event(
                 "error_box_disconnect", box_peer=self._active_box_peer or str(addr)
@@ -1099,7 +1030,7 @@ class OIGProxy:
         note_cloud_failure: bool = True,
         send_box_ack: bool = True,
     ) -> tuple[None, None]:
-        self._set_cloud_connected(False)
+        self.cloud_session_connected = False
         await self._close_writer(cloud_writer)
         await self._process_frame_offline(
             frame_bytes,
@@ -1124,7 +1055,7 @@ class OIGProxy:
         # Check if we should try to connect to cloud
         if not self._should_try_cloud():
             await self._close_writer(cloud_writer)
-            self._set_cloud_connected(False)
+            self.cloud_session_connected = False
             return None, None
         if cloud_writer is not None and not cloud_writer.is_closing():
             return cloud_reader, cloud_writer
@@ -1136,7 +1067,7 @@ class OIGProxy:
             )
             self.cloud_connects += 1
             was_connected = self.cloud_session_connected
-            self._set_cloud_connected(True)
+            self.cloud_session_connected = True
             # Success - record for HYBRID mode
             self._hybrid_record_success()
             if not was_connected:
@@ -1156,7 +1087,7 @@ class OIGProxy:
                 table_name,
             )
             self.cloud_errors += 1
-            self._set_cloud_connected(False)
+            self.cloud_session_connected = False
             await self._close_writer(cloud_writer)
             # Record failure for HYBRID mode
             self._hybrid_record_failure()
@@ -1409,7 +1340,7 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
     ) -> tuple[None, None]:
         await self._close_writer(cloud_writer)
-        self._set_cloud_connected(False)
+        self.cloud_session_connected = False
         await self._process_frame_offline(frame_bytes, table_name, device_id, box_writer)
         return None, None
 
@@ -1453,8 +1384,7 @@ class OIGProxy:
                     continue
                 current_mode = await self._get_current_mode()
 
-                # OFFLINE mode: always local ACK, never try cloud
-                if current_mode == ProxyMode.OFFLINE:
+                if current_mode != ProxyMode.ONLINE:
                     cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
                         frame_bytes=data,
                         table_name=table_name,
@@ -1464,7 +1394,6 @@ class OIGProxy:
                     )
                     continue
 
-                # ONLINE or HYBRID: try cloud forward (HYBRID has fallback in _forward_frame_online)
                 cloud_reader, cloud_writer = await self._forward_frame_online(
                     frame_bytes=data,
                     table_name=table_name,
@@ -1491,7 +1420,7 @@ class OIGProxy:
             )
         finally:
             await self._close_writer(cloud_writer)
-            self._set_cloud_connected(False)
+            self.cloud_session_connected = False
 
     async def _process_frame_offline(
         self,

@@ -107,9 +107,6 @@ def make_proxy(tmp_path):
     proxy._control_mqtt_enabled = False
     proxy._telemetry_client = None
     proxy._set_commands_buffer = []
-    proxy._tbl_events_buffer = []
-    proxy._log_buffer = deque(maxlen=100)
-    proxy._state_changes_buffer = []
     proxy._prms_tables = {}
     proxy._prms_device_id = None
     proxy._table_cache = {}
