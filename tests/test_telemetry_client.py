@@ -187,27 +187,32 @@ class TestTelemetryClientParseMqttUrl:
     """Test _parse_mqtt_url method."""
 
     def test_parse_with_port(self):
-        host, port = telemetry_client.TelemetryClient._parse_mqtt_url("mqtt://test.com:1234")
+        host, port = telemetry_client.TelemetryClient._parse_mqtt_url(
+            "mqtt://test.com:1234")
         assert host == "test.com"
         assert port == 1234
 
     def test_parse_without_port(self):
-        host, port = telemetry_client.TelemetryClient._parse_mqtt_url("mqtt://test.com")
+        host, port = telemetry_client.TelemetryClient._parse_mqtt_url(
+            "mqtt://test.com")
         assert host == "test.com"
         assert port == 1883
 
     def test_parse_tcp_prefix(self):
-        host, port = telemetry_client.TelemetryClient._parse_mqtt_url("tcp://test.com:9999")
+        host, port = telemetry_client.TelemetryClient._parse_mqtt_url(
+            "tcp://test.com:9999")
         assert host == "test.com"
         assert port == 9999
 
     def test_parse_no_prefix(self):
-        host, port = telemetry_client.TelemetryClient._parse_mqtt_url("test.com:5555")
+        host, port = telemetry_client.TelemetryClient._parse_mqtt_url(
+            "test.com:5555")
         assert host == "test.com"
         assert port == 5555
 
     def test_parse_invalid_port(self):
-        host, port = telemetry_client.TelemetryClient._parse_mqtt_url("test.com:invalid")
+        host, port = telemetry_client.TelemetryClient._parse_mqtt_url(
+            "test.com:invalid")
         assert host == "test.com:invalid"  # Invalid port keeps whole string as host
         assert port == 1883
 
@@ -647,7 +652,8 @@ class TestEdgeCases:
 
                     # Mock client to fail on publish
                     mock_client = MagicMock()
-                    mock_client.publish.side_effect = Exception("Publish error")
+                    mock_client.publish.side_effect = Exception(
+                        "Publish error")
                     client._client = mock_client
                     client._connected = True
 
@@ -683,7 +689,8 @@ class TestEdgeCases:
                 client = telemetry_client.TelemetryClient("12345", "1.0.0")
                 mock_client = MagicMock()
                 mock_client.loop_stop.side_effect = Exception("Stop error")
-                mock_client.disconnect.side_effect = Exception("Disconnect error")
+                mock_client.disconnect.side_effect = Exception(
+                    "Disconnect error")
                 client._client = mock_client
 
                 # Should not raise exception
@@ -822,7 +829,9 @@ class TestTelemetryClientCoverage:
             return original_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        globs: dict = {"__name__": "telemetry_client_no_mqtt", "__file__": telemetry_client.__file__}
+        globs: dict = {
+            "__name__": "telemetry_client_no_mqtt",
+            "__file__": telemetry_client.__file__}
         exec(compile(source, telemetry_client.__file__, "exec"), globs)
         assert globs["MQTT_AVAILABLE"] is False
         assert globs["mqtt"] is None

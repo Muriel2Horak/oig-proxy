@@ -9,7 +9,10 @@ from models import ProxyMode, SensorConfig
 
 
 class DummyCloudHealth:
-    def __init__(self, is_online: bool = True, fail_threshold: int = 2) -> None:
+    def __init__(
+            self,
+            is_online: bool = True,
+            fail_threshold: int = 2) -> None:
         self.is_online = is_online
         self.fail_threshold = fail_threshold
         self.consecutive_successes = 0
@@ -65,7 +68,13 @@ class DummyMQTT:
     async def publish_data(self, payload: dict):
         self.published_data.append(payload)
 
-    async def publish_raw(self, *, topic: str, payload: str, qos: int, retain: bool):
+    async def publish_raw(
+            self,
+            *,
+            topic: str,
+            payload: str,
+            qos: int,
+            retain: bool):
         self.published_raw.append((topic, payload, qos, retain))
 
     def _state_topic(self, device_id: str, table: str) -> str:
@@ -79,7 +88,8 @@ class DummyMQTT:
         return self._state_topic(device_id, table)
 
     def map_data_for_publish(self, data, *, table, target_device_id):
-        return self._map_data_for_publish(data, table=table, target_device_id=target_device_id)
+        return self._map_data_for_publish(
+            data, table=table, target_device_id=target_device_id)
 
     def get_cached_payload(self, topic: str):
         return self._last_payload_by_topic.get(topic)
@@ -216,7 +226,10 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     proxy._last_data_iso = "2025-01-01T00:00:00Z"
     proxy._isnew_polls = 1
     proxy._isnew_last_poll_iso = "2025-01-01T00:00:01Z"
-    proxy._control_inflight = {"request_key": "k1", "tbl_name": "tbl", "tbl_item": "MODE"}
+    proxy._control_inflight = {
+        "request_key": "k1",
+        "tbl_name": "tbl",
+        "tbl_item": "MODE"}
     proxy._control_queue = deque([{"request_key": "k2"}])
     proxy._control_last_result = {"status": "ok"}
 
@@ -259,7 +272,8 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     assert window_metrics["box_sessions"] == [{"timestamp": "t1"}]
     assert window_metrics["cloud_sessions"] == [{"timestamp": "t2"}]
     assert window_metrics["offline_events"] == [{"timestamp": "t3"}]
-    assert window_metrics["tbl_events"] == [{"timestamp": "t4", "event_time": "t4"}]
+    assert window_metrics["tbl_events"] == [
+        {"timestamp": "t4", "event_time": "t4"}]
     assert window_metrics["error_context"] == [{"timestamp": "t5"}]
     assert len(window_metrics["logs"]) == 1
 
@@ -288,7 +302,14 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
         calls.append((args, kwargs))
 
     monkeypatch.setattr(proxy, "_publish_mode_if_ready", fake_publish)
-    monkeypatch.setattr(proxy_module, "save_mode_state", lambda mode, dev: calls.append(("save", mode, dev)))
+    monkeypatch.setattr(
+        proxy_module,
+        "save_mode_state",
+        lambda mode,
+        dev: calls.append(
+            ("save",
+             mode,
+             dev)))
 
     async def run():
         await proxy._handle_mode_update("bad", None, "src")
@@ -317,6 +338,7 @@ def test_prms_publish_flow(tmp_path):
         assert proxy._prms_pending_publish is True
 
         proxy.device_id = "DEV1"
+
         async def fail_publish(_payload):
             raise RuntimeError("fail")
         proxy.mqtt_publisher.publish_data = fail_publish
@@ -391,7 +413,13 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
     proxy.device_id = "DEV1"
 
     cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
-    monkeypatch.setattr(proxy_module, "get_sensor_config", lambda key, table=None: (cfg, key))
+    monkeypatch.setattr(
+        proxy_module,
+        "get_sensor_config",
+        lambda key,
+        table=None: (
+            cfg,
+            key))
 
     updated = []
 
@@ -419,7 +447,13 @@ def test_control_message_validation_and_accept(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append((status, error, detail))
 
     async def fake_maybe_start():
@@ -471,7 +505,13 @@ def test_control_start_inflight_paths(tmp_path):
     finished = []
     deferred = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append(status)
 
     async def fake_finish():
@@ -529,7 +569,13 @@ def test_control_on_box_setting_ack(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    async def fake_publish_result(*, tx, status, error=None, detail=None, extra=None):
+    async def fake_publish_result(
+        *,
+        tx,
+        status,
+        error=None,
+        detail=None,
+            extra=None):
         results.append((status, error))
 
     async def fake_finish():

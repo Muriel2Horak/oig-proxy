@@ -14,7 +14,13 @@ class DummyProxy:
     def get_control_api_health(self):
         return {"ok": True, "status": "ready"}
 
-    def control_api_send_setting(self, *, tbl_name, tbl_item, new_value, confirm):
+    def control_api_send_setting(
+            self,
+            *,
+            tbl_name,
+            tbl_item,
+            new_value,
+            confirm):
         self.last_setting = {
             "tbl_name": tbl_name,
             "tbl_item": tbl_item,
@@ -42,7 +48,8 @@ class _TestHandler(_Handler):
             self.do_POST()
 
 
-def _request(method: str, path: str, body: bytes | None, headers: dict[str, str] | None = None):
+def _request(method: str, path: str, body: bytes | None,
+             headers: dict[str, str] | None = None):
     headers = headers or {}
     if body is None:
         body = b""
@@ -98,7 +105,8 @@ def test_control_api_not_found_paths():
     status, _data, _proxy = _request("GET", "/nope", None)
     assert status == 404
 
-    status, _data, _proxy = _request("POST", "/nope", b"{}", {"Content-Type": "application/json"})
+    status, _data, _proxy = _request(
+        "POST", "/nope", b"{}", {"Content-Type": "application/json"})
     assert status == 404
 
 
@@ -108,7 +116,8 @@ def test_control_api_xml_fallback():
         "<TblItem>MODE</TblItem>"
         "<NewValue>2</NewValue>"
     ).encode("utf-8")
-    status, data, _proxy = _request("POST", "/api/setting", body, {"Content-Type": "text/plain"})
+    status, data, _proxy = _request(
+        "POST", "/api/setting", body, {"Content-Type": "text/plain"})
     payload = json.loads(data.decode("utf-8"))
     assert status == 200
     assert payload["ok"] is True

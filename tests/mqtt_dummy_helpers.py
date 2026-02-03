@@ -16,7 +16,8 @@ class DummyMQTTMixin:
         return self._state_topic(device_id, table)
 
     def map_data_for_publish(self, data, *, table, target_device_id):
-        return self._map_data_for_publish(data, table=table, target_device_id=target_device_id)
+        return self._map_data_for_publish(
+            data, table=table, target_device_id=target_device_id)
 
     def get_cached_payload(self, topic):
         return self._last_payload_by_topic.get(topic)

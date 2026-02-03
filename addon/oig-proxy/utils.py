@@ -167,9 +167,7 @@ def load_mode_state() -> tuple[int | None, str | None]:
                         mode_int = None
                     if mode_int is None or mode_int < 0 or mode_int > 5:
                         logger.warning(
-                            "MODE: Stored value %s is out of range 0-5, ignoring",
-                            mode_value,
-                        )
+                            "MODE: Stored value %s is out of range 0-5, ignoring", mode_value, )
                         return None, device_id
                     logger.info(
                         "MODE: Loaded saved state: %s (device_id=%s)",
@@ -226,7 +224,8 @@ def _parse_prms_tables(raw_tables: Any) -> dict[str, dict[str, Any]]:
     return tables
 
 
-def _split_prms_state(data: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], str | None]:
+def _split_prms_state(
+        data: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], str | None]:
     device_id = data.get("device_id")
     raw_tables = data.get("tables")
 
@@ -235,7 +234,8 @@ def _split_prms_state(data: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
         raw_tables = data
         device_id = None
 
-    return _parse_prms_tables(raw_tables), (str(device_id) if device_id else None)
+    return _parse_prms_tables(raw_tables), (str(
+        device_id) if device_id else None)
 
 
 def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
@@ -271,15 +271,15 @@ def save_prms_state(
         os.makedirs(os.path.dirname(PRMS_STATE_PATH), exist_ok=True)
 
         existing = _load_json_file(PRMS_STATE_PATH)
-        existing_dict: dict[str, Any] = existing if isinstance(existing, dict) else {}
+        existing_dict: dict[str, Any] = existing if isinstance(
+            existing, dict) else {}
 
         existing_device_id = existing_dict.get("device_id")
         existing_tables = existing_dict.get("tables")
 
         # Backward compatibility: pokud je soubor přímo dict table->values
-        if existing_tables is None and any(
-            isinstance(k, str) and k.startswith("tbl_") for k in existing_dict.keys()
-        ):
+        if existing_tables is None and any(isinstance(k, str) and k.startswith(
+                "tbl_") for k in existing_dict.keys()):
             existing_tables = existing_dict
             existing_device_id = None
 
@@ -495,7 +495,8 @@ def _add_sensors_from_mapping(mapping: dict[str, Any]) -> int:  # pylint: disabl
     return added
 
 
-def _build_warning_map(mapping: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def _build_warning_map(
+        mapping: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {}
     entries = mapping.get("warnings_3f", [])
     if not isinstance(entries, list):
@@ -562,7 +563,8 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
 
     try:
         conn = sqlite3.connect(CAPTURE_DB_PATH, check_same_thread=False)
-        # PRAGMA pro lepší výkon a menší blokování (writer poběží v background threadu)
+        # PRAGMA pro lepší výkon a menší blokování (writer poběží v background
+        # threadu)
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
@@ -601,7 +603,8 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
                 )
                 conn.commit()
             except sqlite3.Error as exc:
-                logger.debug("Capture DB column %s add skipped: %s", col_name, exc)
+                logger.debug(
+                    "Capture DB column %s add skipped: %s", col_name, exc)
 
         cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
         return conn, cols
@@ -632,7 +635,8 @@ def _commit_capture_batch(
             conn.rollback()
 
 
-def _capture_loop(conn: sqlite3.Connection, sql: str, q: queue.Queue[tuple[Any, ...]]) -> None:
+def _capture_loop(conn: sqlite3.Connection, sql: str,
+                  q: queue.Queue[tuple[Any, ...]]) -> None:
     batch: list[tuple[Any, ...]] = []
     last_commit = time.time()
     while True:
@@ -663,8 +667,7 @@ def _capture_worker(db_path: str) -> None:
         sql = (
             "INSERT INTO frames "
             "(ts, device_id, table_name, raw, raw_b64, parsed, direction, conn_id, peer, length) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)"
-        )
+            "VALUES (?,?,?,?,?,?,?,?,?,?)")
 
         if _capture_queue is None:
             logger.warning("Capture worker started without queue")

@@ -26,7 +26,10 @@ def test_main_runs_with_device_id(monkeypatch):
     async def run():
         monkeypatch.setattr(main_module, "OIGProxy", DummyProxy)
         monkeypatch.setattr(main_module, "load_sensor_map", lambda: None)
-        monkeypatch.setattr(main_module.os, "getenv", lambda key: "DEVX" if key == "DEVICE_ID" else None)
+        monkeypatch.setattr(
+            main_module.os,
+            "getenv",
+            lambda key: "DEVX" if key == "DEVICE_ID" else None)
         await main_module.main()
 
     asyncio.run(run())
@@ -66,7 +69,12 @@ def test_main_handles_exception(monkeypatch):
     monkeypatch.setattr(main_module, "load_sensor_map", lambda: None)
     monkeypatch.setattr(main_module.os, "getenv", lambda key: "DEVX")
 
-    monkeypatch.setattr(main_module.sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    monkeypatch.setattr(
+        main_module.sys,
+        "exit",
+        lambda code=0: (
+            _ for _ in ()).throw(
+            SystemExit(code)))
 
     async def run():
         with pytest.raises(SystemExit) as exc:
@@ -82,7 +90,12 @@ def test_main_module_interrupts(monkeypatch):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(main_module.asyncio, "run", fake_run)
-    monkeypatch.setattr(main_module.sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    monkeypatch.setattr(
+        main_module.sys,
+        "exit",
+        lambda code=0: (
+            _ for _ in ()).throw(
+            SystemExit(code)))
 
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("main", run_name="__main__")

@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "addon" / "oig-proxy"))
 if importlib.util.find_spec("local_oig_crc") is None:
     import pytest
 
-    pytest.skip("local_oig_crc is not available in this environment", allow_module_level=True)
+    pytest.skip(
+        "local_oig_crc is not available in this environment",
+        allow_module_level=True)
 
 import local_oig_crc  # noqa: E402
 

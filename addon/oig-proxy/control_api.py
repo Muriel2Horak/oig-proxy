@@ -48,11 +48,13 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
         length = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(length) if length > 0 else b""
 
-        # JSON preferred, but allow minimal XML snippet containing just the tags.
+        # JSON preferred, but allow minimal XML snippet containing just the
+        # tags.
         try:
             data = json.loads(body.decode("utf-8") if body else "{}")
         except json.JSONDecodeError:
             text = body.decode("utf-8", errors="ignore")
+
             def _tag(name: str) -> str | None:
                 m = re.search(rf"<{name}>([^<]+)</{name}>", text)
                 return m.group(1) if m else None
@@ -112,7 +114,10 @@ class ControlAPIServer:
         httpd.proxy = self.proxy  # type: ignore[attr-defined]
         self._httpd = httpd
 
-        t = threading.Thread(target=httpd.serve_forever, name="oig-control-api", daemon=True)
+        t = threading.Thread(
+            target=httpd.serve_forever,
+            name="oig-control-api",
+            daemon=True)
         t.start()
         self._thread = t
 

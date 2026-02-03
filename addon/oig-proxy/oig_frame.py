@@ -68,7 +68,10 @@ def build_frame(inner_xml: str, *, add_crlf: bool = True) -> str:
     inner_wo_crc = _CRC_TAG_RE.sub(b"", inner_bytes)
     checksum = crc16_modbus(inner_wo_crc)
     crc_tag = f"<CRC>{checksum:05d}</CRC>"
-    out = f"<Frame>{inner_wo_crc.decode('utf-8', errors='strict')}{crc_tag}</Frame>"
+    out = f"<Frame>{
+        inner_wo_crc.decode(
+            'utf-8',
+            errors='strict')}{crc_tag}</Frame>"
     if add_crlf:
         out += "\r\n"
     return out

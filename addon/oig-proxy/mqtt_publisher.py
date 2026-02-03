@@ -79,7 +79,8 @@ class MQTTQueue:
         try:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(queue)")}
             if "retain" not in cols:
-                conn.execute("ALTER TABLE queue ADD COLUMN retain INTEGER NOT NULL DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE queue ADD COLUMN retain INTEGER NOT NULL DEFAULT 0")
                 conn.commit()
         except sqlite3.Error as exc:
             logger.debug("MQTTQueue: retain column check failed: %s", exc)
@@ -87,7 +88,11 @@ class MQTTQueue:
         logger.info("MQTTQueue: Initialized (%s)", self.db_path)
         return conn
 
-    async def add(self, topic: str, payload: str, retain: bool = False) -> bool:
+    async def add(
+            self,
+            topic: str,
+            payload: str,
+            retain: bool = False) -> bool:
         """Přidá MQTT zprávu do fronty (FIFO)."""
         async with self.lock:
             try:
@@ -110,7 +115,8 @@ class MQTTQueue:
                 # historických stavů pro stejný topic (což v HA fan-outne do spousty
                 # state_changed událostí).
                 if retain:
-                    self.conn.execute("DELETE FROM queue WHERE topic = ?", (topic,))
+                    self.conn.execute(
+                        "DELETE FROM queue WHERE topic = ?", (topic,))
 
                 self.conn.execute(
                     "INSERT INTO queue "
@@ -202,9 +208,12 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self.connected = False
         self.discovery_sent: set[str] = set()
         self._last_payload_by_topic: dict[str, str] = {}
-        self._local_tzinfo = datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
-        self._message_handlers: dict[str, tuple[int, Callable[[str, bytes, int, bool], None]]] = {}
-        self._wildcard_handlers: list[tuple[str, int, Callable[[str, bytes, int, bool], None]]] = []
+        self._local_tzinfo = datetime.datetime.now(
+        ).astimezone().tzinfo or datetime.timezone.utc
+        self._message_handlers: dict[str, tuple[int,
+                                                Callable[[str, bytes, int, bool], None]]] = {}
+        self._wildcard_handlers: list[tuple[str, int,
+                                            Callable[[str, bytes, int, bool], None]]] = []
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._replay_future: concurrent.futures.Future[Any] | None = None
 
@@ -230,7 +239,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             logger.error("MQTT library paho-mqtt is not installed")
             return False
 
-        # Pokud connect voláme z asyncio kontextu, uložíme si loop pro thread-safe scheduling.
+        # Pokud connect voláme z asyncio kontextu, uložíme si loop pro
+        # thread-safe scheduling.
         if self._main_loop is None:
             try:
                 self._main_loop = asyncio.get_running_loop()
@@ -450,7 +460,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         if not self.client:
             return False
         try:
-            result = self.client.publish(topic, payload, qos=qos, retain=retain)
+            result = self.client.publish(
+                topic, payload, qos=qos, retain=retain)
             return result.rc == 0
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("MQTT: publish_raw exception: %s", e)
@@ -485,7 +496,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
 
             try:
                 assert self.client is not None
-                result = self.client.publish(topic, payload, qos=1, retain=retain)
+                result = self.client.publish(
+                    topic, payload, qos=1, retain=retain)
                 if result.rc == 0:
                     await self.queue.remove(msg_id)
                     replayed += 1
@@ -636,12 +648,14 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         }
         if config.json_attributes_topic:
             if config.json_attributes_topic == "state":
-                payload["json_attributes_topic"] = self._state_topic(device_id, table)
+                payload["json_attributes_topic"] = self._state_topic(
+                    device_id, table)
             else:
                 payload["json_attributes_topic"] = config.json_attributes_topic
 
         if device_type not in ("inverter", "proxy"):
-            payload["device"]["via_device"] = f"{MQTT_NAMESPACE}_{self.device_id}_inverter"
+            payload["device"]["via_device"] = f"{MQTT_NAMESPACE}_{
+                self.device_id}_inverter"
 
         if config.is_binary:
             payload["payload_on"] = "1"
@@ -676,7 +690,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             logger.debug(
                 "MQTT: Discovery %s skipped - not connected (client=%s, connected=%s)",
                 sensor_id,
-                bool(self.client),
+                bool(
+                    self.client),
                 self.connected,
             )
             return
@@ -716,13 +731,15 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         )
 
         publish_data, mapped_count = self._map_data_for_publish(
-            data, table=str(table) if table else None, target_device_id=target_device_id
-        )
+            data, table=str(table) if table else None, target_device_id=target_device_id)
 
-        topic = self._state_topic(target_device_id, str(table) if table else None)
+        topic = self._state_topic(
+            target_device_id,
+            str(table) if table else None)
         payload = json.dumps(publish_data)
 
-        # De-dupe: pokud payload pro topic je stejný jako minule, nepublikuj ani nequeueuj.
+        # De-dupe: pokud payload pro topic je stejný jako minule, nepublikuj
+        # ani nequeueuj.
         if self._last_payload_by_topic.get(topic) == payload:
             return True
         self._last_payload_by_topic[topic] = payload
@@ -801,10 +818,13 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                 publish_data[key] = value
                 continue
 
-            self.send_discovery(unique_key, cfg, table, device_id=target_device_id)
+            self.send_discovery(
+                unique_key, cfg, table, device_id=target_device_id)
             mapped_count += 1
 
-            if cfg.options and isinstance(value, int) and 0 <= value < len(cfg.options):
+            if cfg.options and isinstance(
+                    value, int) and 0 <= value < len(
+                    cfg.options):
                 publish_data[key] = cfg.options[value]
             else:
                 publish_data[key] = self._coerce_state_value(cfg, value)
@@ -835,7 +855,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
 
         return value
 
-    async def publish_proxy_status(self, status_payload: dict[str, Any]) -> bool:
+    async def publish_proxy_status(
+            self, status_payload: dict[str, Any]) -> bool:
         """Publikuje stav proxy jako samostatnou tabulku proxy_status."""
         data = {"_table": "proxy_status"}
         data.update(status_payload)

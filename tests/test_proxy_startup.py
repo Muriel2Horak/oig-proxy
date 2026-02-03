@@ -31,10 +31,16 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
         def size(self) -> int:
             return 0
 
-    monkeypatch.setattr(mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(tmp_path / "mqtt.db"))
+    monkeypatch.setattr(
+        mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(
+            tmp_path / "mqtt.db"))
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
-    monkeypatch.setattr(proxy_module, "CONTROL_MQTT_PENDING_PATH", str(tmp_path / "pending.json"))
-    monkeypatch.setattr(proxy_module, "CONTROL_MQTT_LOG_PATH", str(tmp_path / "control.log"))
+    monkeypatch.setattr(
+        proxy_module, "CONTROL_MQTT_PENDING_PATH", str(
+            tmp_path / "pending.json"))
+    monkeypatch.setattr(
+        proxy_module, "CONTROL_MQTT_LOG_PATH", str(
+            tmp_path / "control.log"))
 
     proxy = proxy_module.OIGProxy("AUTO")
 

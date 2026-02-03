@@ -30,7 +30,8 @@ def test_mode_state_out_of_range(tmp_path, monkeypatch):
     path = tmp_path / "mode.json"
     monkeypatch.setattr(utils, "MODE_STATE_PATH", str(path))
 
-    path.write_text(json.dumps({"mode": 99, "device_id": "DEV2"}), encoding="utf-8")
+    path.write_text(json.dumps(
+        {"mode": 99, "device_id": "DEV2"}), encoding="utf-8")
     mode, device_id = utils.load_mode_state()
 
     assert mode is None
@@ -41,7 +42,8 @@ def test_mode_state_invalid_value(tmp_path, monkeypatch):
     path = tmp_path / "mode.json"
     monkeypatch.setattr(utils, "MODE_STATE_PATH", str(path))
 
-    path.write_text(json.dumps({"mode": "bad", "device_id": "DEV3"}), encoding="utf-8")
+    path.write_text(json.dumps(
+        {"mode": "bad", "device_id": "DEV3"}), encoding="utf-8")
     mode, device_id = utils.load_mode_state()
 
     assert mode is None
@@ -149,7 +151,12 @@ def test_resolve_cloud_host_failure(monkeypatch):
     monkeypatch.setattr(utils, "_PUBLIC_DNS_HOSTS", {"oigservis.cz"})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_CACHE", {})
     monkeypatch.setattr(utils, "_PUBLIC_DNS_LAST_LOG", {})
-    monkeypatch.setattr(utils, "_resolve_public_dns", lambda host: (None, 30.0))
+    monkeypatch.setattr(
+        utils,
+        "_resolve_public_dns",
+        lambda host: (
+            None,
+            30.0))
 
     with pytest.raises(RuntimeError):
         utils.resolve_cloud_host("oigservis.cz")
@@ -248,7 +255,10 @@ def test_public_dns_nameservers_default(monkeypatch):
 
 
 def test_public_dns_cache_expires(monkeypatch):
-    monkeypatch.setattr(utils, "_PUBLIC_DNS_CACHE", {"host": ("1.2.3.4", time.time() - 1)})
+    monkeypatch.setattr(
+        utils, "_PUBLIC_DNS_CACHE", {
+            "host": (
+                "1.2.3.4", time.time() - 1)})
     assert utils._public_dns_cache_get("host") is None
     assert utils._PUBLIC_DNS_CACHE == {}
 
@@ -313,7 +323,9 @@ def test_resolve_cloud_host_empty():
 
 
 def test_load_prms_state_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(utils, "PRMS_STATE_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(
+        utils, "PRMS_STATE_PATH", str(
+            tmp_path / "missing.json"))
     tables, device_id = utils.load_prms_state()
     assert tables == {}
     assert device_id is None

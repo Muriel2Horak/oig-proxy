@@ -148,19 +148,24 @@ class OIGProxy:
         self._control_status_retain: bool = bool(CONTROL_MQTT_STATUS_RETAIN)
         self._control_log_enabled: bool = bool(CONTROL_MQTT_LOG_ENABLED)
         self._control_log_path: str = str(CONTROL_MQTT_LOG_PATH)
-        self._control_box_ready_s: float = float(CONTROL_MQTT_BOX_READY_SECONDS)
+        self._control_box_ready_s: float = float(
+            CONTROL_MQTT_BOX_READY_SECONDS)
         self._control_ack_timeout_s: float = float(CONTROL_MQTT_ACK_TIMEOUT_S)
-        self._control_applied_timeout_s: float = float(CONTROL_MQTT_APPLIED_TIMEOUT_S)
-        self._control_mode_quiet_s: float = float(CONTROL_MQTT_MODE_QUIET_SECONDS)
+        self._control_applied_timeout_s: float = float(
+            CONTROL_MQTT_APPLIED_TIMEOUT_S)
+        self._control_mode_quiet_s: float = float(
+            CONTROL_MQTT_MODE_QUIET_SECONDS)
         self._control_whitelist: dict[str, set[str]] = CONTROL_WRITE_WHITELIST
         self._control_max_attempts: int = 5
         self._control_retry_delay_s: float = 120.0
         self._control_session_id: str = uuid.uuid4().hex
         self._control_pending_path: str = str(CONTROL_MQTT_PENDING_PATH)
-        self._control_pending_keys: set[str] = self._control_load_pending_keys()
+        self._control_pending_keys: set[str] = self._control_load_pending_keys(
+        )
         self._proxy_status_attrs_topic: str = str(PROXY_STATUS_ATTRS_TOPIC)
         self._local_getactual_enabled: bool = bool(LOCAL_GETACTUAL_ENABLED)
-        self._local_getactual_interval_s: float = float(LOCAL_GETACTUAL_INTERVAL_S)
+        self._local_getactual_interval_s: float = float(
+            LOCAL_GETACTUAL_INTERVAL_S)
         self._local_getactual_task: asyncio.Task[Any] | None = None
         self._full_refresh_interval_h: int = int(FULL_REFRESH_INTERVAL_H)
         self._full_refresh_task: asyncio.Task[Any] | None = None
@@ -170,7 +175,8 @@ class OIGProxy:
         self._telemetry_task: asyncio.Task[Any] | None = None
         self._telemetry_interval_s: int = TELEMETRY_INTERVAL_S
         self._start_time: float = time.time()
-        self._background_tasks: set[asyncio.Task[Any]] = set()  # prevent task GC
+        # prevent task GC
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         self._telemetry_box_sessions: deque[dict[str, Any]] = deque()
         self._telemetry_cloud_sessions: deque[dict[str, Any]] = deque()
         self._telemetry_offline_events: deque[dict[str, Any]] = deque()
@@ -251,7 +257,8 @@ class OIGProxy:
         if self.mqtt_publisher.connect():
             await self.mqtt_publisher.start_health_check()
         else:
-            logger.warning("MQTT: Initial connect failed, health check will retry reconnect")
+            logger.warning(
+                "MQTT: Initial connect failed, health check will retry reconnect")
             await self.mqtt_publisher.start_health_check()
 
         if self._control_mqtt_enabled:
@@ -285,13 +292,15 @@ class OIGProxy:
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._proxy_status_loop())
         if self._full_refresh_task is None or self._full_refresh_task.done():
-            self._full_refresh_task = asyncio.create_task(self._full_refresh_loop())
+            self._full_refresh_task = asyncio.create_task(
+                self._full_refresh_loop())
 
         # Initialize telemetry client (fail-safe, async provisioning)
         if TELEMETRY_ENABLED:
             self._init_telemetry()
             if self._telemetry_task is None or self._telemetry_task.done():
-                self._telemetry_task = asyncio.create_task(self._telemetry_loop())
+                self._telemetry_task = asyncio.create_task(
+                    self._telemetry_loop())
 
         # Spustíme TCP server
         server = await asyncio.start_server(
@@ -312,9 +321,12 @@ class OIGProxy:
         """Vytvoří payload pro proxy_status MQTT sensor."""
         inflight = self._control_inflight
         inflight_str = self._format_control_tx(inflight) if inflight else ""
-        last_result_str = self._format_control_result(self._control_last_result)
-        inflight_key = str(inflight.get("request_key") or "") if inflight else ""
-        queue_keys = [str(tx.get("request_key") or "") for tx in list(self._control_queue)]
+        last_result_str = self._format_control_result(
+            self._control_last_result)
+        inflight_key = str(inflight.get("request_key")
+                           or "") if inflight else ""
+        queue_keys = [str(tx.get("request_key") or "")
+                      for tx in list(self._control_queue)]
         payload = {
             "status": self.mode.value,
             "mode": self.mode.value,
@@ -535,7 +547,8 @@ class OIGProxy:
         if not self._is_hybrid_mode():
             return
         if self._hybrid_in_offline:
-            logger.info("☁️ HYBRID: cloud recovered → switching to online mode")
+            logger.info(
+                "☁️ HYBRID: cloud recovered → switching to online mode")
         self._hybrid_fail_count = 0
         self._hybrid_in_offline = False
 
@@ -604,7 +617,8 @@ class OIGProxy:
         if not table_name or not table_name.startswith("tbl_"):
             return False
 
-        # tbl_actual chodí typicky každých pár sekund → neperzistujeme (zbytečné zápisy)
+        # tbl_actual chodí typicky každých pár sekund → neperzistujeme
+        # (zbytečné zápisy)
         if table_name == "tbl_actual":
             return False
 
@@ -619,7 +633,8 @@ class OIGProxy:
         """Uloží poslední známé hodnoty pro vybrané tabulky (pro obnovu po restartu)."""
         return
 
-    async def _publish_prms_if_ready(self, *, reason: str | None = None) -> None:
+    async def _publish_prms_if_ready(
+            self, *, reason: str | None = None) -> None:
         """Publikuje uložené *_prms hodnoty do MQTT (obnova po restartu/reconnectu)."""
         if not self._prms_tables:
             return
@@ -633,7 +648,8 @@ class OIGProxy:
             return
 
         # Publish jen když je potřeba (startup nebo po MQTT reconnectu)
-        if not self._prms_pending_publish and reason not in ("startup", "device_autodetect"):
+        if not self._prms_pending_publish and reason not in (
+                "startup", "device_autodetect"):
             return
 
         for table_name, values in self._prms_tables.items():
@@ -674,7 +690,9 @@ class OIGProxy:
 
         if mode_int != self._mode_value:
             self._mode_value = mode_int
-            save_mode_state(mode_int, device_id or self.device_id or self._mode_device_id)
+            save_mode_state(
+                mode_int,
+                device_id or self.device_id or self._mode_device_id)
             logger.info("MODE: %s → %s", source, mode_int)
         if device_id:
             self._mode_device_id = device_id
@@ -776,11 +794,13 @@ class OIGProxy:
     def _utc_iso(ts: float | None = None) -> str:
         if ts is None:
             ts = time.time()
-        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromtimestamp(
+            ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     @staticmethod
     def _utc_log_ts(ts: float) -> str:
-        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(
+            ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     def _prune_log_buffer(self) -> None:
         cutoff = time.time() - float(self._telemetry_log_window_s)
@@ -815,11 +835,13 @@ class OIGProxy:
         self._telemetry_logs.clear()
         return logs
 
-    def _record_error_context(self, *, event_type: str, details: dict[str, Any]) -> None:
+    def _record_error_context(self, *, event_type: str,
+                              details: dict[str, Any]) -> None:
         try:
             details_json = json.dumps(details, ensure_ascii=False)
         except Exception:
-            details_json = json.dumps({"detail": str(details)}, ensure_ascii=False)
+            details_json = json.dumps(
+                {"detail": str(details)}, ensure_ascii=False)
         self._telemetry_error_context.append({
             "timestamp": self._utc_iso(),
             "event_type": event_type,
@@ -866,7 +888,11 @@ class OIGProxy:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def _record_box_session_end(self, *, reason: str, peer: str | None) -> None:
+    def _record_box_session_end(
+            self,
+            *,
+            reason: str,
+            peer: str | None) -> None:
         if self._box_connected_since_epoch is None:
             return
         disconnected_at = time.time()
@@ -893,7 +919,11 @@ class OIGProxy:
         })
         self._cloud_connected_since_epoch = None
 
-    def _record_offline_event(self, *, reason: str | None, local_ack: bool | None) -> None:
+    def _record_offline_event(
+            self,
+            *,
+            reason: str | None,
+            local_ack: bool | None) -> None:
         self._telemetry_offline_events.append({
             "timestamp": self._utc_iso(),
             "reason": reason or "unknown",
@@ -912,7 +942,9 @@ class OIGProxy:
                 proxy_version = "1.4.2"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
-            logger.info("📊 Telemetry client initialized (interval=%ss)", self._telemetry_interval_s)
+            logger.info(
+                "📊 Telemetry client initialized (interval=%ss)",
+                self._telemetry_interval_s)
         except Exception as e:
             logger.warning("Telemetry init failed (disabled): %s", e)
             self._telemetry_client = None
@@ -934,7 +966,9 @@ class OIGProxy:
         except Exception as e:
             logger.debug("Initial telemetry provisioning failed: %s", e)
 
-        logger.info("📊 Telemetry loop started (every %ss)", self._telemetry_interval_s)
+        logger.info(
+            "📊 Telemetry loop started (every %ss)",
+            self._telemetry_interval_s)
 
         # Send first telemetry immediately after startup
         try:
@@ -1059,7 +1093,8 @@ class OIGProxy:
                 with suppress(Exception):
                     sock.setsockopt(socket.IPPROTO_TCP, opt, val)
 
-    async def _unregister_box_connection(self, writer: asyncio.StreamWriter) -> None:
+    async def _unregister_box_connection(
+            self, writer: asyncio.StreamWriter) -> None:
         async with self._box_conn_lock:
             if self._active_box_writer is writer:
                 self._active_box_writer = None
@@ -1113,8 +1148,8 @@ class OIGProxy:
             )
             self._last_box_disconnect_reason = None
             self._telemetry_fire_event(
-                "error_box_disconnect", box_peer=self._active_box_peer or str(addr)
-            )
+                "error_box_disconnect",
+                box_peer=self._active_box_peer or str(addr))
             if self._control_mqtt_enabled:
                 await self._control_note_box_disconnect()
             await self._unregister_box_connection(writer)
@@ -1129,7 +1164,11 @@ class OIGProxy:
         """Zpětná kompatibilita: ONLINE režim je řešen per-frame v `_handle_box_connection()`."""
         await self._handle_box_connection(box_reader, box_writer, conn_id)
 
-    async def _note_cloud_failure(self, *, reason: str, local_ack: bool | None = None) -> None:
+    async def _note_cloud_failure(
+            self,
+            *,
+            reason: str,
+            local_ack: bool | None = None) -> None:
         """Zaznamená cloud selhání. V HYBRID mode může přepnout do offline."""
         logger.debug("☁️ Cloud failure noted: %s", reason)
         self._hybrid_record_failure(reason=reason, local_ack=local_ack)
@@ -1151,7 +1190,8 @@ class OIGProxy:
         try:
             data = await asyncio.wait_for(reader.read(8192), timeout=idle_timeout_s)
         except ConnectionResetError:
-            # BOX (nebo síť) spojení tvrdě ukončil – bereme jako běžné odpojení.
+            # BOX (nebo síť) spojení tvrdě ukončil – bereme jako běžné
+            # odpojení.
             self._last_box_disconnect_reason = "reset"
             logger.info(
                 "🔌 BOX reset the connection (conn=%s)", conn_id
@@ -1180,7 +1220,8 @@ class OIGProxy:
         return data
 
     def _touch_last_data(self) -> None:
-        self._last_data_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+        self._last_data_iso = time.strftime(
+            "%Y-%m-%dT%H:%M:%S%z", time.localtime())
         self._last_data_epoch = time.time()
 
     def _extract_device_and_table(
@@ -1326,7 +1367,8 @@ class OIGProxy:
         # Connection failed
         if cloud_writer is None or cloud_reader is None:
             if self._is_hybrid_mode():
-                self._hybrid_record_failure(reason="connect_failed", local_ack=True)
+                self._hybrid_record_failure(
+                    reason="connect_failed", local_ack=True)
                 # HYBRID: immediate offline + local ACK (threshold=1)
                 return await self._fallback_offline_from_cloud_issue(
                     reason="connect_failed",
@@ -1358,7 +1400,8 @@ class OIGProxy:
                 self.cloud_disconnects += 1
                 if self.cloud_session_connected:
                     self._record_cloud_session_end(reason="eof")
-                self._telemetry_fire_event("error_cloud_disconnect", reason="eof")
+                self._telemetry_fire_event(
+                    "error_cloud_disconnect", reason="eof")
                 self._hybrid_record_failure(
                     reason="cloud_eof",
                     local_ack=self._is_hybrid_mode(),
@@ -1591,7 +1634,8 @@ class OIGProxy:
                     )
                 except Exception:
                     # Nechceme shazovat celé BOX spojení kvůli chybě v publish/discovery/parsing.
-                    # Traceback nám pomůže najít přesnou příčinu (např. regex v některé knihovně).
+                    # Traceback nám pomůže najít přesnou příčinu (např. regex v
+                    # některé knihovně).
                     logger.exception(
                         "❌ Frame processing error (conn=%s, peer=%s)",
                         conn_id,
@@ -1625,7 +1669,8 @@ class OIGProxy:
                 )
 
         except ConnectionResetError:
-            # Běžné: BOX přeruší TCP (např. reconnect po modem resetu). Nechceme z toho dělat ERROR.
+            # Běžné: BOX přeruší TCP (např. reconnect po modem resetu).
+            # Nechceme z toho dělat ERROR.
             logger.debug(
                 "🔌 BOX closed the connection (RST, conn=%s, peer=%s)",
                 conn_id,
@@ -1697,7 +1742,11 @@ class OIGProxy:
             return
         topic = f"{MQTT_NAMESPACE}/{device_id}/+/state"
 
-        def _handler(msg_topic: str, payload: bytes, _qos: int, retain: bool) -> None:
+        def _handler(
+                msg_topic: str,
+                payload: bytes,
+                _qos: int,
+                retain: bool) -> None:
             if self._loop is None:
                 return
             try:
@@ -1725,13 +1774,15 @@ class OIGProxy:
         if self._loop is None:
             return
 
-        def _handler(topic: str, payload: bytes, _qos: int, retain: bool) -> None:
+        def _handler(
+                topic: str,
+                payload: bytes,
+                _qos: int,
+                retain: bool) -> None:
             if self._loop is None:
                 return
-            asyncio.run_coroutine_threadsafe(
-                self._control_on_mqtt_message(topic=topic, payload=payload, retain=retain),
-                self._loop,
-            )
+            asyncio.run_coroutine_threadsafe(self._control_on_mqtt_message(
+                topic=topic, payload=payload, retain=retain), self._loop, )
 
         self.mqtt_publisher.add_message_handler(
             topic=self._control_set_topic,
@@ -1744,7 +1795,8 @@ class OIGProxy:
             self._control_result_topic,
         )
 
-    def _parse_mqtt_state_topic(self, topic: str) -> tuple[str | None, str | None]:
+    def _parse_mqtt_state_topic(
+            self, topic: str) -> tuple[str | None, str | None]:
         parts = topic.split("/")
         if len(parts) != 4:
             return None, None
@@ -1821,7 +1873,10 @@ class OIGProxy:
             try:
                 save_prms_state(table_name, raw_values, device_id)
             except Exception as e:
-                logger.debug("STATE: snapshot update failed (%s): %s", table_name, e)
+                logger.debug(
+                    "STATE: snapshot update failed (%s): %s",
+                    table_name,
+                    e)
             existing = self._prms_tables.get(table_name, {})
             merged: dict[str, Any] = {}
             if isinstance(existing, dict):
@@ -1871,7 +1926,8 @@ class OIGProxy:
         except Exception as e:
             logger.debug("CONTROL: Status publish failed: %s", e)
 
-        key_state = self._control_result_key_state(status=status, detail=detail)
+        key_state = self._control_result_key_state(
+            status=status, detail=detail)
         if key_state:
             try:
                 await self._control_publish_key_status(tx=tx, state=key_state, detail=detail)
@@ -1881,7 +1937,8 @@ class OIGProxy:
         # SA only after real applied/completed change (avoid noop/duplicate)
         if status in ("applied", "completed") and not error:
             if detail not in ("noop_already_set", "duplicate_ignored"):
-                if (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "SA"):
+                if (tx.get("tbl_name"), tx.get("tbl_item")) != (
+                        "tbl_box_prms", "SA"):
                     self._control_post_drain_refresh_pending = True
 
     def _control_drop_post_drain_sa_locked(self) -> list[dict[str, Any]]:
@@ -1891,10 +1948,8 @@ class OIGProxy:
             return removed
         kept: deque[dict[str, Any]] = deque()
         for queued in self._control_queue:
-            if (
-                (queued.get("tbl_name"), queued.get("tbl_item")) == ("tbl_box_prms", "SA")
-                and queued.get("_internal") == "post_drain_sa"
-            ):
+            if ((queued.get("tbl_name"), queued.get("tbl_item")) == (
+                    "tbl_box_prms", "SA") and queued.get("_internal") == "post_drain_sa"):
                 removed.append(queued)
                 continue
             kept.append(queued)
@@ -1902,17 +1957,18 @@ class OIGProxy:
             self._control_queue = kept
         return removed
 
-    def _control_cancel_post_drain_sa_inflight_locked(self) -> dict[str, Any] | None:
+    def _control_cancel_post_drain_sa_inflight_locked(
+            self) -> dict[str, Any] | None:
         """Cancel inflight post-drain SA refresh so new commands can proceed."""
         tx = self._control_inflight
-        if (
-            not tx
-            or (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "SA")
-            or tx.get("_internal") != "post_drain_sa"
-        ):
+        if (not tx or (tx.get("tbl_name"), tx.get("tbl_item")) != (
+                "tbl_box_prms", "SA") or tx.get("_internal") != "post_drain_sa"):
             return None
         self._control_inflight = None
-        for task in (self._control_ack_task, self._control_applied_task, self._control_quiet_task):
+        for task in (
+                self._control_ack_task,
+                self._control_applied_task,
+                self._control_quiet_task):
             if task and not task.done():
                 task.cancel()
         self._control_ack_task = None
@@ -1930,8 +1986,11 @@ class OIGProxy:
         return f"{self._control_status_prefix}/{request_key}"
 
     @staticmethod
-    def _control_result_key_state(status: str, detail: str | None) -> str | None:
-        if status == "completed" and detail in ("duplicate_ignored", "noop_already_set"):
+    def _control_result_key_state(
+            status: str,
+            detail: str | None) -> str | None:
+        if status == "completed" and detail in (
+                "duplicate_ignored", "noop_already_set"):
             return None
         mapping = {
             "accepted": "queued",
@@ -1985,11 +2044,16 @@ class OIGProxy:
     def _control_store_pending_keys(self) -> None:
         try:
             with open(self._control_pending_path, "w", encoding="utf-8") as fh:
-                json.dump(sorted(self._control_pending_keys), fh, ensure_ascii=True)
+                json.dump(
+                    sorted(
+                        self._control_pending_keys),
+                    fh,
+                    ensure_ascii=True)
         except Exception as e:
             logger.debug("CONTROL: Pending save failed: %s", e)
 
-    def _control_update_pending_keys(self, *, request_key: str, state: str) -> None:
+    def _control_update_pending_keys(
+            self, *, request_key: str, state: str) -> None:
         if state in ("queued", "sent", "acked", "applied"):
             if request_key not in self._control_pending_keys:
                 self._control_pending_keys.add(request_key)
@@ -2024,7 +2088,8 @@ class OIGProxy:
         self._control_store_pending_keys()
 
     @staticmethod
-    def _parse_setting_event(content: str) -> tuple[str, str, str | None, str | None] | None:
+    def _parse_setting_event(
+            content: str) -> tuple[str, str, str | None, str | None] | None:
         # Example:
         #   "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
         m = re.search(
@@ -2070,7 +2135,8 @@ class OIGProxy:
             source="tbl_events",
         )
 
-    def _cache_last_values(self, _parsed: dict[str, Any], _table_name: str | None) -> None:
+    def _cache_last_values(
+            self, _parsed: dict[str, Any], _table_name: str | None) -> None:
         return
 
     def _update_cached_value(
@@ -2138,7 +2204,8 @@ class OIGProxy:
             else:
                 tx["stage"] = "deferred"
                 tx["deferred_reason"] = reason
-                tx["next_attempt_at"] = time.monotonic() + self._control_retry_delay_s
+                tx["next_attempt_at"] = time.monotonic() + \
+                    self._control_retry_delay_s
                 self._control_queue.appendleft(tx)
                 self._control_inflight = None
             for task in (
@@ -2196,7 +2263,8 @@ class OIGProxy:
             v = str(mode_int)
             return v, v
 
-        if key in (("tbl_invertor_prm1", "AAC_MAX_CHRG"), ("tbl_invertor_prm1", "A_MAX_CHRG")):
+        if key in (("tbl_invertor_prm1", "AAC_MAX_CHRG"),
+                   ("tbl_invertor_prm1", "A_MAX_CHRG")):
             try:
                 f = float(raw_str)
             except Exception:
@@ -2410,7 +2478,10 @@ class OIGProxy:
         )
         if not result.get("ok"):
             err = str(result.get("error") or "send_failed")
-            if err in ("box_not_connected", "box_not_sending_data", "no_active_box_writer"):
+            if err in (
+                "box_not_connected",
+                "box_not_sending_data",
+                    "no_active_box_writer"):
                 await self._control_defer_inflight(reason=err)
                 return
             await self._control_publish_result(tx=tx, status="error", error=err)
@@ -2438,9 +2509,11 @@ class OIGProxy:
 
         if self._control_ack_task and not self._control_ack_task.done():
             self._control_ack_task.cancel()
-        self._control_ack_task = asyncio.create_task(self._control_ack_timeout())
+        self._control_ack_task = asyncio.create_task(
+            self._control_ack_timeout())
 
-    async def _control_on_box_setting_ack(self, *, tx_id: str | None, ack: bool) -> None:
+    async def _control_on_box_setting_ack(
+            self, *, tx_id: str | None, ack: bool) -> None:
         if not tx_id:
             return
         async with self._control_lock:
@@ -2462,7 +2535,8 @@ class OIGProxy:
 
         if self._control_applied_task and not self._control_applied_task.done():
             self._control_applied_task.cancel()
-        self._control_applied_task = asyncio.create_task(self._control_applied_timeout())
+        self._control_applied_task = asyncio.create_task(
+            self._control_applied_timeout())
 
     @staticmethod
     def _control_coerce_value(value: Any) -> Any:
@@ -2483,7 +2557,12 @@ class OIGProxy:
                 return value
         return value
 
-    def _control_map_optimistic_value(self, *, tbl_name: str, tbl_item: str, value: Any) -> Any:
+    def _control_map_optimistic_value(
+            self,
+            *,
+            tbl_name: str,
+            tbl_item: str,
+            value: Any) -> Any:
         cfg, _ = get_sensor_config(tbl_item, tbl_name)
         if cfg and cfg.options:
             text = str(value).strip()
@@ -2512,7 +2591,9 @@ class OIGProxy:
         )
 
         try:
-            save_prms_state(tbl_name, {tbl_item: raw_value}, resolved_device_id)
+            save_prms_state(
+                tbl_name, {
+                    tbl_item: raw_value}, resolved_device_id)
         except Exception as e:
             logger.debug(
                 "STATE: snapshot update failed (%s/%s): %s",
@@ -2546,8 +2627,7 @@ class OIGProxy:
         target_device_id = device_id
         if not target_device_id:
             target_device_id = (
-                self.device_id if self.device_id != "AUTO" else self.mqtt_publisher.device_id
-            )
+                self.device_id if self.device_id != "AUTO" else self.mqtt_publisher.device_id)
         if not target_device_id:
             return
         topic = self.mqtt_publisher.state_topic(target_device_id, tbl_name)
@@ -2628,8 +2708,10 @@ class OIGProxy:
                     return
                 if tx.get("stage") not in ("applied",):
                     return
-                last = float(tx.get("last_inv_ack_mono") or tx.get("applied_at_mono") or 0.0)
-                wait_s = max(0.0, (last + self._control_mode_quiet_s) - time.monotonic())
+                last = float(tx.get("last_inv_ack_mono")
+                             or tx.get("applied_at_mono") or 0.0)
+                wait_s = max(
+                    0.0, (last + self._control_mode_quiet_s) - time.monotonic())
             if wait_s > 0:
                 await asyncio.sleep(wait_s)
                 continue
@@ -2668,7 +2750,8 @@ class OIGProxy:
     ) -> None:
         if not last_tx:
             return
-        if (last_tx.get("tbl_name"), last_tx.get("tbl_item")) == ("tbl_box_prms", "SA"):
+        if (last_tx.get("tbl_name"), last_tx.get(
+                "tbl_item")) == ("tbl_box_prms", "SA"):
             return
 
         async with self._control_lock:
@@ -2700,7 +2783,8 @@ class OIGProxy:
         }
 
         async with self._control_lock:
-            if self._control_inflight and self._control_inflight.get("request_key") == request_key:
+            if self._control_inflight and self._control_inflight.get(
+                    "request_key") == request_key:
                 return
             for queued in self._control_queue:
                 if queued.get("request_key") == request_key:
@@ -2765,20 +2849,20 @@ class OIGProxy:
                 },
             )
 
-            if (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "MODE"):
+            if (tx.get("tbl_name"), tx.get("tbl_item")) != (
+                    "tbl_box_prms", "MODE"):
                 await self._control_publish_result(tx=tx, status="completed", detail="applied")
                 await self._control_finish_inflight()
                 return
 
             if self._control_quiet_task and not self._control_quiet_task.done():
                 self._control_quiet_task.cancel()
-            self._control_quiet_task = asyncio.create_task(self._control_quiet_wait())
+            self._control_quiet_task = asyncio.create_task(
+                self._control_quiet_wait())
             return
 
-        if (
-            "Invertor ACK" in content
-            and (tx.get("tbl_name"), tx.get("tbl_item")) == ("tbl_box_prms", "MODE")
-        ):
+        if ("Invertor ACK" in content and (tx.get("tbl_name"),
+                                           tx.get("tbl_item")) == ("tbl_box_prms", "MODE")):
             async with self._control_lock:
                 tx2 = self._control_inflight
                 if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
@@ -2788,7 +2872,8 @@ class OIGProxy:
                 tx2["last_inv_ack_mono"] = time.monotonic()
             if self._control_quiet_task and not self._control_quiet_task.done():
                 self._control_quiet_task.cancel()
-            self._control_quiet_task = asyncio.create_task(self._control_quiet_wait())
+            self._control_quiet_task = asyncio.create_task(
+                self._control_quiet_wait())
 
     # ---------------------------------------------------------------------
     # Control API (prototype)
@@ -2845,7 +2930,8 @@ class OIGProxy:
     ) -> dict[str, Any]:
         if not self.box_connected:
             return {"ok": False, "error": "box_not_connected"}
-        if self._last_data_epoch is None or (time.time() - self._last_data_epoch) > 30:
+        if self._last_data_epoch is None or (
+                time.time() - self._last_data_epoch) > 30:
             return {"ok": False, "error": "box_not_sending_data"}
         if self.device_id == "AUTO":
             return {"ok": False, "error": "device_id_unknown"}
@@ -2876,7 +2962,11 @@ class OIGProxy:
             f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
             "<ver>55734</ver>"
         )
-        frame = build_frame(inner, add_crlf=True).encode("utf-8", errors="strict")
+        frame = build_frame(
+            inner,
+            add_crlf=True).encode(
+            "utf-8",
+            errors="strict")
 
         self._local_setting_pending = {
             "sent_at": time.monotonic(),
@@ -2914,7 +3004,9 @@ class OIGProxy:
         pending = self._local_setting_pending
         if not pending:
             return False
-        if (time.monotonic() - float(pending.get("sent_at", 0.0))) > self._control_ack_timeout_s:
+        if (
+            time.monotonic() - float(pending.get("sent_at", 0.0))
+        ) > self._control_ack_timeout_s:
             return False
         if "<Reason>Setting</Reason>" not in frame:
             return False
@@ -2931,7 +3023,11 @@ class OIGProxy:
             f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
             f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
         )
-        end_frame = build_frame(end_inner, add_crlf=True).encode("utf-8", errors="strict")
+        end_frame = build_frame(
+            end_inner,
+            add_crlf=True).encode(
+            "utf-8",
+            errors="strict")
 
         box_writer.write(end_frame)
         try:

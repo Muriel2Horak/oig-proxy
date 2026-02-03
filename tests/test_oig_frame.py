@@ -12,16 +12,15 @@ from oig_frame import build_frame, compute_frame_checksum  # noqa: E402
 
 def test_compute_frame_checksum_known_samples():
     samples = [
-        (b"<Frame><Result>END</Result><CRC>34500</CRC></Frame>\r\n", 34500),
-        (
-            b"<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+        (b"<Frame><Result>END</Result><CRC>34500</CRC></Frame>\r\n",
+         34500),
+        (b"<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
             167,
-        ),
-        (
-            b"<Frame><Result>END</Result><Time>2025-12-18 07:09:28</Time>"
+         ),
+        (b"<Frame><Result>END</Result><Time>2025-12-18 07:09:28</Time>"
             b"<UTCTime>2025-12-18 06:09:28</UTCTime><CRC>02378</CRC></Frame>\r\n",
             2378,
-        ),
+         ),
     ]
 
     for raw, want in samples:

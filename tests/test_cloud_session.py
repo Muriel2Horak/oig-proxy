@@ -54,11 +54,16 @@ def test_ensure_connected_timeout(monkeypatch):
     monkeypatch.setattr(cloud_session, "resolve_cloud_host", lambda host: host)
     monkeypatch.setattr(asyncio, "open_connection", fake_open)
 
-    manager = CloudSessionManager("example", 123, connect_timeout_s=0.1, min_reconnect_s=0.1)
+    manager = CloudSessionManager(
+        "example",
+        123,
+        connect_timeout_s=0.1,
+        min_reconnect_s=0.1)
     try:
         asyncio.run(manager.ensure_connected())
     except asyncio.TimeoutError:
-        # Expected timeout during connection attempt; verify stats and backoff below.
+        # Expected timeout during connection attempt; verify stats and backoff
+        # below.
         pass
     assert manager.stats.timeouts == 1
     assert manager.stats.errors == 1
@@ -152,7 +157,10 @@ def test_read_one_ack_frame_uses_buffer():
     manager = CloudSessionManager("example", 123)
     manager._reader = type("R", (), {"read": lambda *_: b""})()
     manager._rx_buf = bytearray(b"<Frame>1</Frame>")
-    ack = asyncio.run(manager._read_one_ack_frame(ack_timeout_s=0.1, ack_max_bytes=1024))
+    ack = asyncio.run(
+        manager._read_one_ack_frame(
+            ack_timeout_s=0.1,
+            ack_max_bytes=1024))
     assert ack == b"<Frame>1</Frame>"
 
 
@@ -169,7 +177,10 @@ def test_read_one_ack_frame_fallback_on_max_bytes():
     manager._reader = DummyReader()
     manager._rx_buf = bytearray()
 
-    ack = asyncio.run(manager._read_one_ack_frame(ack_timeout_s=0.1, ack_max_bytes=5))
+    ack = asyncio.run(
+        manager._read_one_ack_frame(
+            ack_timeout_s=0.1,
+            ack_max_bytes=5))
     assert ack == b"x" * 10
 
 
@@ -200,7 +211,11 @@ def test_ensure_connected_general_error(monkeypatch):
     monkeypatch.setattr(cloud_session, "resolve_cloud_host", lambda host: host)
     monkeypatch.setattr(asyncio, "open_connection", fake_open)
 
-    manager = CloudSessionManager("example", 123, connect_timeout_s=0.1, min_reconnect_s=0.1)
+    manager = CloudSessionManager(
+        "example",
+        123,
+        connect_timeout_s=0.1,
+        min_reconnect_s=0.1)
     try:
         asyncio.run(manager.ensure_connected())
     except RuntimeError:

@@ -87,8 +87,10 @@ def test_control_helpers_and_setting_event():
     )
     assert request_key == "tbl_box_prms/MODE/3"
 
-    assert proxy_module.OIGProxy._control_result_key_state("accepted", None) == "queued"
-    assert proxy_module.OIGProxy._control_result_key_state("completed", "noop_already_set") is None
+    assert proxy_module.OIGProxy._control_result_key_state(
+        "accepted", None) == "queued"
+    assert proxy_module.OIGProxy._control_result_key_state(
+        "completed", "noop_already_set") is None
 
     event = "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
     parsed = proxy_module.OIGProxy._parse_setting_event(event)
