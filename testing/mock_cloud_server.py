@@ -122,6 +122,11 @@ class MockCloudServer:
         if match:
             return match.group(1)
 
+        # Hledáme <Result>IsNew*</Result> (box polling)
+        match = re.search(r'<Result>(IsNew[^<]+)</Result>', text)
+        if match:
+            return match.group(1)
+
         # Hledáme <ToDo>IsNewSet</ToDo> apod.
         match = re.search(r'<ToDo>(IsNew[^<]+)</ToDo>', text)
         if match:

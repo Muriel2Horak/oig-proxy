@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.5] - 2026-02-04
+
+### Added
+
+- Telemetry: `telemetry_stats` window aggregation for request/response counts.
+
+### Changed
+
+- Telemetry logs are sent only during a 2-window debug burst after WARNING/ERROR.
+- Offline ACK: `IsNewSet` returns `END` with `Time/UTCTime`; `IsNewWeather` and
+  `IsNewFW` return `END` without weather payloads.
+
 ## [1.4.4] - 2026-02-03
 
 ### Changed

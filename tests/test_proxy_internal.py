@@ -5,8 +5,9 @@
 # pylint: disable=duplicate-code
 import asyncio
 import json
+import logging
 import time
-from collections import deque
+from collections import deque, defaultdict
 
 import proxy as proxy_module
 from models import ProxyMode, SensorConfig
@@ -219,6 +220,9 @@ def _make_proxy(tmp_path):
     proxy._telemetry_logs = deque()
     proxy._telemetry_log_window_s = 60
     proxy._telemetry_log_max = 1000
+    proxy._telemetry_debug_windows_remaining = 0
+    proxy._telemetry_req_pending = defaultdict(deque)
+    proxy._telemetry_stats = {}
     return proxy
 
 
@@ -260,13 +264,16 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     proxy._telemetry_offline_events.append({"timestamp": "t3"})
     proxy._telemetry_tbl_events.append({"timestamp": "t4", "event_time": "t4"})
     proxy._telemetry_error_context.append({"timestamp": "t5"})
-    proxy._telemetry_logs.append({
-        "_epoch": time.time(),
-        "timestamp": "2026-02-03 10:00:00",
-        "level": "INFO",
-        "message": "Test log",
-        "source": "test",
-    })
+    record = logging.LogRecord(
+        name="test",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="Test warning",
+        args=(),
+        exc_info=None,
+    )
+    proxy._record_log_entry(record)
 
     metrics = proxy._collect_telemetry_metrics()
     window_metrics = metrics["window_metrics"]
@@ -279,6 +286,7 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     assert window_metrics["tbl_events"] == [
         {"timestamp": "t4", "event_time": "t4"}]
     assert window_metrics["error_context"] == [{"timestamp": "t5"}]
+    assert window_metrics["stats"] == []
     assert len(window_metrics["logs"]) == 1
 
     assert not proxy._telemetry_box_sessions
@@ -296,6 +304,30 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     asyncio.run(run())
     assert proxy.mqtt_publisher.published_data
     assert proxy.mqtt_publisher.published_data[0]["MODE"] == 2
+
+
+def test_telemetry_stats_pairing_and_flush(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy._start_time = time.time() - 1
+    proxy.mode = ProxyMode.OFFLINE
+    conn_id = 7
+    proxy._telemetry_record_request("IsNewSet", conn_id)
+    proxy._telemetry_record_response(
+        "<Frame><Result>END</Result><Time>2026-02-04 08:42:50</Time>"
+        "<UTCTime>2026-02-04 08:42:50</UTCTime><CRC>33821</CRC></Frame>",
+        source="local",
+        conn_id=conn_id,
+    )
+
+    metrics = proxy._collect_telemetry_metrics()
+    stats = metrics["window_metrics"]["stats"]
+    assert len(stats) == 1
+    entry = stats[0]
+    assert entry["table"] == "IsNewSet"
+    assert entry["mode"] == ProxyMode.OFFLINE.value
+    assert entry["response_source"] == "local"
+    assert entry["req_count"] == 1
+    assert entry["resp_end"] == 1
 
 
 def test_mode_update_and_processing(tmp_path, monkeypatch):

@@ -2,6 +2,20 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.5] - 2026-02-04
+
+### Added
+
+- Telemetrie: nové agregované statistiky `telemetry_stats` (po okně) pro
+  `IsNew*` i `tbl_*` requesty + klasifikace odpovědí.
+
+### Changed
+
+- Logy v telemetrii se standardně neposílají; po WARNING/ERROR se spouští
+  dočasný "debug burst" na 2 okna.
+- OFFLINE ACK: `IsNewSet` odpovídá `END` s `Time/UTCTime`, `IsNewWeather`
+  a `IsNewFW` odpovídají `END` bez weather payloadu.
+
 ## [1.4.4] - 2026-02-03
 
 ### Changed
