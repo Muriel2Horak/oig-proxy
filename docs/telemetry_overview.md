@@ -57,6 +57,7 @@ Each array is written to its own measurement:
 - `telemetry_box_sessions`
 - `telemetry_cloud_sessions`
 - `telemetry_offline_events`
+- `telemetry_stats`
 
 ## 3) InfluxDB Behavior (Important)
 
@@ -114,7 +115,15 @@ The device ID column is also the drilldown link into the Box Detail dashboard.
    - Telegraf `json_query` mismatch
    - payload does not contain expected arrays
 
-## 6) Standard Debug Workflow
+## 6) Debug Burst Logging (Telemetry Logs)
+
+By default, logs are **not** sent in telemetry. When a `WARNING` or `ERROR`
+is emitted, proxy enables a **debug burst** for the next **2 telemetry windows**
+(typically 10 minutes with 5-minute intervals). During the burst, **all log
+levels** are included in `telemetry_logs`. After the window expires, logs
+stop again.
+
+## 7) Standard Debug Workflow
 
 1. Verify Telegraf writes `telemetry_top` and `telemetry_*` measurements
 2. If type conflict is suspected, delete and re-ingest data

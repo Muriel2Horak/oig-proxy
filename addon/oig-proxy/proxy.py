@@ -19,7 +19,7 @@ import time
 import secrets
 import json
 import uuid
-from collections import deque
+from collections import Counter, defaultdict, deque
 from contextlib import suppress
 import re
 from datetime import datetime, timezone
@@ -188,6 +188,9 @@ class OIGProxy:
         self._telemetry_log_window_s: int = 60
         self._telemetry_log_max: int = 1000
         self._telemetry_log_error: bool = False
+        self._telemetry_debug_windows_remaining: int = 0
+        self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
+        self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
         for handler in list(logger.handlers):
             if isinstance(handler, _TelemetryLogHandler):
                 logger.removeHandler(handler)
@@ -440,6 +443,10 @@ class OIGProxy:
     def _build_offline_ack_frame(self, table_name: str | None) -> bytes:
         if table_name == "END":
             return self._build_end_time_frame()
+        if table_name == "IsNewSet":
+            return self._build_end_time_frame()
+        if table_name in ("IsNewWeather", "IsNewFW"):
+            return build_frame("<Result>END</Result>").encode("utf-8", errors="strict")
         return self._build_ack_only_frame()
 
     @staticmethod
@@ -818,6 +825,10 @@ class OIGProxy:
     def _record_log_entry(self, record: logging.LogRecord) -> None:
         if getattr(self, "_telemetry_log_error", False):
             return
+        if record.levelno >= logging.WARNING:
+            self._telemetry_debug_windows_remaining = 2
+        if getattr(self, "_telemetry_debug_windows_remaining", 0) <= 0:
+            return
         try:
             entry = {
                 "_epoch": record.created,
@@ -849,6 +860,86 @@ class OIGProxy:
         logs = self._snapshot_logs()
         self._telemetry_logs.clear()
         return logs
+
+    def _telemetry_record_request(self, table_name: str | None, conn_id: int) -> None:
+        if not hasattr(self, "_telemetry_req_pending"):
+            self._telemetry_req_pending = defaultdict(deque)
+        if not table_name:
+            return
+        queue = self._telemetry_req_pending[conn_id]
+        queue.append(table_name)
+        if len(queue) > 1000:
+            queue.popleft()
+
+    def _telemetry_response_kind(self, response_text: str) -> str:
+        if "<Result>Weather</Result>" in response_text:
+            return "resp_weather"
+        if "<Result>END</Result>" in response_text:
+            return "resp_end"
+        if "<Result>NACK</Result>" in response_text:
+            return "resp_nack"
+        if "<Result>ACK</Result>" in response_text and "<ToDo>GetAll</ToDo>" in response_text:
+            return "resp_ack_getall"
+        if "<Result>ACK</Result>" in response_text and "<ToDo>GetActual</ToDo>" in response_text:
+            return "resp_ack_getactual"
+        if "<Result>ACK</Result>" in response_text:
+            return "resp_ack"
+        return "resp_other"
+
+    def _telemetry_record_response(
+        self,
+        response_text: str,
+        *,
+        source: str,
+        conn_id: int,
+    ) -> None:
+        if not hasattr(self, "_telemetry_req_pending"):
+            self._telemetry_req_pending = defaultdict(deque)
+        if not hasattr(self, "_telemetry_stats"):
+            self._telemetry_stats = {}
+        queue = self._telemetry_req_pending.get(conn_id)
+        table_name = queue.popleft() if queue else "unmatched"
+        key = (table_name, source, self.mode.value)
+        stats = self._telemetry_stats.setdefault(
+            key,
+            Counter(
+                req_count=0,
+                resp_ack=0,
+                resp_end=0,
+                resp_weather=0,
+                resp_nack=0,
+                resp_ack_getall=0,
+                resp_ack_getactual=0,
+                resp_other=0,
+            ),
+        )
+        stats["req_count"] += 1
+        stats[self._telemetry_response_kind(response_text)] += 1
+
+    def _telemetry_record_timeout(self, *, conn_id: int) -> None:
+        self._telemetry_record_response("", source="timeout", conn_id=conn_id)
+
+    def _telemetry_flush_stats(self) -> list[dict[str, Any]]:
+        if not hasattr(self, "_telemetry_stats"):
+            self._telemetry_stats = {}
+        items: list[dict[str, Any]] = []
+        for (table, source, mode), counts in self._telemetry_stats.items():
+            items.append({
+                "timestamp": self._utc_iso(),
+                "table": table,
+                "mode": mode,
+                "response_source": source,
+                "req_count": counts["req_count"],
+                "resp_ack": counts["resp_ack"],
+                "resp_end": counts["resp_end"],
+                "resp_weather": counts["resp_weather"],
+                "resp_nack": counts["resp_nack"],
+                "resp_ack_getall": counts["resp_ack_getall"],
+                "resp_ack_getactual": counts["resp_ack_getactual"],
+                "resp_other": counts["resp_other"],
+            })
+        self._telemetry_stats.clear()
+        return items
 
     def _record_error_context(self, *, event_type: str,
                               details: dict[str, Any]) -> None:
@@ -954,7 +1045,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.4"
+                proxy_version = "1.4.5"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1023,8 +1114,11 @@ class OIGProxy:
             "offline_events": list(self._telemetry_offline_events),
             "tbl_events": list(self._telemetry_tbl_events),
             "error_context": list(self._telemetry_error_context),
+            "stats": self._telemetry_flush_stats(),
             "logs": self._flush_log_buffer(),
         }
+        if getattr(self, "_telemetry_debug_windows_remaining", 0) > 0:
+            self._telemetry_debug_windows_remaining -= 1
         self._telemetry_box_sessions.clear()
         self._telemetry_cloud_sessions.clear()
         self._telemetry_offline_events.clear()
@@ -1275,6 +1369,7 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
         note_cloud_failure: bool = True,
         send_box_ack: bool = True,
+        conn_id: int | None = None,
     ) -> tuple[None, None]:
         if self.cloud_session_connected:
             self._record_cloud_session_end(reason=reason)
@@ -1286,6 +1381,7 @@ class OIGProxy:
             device_id,
             box_writer,
             send_ack=send_box_ack,
+            conn_id=conn_id,
         )
         if note_cloud_failure:
             await self._note_cloud_failure(reason=reason, local_ack=send_box_ack)
@@ -1367,6 +1463,7 @@ class OIGProxy:
                 frame_bytes=frame_bytes,
                 table_name=table_name,
                 device_id=device_id,
+                conn_id=conn_id,
                 box_writer=box_writer,
                 cloud_writer=cloud_writer,
             )
@@ -1393,6 +1490,7 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
                     note_cloud_failure=False,
+                    conn_id=conn_id,
                 )
             # ONLINE: no local ACK, BOX will timeout
             return None, None
@@ -1432,8 +1530,10 @@ class OIGProxy:
                         box_writer=box_writer,
                         cloud_writer=None,
                         note_cloud_failure=False,
+                        conn_id=conn_id,
                     )
                 # ONLINE: no local ACK
+                self._telemetry_record_timeout(conn_id=conn_id)
                 return None, None
 
             # Success - forward ACK to BOX
@@ -1449,6 +1549,9 @@ class OIGProxy:
                 length=len(ack_data),
                 conn_id=conn_id,
                 peer=self._active_box_peer,
+            )
+            self._telemetry_record_response(
+                ack_str, source="cloud", conn_id=conn_id
             )
             if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
                 self._isnew_last_response = self._last_data_iso
@@ -1489,6 +1592,11 @@ class OIGProxy:
                         conn_id,
                     )
                     end_frame = self._build_end_time_frame()
+                    self._telemetry_record_response(
+                        end_frame.decode("utf-8", errors="replace"),
+                        source="local",
+                        conn_id=conn_id,
+                    )
                     box_writer.write(end_frame)
                     await box_writer.drain()
                     self.stats["acks_local"] += 1
@@ -1502,12 +1610,14 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
                     note_cloud_failure=False,
+                    conn_id=conn_id,
                 )
 
             # ONLINE: no local ACK, close connection
             if self.cloud_session_connected:
                 self._record_cloud_session_end(reason="timeout")
             await self._close_writer(cloud_writer)
+            self._telemetry_record_timeout(conn_id=conn_id)
             return None, None
 
         except Exception as e:
@@ -1536,8 +1646,10 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_writer=None,
                     note_cloud_failure=False,
+                    conn_id=conn_id,
                 )
             # ONLINE: no local ACK
+            self._telemetry_record_timeout(conn_id=conn_id)
             return None, None
 
     async def _process_box_frame_common(
@@ -1567,6 +1679,7 @@ class OIGProxy:
             conn_id=conn_id,
             peer=self._active_box_peer,
         )
+        self._telemetry_record_request(table_name, conn_id)
 
         if parsed:
             if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
@@ -1611,6 +1724,7 @@ class OIGProxy:
         frame_bytes: bytes,
         table_name: str | None,
         device_id: str | None,
+        conn_id: int,
         box_writer: asyncio.StreamWriter,
         cloud_writer: asyncio.StreamWriter | None,
     ) -> tuple[None, None]:
@@ -1618,7 +1732,13 @@ class OIGProxy:
         if self.cloud_session_connected:
             self._record_cloud_session_end(reason="manual_offline")
         self.cloud_session_connected = False
-        await self._process_frame_offline(frame_bytes, table_name, device_id, box_writer)
+        await self._process_frame_offline(
+            frame_bytes,
+            table_name,
+            device_id,
+            box_writer,
+            conn_id=conn_id,
+        )
         return None, None
 
     async def _handle_box_connection(
@@ -1667,6 +1787,7 @@ class OIGProxy:
                         frame_bytes=data,
                         table_name=table_name,
                         device_id=device_id,
+                        conn_id=conn_id,
                         box_writer=box_writer,
                         cloud_writer=cloud_writer,
                     )
@@ -1711,10 +1832,17 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter,
         *,
         send_ack: bool = True,
+        conn_id: int | None = None,
     ):
         """Zpracuj frame v offline režimu - lokální ACK pouze (žádné queueování)."""
         if send_ack:
             ack_response = self._build_offline_ack_frame(table_name)
+            if conn_id is not None:
+                self._telemetry_record_response(
+                    ack_response.decode("utf-8", errors="replace"),
+                    source="local",
+                    conn_id=conn_id,
+                )
             box_writer.write(ack_response)
             await box_writer.drain()
             self.stats["acks_local"] += 1

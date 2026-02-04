@@ -5,7 +5,7 @@
 # pylint: disable=duplicate-code
 import asyncio
 import time
-from collections import deque
+from collections import deque, defaultdict
 
 import proxy as proxy_module
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
@@ -209,6 +209,9 @@ def make_proxy(tmp_path):
     proxy._telemetry_logs = deque()
     proxy._telemetry_log_window_s = 60
     proxy._telemetry_log_max = 1000
+    proxy._telemetry_debug_windows_remaining = 0
+    proxy._telemetry_req_pending = defaultdict(deque)
+    proxy._telemetry_stats = {}
     return proxy
 
 
