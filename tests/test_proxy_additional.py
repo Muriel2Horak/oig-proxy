@@ -729,7 +729,8 @@ def test_handle_box_connection_online(tmp_path):
     async def fake_process(**_kwargs):
         return "DEV1", "tbl_actual"
 
-    def fake_ack(_frame, _writer):
+    def fake_ack(_frame, _writer, *, conn_id):
+        del conn_id
         return False
 
     async def fake_mode():
@@ -764,7 +765,8 @@ def test_handle_box_connection_offline(tmp_path):
     async def fake_process(**_kwargs):
         return "DEV1", "tbl_actual"
 
-    def fake_ack(_frame, _writer):
+    def fake_ack(_frame, _writer, *, conn_id):
+        del conn_id
         return False
 
     async def fake_mode():

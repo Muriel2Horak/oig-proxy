@@ -899,7 +899,14 @@ class OIGProxy:
             self._telemetry_stats = {}
         queue = self._telemetry_req_pending.get(conn_id)
         table_name = queue.popleft() if queue else "unmatched"
-        key = (table_name, source, self.mode.value)
+        if queue is not None and not queue:
+            self._telemetry_req_pending.pop(conn_id, None)
+        mode_value = getattr(self, "mode", None)
+        if isinstance(mode_value, ProxyMode):
+            mode_value = mode_value.value
+        if mode_value is None:
+            mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
+        key = (table_name, source, mode_value)
         stats = self._telemetry_stats.setdefault(
             key,
             Counter(
@@ -1493,6 +1500,7 @@ class OIGProxy:
                     conn_id=conn_id,
                 )
             # ONLINE: no local ACK, BOX will timeout
+            self._telemetry_record_timeout(conn_id=conn_id)
             return None, None
 
         try:
@@ -1778,7 +1786,9 @@ class OIGProxy:
                     )
                     continue
 
-                if self._maybe_handle_local_setting_ack(frame, box_writer):
+                if self._maybe_handle_local_setting_ack(
+                    frame, box_writer, conn_id=conn_id
+                ):
                     continue
                 current_mode = await self._get_current_mode()
 
@@ -3142,7 +3152,7 @@ class OIGProxy:
         }
 
     def _maybe_handle_local_setting_ack(
-        self, frame: str, box_writer: asyncio.StreamWriter
+        self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
     ) -> bool:
         pending = self._local_setting_pending
         if not pending:
@@ -3173,6 +3183,11 @@ class OIGProxy:
             errors="strict")
 
         box_writer.write(end_frame)
+        self._telemetry_record_response(
+            end_frame.decode("utf-8", errors="replace"),
+            source="local",
+            conn_id=conn_id,
+        )
         try:
             task = asyncio.create_task(box_writer.drain())
             self._background_tasks.add(task)

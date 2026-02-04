@@ -472,6 +472,7 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
         ok = proxy._maybe_handle_local_setting_ack(
             "<Reason>Setting</Reason><Result>ACK</Result>",
             writer,
+            conn_id=1,
         )
         await asyncio.sleep(0)
         return res, ok
