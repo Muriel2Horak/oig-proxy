@@ -1234,9 +1234,9 @@ class OIGProxy:
         try:
             data = json.loads(payload)
         except Exception:
-            return None
+            return payload
         if not isinstance(data, dict):
-            return None
+            return data
         if field_name in data:
             return data[field_name]
         field_key = field_name.lower()
@@ -2099,6 +2099,7 @@ class OIGProxy:
             return
         if device_id != target_device_id:
             return
+        self.mqtt_publisher.set_cached_payload(topic, payload_text)
         if not table_name.startswith("tbl_"):
             return
         try:
