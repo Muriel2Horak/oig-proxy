@@ -216,10 +216,14 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             return False
         try:
             client_id = f"oig-proxy-{self.device_id}-{self.instance_hash[:8]}"
-            self._client = mqtt.Client(
-                client_id=client_id,
-                protocol=mqtt.MQTTv311,
-                callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            client_kwargs: dict[str, Any] = {
+                "client_id": client_id,
+                "protocol": mqtt.MQTTv311,
+            }
+            callback_api = getattr(mqtt, "CallbackAPIVersion", None)
+            if callback_api is not None:
+                client_kwargs["callback_api_version"] = callback_api.VERSION2
+            self._client = mqtt.Client(**client_kwargs)  # type: ignore[call-arg]
 
             def on_connect(_client, _userdata, _flags, rc, _properties=None):
                 if rc == 0:

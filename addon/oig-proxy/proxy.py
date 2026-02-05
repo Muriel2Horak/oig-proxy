@@ -907,7 +907,9 @@ class OIGProxy:
             mode_value = mode_value.value
         if mode_value is None:
             mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
-        key = (table_name, source, mode_value)
+        table_key = str(table_name) if table_name else "unmatched"
+        mode_key = str(mode_value) if mode_value is not None else ProxyMode.OFFLINE.value
+        key = (table_key, source, mode_key)
         stats = self._telemetry_stats.setdefault(
             key,
             Counter(

@@ -250,11 +250,14 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         timeout = timeout or self.CONNECT_TIMEOUT
 
         try:
-            self.client = mqtt.Client(
-                callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
-                client_id=f"{MQTT_NAMESPACE}_{self.device_id}",
-                protocol=mqtt.MQTTv311
-            )
+            client_kwargs: dict[str, Any] = {
+                "client_id": f"{MQTT_NAMESPACE}_{self.device_id}",
+                "protocol": mqtt.MQTTv311,
+            }
+            callback_api = getattr(mqtt, "CallbackAPIVersion", None)
+            if callback_api is not None:
+                client_kwargs["callback_api_version"] = callback_api.VERSION1
+            self.client = mqtt.Client(**client_kwargs)  # type: ignore[call-arg]
             if MQTT_USERNAME:
                 self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 

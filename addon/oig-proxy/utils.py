@@ -3,7 +3,9 @@
 Pomocné funkce pro OIG Proxy.
 """
 
+import base64
 import datetime
+import ipaddress
 import json
 import logging
 import os
@@ -11,9 +13,8 @@ import queue
 import sqlite3
 import threading
 import time
-import base64
-import ipaddress
 from contextlib import suppress
+from types import ModuleType
 from typing import Any
 
 from config import (
@@ -30,14 +31,15 @@ from models import SensorConfig
 logger = logging.getLogger(__name__)
 
 # Public DNS resolver for cloud target (bypass local override)
+DNS: ModuleType | None = None
 try:
-    import dns.resolver  # type: ignore
+    import dns.resolver as dns_resolver  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency guard
     DNS = None
 else:
-    DNS = dns
+    DNS = dns_resolver
 
-dns = DNS  # pylint: disable=invalid-name
+dns: ModuleType | None = DNS  # pylint: disable=invalid-name
 
 _PUBLIC_DNS_HOSTS = {"oigservis.cz"}
 _PUBLIC_DNS_DEFAULT = ("8.8.8.8", "1.1.1.1")
