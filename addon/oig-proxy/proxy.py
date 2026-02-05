@@ -3191,11 +3191,6 @@ class OIGProxy:
             errors="strict")
 
         box_writer.write(end_frame)
-        self._telemetry_record_response(
-            end_frame.decode("utf-8", errors="replace"),
-            source="local",
-            conn_id=conn_id,
-        )
         try:
             task = asyncio.create_task(box_writer.drain())
             self._background_tasks.add(task)
