@@ -109,7 +109,11 @@ def _public_dns_cache_set(host: str, ip: str, ttl_s: float) -> None:
 def _resolve_public_dns(host: str) -> tuple[str | None, float]:
     if dns is None:
         return None, _PUBLIC_DNS_TTL_DEFAULT_S
-    resolver = dns.Resolver(configure=False)
+    resolver_cls = getattr(dns, "resolver", None)
+    if resolver_cls is not None:
+        resolver = resolver_cls.Resolver(configure=False)
+    else:
+        resolver = dns.Resolver(configure=False)
     resolver.nameservers = _public_dns_nameservers()
     try:
         answer = resolver.resolve(host, "A", lifetime=2.0)
