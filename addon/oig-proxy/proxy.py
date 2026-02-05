@@ -1075,7 +1075,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.7"
+                proxy_version = "1.4.8"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1227,8 +1227,21 @@ class OIGProxy:
     ) -> Any | None:
         if not self.mqtt_publisher:
             return None
-        topic = self.mqtt_publisher.state_topic(device_id, table_name)
-        payload = self.mqtt_publisher.get_cached_payload(topic)
+        table_candidates = [table_name]
+        if table_name in {"isnewfw", "isnewset", "isnewweather"}:
+            table_candidates.append(
+                {
+                    "isnewfw": "IsNewFW",
+                    "isnewset": "IsNewSet",
+                    "isnewweather": "IsNewWeather",
+                }[table_name]
+            )
+        payload = None
+        for candidate in table_candidates:
+            topic = self.mqtt_publisher.state_topic(device_id, candidate)
+            payload = self.mqtt_publisher.get_cached_payload(topic)
+            if payload:
+                break
         if not payload:
             return None
         try:

@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.4.7] - 2026-02-05
+## [1.4.8] - 2026-02-05
 
 - Cache MQTT state payloads for telemetry top fields.
 - Telemetry top: publish cached box fields (FW version, latency, last call, FW loaded time,
@@ -10,11 +10,16 @@
 - Telemetry logs: include logs for windows where the box never connected (to aid diagnostics).
 - Cloud ACK timeout fixed at 1800s (no config override).
 
+## [1.4.7] - 2026-02-05
+
+- Internal refactor (superseded by 1.4.8 details).
+
 ## [1.4.6] - 2026-02-05
 
 ### Changed
 
 - Internal refactor and telemetry tuning (superseded by 1.4.7 details).
+
 ## [1.4.5] - 2026-02-04
 
 ### Added
