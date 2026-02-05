@@ -194,7 +194,7 @@ class OIGProxy:
         self._telemetry_cloud_ok_in_window: bool = False
         self._telemetry_cloud_failed_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
-        self._telemetry_stats: dict[tuple[str, str, int], Counter[str]] = {}
+        self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
         for handler in list(logger.handlers):
             if isinstance(handler, _TelemetryLogHandler):
                 logger.removeHandler(handler)
@@ -917,7 +917,7 @@ class OIGProxy:
         if isinstance(mode_value, ProxyMode):
             mode_value_str = mode_value.value
         elif isinstance(mode_value, str):
-            mode_value_str = mode_value.strip().lower()
+            mode_value_str = str(mode_value).strip().lower()
         else:
             mode_value_str = (
                 str(mode_value).strip().lower()
