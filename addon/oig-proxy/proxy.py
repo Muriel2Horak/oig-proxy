@@ -912,6 +912,12 @@ class OIGProxy:
             mode_value = mode_value.value
         if mode_value is None:
             mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
+        if isinstance(mode_value, str):
+            mode_value = {
+                "online": ProxyMode.ONLINE.value,
+                "hybrid": ProxyMode.HYBRID.value,
+                "offline": ProxyMode.OFFLINE.value,
+            }.get(mode_value, ProxyMode.OFFLINE.value)
         key = (table_name, source, int(mode_value))
         stats = self._telemetry_stats.setdefault(
             key,
@@ -1815,7 +1821,7 @@ class OIGProxy:
                     continue
 
                 if self._maybe_handle_local_setting_ack(
-                    frame, box_writer, conn_id=conn_id
+                    frame, box_writer, _conn_id=conn_id
                 ):
                     continue
                 current_mode = await self._get_current_mode()
@@ -3180,7 +3186,7 @@ class OIGProxy:
         }
 
     def _maybe_handle_local_setting_ack(
-        self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
+        self, frame: str, box_writer: asyncio.StreamWriter, *, _conn_id: int
     ) -> bool:
         pending = self._local_setting_pending
         if not pending:
