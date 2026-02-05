@@ -110,15 +110,12 @@ def _resolve_public_dns(host: str) -> tuple[str | None, float]:
     if dns is None:
         return None, _PUBLIC_DNS_TTL_DEFAULT_S
     # Determine the correct Resolver class depending on what `dns` refers to:
-    # - if `dns` is the `dns.resolver` module, use `dns.Resolver`
-    # - if `dns` is the top-level `dns` package, use `dns.resolver.Resolver`
-    resolver_cls = None
-    if isinstance(dns, ModuleType) and getattr(dns, "__name__", "").endswith(".resolver"):
-        resolver_cls = getattr(dns, "Resolver", None)
-    else:
+    # - if `dns` exposes Resolver directly, use it
+    # - otherwise fallback to `dns.resolver.Resolver`
+    resolver_cls = getattr(dns, "Resolver", None)
+    if resolver_cls is None:
         nested = getattr(dns, "resolver", None)
-        if isinstance(nested, ModuleType):
-            resolver_cls = getattr(nested, "Resolver", None)
+        resolver_cls = getattr(nested, "Resolver", None) if nested else None
     if resolver_cls is None:
         logger.warning(
             "Public DNS resolution unavailable: dnspython Resolver not found"
