@@ -81,6 +81,12 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 
+ISNEW_STATE_TOPIC_ALIASES = {
+    "isnewfw": "IsNewFW",
+    "isnewset": "IsNewSet",
+    "isnewweather": "IsNewWeather",
+}
+
 
 class _TelemetryLogHandler(logging.Handler):
     def __init__(self, proxy: "OIGProxy") -> None:
@@ -1228,14 +1234,9 @@ class OIGProxy:
         if not self.mqtt_publisher:
             return None
         table_candidates = [table_name]
-        if table_name in {"isnewfw", "isnewset", "isnewweather"}:
-            table_candidates.append(
-                {
-                    "isnewfw": "IsNewFW",
-                    "isnewset": "IsNewSet",
-                    "isnewweather": "IsNewWeather",
-                }[table_name]
-            )
+        alias = ISNEW_STATE_TOPIC_ALIASES.get(table_name)
+        if alias:
+            table_candidates.append(alias)
         payload = None
         for candidate in table_candidates:
             topic = self.mqtt_publisher.state_topic(device_id, candidate)

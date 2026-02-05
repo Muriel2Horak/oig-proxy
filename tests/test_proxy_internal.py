@@ -333,6 +333,17 @@ def test_telemetry_stats_pairing_and_flush(tmp_path):
     assert entry["resp_end"] == 1
 
 
+def test_telemetry_cached_state_value_pascalcase(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy.mqtt_publisher = DummyMQTT()
+    topic = proxy.mqtt_publisher.state_topic("DEV1", "IsNewFW")
+    proxy.mqtt_publisher.set_cached_payload(
+        topic, json.dumps({"Fw": "v1.2.3"})
+    )
+    value = proxy._telemetry_cached_state_value("DEV1", "isnewfw", "fw")
+    assert value == "v1.2.3"
+
+
 def test_mode_update_and_processing(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     calls = []
