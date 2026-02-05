@@ -194,7 +194,7 @@ class OIGProxy:
         self._telemetry_cloud_ok_in_window: bool = False
         self._telemetry_cloud_failed_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
-        self._telemetry_stats: dict[tuple[str, str, int], Counter[str]] = {}
+        self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
         for handler in list(logger.handlers):
             if isinstance(handler, _TelemetryLogHandler):
                 logger.removeHandler(handler)
@@ -915,23 +915,18 @@ class OIGProxy:
         if mode_value is None:
             mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
         if isinstance(mode_value, ProxyMode):
-            mode_value = mode_value.value
+            mode_value_str = mode_value.value
         elif isinstance(mode_value, str):
             mode_value_str = str(mode_value).strip().lower()
-            if mode_value_str.isdigit():
-                mode_value = int(mode_value_str)
-            else:
-                mode_value = {
-                    "online": ProxyMode.ONLINE.value,
-                    "hybrid": ProxyMode.HYBRID.value,
-                    "offline": ProxyMode.OFFLINE.value,
-                }.get(mode_value_str, ProxyMode.OFFLINE.value)
-        if not isinstance(mode_value, int):
-            try:
-                mode_value = int(mode_value)
-            except (TypeError, ValueError):
-                mode_value = ProxyMode.OFFLINE.value
-        key = (table_name, source, mode_value)
+        else:
+            mode_value_str = (
+                str(mode_value).strip().lower()
+                if mode_value is not None
+                else ProxyMode.OFFLINE.value
+            )
+        if mode_value_str not in {"online", "hybrid", "offline"}:
+            mode_value_str = ProxyMode.OFFLINE.value
+        key = (table_name, source, mode_value_str)
         stats = self._telemetry_stats.setdefault(
             key,
             Counter(
@@ -1080,7 +1075,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.6"
+                proxy_version = "1.4.7"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1239,9 +1234,9 @@ class OIGProxy:
         try:
             data = json.loads(payload)
         except Exception:
-            return None
+            return payload
         if not isinstance(data, dict):
-            return None
+            return data
         if field_name in data:
             return data[field_name]
         field_key = field_name.lower()
@@ -2104,6 +2099,7 @@ class OIGProxy:
             return
         if device_id != target_device_id:
             return
+        self.mqtt_publisher.set_cached_payload(topic, payload_text)
         if not table_name.startswith("tbl_"):
             return
         try:
