@@ -901,7 +901,7 @@ class OIGProxy:
         if not hasattr(self, "_telemetry_stats"):
             self._telemetry_stats = {}
         queue = self._telemetry_req_pending.get(conn_id)
-        if queue and len(queue) > 0:
+        if queue:
             table_name = queue.popleft()
         else:
             table_name = "unmatched"
