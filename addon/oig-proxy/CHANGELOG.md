@@ -15,7 +15,6 @@
 ### Changed
 
 - Internal refactor and telemetry tuning (superseded by 1.4.7 details).
-
 ## [1.4.5] - 2026-02-04
 
 ### Added

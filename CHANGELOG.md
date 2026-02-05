@@ -17,7 +17,6 @@
 ### Changed
 
 - Internal refactor and telemetry tuning (superseded by 1.4.7 details).
-
 ## [1.4.5] - 2026-02-04
 
 ### Added
@@ -31,6 +30,11 @@
   dočasný "debug burst" na 2 okna.
 - OFFLINE ACK: `IsNewSet` odpovídá `END` s `Time/UTCTime`, `IsNewWeather`
   a `IsNewFW` odpovídají `END` bez weather payloadu.
+- Telemetrie: `box_connected` je true, pokud se box během okna alespoň
+  jednou připojí nebo pošle rámec.
+- Telemetrie: `cloud_online` je true, pokud v okně přišla odpověď z cloudu
+  nebo je otevřená cloud session bez chyby/timeoutu.
+- Cloud ACK timeout je fixně 1800s (bez možnosti konfigurace).
 
 ## [1.4.4] - 2026-02-03
 
