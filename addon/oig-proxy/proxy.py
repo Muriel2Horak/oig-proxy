@@ -1167,7 +1167,7 @@ class OIGProxy:
         self._telemetry_offline_events.clear()
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
-        return {
+        metrics: dict[str, Any] = {
             "timestamp": self._utc_iso(),
             "interval_s": int(self._telemetry_interval_s),
             "uptime_s": uptime_s,
@@ -1187,6 +1187,55 @@ class OIGProxy:
             "set_commands": set_commands,
             "window_metrics": window_metrics,
         }
+        device_id = self.device_id if self.device_id != "AUTO" else ""
+        if device_id:
+            metrics.update({
+                "isnewfw_fw": self._telemetry_cached_state_value(
+                    device_id, "isnewfw", "fw"
+                ),
+                "isnewset_lat": self._telemetry_cached_state_value(
+                    device_id, "isnewset", "lat"
+                ),
+                "tbl_box_tmlastcall": self._telemetry_cached_state_value(
+                    device_id, "tbl_box", "tmlastcall"
+                ),
+                "isnewweather_loadedon": self._telemetry_cached_state_value(
+                    device_id, "isnewweather", "loadedon"
+                ),
+                "tbl_box_strnght": self._telemetry_cached_state_value(
+                    device_id, "tbl_box", "strnght"
+                ),
+                "tbl_invertor_prms_model": self._telemetry_cached_state_value(
+                    device_id, "tbl_invertor_prms", "model"
+                ),
+            })
+        return metrics
+
+    def _telemetry_cached_state_value(
+        self,
+        device_id: str,
+        table_name: str,
+        field_name: str,
+    ) -> Any | None:
+        if not self.mqtt_publisher:
+            return None
+        topic = self.mqtt_publisher.state_topic(device_id, table_name)
+        payload = self.mqtt_publisher.get_cached_payload(topic)
+        if not payload:
+            return None
+        try:
+            data = json.loads(payload)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if field_name in data:
+            return data[field_name]
+        field_key = field_name.lower()
+        for key, value in data.items():
+            if str(key).lower() == field_key:
+                return value
+        return None
 
     def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
         """Fire telemetry event (non-blocking, fire and forget)."""
