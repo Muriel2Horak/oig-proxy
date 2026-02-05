@@ -913,7 +913,7 @@ class OIGProxy:
         if isinstance(mode_value, ProxyMode):
             mode_value = mode_value.value
         elif isinstance(mode_value, str):
-            mode_value_str = mode_value.strip().lower()
+            mode_value_str = str(mode_value).strip().lower()
             if mode_value_str.isdigit():
                 mode_value = int(mode_value_str)
             else:
