@@ -37,6 +37,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency guard
     dns_resolver = None
 
+dns: ModuleType | None = dns_resolver  # pylint: disable=invalid-name
+
 _PUBLIC_DNS_HOSTS = {"oigservis.cz"}
 _PUBLIC_DNS_DEFAULT = ("8.8.8.8", "1.1.1.1")
 _PUBLIC_DNS_CACHE: dict[str, tuple[str, float]] = {}
@@ -105,9 +107,9 @@ def _public_dns_cache_set(host: str, ip: str, ttl_s: float) -> None:
 
 
 def _resolve_public_dns(host: str) -> tuple[str | None, float]:
-    if dns_resolver is None:
+    if dns is None:
         return None, _PUBLIC_DNS_TTL_DEFAULT_S
-    resolver = dns_resolver.Resolver(configure=False)
+    resolver = dns.Resolver(configure=False)
     resolver.nameservers = _public_dns_nameservers()
     try:
         answer = resolver.resolve(host, "A", lifetime=2.0)
