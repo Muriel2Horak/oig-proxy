@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.4.7] - 2026-02-05
+
+- Cache MQTT state payloads for telemetry top fields.
+
 ## [1.4.6] - 2026-02-05
 
 ### Added
