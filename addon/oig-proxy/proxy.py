@@ -190,6 +190,7 @@ class OIGProxy:
         self._telemetry_log_error: bool = False
         self._telemetry_debug_windows_remaining: int = 0
         self._telemetry_box_seen_in_window: bool = False
+        self._telemetry_force_logs_this_window: bool = True
         self._telemetry_cloud_ok_in_window: bool = False
         self._telemetry_cloud_failed_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
@@ -830,7 +831,10 @@ class OIGProxy:
             return
         if record.levelno >= logging.WARNING:
             self._telemetry_debug_windows_remaining = 2
-        if getattr(self, "_telemetry_debug_windows_remaining", 0) <= 0:
+        if (
+            getattr(self, "_telemetry_debug_windows_remaining", 0) <= 0
+            and not getattr(self, "_telemetry_force_logs_this_window", False)
+        ):
             return
         try:
             entry = {
@@ -1139,19 +1143,18 @@ class OIGProxy:
         # Get and clear SET commands buffer
         set_commands = self._set_commands_buffer[:]
         self._set_commands_buffer.clear()
-        window_metrics = {
-            "box_sessions": list(self._telemetry_box_sessions),
-            "cloud_sessions": list(self._telemetry_cloud_sessions),
-            "offline_events": list(self._telemetry_offline_events),
-            "tbl_events": list(self._telemetry_tbl_events),
-            "error_context": list(self._telemetry_error_context),
-            "stats": self._telemetry_flush_stats(),
-            "logs": self._flush_log_buffer(),
-        }
-        if getattr(self, "_telemetry_debug_windows_remaining", 0) > 0:
-            self._telemetry_debug_windows_remaining -= 1
+        debug_active = getattr(self, "_telemetry_debug_windows_remaining", 0) > 0
         box_connected_window = self.box_connected or self._telemetry_box_seen_in_window
         self._telemetry_box_seen_in_window = False
+        include_logs = (
+            debug_active
+            or not box_connected_window
+        )
+        logs = self._flush_log_buffer() if include_logs else []
+        if not include_logs:
+            self._telemetry_logs.clear()
+        if debug_active:
+            self._telemetry_debug_windows_remaining -= 1
         if self._telemetry_cloud_failed_in_window:
             cloud_online_window = False
         elif self._telemetry_cloud_ok_in_window:
@@ -1162,11 +1165,21 @@ class OIGProxy:
             cloud_online_window = False
         self._telemetry_cloud_ok_in_window = False
         self._telemetry_cloud_failed_in_window = False
+        window_metrics = {
+            "box_sessions": list(self._telemetry_box_sessions),
+            "cloud_sessions": list(self._telemetry_cloud_sessions),
+            "offline_events": list(self._telemetry_offline_events),
+            "tbl_events": list(self._telemetry_tbl_events),
+            "error_context": list(self._telemetry_error_context),
+            "stats": self._telemetry_flush_stats(),
+            "logs": logs,
+        }
         self._telemetry_box_sessions.clear()
         self._telemetry_cloud_sessions.clear()
         self._telemetry_offline_events.clear()
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
+        self._telemetry_force_logs_this_window = True
         metrics: dict[str, Any] = {
             "timestamp": self._utc_iso(),
             "interval_s": int(self._telemetry_interval_s),
@@ -1323,6 +1336,7 @@ class OIGProxy:
         logger.info("🔌 BOX connected (conn=%s, peer=%s)", conn_id, addr)
         self.box_connected = True
         self._telemetry_box_seen_in_window = True
+        self._telemetry_force_logs_this_window = False
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
         self._last_box_disconnect_reason = None
@@ -1756,6 +1770,7 @@ class OIGProxy:
     ) -> tuple[str | None, str | None]:
         self.stats["frames_received"] += 1
         self._telemetry_box_seen_in_window = True
+        self._telemetry_force_logs_this_window = False
         self._touch_last_data()
 
         parsed = self.parser.parse_xml_frame(frame)
@@ -1882,6 +1897,7 @@ class OIGProxy:
                     frame, box_writer, conn_id=conn_id
                 ):
                     continue
+                self._telemetry_force_logs_this_window = False
                 current_mode = await self._get_current_mode()
 
                 if current_mode != ProxyMode.ONLINE:
