@@ -112,6 +112,9 @@ def _resolve_public_dns(host: str) -> tuple[str | None, float]:
     # `dns` is expected to be the `dns.resolver` module; use its Resolver class directly.
     resolver_cls = getattr(dns, "Resolver", None)
     if resolver_cls is None:
+        nested = getattr(dns, "resolver", None)
+        resolver_cls = getattr(nested, "Resolver", None) if nested else None
+    if resolver_cls is None:
         logger.warning(
             "Public DNS resolution unavailable: dnspython Resolver not found"
         )
