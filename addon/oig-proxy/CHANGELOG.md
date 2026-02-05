@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.6] - 2026-02-05
+
+### Changed
+
+- Telemetry: `box_connected` is true if the box connected or sent data at least once in the telemetry window.
+- Cloud ACK timeout is fixed at 1800s (no config override).
+
 ## [1.4.5] - 2026-02-04
 
 ### Added
@@ -11,6 +18,7 @@
 - Telemetry logs are sent only during a 2-window debug burst after WARNING/ERROR.
 - Offline ACK: `IsNewSet` returns `END` with `Time/UTCTime`; `IsNewWeather` and
   `IsNewFW` return `END` without weather payloads.
+- Cloud ACK timeout is fixed at 1800s (no config override).
 
 ## [1.4.4] - 2026-02-03
 

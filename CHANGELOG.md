@@ -2,6 +2,13 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.6] - 2026-02-05
+
+### Changed
+
+- Telemetrie: `box_connected` je true, pokud se box v daném okně alespoň jednou připojil nebo poslal data.
+- `CLOUD_ACK_TIMEOUT` je fixně 1800s (bez override z configu).
+
 ## [1.4.5] - 2026-02-04
 
 ### Added

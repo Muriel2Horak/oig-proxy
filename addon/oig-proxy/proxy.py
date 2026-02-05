@@ -189,6 +189,7 @@ class OIGProxy:
         self._telemetry_log_max: int = 1000
         self._telemetry_log_error: bool = False
         self._telemetry_debug_windows_remaining: int = 0
+        self._telemetry_box_seen_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
         self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
         for handler in list(logger.handlers):
@@ -1052,7 +1053,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.5"
+                proxy_version = "1.4.6"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1131,13 +1132,18 @@ class OIGProxy:
         self._telemetry_offline_events.clear()
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
+        box_connected_window = (
+            self.box_connected
+            or getattr(self, "_telemetry_box_seen_in_window", False)
+        )
+        self._telemetry_box_seen_in_window = False
         return {
             "timestamp": self._utc_iso(),
             "interval_s": int(self._telemetry_interval_s),
             "uptime_s": uptime_s,
             "mode": self.mode.value,
             "configured_mode": self._configured_mode,
-            "box_connected": self.box_connected,
+            "box_connected": box_connected_window,
             "box_peer": self._active_box_peer,
             "frames_received": self.stats.get("frames_received", 0),
             "frames_forwarded": self.stats.get("frames_forwarded", 0),
@@ -1237,6 +1243,7 @@ class OIGProxy:
 
         logger.info("🔌 BOX connected (conn=%s, peer=%s)", conn_id, addr)
         self.box_connected = True
+        self._telemetry_box_seen_in_window = True
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
         self._last_box_disconnect_reason = None
@@ -1664,6 +1671,7 @@ class OIGProxy:
         self, *, frame_bytes: bytes, frame: str, conn_id: int
     ) -> tuple[str | None, str | None]:
         self.stats["frames_received"] += 1
+        self._telemetry_box_seen_in_window = True
         self._touch_last_data()
 
         parsed = self.parser.parse_xml_frame(frame)
