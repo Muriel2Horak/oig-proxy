@@ -190,6 +190,8 @@ class OIGProxy:
         self._telemetry_log_error: bool = False
         self._telemetry_debug_windows_remaining: int = 0
         self._telemetry_box_seen_in_window: bool = False
+        self._telemetry_cloud_ok_in_window: bool = False
+        self._telemetry_cloud_failed_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
         self._telemetry_stats: dict[tuple[str, str, int], Counter[str]] = {}
         for handler in list(logger.handlers):
@@ -926,8 +928,11 @@ class OIGProxy:
         )
         stats["req_count"] += 1
         stats[self._telemetry_response_kind(response_text)] += 1
+        if source == "cloud":
+            self._telemetry_cloud_ok_in_window = True
 
     def _telemetry_record_timeout(self, *, conn_id: int) -> None:
+        self._telemetry_cloud_failed_in_window = True
         self._telemetry_record_response("", source="timeout", conn_id=conn_id)
 
     def _telemetry_flush_stats(self) -> list[dict[str, Any]]:
@@ -1132,6 +1137,16 @@ class OIGProxy:
             self._telemetry_debug_windows_remaining -= 1
         box_connected_window = self.box_connected or self._telemetry_box_seen_in_window
         self._telemetry_box_seen_in_window = False
+        if self._telemetry_cloud_failed_in_window:
+            cloud_online_window = False
+        elif self._telemetry_cloud_ok_in_window:
+            cloud_online_window = True
+        elif self.cloud_session_connected:
+            cloud_online_window = True
+        else:
+            cloud_online_window = False
+        self._telemetry_cloud_ok_in_window = False
+        self._telemetry_cloud_failed_in_window = False
         self._telemetry_box_sessions.clear()
         self._telemetry_cloud_sessions.clear()
         self._telemetry_offline_events.clear()
@@ -1151,7 +1166,7 @@ class OIGProxy:
             "cloud_disconnects": self.cloud_disconnects,
             "cloud_timeouts": self.cloud_timeouts,
             "cloud_errors": self.cloud_errors,
-            "cloud_online": not self._hybrid_in_offline,
+            "cloud_online": cloud_online_window,
             "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
             "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
             "set_commands": set_commands,
@@ -1492,6 +1507,7 @@ class OIGProxy:
 
         # Connection failed
         if cloud_writer is None or cloud_reader is None:
+            self._telemetry_cloud_failed_in_window = True
             if self._is_hybrid_mode():
                 self._hybrid_record_failure(
                     reason="connect_failed", local_ack=True)
@@ -1520,6 +1536,7 @@ class OIGProxy:
                 timeout=CLOUD_ACK_TIMEOUT,
             )
             if not ack_data:
+                self._telemetry_cloud_failed_in_window = True
                 logger.warning(
                     "⚠️ Cloud closed connection (conn=%s, table=%s)",
                     conn_id,
@@ -1554,6 +1571,7 @@ class OIGProxy:
             # Success - forward ACK to BOX
             self._hybrid_record_success()
             ack_str = ack_data.decode("utf-8", errors="replace")
+            self._telemetry_cloud_ok_in_window = True
             capture_payload(
                 None,
                 table_name,
@@ -1581,6 +1599,7 @@ class OIGProxy:
             return cloud_reader, cloud_writer
 
         except asyncio.TimeoutError:
+            self._telemetry_cloud_failed_in_window = True
             self.cloud_timeouts += 1
             self._telemetry_fire_event(
                 "error_cloud_timeout",
@@ -1636,6 +1655,7 @@ class OIGProxy:
             return None, None
 
         except Exception as e:
+            self._telemetry_cloud_failed_in_window = True
             logger.warning(
                 "⚠️ Cloud error: %s (conn=%s, table=%s)",
                 e,

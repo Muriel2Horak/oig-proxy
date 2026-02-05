@@ -13,6 +13,8 @@
   `IsNewFW` return `END` without weather payloads.
 - Telemetry: `box_connected` is true if the box connected or sent data at least
   once in the telemetry window.
+- Telemetry: `cloud_online` is true if a cloud response arrived in the window or
+  if the cloud session stayed open without errors/timeouts.
 - Cloud ACK timeout is fixed at 1800s (no config override).
 
 ## [1.4.4] - 2026-02-03
