@@ -189,8 +189,12 @@ class OIGProxy:
         self._telemetry_log_max: int = 1000
         self._telemetry_log_error: bool = False
         self._telemetry_debug_windows_remaining: int = 0
+        self._telemetry_box_seen_in_window: bool = False
+        self._telemetry_force_logs_this_window: bool = True
+        self._telemetry_cloud_ok_in_window: bool = False
+        self._telemetry_cloud_failed_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
-        self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
+        self._telemetry_stats: dict[tuple[str, str, int], Counter[str]] = {}
         for handler in list(logger.handlers):
             if isinstance(handler, _TelemetryLogHandler):
                 logger.removeHandler(handler)
@@ -827,7 +831,10 @@ class OIGProxy:
             return
         if record.levelno >= logging.WARNING:
             self._telemetry_debug_windows_remaining = 2
-        if getattr(self, "_telemetry_debug_windows_remaining", 0) <= 0:
+        if (
+            getattr(self, "_telemetry_debug_windows_remaining", 0) <= 0
+            and not getattr(self, "_telemetry_force_logs_this_window", False)
+        ):
             return
         try:
             entry = {
@@ -898,14 +905,32 @@ class OIGProxy:
         if not hasattr(self, "_telemetry_stats"):
             self._telemetry_stats = {}
         queue = self._telemetry_req_pending.get(conn_id)
-        table_name = queue.popleft() if queue else "unmatched"
+        if queue:
+            table_name = queue.popleft()
+        else:
+            table_name = "unmatched"
         if queue is not None and not queue:
             self._telemetry_req_pending.pop(conn_id, None)
         mode_value = getattr(self, "mode", None)
-        if isinstance(mode_value, ProxyMode):
-            mode_value = mode_value.value
         if mode_value is None:
             mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
+        if isinstance(mode_value, ProxyMode):
+            mode_value = mode_value.value
+        elif isinstance(mode_value, str):
+            mode_value_str = str(mode_value).strip().lower()
+            if mode_value_str.isdigit():
+                mode_value = int(mode_value_str)
+            else:
+                mode_value = {
+                    "online": ProxyMode.ONLINE.value,
+                    "hybrid": ProxyMode.HYBRID.value,
+                    "offline": ProxyMode.OFFLINE.value,
+                }.get(mode_value_str, ProxyMode.OFFLINE.value)
+        if not isinstance(mode_value, int):
+            try:
+                mode_value = int(mode_value)
+            except (TypeError, ValueError):
+                mode_value = ProxyMode.OFFLINE.value
         key = (table_name, source, mode_value)
         stats = self._telemetry_stats.setdefault(
             key,
@@ -922,8 +947,11 @@ class OIGProxy:
         )
         stats["req_count"] += 1
         stats[self._telemetry_response_kind(response_text)] += 1
+        if source == "cloud":
+            self._telemetry_cloud_ok_in_window = True
 
     def _telemetry_record_timeout(self, *, conn_id: int) -> None:
+        self._telemetry_cloud_failed_in_window = True
         self._telemetry_record_response("", source="timeout", conn_id=conn_id)
 
     def _telemetry_flush_stats(self) -> list[dict[str, Any]]:
@@ -1052,7 +1080,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.5"
+                proxy_version = "1.4.6"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1115,6 +1143,28 @@ class OIGProxy:
         # Get and clear SET commands buffer
         set_commands = self._set_commands_buffer[:]
         self._set_commands_buffer.clear()
+        debug_active = getattr(self, "_telemetry_debug_windows_remaining", 0) > 0
+        box_connected_window = self.box_connected or self._telemetry_box_seen_in_window
+        self._telemetry_box_seen_in_window = False
+        include_logs = (
+            debug_active
+            or not box_connected_window
+        )
+        logs = self._flush_log_buffer() if include_logs else []
+        if not include_logs:
+            self._telemetry_logs.clear()
+        if debug_active:
+            self._telemetry_debug_windows_remaining -= 1
+        if self._telemetry_cloud_failed_in_window:
+            cloud_online_window = False
+        elif self._telemetry_cloud_ok_in_window:
+            cloud_online_window = True
+        elif self.cloud_session_connected:
+            cloud_online_window = True
+        else:
+            cloud_online_window = False
+        self._telemetry_cloud_ok_in_window = False
+        self._telemetry_cloud_failed_in_window = False
         window_metrics = {
             "box_sessions": list(self._telemetry_box_sessions),
             "cloud_sessions": list(self._telemetry_cloud_sessions),
@@ -1122,22 +1172,21 @@ class OIGProxy:
             "tbl_events": list(self._telemetry_tbl_events),
             "error_context": list(self._telemetry_error_context),
             "stats": self._telemetry_flush_stats(),
-            "logs": self._flush_log_buffer(),
+            "logs": logs,
         }
-        if getattr(self, "_telemetry_debug_windows_remaining", 0) > 0:
-            self._telemetry_debug_windows_remaining -= 1
         self._telemetry_box_sessions.clear()
         self._telemetry_cloud_sessions.clear()
         self._telemetry_offline_events.clear()
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
-        return {
+        self._telemetry_force_logs_this_window = True
+        metrics: dict[str, Any] = {
             "timestamp": self._utc_iso(),
             "interval_s": int(self._telemetry_interval_s),
             "uptime_s": uptime_s,
             "mode": self.mode.value,
             "configured_mode": self._configured_mode,
-            "box_connected": self.box_connected,
+            "box_connected": box_connected_window,
             "box_peer": self._active_box_peer,
             "frames_received": self.stats.get("frames_received", 0),
             "frames_forwarded": self.stats.get("frames_forwarded", 0),
@@ -1145,12 +1194,61 @@ class OIGProxy:
             "cloud_disconnects": self.cloud_disconnects,
             "cloud_timeouts": self.cloud_timeouts,
             "cloud_errors": self.cloud_errors,
-            "cloud_online": not self._hybrid_in_offline,
+            "cloud_online": cloud_online_window,
             "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
             "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
             "set_commands": set_commands,
             "window_metrics": window_metrics,
         }
+        device_id = self.device_id if self.device_id != "AUTO" else ""
+        if device_id:
+            metrics.update({
+                "isnewfw_fw": self._telemetry_cached_state_value(
+                    device_id, "isnewfw", "fw"
+                ),
+                "isnewset_lat": self._telemetry_cached_state_value(
+                    device_id, "isnewset", "lat"
+                ),
+                "tbl_box_tmlastcall": self._telemetry_cached_state_value(
+                    device_id, "tbl_box", "tmlastcall"
+                ),
+                "isnewweather_loadedon": self._telemetry_cached_state_value(
+                    device_id, "isnewweather", "loadedon"
+                ),
+                "tbl_box_strnght": self._telemetry_cached_state_value(
+                    device_id, "tbl_box", "strnght"
+                ),
+                "tbl_invertor_prms_model": self._telemetry_cached_state_value(
+                    device_id, "tbl_invertor_prms", "model"
+                ),
+            })
+        return metrics
+
+    def _telemetry_cached_state_value(
+        self,
+        device_id: str,
+        table_name: str,
+        field_name: str,
+    ) -> Any | None:
+        if not self.mqtt_publisher:
+            return None
+        topic = self.mqtt_publisher.state_topic(device_id, table_name)
+        payload = self.mqtt_publisher.get_cached_payload(topic)
+        if not payload:
+            return None
+        try:
+            data = json.loads(payload)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if field_name in data:
+            return data[field_name]
+        field_key = field_name.lower()
+        for key, value in data.items():
+            if str(key).lower() == field_key:
+                return value
+        return None
 
     def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
         """Fire telemetry event (non-blocking, fire and forget)."""
@@ -1237,6 +1335,8 @@ class OIGProxy:
 
         logger.info("🔌 BOX connected (conn=%s, peer=%s)", conn_id, addr)
         self.box_connected = True
+        self._telemetry_box_seen_in_window = True
+        self._telemetry_force_logs_this_window = False
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
         self._last_box_disconnect_reason = None
@@ -1485,6 +1585,7 @@ class OIGProxy:
 
         # Connection failed
         if cloud_writer is None or cloud_reader is None:
+            self._telemetry_cloud_failed_in_window = True
             if self._is_hybrid_mode():
                 self._hybrid_record_failure(
                     reason="connect_failed", local_ack=True)
@@ -1513,6 +1614,7 @@ class OIGProxy:
                 timeout=CLOUD_ACK_TIMEOUT,
             )
             if not ack_data:
+                self._telemetry_cloud_failed_in_window = True
                 logger.warning(
                     "⚠️ Cloud closed connection (conn=%s, table=%s)",
                     conn_id,
@@ -1547,6 +1649,7 @@ class OIGProxy:
             # Success - forward ACK to BOX
             self._hybrid_record_success()
             ack_str = ack_data.decode("utf-8", errors="replace")
+            self._telemetry_cloud_ok_in_window = True
             capture_payload(
                 None,
                 table_name,
@@ -1574,6 +1677,7 @@ class OIGProxy:
             return cloud_reader, cloud_writer
 
         except asyncio.TimeoutError:
+            self._telemetry_cloud_failed_in_window = True
             self.cloud_timeouts += 1
             self._telemetry_fire_event(
                 "error_cloud_timeout",
@@ -1629,6 +1733,7 @@ class OIGProxy:
             return None, None
 
         except Exception as e:
+            self._telemetry_cloud_failed_in_window = True
             logger.warning(
                 "⚠️ Cloud error: %s (conn=%s, table=%s)",
                 e,
@@ -1664,6 +1769,8 @@ class OIGProxy:
         self, *, frame_bytes: bytes, frame: str, conn_id: int
     ) -> tuple[str | None, str | None]:
         self.stats["frames_received"] += 1
+        self._telemetry_box_seen_in_window = True
+        self._telemetry_force_logs_this_window = False
         self._touch_last_data()
 
         parsed = self.parser.parse_xml_frame(frame)
@@ -1790,6 +1897,7 @@ class OIGProxy:
                     frame, box_writer, conn_id=conn_id
                 ):
                     continue
+                self._telemetry_force_logs_this_window = False
                 current_mode = await self._get_current_mode()
 
                 if current_mode != ProxyMode.ONLINE:
@@ -3154,6 +3262,7 @@ class OIGProxy:
     def _maybe_handle_local_setting_ack(
         self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
     ) -> bool:
+        _ = conn_id
         pending = self._local_setting_pending
         if not pending:
             return False
@@ -3183,11 +3292,6 @@ class OIGProxy:
             errors="strict")
 
         box_writer.write(end_frame)
-        self._telemetry_record_response(
-            end_frame.decode("utf-8", errors="replace"),
-            source="local",
-            conn_id=conn_id,
-        )
         try:
             task = asyncio.create_task(box_writer.drain())
             self._background_tasks.add(task)

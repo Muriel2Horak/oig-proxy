@@ -3,7 +3,9 @@
 Pomocné funkce pro OIG Proxy.
 """
 
+import base64
 import datetime
+import ipaddress
 import json
 import logging
 import os
@@ -11,9 +13,8 @@ import queue
 import sqlite3
 import threading
 import time
-import base64
-import ipaddress
 from contextlib import suppress
+from types import ModuleType
 from typing import Any
 
 from config import (
@@ -30,14 +31,13 @@ from models import SensorConfig
 logger = logging.getLogger(__name__)
 
 # Public DNS resolver for cloud target (bypass local override)
+dns_resolver: ModuleType | None
 try:
-    import dns.resolver  # type: ignore
+    import dns.resolver as dns_resolver  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency guard
-    DNS = None
-else:
-    DNS = dns
+    dns_resolver = None
 
-dns = DNS  # pylint: disable=invalid-name
+dns: ModuleType | None = dns_resolver  # pylint: disable=invalid-name
 
 _PUBLIC_DNS_HOSTS = {"oigservis.cz"}
 _PUBLIC_DNS_DEFAULT = ("8.8.8.8", "1.1.1.1")
@@ -109,7 +109,17 @@ def _public_dns_cache_set(host: str, ip: str, ttl_s: float) -> None:
 def _resolve_public_dns(host: str) -> tuple[str | None, float]:
     if dns is None:
         return None, _PUBLIC_DNS_TTL_DEFAULT_S
-    resolver = dns.resolver.Resolver(configure=False)
+    # `dns` is expected to be the `dns.resolver` module; use its Resolver class directly.
+    resolver_cls = getattr(dns, "Resolver", None)
+    if resolver_cls is None:
+        nested = getattr(dns, "resolver", None)
+        resolver_cls = getattr(nested, "Resolver", None) if nested else None
+    if resolver_cls is None:
+        logger.warning(
+            "Public DNS resolution unavailable: dnspython Resolver not found"
+        )
+        return None, _PUBLIC_DNS_TTL_DEFAULT_S
+    resolver = resolver_cls(configure=False)
     resolver.nameservers = _public_dns_nameservers()
     try:
         answer = resolver.resolve(host, "A", lifetime=2.0)

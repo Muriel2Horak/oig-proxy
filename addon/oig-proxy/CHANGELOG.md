@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.6] - 2026-02-05
+
+### Added
+
+- Telemetry top: publish cached box fields (FW version, latence, last call, FW loaded time,
+  WiFi strength, inverter model).
+
+### Changed
+
+- Telemetry: `cloud_online` reflects successful cloud response or open session without errors
+  in the window; `box_connected` reflects any connect/frame in the window.
+- Telemetry logs: include logs for windows where the box never connected (to aid diagnostics).
+- Cloud ACK timeout fixed at 1800s (no config override).
+
 ## [1.4.5] - 2026-02-04
 
 ### Added
@@ -11,6 +25,11 @@
 - Telemetry logs are sent only during a 2-window debug burst after WARNING/ERROR.
 - Offline ACK: `IsNewSet` returns `END` with `Time/UTCTime`; `IsNewWeather` and
   `IsNewFW` return `END` without weather payloads.
+- Telemetry: `box_connected` is true if the box connected or sent data at least
+  once in the telemetry window.
+- Telemetry: `cloud_online` is true if a cloud response arrived in the window or
+  if the cloud session stayed open without errors/timeouts.
+- Cloud ACK timeout is fixed at 1800s (no config override).
 
 ## [1.4.4] - 2026-02-03
 

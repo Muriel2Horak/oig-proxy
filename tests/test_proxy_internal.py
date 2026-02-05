@@ -221,6 +221,9 @@ def _make_proxy(tmp_path):
     proxy._telemetry_log_window_s = 60
     proxy._telemetry_log_max = 1000
     proxy._telemetry_debug_windows_remaining = 0
+    proxy._telemetry_box_seen_in_window = False
+    proxy._telemetry_cloud_ok_in_window = False
+    proxy._telemetry_cloud_failed_in_window = False
     proxy._telemetry_req_pending = defaultdict(deque)
     proxy._telemetry_stats = {}
     return proxy

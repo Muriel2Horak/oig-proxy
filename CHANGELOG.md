@@ -2,6 +2,20 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.6] - 2026-02-05
+
+### Added
+
+- Telemetry top: publish cached box fields (FW version, latence, last call, FW loaded time,
+  WiFi strength, inverter model).
+
+### Changed
+
+- Telemetry: `cloud_online` reflects successful cloud response or open session without errors
+  in the window; `box_connected` reflects any connect/frame in the window.
+- Telemetry logs: include logs for windows where the box never connected (to aid diagnostics).
+- Cloud ACK timeout fixed at 1800s (no config override).
+
 ## [1.4.5] - 2026-02-04
 
 ### Added
@@ -15,6 +29,11 @@
   dočasný "debug burst" na 2 okna.
 - OFFLINE ACK: `IsNewSet` odpovídá `END` s `Time/UTCTime`, `IsNewWeather`
   a `IsNewFW` odpovídají `END` bez weather payloadu.
+- Telemetrie: `box_connected` je true, pokud se box během okna alespoň
+  jednou připojí nebo pošle rámec.
+- Telemetrie: `cloud_online` je true, pokud v okně přišla odpověď z cloudu
+  nebo je otevřená cloud session bez chyby/timeoutu.
+- Cloud ACK timeout je fixně 1800s (bez možnosti konfigurace).
 
 ## [1.4.4] - 2026-02-03
 
