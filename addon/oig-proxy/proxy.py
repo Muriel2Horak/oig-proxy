@@ -908,17 +908,26 @@ class OIGProxy:
         if queue is not None and not queue:
             self._telemetry_req_pending.pop(conn_id, None)
         mode_value = getattr(self, "mode", None)
-        if isinstance(mode_value, ProxyMode):
-            mode_value = mode_value.value
         if mode_value is None:
             mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
-        if isinstance(mode_value, str):
-            mode_value = {
-                "online": ProxyMode.ONLINE.value,
-                "hybrid": ProxyMode.HYBRID.value,
-                "offline": ProxyMode.OFFLINE.value,
-            }.get(mode_value, ProxyMode.OFFLINE.value)
-        key = (table_name, source, int(mode_value))
+        if isinstance(mode_value, ProxyMode):
+            mode_value = mode_value.value
+        elif isinstance(mode_value, str):
+            mode_value_str = mode_value.strip().lower()
+            if mode_value_str.isdigit():
+                mode_value = int(mode_value_str)
+            else:
+                mode_value = {
+                    "online": ProxyMode.ONLINE.value,
+                    "hybrid": ProxyMode.HYBRID.value,
+                    "offline": ProxyMode.OFFLINE.value,
+                }.get(mode_value_str, ProxyMode.OFFLINE.value)
+        if not isinstance(mode_value, int):
+            try:
+                mode_value = int(mode_value)
+            except (TypeError, ValueError):
+                mode_value = ProxyMode.OFFLINE.value
+        key = (table_name, source, mode_value)
         stats = self._telemetry_stats.setdefault(
             key,
             Counter(
@@ -1821,7 +1830,7 @@ class OIGProxy:
                     continue
 
                 if self._maybe_handle_local_setting_ack(
-                    frame, box_writer, _conn_id=conn_id
+                    frame, box_writer, conn_id=conn_id
                 ):
                     continue
                 current_mode = await self._get_current_mode()
@@ -3186,8 +3195,9 @@ class OIGProxy:
         }
 
     def _maybe_handle_local_setting_ack(
-        self, frame: str, box_writer: asyncio.StreamWriter, *, _conn_id: int
+        self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
     ) -> bool:
+        _ = conn_id
         pending = self._local_setting_pending
         if not pending:
             return False
