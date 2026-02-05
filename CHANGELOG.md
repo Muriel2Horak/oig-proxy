@@ -2,13 +2,6 @@
 
 <!-- markdownlint-disable MD024 -->
 
-## [1.4.6] - 2026-02-05
-
-### Changed
-
-- Telemetrie: `box_connected` je true, pokud se box v daném okně alespoň jednou připojil nebo poslal data.
-- `CLOUD_ACK_TIMEOUT` je fixně 1800s (bez override z configu).
-
 ## [1.4.5] - 2026-02-04
 
 ### Added
@@ -22,6 +15,9 @@
   dočasný "debug burst" na 2 okna.
 - OFFLINE ACK: `IsNewSet` odpovídá `END` s `Time/UTCTime`, `IsNewWeather`
   a `IsNewFW` odpovídají `END` bez weather payloadu.
+- Telemetrie: `box_connected` je true, pokud se box během okna alespoň
+  jednou připojí nebo pošle rámec.
+- Cloud ACK timeout je fixně 1800s (bez možnosti konfigurace).
 
 ## [1.4.4] - 2026-02-03
 

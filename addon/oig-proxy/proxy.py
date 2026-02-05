@@ -191,7 +191,7 @@ class OIGProxy:
         self._telemetry_debug_windows_remaining: int = 0
         self._telemetry_box_seen_in_window: bool = False
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
-        self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
+        self._telemetry_stats: dict[tuple[str, str, int], Counter[str]] = {}
         for handler in list(logger.handlers):
             if isinstance(handler, _TelemetryLogHandler):
                 logger.removeHandler(handler)
@@ -899,7 +899,10 @@ class OIGProxy:
         if not hasattr(self, "_telemetry_stats"):
             self._telemetry_stats = {}
         queue = self._telemetry_req_pending.get(conn_id)
-        table_name = queue.popleft() if queue else "unmatched"
+        if queue and len(queue) > 0:
+            table_name = queue.popleft()
+        else:
+            table_name = "unmatched"
         if queue is not None and not queue:
             self._telemetry_req_pending.pop(conn_id, None)
         mode_value = getattr(self, "mode", None)
@@ -907,9 +910,7 @@ class OIGProxy:
             mode_value = mode_value.value
         if mode_value is None:
             mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
-        table_key = str(table_name) if table_name else "unmatched"
-        mode_key = str(mode_value) if mode_value is not None else ProxyMode.OFFLINE.value
-        key = (table_key, source, mode_key)
+        key = (table_name, source, int(mode_value))
         stats = self._telemetry_stats.setdefault(
             key,
             Counter(
@@ -1055,7 +1056,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.6"
+                proxy_version = "1.4.5"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1129,16 +1130,13 @@ class OIGProxy:
         }
         if getattr(self, "_telemetry_debug_windows_remaining", 0) > 0:
             self._telemetry_debug_windows_remaining -= 1
+        box_connected_window = self.box_connected or self._telemetry_box_seen_in_window
+        self._telemetry_box_seen_in_window = False
         self._telemetry_box_sessions.clear()
         self._telemetry_cloud_sessions.clear()
         self._telemetry_offline_events.clear()
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
-        box_connected_window = (
-            self.box_connected
-            or getattr(self, "_telemetry_box_seen_in_window", False)
-        )
-        self._telemetry_box_seen_in_window = False
         return {
             "timestamp": self._utc_iso(),
             "interval_s": int(self._telemetry_interval_s),
