@@ -4,6 +4,7 @@
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code,unused-variable
 import asyncio
+from collections import deque
 
 from models import ProxyMode
 import proxy as proxy_module
@@ -42,6 +43,10 @@ def _make_proxy(
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._hybrid_state = None
+    proxy._hybrid_state_since_epoch = None
+    proxy._hybrid_last_offline_reason = None
+    proxy._telemetry_hybrid_sessions = deque()
     proxy._telemetry_offline_events = []
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None
@@ -67,6 +72,10 @@ def test_switch_mode_tracks_changes():
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
+    proxy._hybrid_state = None
+    proxy._hybrid_state_since_epoch = None
+    proxy._hybrid_last_offline_reason = None
+    proxy._telemetry_hybrid_sessions = deque()
     proxy._telemetry_offline_events = []
 
     async def run():

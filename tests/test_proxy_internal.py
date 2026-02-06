@@ -135,6 +135,11 @@ def _make_proxy(tmp_path):
     proxy.cloud_session_connected = False
     proxy._cloud_connected_since_epoch = None
     proxy._cloud_peer = None
+    proxy._configured_mode = "online"
+    proxy._telemetry_hybrid_sessions = deque()
+    proxy._hybrid_state = None
+    proxy._hybrid_state_since_epoch = None
+    proxy._hybrid_last_offline_reason = None
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy.box_connected = False
