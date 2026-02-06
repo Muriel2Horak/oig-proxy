@@ -482,10 +482,7 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     assert proxy.stats["acks_cloud"] == 1
 
 
-def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
-    """In ONLINE mode, END timeout does NOT send local ACK - fully transparent."""
-    proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "online"  # ONLINE mode: transparent
+def _setup_cloud_timeout(proxy, monkeypatch):
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
@@ -500,6 +497,14 @@ def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
         raise asyncio.TimeoutError
 
     monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
+    return box_writer
+
+
+def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
+    """In ONLINE mode, END timeout does NOT send local ACK - fully transparent."""
+    proxy = make_proxy(tmp_path)
+    proxy._configured_mode = "online"  # ONLINE mode: transparent
+    box_writer = _setup_cloud_timeout(proxy, monkeypatch)
 
     asyncio.run(
         proxy._forward_frame_online(
@@ -523,20 +528,7 @@ def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     proxy._configured_mode = "hybrid"  # HYBRID mode
     proxy._hybrid_in_offline = True  # Already reached threshold
-    box_writer = DummyWriter()
-    cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
-    cloud_writer = DummyWriter()
-
-    async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer, True
-
-    proxy._ensure_cloud_connected = fake_ensure
-
-    async def timeout_wait_for(coro, timeout):
-        coro.close()
-        raise asyncio.TimeoutError
-
-    monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
+    box_writer = _setup_cloud_timeout(proxy, monkeypatch)
 
     asyncio.run(
         proxy._forward_frame_online(
