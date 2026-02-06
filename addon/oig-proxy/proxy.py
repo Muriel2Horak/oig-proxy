@@ -571,7 +571,10 @@ class OIGProxy:
         if self._hybrid_fail_count >= self._hybrid_fail_threshold:
             if not self._hybrid_in_offline:
                 transition_time = time.time()
-                self._record_hybrid_state_end(ended_at=transition_time, reason=None)
+                self._record_hybrid_state_end(
+                    ended_at=transition_time,
+                    reason=reason or "cloud_failure",
+                )
                 self._hybrid_in_offline = True
                 self._hybrid_last_offline_time = time.time()
                 self._hybrid_state = "offline"
@@ -1104,6 +1107,7 @@ class OIGProxy:
             "mode": self.mode.value,
         })
         self._hybrid_state_since_epoch = None
+        self._hybrid_state = None
 
     def _record_offline_event(
             self,
