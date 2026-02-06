@@ -1129,7 +1129,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.5.0"
+                proxy_version = "1.5.1"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1599,8 +1599,6 @@ class OIGProxy:
             if not was_connected:
                 self._cloud_connected_since_epoch = time.time()
                 self._cloud_peer = f"{target_host}:{TARGET_PORT}"
-            # Success - record for HYBRID mode
-            self._hybrid_record_success()
             if not was_connected:
                 logger.info(
                     "☁️ Cloud session connected (%s:%s, conn=%s, table=%s)",
