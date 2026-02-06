@@ -297,7 +297,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
 
-    reader, writer, attempted = asyncio.run(run_success())
+    reader, writer, _attempted = asyncio.run(run_success())
     assert reader is not None
     assert writer is not None
 
@@ -315,7 +315,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
 
-    reader, writer, attempted = asyncio.run(run_fail())
+    reader, writer, _attempted = asyncio.run(run_fail())
     assert reader is None
     assert writer is None
 

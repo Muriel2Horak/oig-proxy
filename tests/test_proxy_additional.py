@@ -388,7 +388,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy_module, "resolve_cloud_host", lambda host: host)
     monkeypatch.setattr(asyncio, "open_connection", fake_open)
 
-    reader, writer, attempted = asyncio.run(
+    reader, writer, _attempted = asyncio.run(
         proxy._ensure_cloud_connected(
             None,
             None,
@@ -407,7 +407,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(asyncio, "open_connection", fake_fail)
     writer._closing = True
-    reader, writer, attempted = asyncio.run(
+    reader, writer, _attempted = asyncio.run(
         proxy._ensure_cloud_connected(
             reader,
             writer,
@@ -433,7 +433,7 @@ def test_ensure_cloud_connected_force_offline(tmp_path):
 
     proxy._close_writer = fake_close
 
-    reader, writer, attempted = asyncio.run(
+    reader, writer, _attempted = asyncio.run(
         proxy._ensure_cloud_connected(
             None,
             DummyWriter(),
