@@ -187,6 +187,7 @@ class OIGProxy:
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._telemetry_box_sessions: deque[dict[str, Any]] = deque()
         self._telemetry_cloud_sessions: deque[dict[str, Any]] = deque()
+        self._telemetry_hybrid_sessions: deque[dict[str, Any]] = deque()
         self._telemetry_offline_events: deque[dict[str, Any]] = deque()
         self._telemetry_tbl_events: deque[dict[str, Any]] = deque()
         self._telemetry_error_context: deque[dict[str, Any]] = deque()
@@ -199,6 +200,9 @@ class OIGProxy:
         self._telemetry_force_logs_this_window: bool = True
         self._telemetry_cloud_ok_in_window: bool = False
         self._telemetry_cloud_failed_in_window: bool = False
+        self._hybrid_state: str | None = None
+        self._hybrid_state_since_epoch: float | None = None
+        self._hybrid_last_offline_reason: str | None = None
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
         self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
         for handler in list(logger.handlers):
@@ -221,6 +225,10 @@ class OIGProxy:
         self._box_connected_since_epoch: float | None = None
         self._last_box_disconnect_reason: str | None = None
         self._last_values: dict[tuple[str, str], Any] = {}
+
+        if self._configured_mode == "hybrid":
+            self._hybrid_state = "offline" if self._hybrid_in_offline else "online"
+            self._hybrid_state_since_epoch = time.time()
 
         # Statistiky
         self.stats = {
@@ -559,10 +567,16 @@ class OIGProxy:
             # Restart offline window after each failed probe so we only
             # attempt once per retry interval.
             self._hybrid_last_offline_time = time.time()
+            self._hybrid_last_offline_reason = reason or self._hybrid_last_offline_reason
         if self._hybrid_fail_count >= self._hybrid_fail_threshold:
             if not self._hybrid_in_offline:
+                transition_time = time.time()
+                self._record_hybrid_state_end(ended_at=transition_time, reason=None)
                 self._hybrid_in_offline = True
                 self._hybrid_last_offline_time = time.time()
+                self._hybrid_state = "offline"
+                self._hybrid_state_since_epoch = transition_time
+                self._hybrid_last_offline_reason = reason or "unknown"
                 self._record_offline_event(reason=reason, local_ack=local_ack)
                 logger.warning(
                     "☁️ HYBRID: %d failures → switching to offline mode",
@@ -576,6 +590,14 @@ class OIGProxy:
         if self._hybrid_in_offline:
             logger.info(
                 "☁️ HYBRID: cloud recovered → switching to online mode")
+            transition_time = time.time()
+            self._record_hybrid_state_end(
+                ended_at=transition_time,
+                reason=self._hybrid_last_offline_reason or "cloud_recovered",
+            )
+            self._hybrid_state = "online"
+            self._hybrid_state_since_epoch = transition_time
+            self._hybrid_last_offline_reason = None
         self._hybrid_fail_count = 0
         self._hybrid_in_offline = False
 
@@ -1065,6 +1087,24 @@ class OIGProxy:
         })
         self._cloud_connected_since_epoch = None
 
+    def _record_hybrid_state_end(
+            self,
+            *,
+            ended_at: float,
+            reason: str | None = None) -> None:
+        if self._hybrid_state_since_epoch is None or self._hybrid_state is None:
+            return
+        self._telemetry_hybrid_sessions.append({
+            "timestamp": self._utc_iso(ended_at),
+            "state": self._hybrid_state,
+            "started_at": self._utc_iso(self._hybrid_state_since_epoch),
+            "ended_at": self._utc_iso(ended_at),
+            "duration_s": int(ended_at - self._hybrid_state_since_epoch),
+            "reason": reason,
+            "mode": self.mode.value,
+        })
+        self._hybrid_state_since_epoch = None
+
     def _record_offline_event(
             self,
             *,
@@ -1170,9 +1210,26 @@ class OIGProxy:
             cloud_online_window = False
         self._telemetry_cloud_ok_in_window = False
         self._telemetry_cloud_failed_in_window = False
+        hybrid_sessions = list(self._telemetry_hybrid_sessions)
+        if self._configured_mode == "hybrid" and self._hybrid_state_since_epoch is not None:
+            now = time.time()
+            hybrid_sessions.append({
+                "timestamp": self._utc_iso(now),
+                "state": self._hybrid_state,
+                "started_at": self._utc_iso(self._hybrid_state_since_epoch),
+                "ended_at": None,
+                "duration_s": int(now - self._hybrid_state_since_epoch),
+                "reason": (
+                    self._hybrid_last_offline_reason
+                    if self._hybrid_state == "offline"
+                    else None
+                ),
+                "mode": self.mode.value,
+            })
         window_metrics = {
             "box_sessions": list(self._telemetry_box_sessions),
             "cloud_sessions": list(self._telemetry_cloud_sessions),
+            "hybrid_sessions": hybrid_sessions,
             "offline_events": list(self._telemetry_offline_events),
             "tbl_events": list(self._telemetry_tbl_events),
             "error_context": list(self._telemetry_error_context),
@@ -1181,6 +1238,7 @@ class OIGProxy:
         }
         self._telemetry_box_sessions.clear()
         self._telemetry_cloud_sessions.clear()
+        self._telemetry_hybrid_sessions.clear()
         self._telemetry_offline_events.clear()
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
