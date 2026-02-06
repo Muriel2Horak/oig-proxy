@@ -297,7 +297,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
 
-    reader, writer = asyncio.run(run_success())
+    reader, writer, _attempted = asyncio.run(run_success())
     assert reader is not None
     assert writer is not None
 
@@ -315,7 +315,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
 
-    reader, writer = asyncio.run(run_fail())
+    reader, writer, _attempted = asyncio.run(run_fail())
     assert reader is None
     assert writer is None
 
@@ -326,7 +326,7 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
 
     async def fake_ensure(*_args, **_kwargs):
-        return DummyReader(b"<ACK/>"), cloud_writer
+        return DummyReader(b"<ACK/>"), cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
     monkeypatch.setattr(
@@ -355,7 +355,7 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     proxy._hybrid_in_offline = True  # Already reached threshold
 
     async def fake_ensure_eof(*_args, **_kwargs):
-        return DummyReader(b""), cloud_writer
+        return DummyReader(b""), cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure_eof
     called = []

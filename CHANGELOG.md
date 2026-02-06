@@ -2,6 +2,14 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.4.9] - 2026-02-06
+
+### Changed
+
+- HYBRID: attempt cloud once per retry interval even while offline; fallback
+  to local ACK only after failed probe.
+- HYBRID: retry interval default shortened to 60s.
+
 ## [1.4.8] - 2026-02-05
 
 - Cache MQTT state payloads for telemetry top fields.

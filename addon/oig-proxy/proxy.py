@@ -555,6 +555,10 @@ class OIGProxy:
         if not self._is_hybrid_mode():
             return
         self._hybrid_fail_count += 1
+        if self._hybrid_in_offline:
+            # Restart offline window after each failed probe so we only
+            # attempt once per retry interval.
+            self._hybrid_last_offline_time = time.time()
         if self._hybrid_fail_count >= self._hybrid_fail_threshold:
             if not self._hybrid_in_offline:
                 self._hybrid_in_offline = True
@@ -1081,7 +1085,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.8"
+                proxy_version = "1.4.9"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1511,16 +1515,16 @@ class OIGProxy:
         conn_id: int,
         table_name: str | None,
         connect_timeout_s: float,
-    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, bool]:
         # Check if we should try to connect to cloud
         if not self._should_try_cloud():
             await self._close_writer(cloud_writer)
             if self.cloud_session_connected:
                 self._record_cloud_session_end(reason="manual_offline")
             self.cloud_session_connected = False
-            return None, None
+            return None, None, False
         if cloud_writer is not None and not cloud_writer.is_closing():
-            return cloud_reader, cloud_writer
+            return cloud_reader, cloud_writer, False
         try:
             target_host = resolve_cloud_host(TARGET_SERVER)
             cloud_reader, cloud_writer = await asyncio.wait_for(
@@ -1543,7 +1547,7 @@ class OIGProxy:
                     conn_id,
                     table_name or "-",
                 )
-            return cloud_reader, cloud_writer
+            return cloud_reader, cloud_writer, True
         except Exception as e:
             logger.warning(
                 "⚠️ Cloud unavailable: %s (conn=%s, table=%s)",
@@ -1554,7 +1558,7 @@ class OIGProxy:
             self.cloud_errors += 1
             self.cloud_session_connected = False
             await self._close_writer(cloud_writer)
-            return None, None
+            return None, None, True
 
     async def _forward_frame_online(
         self,
@@ -1584,7 +1588,7 @@ class OIGProxy:
                 cloud_writer=cloud_writer,
             )
 
-        cloud_reader, cloud_writer = await self._ensure_cloud_connected(
+        cloud_reader, cloud_writer, cloud_attempted = await self._ensure_cloud_connected(
             cloud_reader,
             cloud_writer,
             conn_id=conn_id,
@@ -1595,6 +1599,12 @@ class OIGProxy:
         # Connection failed
         if cloud_writer is None or cloud_reader is None:
             self._telemetry_cloud_failed_in_window = True
+            if cloud_attempted:
+                self._telemetry_fire_event(
+                    "error_cloud_connect",
+                    cloud_host=TARGET_SERVER,
+                    reason="connect_failed",
+                )
             if self._is_hybrid_mode():
                 self._hybrid_record_failure(
                     reason="connect_failed", local_ack=True)
@@ -1617,6 +1627,8 @@ class OIGProxy:
             cloud_writer.write(frame_bytes)
             await cloud_writer.drain()
             self.stats["frames_forwarded"] += 1
+            # Frame successfully sent to cloud in this window
+            self._telemetry_cloud_ok_in_window = True
 
             ack_data = await asyncio.wait_for(
                 cloud_reader.read(4096),
@@ -1909,7 +1921,18 @@ class OIGProxy:
                 self._telemetry_force_logs_this_window = False
                 current_mode = await self._get_current_mode()
 
-                if current_mode != ProxyMode.ONLINE:
+                if current_mode == ProxyMode.OFFLINE:
+                    cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
+                        frame_bytes=data,
+                        table_name=table_name,
+                        device_id=device_id,
+                        conn_id=conn_id,
+                        box_writer=box_writer,
+                        cloud_writer=cloud_writer,
+                    )
+                    continue
+
+                if current_mode == ProxyMode.HYBRID and not self._should_try_cloud():
                     cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
                         frame_bytes=data,
                         table_name=table_name,
