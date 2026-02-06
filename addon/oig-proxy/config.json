@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": [
@@ -19,7 +19,7 @@
     "proxy_port": 5710,
     "proxy_mode": "hybrid",
     "cloud_ack_timeout": 1800.0,
-    "hybrid_retry_interval": 300,
+    "hybrid_retry_interval": 60,
     "hybrid_fail_threshold": 1,
     "mqtt_host": "core-mosquitto",
     "mqtt_port": 1883,

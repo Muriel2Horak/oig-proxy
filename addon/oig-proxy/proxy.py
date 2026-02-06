@@ -555,6 +555,10 @@ class OIGProxy:
         if not self._is_hybrid_mode():
             return
         self._hybrid_fail_count += 1
+        if self._hybrid_in_offline:
+            # Restart offline window after each failed probe so we only
+            # attempt once per retry interval.
+            self._hybrid_last_offline_time = time.time()
         if self._hybrid_fail_count >= self._hybrid_fail_threshold:
             if not self._hybrid_in_offline:
                 self._hybrid_in_offline = True
@@ -1081,7 +1085,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.8"
+                proxy_version = "1.4.9"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
@@ -1917,7 +1921,18 @@ class OIGProxy:
                 self._telemetry_force_logs_this_window = False
                 current_mode = await self._get_current_mode()
 
-                if current_mode != ProxyMode.ONLINE:
+                if current_mode == ProxyMode.OFFLINE:
+                    cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
+                        frame_bytes=data,
+                        table_name=table_name,
+                        device_id=device_id,
+                        conn_id=conn_id,
+                        box_writer=box_writer,
+                        cloud_writer=cloud_writer,
+                    )
+                    continue
+
+                if current_mode == ProxyMode.HYBRID and not self._should_try_cloud():
                     cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
                         frame_bytes=data,
                         table_name=table_name,
