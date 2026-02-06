@@ -388,7 +388,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy_module, "resolve_cloud_host", lambda host: host)
     monkeypatch.setattr(asyncio, "open_connection", fake_open)
 
-    reader, writer = asyncio.run(
+    reader, writer, attempted = asyncio.run(
         proxy._ensure_cloud_connected(
             None,
             None,
@@ -407,7 +407,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(asyncio, "open_connection", fake_fail)
     writer._closing = True
-    reader, writer = asyncio.run(
+    reader, writer, attempted = asyncio.run(
         proxy._ensure_cloud_connected(
             reader,
             writer,
@@ -433,7 +433,7 @@ def test_ensure_cloud_connected_force_offline(tmp_path):
 
     proxy._close_writer = fake_close
 
-    reader, writer = asyncio.run(
+    reader, writer, attempted = asyncio.run(
         proxy._ensure_cloud_connected(
             None,
             DummyWriter(),
@@ -457,7 +457,7 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
     monkeypatch.setattr(
@@ -491,7 +491,7 @@ def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
 
@@ -528,7 +528,7 @@ def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
 
@@ -566,7 +566,7 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
     called = []
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     async def fake_fallback(**kwargs):
         called.append(kwargs["reason"])
@@ -608,7 +608,7 @@ def test_forward_frame_online_timeout_non_end_online_mode(
     closed = {"called": False}
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     async def fake_close(_writer):
         closed["called"] = True
@@ -652,7 +652,7 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
     called = []
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     async def fake_fallback(**kwargs):
         called.append(kwargs["reason"])
@@ -692,7 +692,7 @@ def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
     called = []
 
     async def fake_ensure(_reader, _writer, **_kwargs):
-        return cloud_reader, cloud_writer
+        return cloud_reader, cloud_writer, True
 
     async def fake_fallback(**_kwargs):
         called.append("fallback")
