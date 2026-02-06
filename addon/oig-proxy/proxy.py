@@ -200,6 +200,9 @@ class OIGProxy:
         self._telemetry_force_logs_this_window: bool = True
         self._telemetry_cloud_ok_in_window: bool = False
         self._telemetry_cloud_failed_in_window: bool = False
+        # Treat very short EOFs as a timeout-like failure unless we observed a
+        # successful cloud response in the same telemetry window.
+        self._telemetry_cloud_eof_short_in_window: bool = False
         self._hybrid_state: str | None = None
         self._hybrid_state_since_epoch: float | None = None
         self._hybrid_last_offline_reason: str | None = None
@@ -1081,11 +1084,18 @@ class OIGProxy:
         if self._cloud_connected_since_epoch is None:
             return
         disconnected_at = time.time()
+        duration = disconnected_at - self._cloud_connected_since_epoch
+        if (
+            reason == "eof"
+            and duration < 1.0
+            and not self._telemetry_cloud_ok_in_window
+        ):
+            self._telemetry_cloud_eof_short_in_window = True
         self._telemetry_cloud_sessions.append({
             "timestamp": self._utc_iso(disconnected_at),
             "connected_at": self._utc_iso(self._cloud_connected_since_epoch),
             "disconnected_at": self._utc_iso(disconnected_at),
-            "duration_s": int(disconnected_at - self._cloud_connected_since_epoch),
+            "duration_s": int(duration),
             "reason": reason,
         })
         self._cloud_connected_since_epoch = None
@@ -1204,16 +1214,21 @@ class OIGProxy:
             self._telemetry_logs.clear()
         if debug_active:
             self._telemetry_debug_windows_remaining -= 1
-        if self._telemetry_cloud_failed_in_window:
-            cloud_online_window = False
-        elif self._telemetry_cloud_ok_in_window:
+        # cloud_online window logic:
+        # - any successful cloud response -> green (success wins)
+        # - otherwise: failures (timeout/connect error) or very short EOF (<1s) -> red
+        # - otherwise: if session is currently connected -> green
+        if self._telemetry_cloud_ok_in_window:
             cloud_online_window = True
+        elif self._telemetry_cloud_failed_in_window or self._telemetry_cloud_eof_short_in_window:
+            cloud_online_window = False
         elif self.cloud_session_connected:
             cloud_online_window = True
         else:
             cloud_online_window = False
         self._telemetry_cloud_ok_in_window = False
         self._telemetry_cloud_failed_in_window = False
+        self._telemetry_cloud_eof_short_in_window = False
         hybrid_sessions = list(self._telemetry_hybrid_sessions)
         if self._configured_mode == "hybrid" and self._hybrid_state_since_epoch is not None:
             now = time.time()

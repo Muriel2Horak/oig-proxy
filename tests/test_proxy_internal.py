@@ -216,6 +216,7 @@ def _make_proxy(tmp_path):
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
     proxy._telemetry_interval_s = 300
+    proxy._start_time = time.time()
     proxy._set_commands_buffer = []
     proxy._telemetry_box_sessions = deque()
     proxy._telemetry_cloud_sessions = deque()
@@ -229,6 +230,7 @@ def _make_proxy(tmp_path):
     proxy._telemetry_box_seen_in_window = False
     proxy._telemetry_cloud_ok_in_window = False
     proxy._telemetry_cloud_failed_in_window = False
+    proxy._telemetry_cloud_eof_short_in_window = False
     proxy._telemetry_req_pending = defaultdict(deque)
     proxy._telemetry_stats = {}
     return proxy
@@ -312,6 +314,35 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     asyncio.run(run())
     assert proxy.mqtt_publisher.published_data
     assert proxy.mqtt_publisher.published_data[0]["MODE"] == 2
+
+
+def test_cloud_online_success_wins_over_failure(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    proxy._telemetry_cloud_ok_in_window = True
+    proxy._telemetry_cloud_failed_in_window = True
+    proxy.cloud_session_connected = False
+    metrics = proxy._collect_telemetry_metrics()
+    assert metrics["cloud_online"] is True
+
+
+def test_cloud_online_eof_short_without_success_is_false(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    proxy._cloud_connected_since_epoch = 100.0
+    proxy._telemetry_cloud_ok_in_window = False
+    monkeypatch.setattr(time, "time", lambda: 100.5)
+    proxy._record_cloud_session_end(reason="eof")
+    metrics = proxy._collect_telemetry_metrics()
+    assert metrics["cloud_online"] is False
+
+
+def test_cloud_online_eof_short_after_success_is_true(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    proxy._cloud_connected_since_epoch = 200.0
+    proxy._telemetry_cloud_ok_in_window = True
+    monkeypatch.setattr(time, "time", lambda: 200.2)
+    proxy._record_cloud_session_end(reason="eof")
+    metrics = proxy._collect_telemetry_metrics()
+    assert metrics["cloud_online"] is True
 
 
 def test_telemetry_stats_pairing_and_flush(tmp_path):

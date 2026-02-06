@@ -183,6 +183,8 @@ CONTROL_MQTT_PENDING_PATH = os.getenv(
 # ============================================================================
 CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
 CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
+# Retence capture DB (frames) v dnech. 0 = nevynucovat retenci.
+CAPTURE_RETENTION_DAYS = max(0, _get_int_env("CAPTURE_RETENTION_DAYS", 7))
 
 # ============================================================================
 # MQTT Queue Configuration

@@ -177,4 +177,12 @@ else
   bashio::log.info "📦 Capture raw bytes: DISABLED"
 fi
 
+# CAPTURE_RETENTION_DAYS - int z config (retence payloads.db)
+CAPTURE_RETENTION_DAYS=$(bashio::config 'capture_retention_days' 2>/dev/null)
+if [ -z "$CAPTURE_RETENTION_DAYS" ] || [ "$CAPTURE_RETENTION_DAYS" = "null" ]; then
+  CAPTURE_RETENTION_DAYS=7
+fi
+export CAPTURE_RETENTION_DAYS=$CAPTURE_RETENTION_DAYS
+bashio::log.info "🧹 Capture retention days: $CAPTURE_RETENTION_DAYS"
+
 python -u /app/main.py
