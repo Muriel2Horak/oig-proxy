@@ -2,6 +2,19 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.5.0] - 2026-02-06
+
+### Added
+
+- Telemetry: hybrid online/offline session tracking in window metrics (state, start/end,
+  duration, reason).
+
+### Changed
+
+- HYBRID: attempt cloud once per retry interval even while offline; fallback
+  to local ACK only after failed probe.
+- HYBRID: retry interval default shortened to 60s.
+
 ## [1.4.9] - 2026-02-06
 
 ### Changed
@@ -10,153 +23,9 @@
   to local ACK only after failed probe.
 - HYBRID: retry interval default shortened to 60s.
 
-## [1.4.8] - 2026-02-05
+### Older
 
-- Cache MQTT state payloads for telemetry top fields.
-- Telemetry top: publish cached box fields (FW version, latency, last call, FW loaded time,
-  WiFi strength, inverter model).
-- Telemetry: `cloud_online` reflects successful cloud response or open session without errors
-  in the window; `box_connected` reflects any connect/frame in the window.
-- Telemetry logs: include logs for windows where the box never connected (to aid diagnostics).
-- Cloud ACK timeout fixed at 1800s (no config override).
-
-## [1.4.7] - 2026-02-05
-
-- Internal refactor (superseded by 1.4.8 details).
-
-## [1.4.6] - 2026-02-05
-
-### Changed
-
-- Internal refactor and telemetry tuning (superseded by 1.4.7 details).
-
-## [1.4.5] - 2026-02-04
-
-### Added
-
-- Telemetrie: nové agregované statistiky `telemetry_stats` (po okně) pro
-  `IsNew*` i `tbl_*` requesty + klasifikace odpovědí.
-
-### Changed
-
-- Logy v telemetrii se standardně neposílají; po WARNING/ERROR se spouští
-  dočasný "debug burst" na 2 okna.
-- OFFLINE ACK: `IsNewSet` odpovídá `END` s `Time/UTCTime`, `IsNewWeather`
-  a `IsNewFW` odpovídají `END` bez weather payloadu.
-- Telemetrie: `box_connected` je true, pokud se box během okna alespoň
-  jednou připojí nebo pošle rámec.
-- Telemetrie: `cloud_online` je true, pokud v okně přišla odpověď z cloudu
-  nebo je otevřená cloud session bez chyby/timeoutu.
-- Cloud ACK timeout je fixně 1800s (bez možnosti konfigurace).
-
-## [1.4.4] - 2026-02-03
-
-### Changed
-
-- Zvýšeno výchozí `CLOUD_ACK_TIMEOUT` na 1800s (30 min).
-
-## [1.4.3] - 2026-02-03
-
-### Changed
-
-- **Proxy mode**: Explicitní `online` zůstává transparentní (žádné vynucené
-  přepnutí na `hybrid`). Default zůstává `online`, pokud není nakonfigurováno
-  jinak.
-- **Type Safety**: Fixed all mypy type errors (7 → 0)
-  - `utils.py`: Fixed deprecated `datetime.UTC` → `datetime.timezone.utc`
-  - `telemetry_client.py`: Added type annotations and assertions for Optional types
-  - `mqtt_publisher.py`: Added assertions before Optional client usage
-  - `proxy.py`: Fixed type annotation union confusion
-
-- **Code Quality**: Achieved pylint 10.00/10
-  - Fixed line length violations
-  - Removed trailing whitespace
-  - Multi-line formatting for long statements
-
-- **Test Coverage**: Improved from 56.9% to 96.5%
-  - New `test_local_oig_crc.py`: 30 comprehensive tests (100% coverage)
-  - New `test_telemetry_client.py`: 150+ tests (92.8% coverage)
-  - 279 tests total, all passing
-
-## [1.4.2] - 2026-02-02
-
-### Fixed
-
-- Docker build: přidán chybějící `telemetry_client.py` do image
-
-## [1.4.1] - 2026-02-01
-
-### Changed
-
-- **HYBRID režim**: Okamžité přepnutí do offline při selhání cloudu
-  - Při prvním selhání (timeout/connect error) přepne ihned do offline a pošle lokální ACK
-  - Předchází restartu modemu na BOXu (BOX restartoval modem když nedostal ACK)
-  - Po `hybrid_retry_interval` (default 300s) zkusí znovu cloud
-  - `hybrid_fail_threshold` změněn z 3 na 1 (bez čekání na více pokusů)
-
-- **ONLINE režim**: Beze změny - plně transparentní
-  - Při selhání cloudu se neposílá lokální ACK
-  - BOX řeší timeout sám (jako přímé připojení ke cloudu)
-
-- **run script**: Exportuje `PROXY_MODE` a `HYBRID_*` konfigurace do env proměnných
-
-### Added
-
-- Telemetrie: interní diagnostická data (offline buffer, SET příkazy)
-
-## [1.4.0] - 2026-02-01
-
-### Added
-
-- **Network Diagnostic Tool** (`scripts/network_diagnostic.py`): Skript pro diagnostiku síťové konfigurace a připojení ke cloudu
-- **Mock Cloud Capture** (`scripts/mock_cloud_capture.py`): Zachytávání komunikace pro analýzu protokolu
-- **DIAGNOSTIC_TOOLS.md**: Dokumentace diagnostických nástrojů
-
-### Changed
-
-- Diagnostický cloud server přesunut do samostatného repozitáře `oig-diagnostic-cloud`
-- Vylepšená dokumentace 3-režimového systému (ONLINE/HYBRID/OFFLINE)
-
-## [1.3.33] - 2026-01-30
-
-### Changed
-
-- **Nový 3-režimový systém**: `proxy_mode` konfigurace s hodnotami:
-  - `online` (default): Transparentní přeposílání BOX↔Cloud, žádná lokální logika
-  - `hybrid`: Chytrý fallback - při selhání cloudu přepne do offline, po intervalu zkusí znovu
-  - `offline`: Vždy lokální ACK, nikdy se nepřipojuje ke cloudu
-- **HYBRID režim**: Detekce offline na základě timeoutů a chyb připojení
-- **HYBRID fallback logika**: Lokální ACK se posílá až po dosažení `hybrid_fail_threshold` (default 3) chyb - BOX má šanci na retry
-- Nové konfigurace:
-  - `hybrid_retry_interval` (default 300s) - interval pro retry cloudu po přechodu do offline
-  - `hybrid_fail_threshold` (default 3) - počet chyb před fallbackem do offline
-
-### Fixed
-
-- **ONLINE režim je nyní plně transparentní**: END timeout již neposílá lokální ACK - BOX dostane timeout stejně jako by komunikoval přímo s cloudem
-- Lokální END ACK se posílá pouze v HYBRID režimu po dosažení threshold chyb
-
-### Removed
-
-- **CloudHealthChecker** odstraněn - nahrazen HYBRID logikou detekce na základě skutečných chyb
-- Konfigurace `cloud_health_check_enabled`, `cloud_health_check_interval`, `cloud_health_check_fail_threshold` odstraněny
-
-## [1.3.32] - 2026-01-29
-
-### Removed
-
-- **CloudQueue** kompletně odstraněn - žádné ukládání/queueování framů směr cloud.
-- Konfigurace `cloud_queue_enabled`, `clear_cloud_queue_on_start`, `CLOUD_QUEUE_DB_PATH`, `CLOUD_QUEUE_MAX_SIZE` odstraněny.
-
-### Changed
-
-- Offline režim pouze posílá lokální ACK - žádné další zpracování.
-- Proxy nyní transparentně forwarduje veškerou komunikaci bez úprav.
-- MQTTQueue pro offline buffering MQTT zpráv ponechán.
-
-## [1.3.31] - 2026-01-29
-
-### Removed
+- Older entries have been trimmed for brevity.
 
 - **REPLAY režim** kompletně odstraněn - proxy již neodesílá cached framy do cloudu.
 

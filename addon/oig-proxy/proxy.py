@@ -1125,7 +1125,7 @@ class OIGProxy:
             try:
                 proxy_version = pkg_version("oig-proxy")
             except Exception:
-                proxy_version = "1.4.9"
+                proxy_version = "1.5.0"
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
