@@ -21,6 +21,7 @@ from config import (
     CAPTURE_DB_PATH,
     CAPTURE_PAYLOADS,
     CAPTURE_RAW_BYTES,
+    CAPTURE_RETENTION_DAYS,
     MAP_RELOAD_SECONDS,
     MODE_STATE_PATH,
     PRMS_STATE_PATH,
@@ -651,6 +652,7 @@ def _capture_loop(conn: sqlite3.Connection, sql: str,
                   q: queue.Queue[tuple[Any, ...]]) -> None:
     batch: list[tuple[Any, ...]] = []
     last_commit = time.time()
+    last_prune = 0.0
     while True:
         try:
             item = q.get(timeout=1.0)
@@ -661,6 +663,9 @@ def _capture_loop(conn: sqlite3.Connection, sql: str,
             _commit_capture_batch(conn, sql, batch)
             batch.clear()
             last_commit = time.time()
+            if CAPTURE_RETENTION_DAYS > 0 and (time.time() - last_prune) >= 600:
+                _prune_capture_db(conn)
+                last_prune = time.time()
             continue
 
         batch.append(item)
@@ -668,6 +673,29 @@ def _capture_loop(conn: sqlite3.Connection, sql: str,
             _commit_capture_batch(conn, sql, batch)
             batch.clear()
             last_commit = time.time()
+        if CAPTURE_RETENTION_DAYS > 0 and (time.time() - last_prune) >= 600:
+            _prune_capture_db(conn)
+            last_prune = time.time()
+
+
+def _prune_capture_db(conn: sqlite3.Connection) -> None:
+    """Prune capture DB to keep it bounded."""
+    if CAPTURE_RETENTION_DAYS <= 0:
+        return
+    try:
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(days=CAPTURE_RETENTION_DAYS)
+        )
+        cutoff_iso = cutoff.replace(microsecond=0).isoformat()
+        cur = conn.execute("DELETE FROM frames WHERE ts < ?", (cutoff_iso,))
+        deleted = cur.rowcount if cur.rowcount is not None else 0
+        conn.commit()
+        if deleted:
+            with suppress(Exception):
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.debug("Capture DB prune failed: %s", exc)
 
 
 def _capture_worker(db_path: str) -> None:

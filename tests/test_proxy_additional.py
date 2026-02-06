@@ -213,6 +213,7 @@ def make_proxy(tmp_path):
     proxy._telemetry_box_seen_in_window = False
     proxy._telemetry_cloud_ok_in_window = False
     proxy._telemetry_cloud_failed_in_window = False
+    proxy._telemetry_cloud_eof_short_in_window = False
     proxy._telemetry_req_pending = defaultdict(deque)
     proxy._telemetry_stats = {}
     return proxy

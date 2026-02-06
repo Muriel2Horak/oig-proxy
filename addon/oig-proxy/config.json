@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "slug": "oig_proxy",
   "description": "TCP proxy OIG -> MQTT/HA (dekódování rámců, warningů, discovery)",
   "arch": [
@@ -31,6 +31,7 @@
     "log_level": "INFO",
     "capture_payloads": false,
     "capture_raw_bytes": false,
+    "capture_retention_days": 7,
     "control_mqtt_enabled": false
   },
   "schema": {
@@ -51,6 +52,7 @@
     "log_level": "list(INFO|DEBUG|WARNING|ERROR)",
     "capture_payloads": "bool?",
     "capture_raw_bytes": "bool?",
+    "capture_retention_days": "int?",
     "control_mqtt_enabled": "bool?",
     "ha_ip": "str?",
     "dns_upstream": "str?"

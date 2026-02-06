@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1] - 2026-02-06
+
+### Fixed
+
+- HYBRID: only mark cloud success after a valid ACK; prevent fail counter reset on
+  connect-only failures (e.g., immediate disconnect).
+
 ## [1.5.0] - 2026-02-06
 
 ### Added
