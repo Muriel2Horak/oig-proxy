@@ -43,3 +43,4 @@ deploy_to_ha.sh
 .scannerwork/
 .sonar_cache/
 reports/
+test-results/
