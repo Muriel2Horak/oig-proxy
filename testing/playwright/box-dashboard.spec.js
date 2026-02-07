@@ -175,8 +175,11 @@ test("box detail dashboard returns data for key panels", async ({ page }) => {
   // Notes:
   // - Some tables can be legitimately empty in a 24h window (e.g. modem resets, debug logs).
   // - We still assert the Flux compiles and the datasource query succeeds.
-  const mustReturnFrames = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 11]);
-  const shouldCompile = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+  // "Must have frames" should be limited to signals that are expected for any active box.
+  // Counters like timeouts/modem resets can be legitimately absent (Grafana will show "No data"),
+  // so we only require them to compile.
+  const mustReturnFrames = new Set([1, 2, 7, 8, 9, 11, 18, 19]);
+  const shouldCompile = [3, 4, 5, 6, 10, 12, 13, 14, 15, 16, 17, 20, 21];
   for (const pid of [...mustReturnFrames, ...shouldCompile]) {
     const p = byId(pid);
     expect(p).toBeTruthy();
