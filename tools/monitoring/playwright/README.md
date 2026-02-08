@@ -7,13 +7,13 @@ This folder contains lightweight Playwright smoke tests for Grafana dashboards.
 
 ## Install
 ```bash
-cd testing/playwright
+cd tools/monitoring/playwright
 npm ci
 ```
 
 ## Run
 ```bash
-cd testing/playwright
+cd tools/monitoring/playwright
 npm test -- fleet-dashboard.spec.js
 npm test -- box-dashboard.spec.js
 ```
