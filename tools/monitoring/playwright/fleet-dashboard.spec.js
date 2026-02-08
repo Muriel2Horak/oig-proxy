@@ -7,6 +7,11 @@
 //   cd testing/playwright && npm test -- fleet-dashboard.spec.js
 
 const { test, expect } = require("@playwright/test");
+const {
+  dismissUpdatePasswordIfPresent,
+  loginIfNeeded,
+  grafanaDsQuery,
+} = require("./grafana_helpers");
 
 const GRAFANA_URL =
   process.env.GRAFANA_URL || "http://10.0.0.160:3000";
@@ -14,99 +19,9 @@ const DASH_UID =
   process.env.GRAFANA_DASH_UID || "oig-fleet-influx-v2";
 const DASH_SLUG =
   process.env.GRAFANA_DASH_SLUG || "oig-fleet-overview-v2";
-const USERNAME = process.env.GRAFANA_USER || "admin";
-const PASSWORD = process.env.GRAFANA_PASS || "admin";
+const USERNAME = process.env.GRAFANA_USER;
+const PASSWORD = process.env.GRAFANA_PASS;
 const NEW_PASSWORD = process.env.GRAFANA_NEW_PASS;
-
-async function grafanaDsQuery(page, datasourceUid, flux) {
-  const now = Date.now();
-  const from = now - 60 * 60 * 1000;
-  const resp = await page.request.post(`${GRAFANA_URL}/api/ds/query`, {
-    data: {
-      queries: [
-        {
-          refId: "A",
-          datasource: { uid: datasourceUid },
-          queryType: "flux",
-          rawQuery: true,
-          resultFormat: "table",
-          query: flux,
-        },
-      ],
-      from: String(from),
-      to: String(now),
-    },
-  });
-  if (!resp.ok()) {
-    throw new Error(`Grafana ds/query failed: ${resp.status()} ${resp.statusText()}`);
-  }
-  const body = await resp.json();
-  const frames = body?.results?.A?.frames || [];
-  if (!frames.length) return { fieldNames: [], frames: [] };
-  const fieldNames = (frames[0]?.schema?.fields || [])
-    .map((f) => f?.name)
-    .filter(Boolean);
-  return { fieldNames, frames };
-}
-
-async function dismissUpdatePasswordIfPresent(page) {
-  const heading = page.getByRole("heading", { name: /update your password/i });
-  const skip = page.getByRole("button", { name: /^skip$/i });
-
-  // The dialog can appear a moment after navigation/login; wait briefly.
-  try {
-    await heading.first().waitFor({ timeout: 3_000 });
-  } catch {
-    return;
-  }
-
-  for (let i = 0; i < 3; i++) {
-    if (!(await heading.count())) return;
-    if (!(await skip.count())) return;
-
-    await skip.click({ force: true });
-    await page.waitForLoadState("domcontentloaded");
-    try {
-      await heading.first().waitFor({ state: "detached", timeout: 5_000 });
-      return;
-    } catch {
-      // Keep looping.
-    }
-  }
-
-  // If the instance enforces a password change, allow the test runner to opt-in
-  // via env var. We do NOT change passwords implicitly.
-  if (!NEW_PASSWORD) {
-    throw new Error(
-      "Grafana requires a password change. Set GRAFANA_NEW_PASS to let the test proceed."
-    );
-  }
-
-  await page.getByRole("textbox", { name: /^new password$/i }).fill(NEW_PASSWORD);
-  await page
-    .getByRole("textbox", { name: /^confirm new password$/i })
-    .fill(NEW_PASSWORD);
-  await page.getByRole("button", { name: /^submit$/i }).click();
-  await page.waitForLoadState("domcontentloaded");
-}
-
-async function loginIfNeeded(page) {
-  await dismissUpdatePasswordIfPresent(page);
-
-  // Grafana login form varies by version. Use role-based selectors.
-  const userInput = page.getByRole("textbox", { name: /email or username/i });
-  try {
-    await userInput.first().waitFor({ timeout: 5_000 });
-  } catch {
-    return;
-  }
-
-  await userInput.first().fill(USERNAME);
-  await page.getByRole("textbox", { name: /^password$/i }).fill(PASSWORD);
-  await page.getByRole("button", { name: /log in/i }).click();
-  await page.waitForLoadState("domcontentloaded");
-  await dismissUpdatePasswordIfPresent(page);
-}
 
 test("fleet device list renders stable columns", async ({ page }) => {
   test.setTimeout(120_000);
@@ -114,9 +29,9 @@ test("fleet device list renders stable columns", async ({ page }) => {
     `${GRAFANA_URL}/d/${DASH_UID}/${DASH_SLUG}?orgId=1&from=now-1h&to=now`,
     { waitUntil: "domcontentloaded" }
   );
-  await dismissUpdatePasswordIfPresent(page);
-  await loginIfNeeded(page);
-  await dismissUpdatePasswordIfPresent(page);
+  await dismissUpdatePasswordIfPresent(page, NEW_PASSWORD);
+  await loginIfNeeded(page, GRAFANA_URL, USERNAME, PASSWORD, NEW_PASSWORD);
+  await dismissUpdatePasswordIfPresent(page, NEW_PASSWORD);
 
   // Verify panel queries via Grafana API, not DOM headers (Grafana table virtualizes columns).
   const dashResp = await page.request.get(`${GRAFANA_URL}/api/dashboards/uid/${DASH_UID}`);
@@ -127,7 +42,14 @@ test("fleet device list renders stable columns", async ({ page }) => {
   expect(deviceList).toBeTruthy();
   const dsUid = deviceList.targets[0].datasource.uid;
   const dlq = deviceList.targets[0].query;
-  const { fieldNames: dlFields, frames: dlFrames } = await grafanaDsQuery(page, dsUid, dlq);
+  const { fieldNames: dlFields, frames: dlFrames } = await grafanaDsQuery(
+    page,
+    GRAFANA_URL,
+    dsUid,
+    dlq,
+    "now-1h",
+    "now"
+  );
 
   // Required stable fields in Device List data frame.
   for (const k of [
@@ -160,7 +82,14 @@ test("fleet device list renders stable columns", async ({ page }) => {
   expect(dev).toBeTruthy();
   expect(dev.type).toBe("barchart");
   const devq = dev.targets[0].query;
-  const { fieldNames: devFields, frames: devFrames } = await grafanaDsQuery(page, dsUid, devq);
+  const { fieldNames: devFields, frames: devFrames } = await grafanaDsQuery(
+    page,
+    GRAFANA_URL,
+    dsUid,
+    devq,
+    "now-1h",
+    "now"
+  );
   expect(devFields).toContain("device_label");
   expect(devFields).toContain("tables_dev_pct");
   const devF0 = devFrames[0];
@@ -176,6 +105,13 @@ test("fleet device list renders stable columns", async ({ page }) => {
   expect(disc.type).toBe("barchart");
   expect(disc.options?.xField).toBe("device_label");
   const discq = disc.targets[0].query;
-  const { fieldNames: discFields } = await grafanaDsQuery(page, dsUid, discq);
+  const { fieldNames: discFields } = await grafanaDsQuery(
+    page,
+    GRAFANA_URL,
+    dsUid,
+    discq,
+    "now-1h",
+    "now"
+  );
   expect(discFields).toContain("device_label");
 });

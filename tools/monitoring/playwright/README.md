@@ -20,11 +20,12 @@ npm test -- box-dashboard.spec.js
 
 ## Env Vars
 - `GRAFANA_URL` (default: `http://10.0.0.160:3000`)
-- `GRAFANA_USER` (default: `admin`)
-- `GRAFANA_PASS` (default: `admin`)
+- `GRAFANA_USER` (required)
+- `GRAFANA_PASS` (required)
 - `GRAFANA_DASH_UID` (default: `oig-fleet-influx-v2`)
 - `GRAFANA_DASH_SLUG` (default: `oig-fleet-overview-v2`)
 - `GRAFANA_BOX_DASH_UID` (default: `oig-box-influx`)
 - `GRAFANA_BOX_DASH_SLUG` (default: `oig-box-detail-24h`)
 - `GRAFANA_DEVICE_ID` (default: `2209234094`)
 - `GRAFANA_INFLUX_DS_UID` (default: `afc1e5763y6f4d`)
+- `GRAFANA_NEW_PASS` (optional, only needed if Grafana forces password change)
