@@ -19,7 +19,7 @@ npm test -- box-dashboard.spec.js
 ```
 
 ## Env Vars
-- `GRAFANA_URL` (default: `http://10.0.0.160:3000`)
+- `GRAFANA_URL` (required)
 - `GRAFANA_USER` (required)
 - `GRAFANA_PASS` (required)
 - `GRAFANA_DASH_UID` (default: `oig-fleet-influx-v2`)

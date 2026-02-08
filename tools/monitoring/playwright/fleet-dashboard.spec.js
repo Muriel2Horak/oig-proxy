@@ -4,7 +4,7 @@
 // renders rows and includes key columns (FW, Tables Sent, IsNew Tables).
 //
 // Run:
-//   cd testing/playwright && npm test -- fleet-dashboard.spec.js
+//   cd tools/monitoring/playwright && npm test -- fleet-dashboard.spec.js
 
 const { test, expect } = require("@playwright/test");
 const {
@@ -13,8 +13,7 @@ const {
   grafanaDsQuery,
 } = require("./grafana_helpers");
 
-const GRAFANA_URL =
-  process.env.GRAFANA_URL || "http://10.0.0.160:3000";
+const GRAFANA_URL = process.env.GRAFANA_URL;
 const DASH_UID =
   process.env.GRAFANA_DASH_UID || "oig-fleet-influx-v2";
 const DASH_SLUG =
@@ -25,6 +24,7 @@ const NEW_PASSWORD = process.env.GRAFANA_NEW_PASS;
 
 test("fleet device list renders stable columns", async ({ page }) => {
   test.setTimeout(120_000);
+  if (!GRAFANA_URL) throw new Error("Missing GRAFANA_URL (Grafana base URL).");
   await page.goto(
     `${GRAFANA_URL}/d/${DASH_UID}/${DASH_SLUG}?orgId=1&from=now-1h&to=now`,
     { waitUntil: "domcontentloaded" }

@@ -4,7 +4,7 @@
 // compile and return data for key panels (sessions, tables sent, errors trend).
 //
 // Run:
-//   cd testing/playwright && npm test -- box-dashboard.spec.js
+//   cd tools/monitoring/playwright && npm test -- box-dashboard.spec.js
 
 const { test, expect } = require("@playwright/test");
 const {
@@ -14,7 +14,7 @@ const {
   getColumnValues,
 } = require("./grafana_helpers");
 
-const GRAFANA_URL = process.env.GRAFANA_URL || "http://10.0.0.160:3000";
+const GRAFANA_URL = process.env.GRAFANA_URL;
 const DASH_UID = process.env.GRAFANA_BOX_DASH_UID || "oig-box-influx";
 const DASH_SLUG = process.env.GRAFANA_BOX_DASH_SLUG || "oig-box-detail-24h";
 const USERNAME = process.env.GRAFANA_USER;
@@ -25,6 +25,7 @@ const INFLUX_DS_UID = process.env.GRAFANA_INFLUX_DS_UID || "afc1e5763y6f4d";
 
 test("box detail dashboard returns data for key panels", async ({ page }) => {
   test.setTimeout(240_000);
+  if (!GRAFANA_URL) throw new Error("Missing GRAFANA_URL (Grafana base URL).");
 
   await page.goto(
     `${GRAFANA_URL}/d/${DASH_UID}/${DASH_SLUG}?orgId=1&from=now-24h&to=now&var-device_id=${DEVICE_ID}`,
