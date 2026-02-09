@@ -206,7 +206,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
 
     @device_id.setter
     def device_id(self, value: str) -> None:
-        # Allow enabling later when id is inferred (AUTO mode).
+        # Normalize and update the device id used for MQTT topics.
         self._device_id = value or ""
 
     @staticmethod

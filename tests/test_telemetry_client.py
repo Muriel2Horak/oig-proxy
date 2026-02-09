@@ -408,6 +408,14 @@ class TestTelemetryClientPublish:
         result = await client.send_event("test_event")
         assert result is False
 
+    @pytest.mark.asyncio
+    async def test_send_event_skips_when_device_id_empty(self, client):
+        # Simulate AUTO mode before device id is known.
+        client.device_id = ""
+        client._enabled = True
+        result = await client.send_event("test_event")
+        assert result is False
+
 
 class TestTelemetryClientConvenienceMethods:
     """Test convenience event methods."""
