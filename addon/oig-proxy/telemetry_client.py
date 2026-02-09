@@ -32,6 +32,9 @@ BUFFER_MAX_MESSAGES = 1000
 BUFFER_MAX_AGE_HOURS = 24
 BUFFER_DB_PATH = Path("/data/telemetry_buffer.db")
 
+MQTT_DISCONNECT_WAIT_S = 2.0
+MQTT_DISCONNECT_POLL_S = 0.1
+
 
 def _get_instance_hash() -> str:
     """Generate instance hash from SUPERVISOR_TOKEN or hostname."""
@@ -275,13 +278,20 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         # Stop old client before creating new one to prevent "session taken over" loop
         if self._client:
             try:
-                self._client.loop_stop()
+                # Request a graceful disconnect while the network loop is still running.
                 self._client.disconnect()
-                # Wait up to 60 seconds for graceful disconnect
-                for _ in range(600):
+                deadline = time.time() + MQTT_DISCONNECT_WAIT_S
+                while time.time() < deadline:
                     if not self._client.is_connected():
                         break
-                    time.sleep(0.1)
+                    time.sleep(MQTT_DISCONNECT_POLL_S)
+                else:
+                    logger.debug(
+                        "📡 Telemetry MQTT disconnect wait timeout (%.1fs)",
+                        MQTT_DISCONNECT_WAIT_S,
+                    )
+                # After disconnect (or timeout), stop the network loop thread.
+                self._client.loop_stop(force=True)
             except Exception:  # nosec B110 - cleanup, failure is acceptable
                 pass
             self._client = None
