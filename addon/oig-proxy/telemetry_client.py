@@ -177,11 +177,12 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
     """
 
     def __init__(self, device_id: str, version: str):
-        self.device_id = device_id
+        # device_id can be empty initially (e.g. DEVICE_ID=AUTO and inferred later).
+        # Do NOT permanently disable telemetry based on initial empty id.
+        self._device_id = device_id
         self.version = version
         self.instance_hash = _get_instance_hash()
-        self._enabled = config.TELEMETRY_ENABLED and bool(
-            device_id) and MQTT_AVAILABLE
+        self._enabled = config.TELEMETRY_ENABLED and MQTT_AVAILABLE
         self._consecutive_errors = 0
         self._client: Optional[Any] = None
         self._connected = False
@@ -197,6 +198,16 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         )
         if self._enabled:
             logger.debug("📡 Telemetry enabled")
+
+    @property
+    def device_id(self) -> str:
+        """Current device id used for MQTT topics (may be empty in AUTO mode)."""
+        return self._device_id
+
+    @device_id.setter
+    def device_id(self, value: str) -> None:
+        # Normalize and update the device id used for MQTT topics.
+        self._device_id = value or ""
 
     @staticmethod
     def _parse_mqtt_url(url: str) -> tuple[str, int]:
@@ -313,6 +324,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             logger.info(
                 "📡 send_telemetry: telemetry is DISABLED, returning False")
             return False
+        if not self.device_id:
+            # Device id not known yet (AUTO mode). Do not send/buffer invalid topic.
+            logger.info("📡 send_telemetry: device_id is empty, skipping send")
+            return False
         payload = {
             "device_id": self.device_id,
             "instance_hash": self.instance_hash,
@@ -365,6 +380,8 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         Events are also buffered if MQTT unavailable.
         """
         if not self._enabled:
+            return False
+        if not self.device_id:
             return False
         payload = {
             "device_id": self.device_id,
