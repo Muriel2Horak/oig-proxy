@@ -229,6 +229,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             client_id = f"oig-proxy-{self.device_id}-{self.instance_hash[:8]}"
             client_kwargs: dict[str, Any] = {
                 "client_id": client_id,
+                "clean_session": True,
                 "protocol": mqtt.MQTTv311,
             }
             callback_api = getattr(mqtt, "CallbackAPIVersion", None)
@@ -271,6 +272,20 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         """Ensure MQTT client is connected."""
         if self._connected and self._client:
             return True
+        # Stop old client before creating new one to prevent "session taken over" loop
+        if self._client:
+            try:
+                self._client.loop_stop()
+                self._client.disconnect()
+                # Wait up to 60 seconds for graceful disconnect
+                for _ in range(600):
+                    if not self._client.is_connected():
+                        break
+                    time.sleep(0.1)
+            except Exception:  # nosec B110 - cleanup, failure is acceptable
+                pass
+            self._client = None
+            self._connected = False
         return self._create_client()
 
     def _publish_sync(self, topic: str, payload: dict) -> bool:
