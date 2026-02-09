@@ -2,6 +2,13 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.5.2] - 2026-02-09
+
+### Fixed
+
+- Telemetry: do not permanently disable telemetry when `DEVICE_ID=AUTO` starts with an
+  empty device id; telemetry begins sending once the device id is inferred.
+
 ## [1.5.1] - 2026-02-06
 
 ### Fixed

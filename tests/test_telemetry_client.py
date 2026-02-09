@@ -186,8 +186,12 @@ class TestTelemetryClientInit:
     @patch('telemetry_client.config')
     def test_init_disabled_no_device_id(self, mock_config):
         mock_config.TELEMETRY_ENABLED = True
-        client = telemetry_client.TelemetryClient("", "1.0.0")
-        assert client._enabled is False
+        mock_config.TELEMETRY_MQTT_BROKER = "mqtt://test:1883"
+        with patch('telemetry_client.MQTT_AVAILABLE', True):
+            client = telemetry_client.TelemetryClient("", "1.0.0")
+        # Device id can be inferred later (AUTO mode), so client must stay enabled.
+        assert client._enabled is True
+        assert client.device_id == ""
 
     @patch('telemetry_client.config')
     def test_init_telemetry_disabled(self, mock_config):
@@ -357,6 +361,32 @@ class TestTelemetryClientPublish:
         client._enabled = False
         result = await client.send_telemetry({"mode": "online"})
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_telemetry_skips_when_device_id_empty(self, client):
+        # Simulate AUTO mode before device id is known.
+        client.device_id = ""
+        client._enabled = True
+        result = await client.send_telemetry({"mode": "online"})
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_telemetry_starts_working_after_device_id_set(self, client):
+        # Start with no device id (AUTO mode) then set later.
+        client.device_id = ""
+        client._enabled = True
+        assert await client.send_telemetry({"mode": "online"}) is False
+
+        client.device_id = "2209234094"
+        mock_client = MagicMock()
+        mock_result = MagicMock()
+        mock_result.rc = 0
+        mock_client.publish.return_value = mock_result
+        client._client = mock_client
+        client._connected = True
+
+        assert await client.send_telemetry({"mode": "online"}) is True
+        assert mock_client.publish.call_args[0][0] == "oig/telemetry/2209234094"
 
     @pytest.mark.asyncio
     async def test_send_event_success(self, client):
