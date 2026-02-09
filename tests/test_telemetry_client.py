@@ -290,6 +290,26 @@ class TestTelemetryClientMqtt:
         assert client._ensure_connected() is True
         client._create_client.assert_called_once()
 
+    @patch('telemetry_client.config')
+    @patch('telemetry_client.MQTT_AVAILABLE', True)
+    def test_ensure_connected_stops_old_client_before_create(self, mock_config, mock_mqtt):
+        mock_config.TELEMETRY_ENABLED = True
+        mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
+
+        client = telemetry_client.TelemetryClient("12345", "1.0.0")
+        old = MagicMock()
+        old.is_connected.return_value = False
+        client._client = old
+        client._connected = False
+        client._create_client = MagicMock(return_value=True)
+
+        with patch('telemetry_client.time.sleep') as sleep_mock:
+            assert client._ensure_connected() is True
+        old.disconnect.assert_called_once()
+        old.loop_stop.assert_called_once()
+        sleep_mock.assert_not_called()
+        client._create_client.assert_called_once()
+
 
 class TestTelemetryClientPublish:
     """Test publish operations."""
