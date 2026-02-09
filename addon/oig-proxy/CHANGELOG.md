@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3] - 2026-02-09
+
+### Fixed
+
+- Telemetry: avoid MQTT "session taken over" reconnect loops by stopping the old MQTT
+  client before creating a new one and forcing a clean session.
+
 ## [1.5.2] - 2026-02-09
 
 ### Fixed
