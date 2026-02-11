@@ -37,7 +37,7 @@ class DummyMQTT(DummyMQTTMixin):
     def publish_availability(self):
         self.published_raw.append(("availability", None))
 
-    def publish_raw(
+    async def publish_raw(
             self,
             *,
             topic: str,
@@ -47,7 +47,7 @@ class DummyMQTT(DummyMQTTMixin):
         self.published_raw.append((topic, payload, qos, retain))
         return True
 
-    def publish_data(self, payload):
+    async def publish_data(self, payload):
         self.published_data.append(payload)
         return True
 
@@ -74,13 +74,13 @@ class DummyWriter:
     def write(self, data):
         self.data.append(data)
 
-    def drain(self):
+    async def drain(self):
         return None
 
     def close(self):
         self._closing = True
 
-    def wait_closed(self):
+    async def wait_closed(self):
         return None
 
     def is_closing(self):
@@ -98,7 +98,7 @@ class DummyReader:
     def __init__(self, payloads):
         self._payloads = list(payloads)
 
-    def read(self, _size):
+    async def read(self, _size):
         if not self._payloads:
             return b""
         item = self._payloads.pop(0)
@@ -260,17 +260,17 @@ def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
     proxy._control_inflight = None
     proxy._control_queue = []
 
-    def fake_mode():
+    async def fake_mode():
         return ProxyMode.ONLINE
 
     proxy._get_current_mode = fake_mode
     calls = {"send": 0, "sleep": 0}
 
-    def fake_send(**_):
+    async def fake_send(**_):
         calls["send"] += 1
         raise RuntimeError("boom")
 
-    def fake_sleep(_interval):
+    async def fake_sleep(_interval):
         calls["sleep"] += 1
         if calls["sleep"] == 1:
             return None
@@ -302,13 +302,13 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
 
     calls = {"sleep": 0, "status": 0}
 
-    def fake_sleep(_interval):
+    async def fake_sleep(_interval):
         calls["sleep"] += 1
         if calls["sleep"] == 1:
             return None
         raise RuntimeError("stop")
 
-    def fake_status():
+    async def fake_status():
         calls["status"] += 1
 
     proxy.publish_proxy_status = fake_status
@@ -327,12 +327,12 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
 def test_read_box_bytes_timeout_and_reset(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
 
-    def fake_publish():
+    async def fake_publish():
         return None
 
     proxy.publish_proxy_status = fake_publish
 
-    def timeout_wait_for(coro, _timeout):
+    async def timeout_wait_for(coro, timeout):
         coro.close()
         raise asyncio.TimeoutError
 
@@ -345,7 +345,7 @@ def test_read_box_bytes_timeout_and_reset(tmp_path, monkeypatch):
             idle_timeout_s=0.1))
     assert res is None
 
-    def reset_wait_for(coro, timeout):
+    async def reset_wait_for(coro, timeout):
         coro.close()
         raise ConnectionResetError
 
@@ -362,7 +362,7 @@ def test_read_box_bytes_timeout_and_reset(tmp_path, monkeypatch):
 def test_read_box_bytes_eof(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
 
-    def fake_publish():
+    async def fake_publish():
         return None
 
     proxy.publish_proxy_status = fake_publish
@@ -383,7 +383,7 @@ def test_read_box_bytes_eof(tmp_path, monkeypatch):
 def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
 
-    def fake_open(_host, _port):
+    async def fake_open(_host, _port):
         return DummyReader([]), DummyWriter()
 
     monkeypatch.setattr(proxy_module, "resolve_cloud_host", lambda host: host)
@@ -403,7 +403,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     assert proxy.cloud_session_connected is True
     assert proxy.cloud_connects == 1
 
-    def fake_fail(_host, _port):
+    async def fake_fail(_host, _port):
         raise RuntimeError("fail")
 
     monkeypatch.setattr(asyncio, "open_connection", fake_fail)
@@ -429,7 +429,7 @@ def test_ensure_cloud_connected_force_offline(tmp_path):
     proxy._configured_mode = "offline"  # Set to OFFLINE mode
     closed = {"called": False}
 
-    def fake_close(_writer):
+    async def fake_close(_writer):
         closed["called"] = True
 
     proxy._close_writer = fake_close
@@ -457,7 +457,7 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
 
-    def fake_ensure(_reader, _writer, **_kwargs):
+    async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
@@ -488,12 +488,12 @@ def _setup_cloud_timeout(proxy, monkeypatch):
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
 
-    def fake_ensure(_reader, _writer, **_kwargs):
+    async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
 
-    def timeout_wait_for(coro, _timeout):
+    async def timeout_wait_for(coro, timeout):
         coro.close()
         raise asyncio.TimeoutError
 
@@ -558,17 +558,17 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
     called = []
 
-    def fake_ensure(_reader, _writer, **_kwargs):
+    async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    def fake_fallback(**kwargs):
+    async def fake_fallback(**kwargs):
         called.append(kwargs["reason"])
         return None, None
 
     proxy._ensure_cloud_connected = fake_ensure
     proxy._fallback_offline_from_cloud_issue = fake_fallback
 
-    def timeout_wait_for(coro, _timeout):
+    async def timeout_wait_for(coro, timeout):
         coro.close()
         raise asyncio.TimeoutError
 
@@ -600,16 +600,16 @@ def test_forward_frame_online_timeout_non_end_online_mode(
     cloud_writer = DummyWriter()
     closed = {"called": False}
 
-    def fake_ensure(_reader, _writer, **_kwargs):
+    async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    def fake_close(_writer):
+    async def fake_close(_writer):
         closed["called"] = True
 
     proxy._ensure_cloud_connected = fake_ensure
     proxy._close_writer = fake_close
 
-    def timeout_wait_for(coro, _timeout):
+    async def timeout_wait_for(coro, timeout):
         coro.close()
         raise asyncio.TimeoutError
 
@@ -644,10 +644,10 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
     called = []
 
-    def fake_ensure(_reader, _writer, **_kwargs):
+    async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    def fake_fallback(**kwargs):
+    async def fake_fallback(**kwargs):
         called.append(kwargs["reason"])
         return None, None
 
@@ -684,10 +684,10 @@ def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
     cloud_writer = DummyWriter()
     called = []
 
-    def fake_ensure(_reader, _writer, **_kwargs):
+    async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    def fake_fallback(**_kwargs):
+    async def fake_fallback(**_kwargs):
         called.append("fallback")
         return None, None
 
@@ -722,17 +722,17 @@ def test_handle_box_connection_online(tmp_path):
             return None
         return data
 
-    def fake_process(**_kwargs):
+    async def fake_process(**_kwargs):
         return "DEV1", "tbl_actual"
 
     def fake_ack(_frame, _writer, *, conn_id):
         del conn_id
         return False
 
-    def fake_mode():
+    async def fake_mode():
         return ProxyMode.ONLINE
 
-    def fake_forward(**_kwargs):
+    async def fake_forward(**_kwargs):
         called.append("forward")
         return None, None
 
@@ -758,17 +758,17 @@ def test_handle_box_connection_offline(tmp_path):
             return None
         return data
 
-    def fake_process(**_kwargs):
+    async def fake_process(**_kwargs):
         return "DEV1", "tbl_actual"
 
     def fake_ack(_frame, _writer, *, conn_id):
         del conn_id
         return False
 
-    def fake_mode():
+    async def fake_mode():
         return ProxyMode.OFFLINE
 
-    def fake_offline(**_kwargs):
+    async def fake_offline(**_kwargs):
         called.append("offline")
         return None, None
 
@@ -788,19 +788,19 @@ def test_handle_connection_lifecycle(tmp_path):
     writer = DummyWriter()
     proxy._local_getactual_task = None
 
-    def fake_status():
+    async def fake_status():
         return None
 
-    def fake_loop(*_args, **_kwargs):
+    async def fake_loop(*_args, **_kwargs):
         return None
 
-    def fake_handle(*_args, **_kwargs):
+    async def fake_handle(*_args, **_kwargs):
         return None
 
-    def fake_close(_writer):
+    async def fake_close(_writer):
         return None
 
-    def fake_unregister(_writer):
+    async def fake_unregister(_writer):
         return None
 
     proxy.publish_proxy_status = fake_status
@@ -847,10 +847,10 @@ def test_local_getactual_loop_sends_and_logs(tmp_path, monkeypatch):
     writer = DummyWriter()
     proxy.box_connected = True
 
-    def fake_send(*_args, **_kwargs):
+    async def fake_send(*_args, **_kwargs):
         raise RuntimeError("fail")
 
-    def fake_sleep(_interval):
+    async def fake_sleep(_interval):
         raise RuntimeError("stop")
 
     proxy._send_getactual_to_box = fake_send
@@ -884,7 +884,7 @@ def test_handle_setting_event_publishes(tmp_path):
     proxy = make_proxy(tmp_path)
     called = []
 
-    def fake_publish(**kwargs):
+    async def fake_publish(**kwargs):
         called.append(kwargs)
 
     proxy._publish_setting_event_state = fake_publish
@@ -929,7 +929,7 @@ def test_process_box_frame_common_isnew_updates(tmp_path, monkeypatch):
     proxy._setup_mqtt_state_cache = lambda: None
     proxy._maybe_persist_table_state = lambda *_args, **_kwargs: None
 
-    def async_noop(*_args, **_kwargs):
+    async def async_noop(*_args, **_kwargs):
         return None
 
     proxy._handle_setting_event = async_noop

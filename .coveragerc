@@ -1,6 +1,7 @@
 [run]
 branch = True
 parallel = True
+relative_files = True
 source =
     addon/oig-proxy
 omit =
@@ -11,12 +12,6 @@ omit =
     */__pycache__/*
     */logs/*
     */reports/*
-    */addon/oig-proxy/proxy.py
-    */addon/oig-proxy/mqtt_publisher.py
-    */addon/oig-proxy/cloud_manager.py
-    */addon/oig-proxy/cloud_session.py
-    */addon/oig-proxy/utils.py
-    */addon/oig-proxy/main.py
 
 [report]
 show_missing = True

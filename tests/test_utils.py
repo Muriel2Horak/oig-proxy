@@ -293,8 +293,10 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
             return DummyAnswer()
 
     class DummyDNS:
+        Resolver = Dummyresolver
+
         class resolver:
-            resolver = Dummyresolver
+            Resolver = Dummyresolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
     monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
@@ -312,8 +314,10 @@ def test_resolve_public_dns_error(monkeypatch):
             raise RuntimeError("boom")
 
     class DummyDNS:
+        Resolver = Dummyresolver
+
         class resolver:
-            resolver = Dummyresolver
+            Resolver = Dummyresolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
     monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])

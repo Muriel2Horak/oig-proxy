@@ -57,7 +57,9 @@ class DummyMQTTModule:
         VERSION1 = object()
 
     mqtt_v311 = 4
+    MQTTv311 = 4
     client = Dummyclient
+    Client = Dummyclient
 
 
 def test_connect_skips_when_mqtt_unavailable(monkeypatch):
@@ -189,11 +191,11 @@ def test_replay_queue_publish_failure(monkeypatch):
         def size(self) -> int:
             return 1
 
-        def get_next(self):
+        async def get_next(self):
             self.calls.append("get_next")
             return (1, "t", "p", False)
 
-        def remove(self, _msg_id):
+        async def remove(self, _msg_id):
             self.calls.append("remove")
             return True
 
@@ -309,11 +311,11 @@ def test_replay_queue_interrupts_when_disconnected(monkeypatch):
         def size(self) -> int:
             return 1
 
-        def get_next(self):
+        async def get_next(self):
             self.calls.append("get_next")
             return (1, "t", "p", False)
 
-        def remove(self, _msg_id):
+        async def remove(self, _msg_id):
             self.calls.append("remove")
             return True
 
@@ -335,7 +337,7 @@ def test_health_check_loop_reconnects(monkeypatch):
         calls["connect"] += 1
         return True
 
-    def fake_sleep(_interval):
+    async def fake_sleep(_interval):
         calls["sleep"] += 1
         if calls["sleep"] == 1:
             return None
