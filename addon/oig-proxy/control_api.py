@@ -21,12 +21,16 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
     server_version = "OIGProxyControlAPI/0.1"
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
-        """Odešle JSON odpověď se zadaným HTTP statusem."""
+        """Odešle JSON odpověď se zadaným HTTP statusem.
+        
+        SECURITY NOTE: This is a prototype API with minimal validation.
+        In production, sanitize payload to prevent XSS and reflection attacks."""
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(raw)
 
