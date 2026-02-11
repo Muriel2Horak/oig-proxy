@@ -1,0 +1,174 @@
+# Gitleaks configuration for OIG Proxy
+# This file defines patterns for detecting secrets in code
+
+title = "gitleaks config"
+
+[[rules]]
+description = "Generic API Key"
+id = "generic-api-key"
+regex = '''(?i)(api_key|apikey|api-key)['"\s]*[:=]['"\s]*[a-zA-Z0-9\-_]{10,}'''
+entropy = 3.7
+tags = ["api", "key"]
+
+[[rules]]
+description = "AWS Access Key"
+id = "aws-access-key"
+regex = '''(AKIA|A3T[A-Z0-9]|ABIA|ACCA)[A-Z0-9]{16}'''
+entropy = 3.7
+tags = ["aws", "key"]
+
+[[rules]]
+description = "AWS Secret Key"
+id = "aws-secret-key"
+regex = '''(?i)aws_secret.*?[\"']([a-zA-Z0-9+/]{40})[\"']'''
+entropy = 3.7
+tags = ["aws", "secret"]
+
+[[rules]]
+description = "GitHub Token"
+id = "github-token"
+regex = '''ghp_[a-zA-Z0-9]{36}'''
+entropy = 3.7
+tags = ["github", "token"]
+
+[[rules]]
+description = "GitHub Personal Access Token (Classic)"
+id = "github-pat-classic"
+regex = '''gho_[a-zA-Z0-9]{36}'''
+entropy = 3.7
+tags = ["github", "token"]
+
+[[rules]]
+description = "Slack Token"
+id = "slack-token"
+regex = '''xox[baprs]-[a-zA-Z0-9-]{10,48}'''
+entropy = 3.7
+tags = ["slack", "token"]
+
+[[rules]]
+description = "Slack Webhook URL"
+id = "slack-webhook"
+regex = '''https://hooks\.slack\.com/services/[a-zA-Z0-9/]{9,}'''
+entropy = 3.7
+tags = ["slack", "webhook"]
+
+[[rules]]
+description = "Sonar Token"
+id = "sonar-token"
+regex = '''[a-f0-9]{32,40}'''
+entropy = 3.5
+tags = ["sonar", "token"]
+
+[[rules]]
+description = "Sonar Login/Password in comments"
+id = "sonar-credentials"
+regex = '''(?i)(sonar_token|sonar_login|sonar_password|sonar_pass)['"\s]*[:=]['"\s]*[^'"\s]{8,}'''
+entropy = 3.0
+tags = ["sonar", "credentials"]
+
+[[rules]]
+description = "Database Connection String"
+id = "database-connection-string"
+regex = '''(?i)(mysql|postgres|mongodb|sqlite)://[^'" \s]+:[^'" \s]+@[^'" \s]+'''
+entropy = 3.7
+tags = ["database", "connection"]
+
+[[rules]]
+description = "Password in assignment"
+id = "password-assignment"
+regex = '''(?i)(password|pass|pwd)['"\s]*[:=]['"\s]*[^'" \s]{8,}'''
+entropy = 3.0
+tags = ["password"]
+
+[[rules]]
+description = "Private Key"
+id = "private-key"
+regex = '''-----BEGIN\s*(RSA|EC|DSA|OPENSSH)\s*PRIVATE\s*KEY-----'''
+entropy = 4.5
+tags = ["private-key"]
+
+[[rules]]
+description = "JWT Token"
+id = "jwt-token"
+regex = '''eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*'''
+entropy = 4.5
+tags = ["jwt", "token"]
+
+[[rules]]
+description = "SonarCloud Token"
+id = "sonar-cloud-token"
+regex = '''[a-f0-9]{40}'''
+entropy = 3.5
+tags = ["sonarcloud", "token"]
+
+[[rules]]
+description = "Bearer Token"
+id = "bearer-token"
+regex = '''Bearer\s+[a-zA-Z0-9\-_\.]{10,}'''
+entropy = 3.7
+tags = ["bearer", "token"]
+
+[allowlist]
+description = "Global Allowlist"
+paths = [
+  '''\.venv/''',
+  '''\.git/''',
+  '''node_modules/''',
+  '''\.mypy_cache/''',
+  '''__pycache__/''',
+  '''\.pytest_cache/''',
+  '''\.sonar_cache/''',
+  '''\.coverage''',
+  '''coverage\.xml''',
+  '''bandit\.json''',
+  '''safety\.json''',
+  '''gitleaks\.json''',
+  '''test_.*\.py''',
+  '''local_.*\.py''',
+]
+
+[allowlist]
+description = "Allow comments and documentation"
+regexes = [
+  '''#[^"]*['"][^"]*['"][^"]*$''',  # Comments with quotes
+]
+
+[allowlist]
+description = "Allow localhost and test values"
+regexes = [
+  '''localhost''',
+  '''127\.0\.0\.1''',
+  '''test-host''',
+  '''test-token''',
+  '''test-user''',
+  '''test-pass''',
+  '''example\.com''',
+]
+
+[allowlist]
+description = "Allow empty or placeholder values"
+regexes = [
+  '''['"][\s]*['"]''',  # Empty strings
+  '''null''',  # Null values
+  '''placeholder''',
+  '''TODO''',
+  '''FIXME''',
+]
+
+[allowlist]
+description = "Allow environment variable references"
+regexes = [
+  '''os\.getenv''',
+  '''os\.environ''',
+  '''getenv\(''',
+  '''getenv\("''',
+]
+
+[allowlist]
+description = "Allow log messages"
+regexes = [
+  '''logger\.''',
+  '''logging\.''',
+  '''print\(''',
+  '''print\("''',
+]

@@ -40,9 +40,9 @@ def _get_instance_hash() -> str:
     """Generate instance hash from SUPERVISOR_TOKEN or hostname."""
     supervisor_token = os.getenv("SUPERVISOR_TOKEN", "")
     if supervisor_token:
-        return hashlib.sha256(supervisor_token.encode()).hexdigest()[:16]
+        return hashlib.sha256(supervisor_token.encode()).hexdigest()[:32]
     hostname = os.getenv("HOSTNAME", "unknown")
-    return hashlib.sha256(hostname.encode()).hexdigest()[:16]
+    return hashlib.sha256(hostname.encode()).hexdigest()[:32]
 
 
 class TelemetryBuffer:

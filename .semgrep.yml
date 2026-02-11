@@ -1,0 +1,144 @@
+rules:
+  - id: control-api-input-validation
+    pattern: |
+      request.get("tbl_name") or request.get("tbl_item") or request.get("new_value")
+    message: "Control API input should be validated"
+    severity: WARNING
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A1: Injection"
+      cwe: "CWE-20: Improper Input Validation"
+
+  - id: telemetry-instance-hash-entropy
+    pattern: |
+      hashlib.sha256(...).hexdigest()[:$X]
+    message: "Instance hash should be at least 32 characters for sufficient entropy"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A2: Broken Authentication"
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  - id: hardcoded-secret
+    pattern: |
+      $PASSWORD = "$STRING"
+    message: "Hardcoded secret detected"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A7: Identification and Authentication Failures"
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: sql-injection-risk
+    pattern: |
+      execute($SQL + $VAR)
+    message: "Possible SQL injection risk - use parameterized queries"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A1: Injection"
+      cwe: "CWE-89: SQL Injection"
+
+  - id: eval-risk
+    pattern: |
+      eval($INPUT)
+    message: "Use of eval() function - code injection risk"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A3: Injection"
+      cwe: "CWE-94: Code Injection"
+
+  - id: exec-risk
+    pattern: |
+      exec($INPUT)
+    message: "Use of exec() function - code injection risk"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A3: Injection"
+      cwe: "CWE-78: OS Command Injection"
+
+  - id: xml-parsing-xxe
+    pattern: |
+      xml.etree.ElementTree.parse($FILE)
+    message: "XML parsing without XXE protection"
+    severity: WARNING
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A5: Broken Access Control"
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+
+  - id: weak-random
+    pattern: |
+      random.$METHOD(...)
+    message: "Use of random module - consider secrets module for cryptographic operations"
+    severity: WARNING
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A2: Broken Authentication"
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+
+  - id: temp-file-security
+    pattern: |
+      tempfile.mktemp(...)
+    message: "Use of mktemp() - security risk. Use mkstemp() instead"
+    severity: WARNING
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A1: Injection"
+      cwe: "CWE-377: Insecure Temporary File"
+
+  - id: pickle-risk
+    pattern: |
+      pickle.loads($DATA)
+    message: "Use of pickle.loads() - potential arbitrary code execution"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A3: Injection"
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+
+  - id: shell-injection-risk
+    pattern: |
+      subprocess.$METHOD($CMD + $VAR)
+    message: "Possible shell injection risk - use list argument instead of string concatenation"
+    severity: ERROR
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A1: Injection"
+      cwe: "CWE-78: OS Command Injection"
+
+  - id: no-auth-api
+    pattern: |
+      $HANDLER.do_$METHOD(...)
+    message: "API handler without authentication check"
+    severity: WARNING
+    languages:
+      - python
+    metadata:
+      category: security
+      owasp: "A2: Broken Authentication"
+      cwe: "CWE-306: Missing Authentication for Critical Function"

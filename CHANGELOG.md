@@ -2,6 +2,59 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [1.6.0] - 2026-02-11
+
+### Security
+- **Telemetry**: Increased instance hash length from 16 to 32 characters (128 bits of entropy) for better collision resistance
+- **Security Testing**: Implemented comprehensive security testing framework with 56 tests (25 unit + 31 penetration)
+- **Secret Detection**: Added Gitleaks configuration for detecting hardcoded secrets in code
+- **Dependency Scanning**: Added Safety for Python dependency vulnerability checking
+- **Advanced SAST**: Added Semgrep with 11 custom rules for OIG Proxy-specific security issues
+- **Container Scanning**: Added Trivy for container and dependency vulnerability scanning
+
+### Added
+- **Local CI Script** (`.github/scripts/ci.sh`): Run same checks as GitHub CI locally with flags (`--no-tests`, `--no-security`, `--no-lint`, `--sonar`)
+- **GitHub Security Scan Workflow**: Daily security scan with all tools (Bandit, Safety, Semgrep, Trivy, Gitleaks)
+- **Security Unit Tests** (`tests/test_security.py`): 25 tests for telemetry, control API, session management, input validation, secrets, replay protection, encryption, and network security
+- **Penetration Tests** (`tests/test_penetration.py`): 31 tests simulating SQL injection, XSS, command injection, XML injection, path traversal, LDAP injection, buffer overflow, Unicode attacks, DoS, session hijacking, DNS rebinding, man-in-the-middle, null byte injection, format string attacks, integer overflow, and rate limiting attacks
+- **Documentation**: Complete CI/CD overview (`docs/CI_CD_OVERVIEW.md`) and security testing guide (`docs/SECURITY_TESTING.md`)
+
+### Changed
+- **Telemetry**: Instance hash now uses 32 characters (128 bits) instead of 16 characters (64 bits) for improved security against collision attacks
+- **CI/CD**: Local CI script mirrors GitHub CI with same tools and checks
+- **CI/CD**: GitHub Actions workflows now run security scans daily (2 AM UTC) and on push/PR
+
+### Removed
+- **Monitoring/Telemetry Relics**: Removed all monitoring infrastructure relics from repository (separate project)
+  - `tools/monitoring/playwright/` (Playwright tests for Grafana dashboards)
+  - Grafana dashboard JSON files (5 files from `analysis/`)
+  - Grafana API and patching scripts (3 files from `analysis/`)
+  - Dashboard fix scripts (5 files from `analysis/`)
+  - Window metrics/Telegraf scripts (6 files from `analysis/`)
+  - Telemetry backend scripts (2 files from `analysis/`)
+  - Test/utility scripts (3 files from `analysis/`)
+  - Documentation (2 files from `analysis/`)
+  - Total: 27 files deleted, 509 lines removed
+
+### Security Checklist
+- [x] Instance hash is 32 characters (128 bits)
+- [x] No hardcoded passwords in code
+- [x] No hardcoded tokens in code
+- [x] Telemetry timestamp includes timezone
+- [x] Telemetry buffer has limits
+- [x] Control API listens on localhost by default
+- [x] Cloud session uses locks
+- [x] Parser handles XML injection
+- [x] Bandit scanning integrated
+- [x] Safety scanning integrated
+- [x] Gitleaks scanning configured
+- [x] Unit security tests implemented
+- [x] Penetration tests implemented
+- [x] Semgrep scanning integrated
+- [x] Trivy scanning integrated
+- [x] CI/CD security workflow created
+- [x] Local CI script created (same as GitHub CI)
+
 ## [1.5.3] - 2026-02-09
 
 ### Fixed

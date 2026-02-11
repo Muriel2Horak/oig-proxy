@@ -33,14 +33,20 @@ class TestGetInstanceHash:
         monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token-123")
         result = telemetry_client._get_instance_hash()
         assert isinstance(result, str)
-        assert len(result) == 16
+        assert len(result) == 32
 
     def test_without_supervisor_token(self, monkeypatch):
         monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
         monkeypatch.setenv("HOSTNAME", "test-host")
         result = telemetry_client._get_instance_hash()
         assert isinstance(result, str)
-        assert len(result) == 16
+        assert len(result) == 32
+
+    def test_instance_hash_characters(self, monkeypatch):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token-456")
+        result = telemetry_client._get_instance_hash()
+        assert len(result) == 32
+        assert all(c in "0123456789abcdef" for c in result)
 
     def test_deterministic(self, monkeypatch):
         monkeypatch.setenv("SUPERVISOR_TOKEN", "same-token")
