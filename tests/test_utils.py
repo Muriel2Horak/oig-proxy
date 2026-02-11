@@ -480,7 +480,7 @@ def test_commit_capture_batch_error():
             self.rolled_back = True
 
     conn = DummyConn()
-    utils._commit_capture_batch(conn, "SQL", [("a",)])
+    utils._commit_capture_batch(conn, "SQL", [("a",)])  # type: ignore[arg-type]
     assert conn.rolled_back is True
 
 

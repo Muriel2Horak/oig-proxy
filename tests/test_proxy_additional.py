@@ -831,7 +831,7 @@ def test_tune_socket_sets_options():
             return None
 
     writer = SocketWriter()
-    proxy_module.OIGProxy._tune_socket(writer)
+    proxy_module.OIGProxy._tune_socket(writer)  # type: ignore[arg-type]
     assert writer.sock.calls
 
 

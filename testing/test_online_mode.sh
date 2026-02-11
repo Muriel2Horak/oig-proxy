@@ -7,6 +7,8 @@
 # 3. Poslat frames z BOXu
 # 4. Validovat že vše prošlo transparentně
 
+
+SEPARATOR="========================================="
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,13 +28,13 @@ PY
 
 CLOUD_PORT="${CLOUD_PORT:-$(find_free_port)}"
 PROXY_PORT="${PROXY_PORT:-$(find_free_port)}"
-if [ "$PROXY_PORT" = "$CLOUD_PORT" ]; then
+if [[ "$PROXY_PORT" = "$CLOUD_PORT" ]]; then
     PROXY_PORT="$(find_free_port)"
 fi
 
-echo "========================================="
+echo "$SEPARATOR"
 echo "TEST 1: ONLINE MODE (SMOKE TEST)"
-echo "========================================="
+echo "$SEPARATOR"
 echo ""
 
 GREEN='\033[0;32m'
@@ -52,7 +54,7 @@ pass() {
 queue_count() {
     if command -v sqlite3 >/dev/null 2>&1; then
         sqlite3 /tmp/cloud_queue.db 'SELECT COUNT(*) FROM queue' 2>/dev/null || echo "0"
-        return
+        return 0
     fi
     "${PYTHON_BIN}" - <<'PY'
 import sqlite3
@@ -125,7 +127,7 @@ echo "${YELLOW}Step 3b: Stopping mock cloud to flush stats...${NC}"
 kill -TERM "${CLOUD_PID}" 2>/dev/null || true
 wait "${CLOUD_PID}" 2>/dev/null || true
 for _ in $(seq 1 25); do
-    if [ -f mock_cloud_frames.json ]; then
+    if [ -f mock_cloud_frames.json ]]; then
         break
     fi
     sleep 0.2
@@ -133,16 +135,16 @@ done
 
 # Step 4: Validation
 echo ""
-echo "========================================="
+echo "$SEPARATOR"
 echo "VALIDATION"
-echo "========================================="
+echo "$SEPARATOR"
 
 # Check success rate from BOX
 BOX_SENT=$(grep "Frames sent:" /tmp/box_test1.log 2>/dev/null | awk '{print $NF}' || true)
 BOX_ACKS=$(grep "ACKs received:" /tmp/box_test1.log 2>/dev/null | awk '{print $NF}' || true)
 echo "BOX: Sent $BOX_SENT, ACKs $BOX_ACKS"
 
-if [ -n "$BOX_SENT" ] && [ "$BOX_SENT" = "$BOX_ACKS" ]; then
+if [ -n "$BOX_SENT" ] && [ "$BOX_SENT" = "$BOX_ACKS" ]]; then
     pass "100% ACK rate"
 else
     fail "Missing ACKs"
@@ -167,7 +169,7 @@ PY
 
 echo "Cloud received: $CLOUD_FRAMES frames"
 
-if [ "$BOX_SENT" = "$CLOUD_FRAMES" ]; then
+if [[ "$BOX_SENT" = "$CLOUD_FRAMES" ]]; then
     pass "All frames delivered to cloud"
 else
     fail "Frame loss"
@@ -177,16 +179,16 @@ fi
 QUEUE_SIZE=$(queue_count)
 echo "Queue size: $QUEUE_SIZE"
 
-if [ "$QUEUE_SIZE" = "0" ]; then
+if [[ "$QUEUE_SIZE" = "0" ]]; then
     pass "Queue empty (direct forward)"
 else
     fail "Unexpected queuing"
 fi
 
 echo ""
-echo "========================================="
+echo "$SEPARATOR"
 echo "TEST 1 COMPLETE"
-echo "========================================="
+echo "$SEPARATOR"
 echo ""
 echo "Logs:"
 echo "  Cloud:  /tmp/cloud_test1.log"
@@ -194,6 +196,6 @@ echo "  Proxy:  /tmp/proxy_test1.log"
 echo "  BOX:    /tmp/box_test1.log"
 echo "  Stats:  mock_cloud_frames.json"
 
-if [ "$FAILURES" -gt 0 ]; then
+if [[ "$FAILURES" -gt 0 ]]; then
     exit 1
 fi

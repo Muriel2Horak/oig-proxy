@@ -8,6 +8,8 @@
 # 4. Paralelně posílat nové live frames
 # 5. Validovat FIFO pořadí a přechod do ONLINE
 
+
+SEPARATOR="========================================="
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,13 +29,13 @@ PY
 
 CLOUD_PORT="${CLOUD_PORT:-$(find_free_port)}"
 PROXY_PORT="${PROXY_PORT:-$(find_free_port)}"
-if [ "$PROXY_PORT" = "$CLOUD_PORT" ]; then
+if [[ "$PROXY_PORT" = "$CLOUD_PORT" ]]; then
     PROXY_PORT="$(find_free_port)"
 fi
 
-echo "========================================="
+echo "$SEPARATOR"
 echo "TEST 3: REPLAY MODE"
-echo "========================================="
+echo "$SEPARATOR"
 echo ""
 
 # Colors
@@ -54,7 +56,7 @@ pass() {
 queue_count() {
     if command -v sqlite3 >/dev/null 2>&1; then
         sqlite3 /tmp/cloud_queue.db 'SELECT COUNT(*) FROM queue' 2>/dev/null || echo "0"
-        return
+        return 0
     fi
     "${PYTHON_BIN}" - <<'PY'
 import sqlite3
@@ -69,7 +71,7 @@ PY
 
 wait_for_replay() {
     local deadline=$((SECONDS + 60))
-    while [ $SECONDS -lt $deadline ]; do
+    while [ $SECONDS -lt $deadline ]]; do
         if grep -Eq "Mode changed: .*replay" /tmp/proxy_test3.log; then
             return 0
         fi
@@ -80,10 +82,10 @@ wait_for_replay() {
 
 wait_for_queue_empty() {
     local deadline=$((SECONDS + 120))
-    while [ $SECONDS -lt $deadline ]; do
+    while [ $SECONDS -lt $deadline ]]; do
         COUNT=$(queue_count)
         echo "  Queue size: $COUNT"
-        if [ "$COUNT" = "0" ]; then
+        if [[ "$COUNT" = "0" ]]; then
             return 0
         fi
         sleep 5
@@ -95,7 +97,7 @@ wait_for_pid() {
     local pid="$1"
     local deadline=$((SECONDS + 30))
     while kill -0 "$pid" 2>/dev/null; do
-        if [ $SECONDS -ge $deadline ]; then
+        if [ $SECONDS -ge $deadline ]]; then
             return 1
         fi
         sleep 1
@@ -209,7 +211,7 @@ else
     fail "No ONLINE mode detected"
 fi
 
-if [ -n "${BOX_LIVE_PID:-}" ]; then
+if [ -n "${BOX_LIVE_PID:-}" ]]; then
     if wait_for_pid "${BOX_LIVE_PID}"; then
         pass "Live frames client finished"
     else
@@ -223,7 +225,7 @@ echo "${YELLOW}Stopping mock cloud to flush stats...${NC}"
 kill -TERM "${CLOUD_PID}" 2>/dev/null || true
 wait "${CLOUD_PID}" 2>/dev/null || true
 for _ in $(seq 1 25); do
-    if [ -f mock_cloud_frames.json ]; then
+    if [ -f mock_cloud_frames.json ]]; then
         break
     fi
     sleep 0.2
@@ -231,9 +233,9 @@ done
 
 # Step 8: Validation
 echo ""
-echo "========================================="
+echo "$SEPARATOR"
 echo "VALIDATION"
-echo "========================================="
+echo "$SEPARATOR"
 
 # Check cloud received frames
 CLOUD_FRAMES=$("${PYTHON_BIN}" - <<'PY'
@@ -252,7 +254,7 @@ print(stats.get("total_frames", 0))
 PY
 )
 echo "Cloud received: $CLOUD_FRAMES frames"
-if [ "$CLOUD_FRAMES" = "0" ]; then
+if [[ "$CLOUD_FRAMES" = "0" ]]; then
     fail "No frames received by cloud"
 fi
 
@@ -289,9 +291,9 @@ else
 fi
 
 echo ""
-echo "========================================="
+echo "$SEPARATOR"
 echo "TEST 3 COMPLETE"
-echo "========================================="
+echo "$SEPARATOR"
 echo ""
 echo "Logs:"
 echo "  Proxy:  /tmp/proxy_test3.log"
@@ -299,6 +301,6 @@ echo "  Cloud:  /tmp/cloud_test3.log"
 echo "  BOX:    /tmp/box_offline.log, /tmp/box_live.log"
 echo "  Frames: mock_cloud_frames.json"
 
-if [ "$FAILURES" -gt 0 ]; then
+if [[ "$FAILURES" -gt 0 ]]; then
     exit 1
 fi
