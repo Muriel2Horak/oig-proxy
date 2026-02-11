@@ -108,8 +108,8 @@ regex = '''Bearer\s+[a-zA-Z0-9\-_\.]{10,}'''
 entropy = 3.7
 tags = ["bearer", "token"]
 
-[[allowlist]]
-description = "Global Allowlist"
+[allowlist]
+description = "Global allowlist"
 paths = [
   '''\.venv/''',
   '''\.git/''',
@@ -126,16 +126,8 @@ paths = [
   '''test_.*\.py''',
   '''local_.*\.py''',
 ]
-
-[[allowlist]]
-description = "Allow comments and documentation"
 regexes = [
   '''#[^"]*['"][^"]*['"][^"]*$''',  # Comments with quotes
-]
-
-[[allowlist]]
-description = "Allow localhost and test values"
-regexes = [
   '''localhost''',
   '''127\.0\.0\.1''',
   '''test-host''',
@@ -143,30 +135,15 @@ regexes = [
   '''test-user''',
   '''test-pass''',
   '''example\.com''',
-]
-
-[[allowlist]]
-description = "Allow empty or placeholder values"
-regexes = [
   '''['"][\s]*['"]''',  # Empty strings
   '''null''',  # Null values
   '''placeholder''',
   '''TODO''',
   '''FIXME''',
-]
-
-[[allowlist]]
-description = "Allow environment variable references"
-regexes = [
   '''os\.getenv''',
   '''os\.environ''',
   '''getenv\(''',
   '''getenv\("''',
-]
-
-[allowlist]
-description = "Allow log messages"
-regexes = [
   '''logger\.''',
   '''logging\.''',
   '''print\(''',
