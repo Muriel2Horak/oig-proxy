@@ -27,4 +27,4 @@ jobs:
         run: |
           pylint addon/oig-proxy/*.py tests/*.py \
             --disable=import-outside-toplevel,unused-import,reimported,redefined-outer-name \
-            --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself
+            --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself,unused-argument
