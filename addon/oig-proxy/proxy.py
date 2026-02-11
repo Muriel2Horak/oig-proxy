@@ -208,7 +208,8 @@ class OIGProxy:
         self._hybrid_last_offline_reason: str | None = None
         self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
         self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
-        for handler in list(logger.handlers):
+        # Create copy for safe iteration during modification
+        for handler in list(logger.handlers):  # noqa: C417
             if isinstance(handler, _TelemetryLogHandler):
                 logger.removeHandler(handler)
         self._telemetry_log_handler = _TelemetryLogHandler(self)
@@ -356,7 +357,7 @@ class OIGProxy:
         inflight_key = str(inflight.get("request_key")
                            or "") if inflight else ""
         queue_keys = [str(tx.get("request_key") or "")
-                      for tx in list(self._control_queue)]
+                      for tx in self._control_queue]
         payload = {
             "status": self.mode.value,
             "mode": self.mode.value,
@@ -399,7 +400,7 @@ class OIGProxy:
             inflight_key = ""
         queue_keys = [
             str(tx.get("request_key") or "")
-            for tx in list(self._control_queue)
+            for tx in self._control_queue
         ]
         return {
             "control_inflight_key": inflight_key,
@@ -898,7 +899,7 @@ class OIGProxy:
         self._prune_log_buffer()
         return [
             {k: v for k, v in item.items() if k != "_epoch"}
-            for item in list(self._telemetry_logs)
+            for item in self._telemetry_logs
         ]
 
     def _flush_log_buffer(self) -> list[dict[str, Any]]:
