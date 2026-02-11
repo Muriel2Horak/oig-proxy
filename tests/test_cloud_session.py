@@ -36,10 +36,10 @@ def test_ensure_connected_success(monkeypatch):
         def close(self):
             self._closing = True
 
-        async def wait_closed(self):
+        def wait_closed(self):
             return None
 
-    async def fake_open(_host, _port):
+    def fake_open(_host, _port):
         return asyncio.StreamReader(), DummyWriter()
 
     monkeypatch.setattr(cloud_session, "resolve_cloud_host", lambda host: host)
@@ -52,7 +52,7 @@ def test_ensure_connected_success(monkeypatch):
 
 
 def test_ensure_connected_timeout(monkeypatch):
-    async def fake_open(_host, _port):
+    def fake_open(_host, _port):
         raise asyncio.TimeoutError()
 
     monkeypatch.setattr(cloud_session, "resolve_cloud_host", lambda host: host)
@@ -86,22 +86,22 @@ def test_send_and_read_ack_success(monkeypatch):
         def write(self, data):
             self.writes.append(data)
 
-        async def drain(self):
+        def drain(self):
             return None
 
         def close(self):
             self._closing = True
 
-        async def wait_closed(self):
+        def wait_closed(self):
             return None
 
     manager = CloudSessionManager("example", 123)
     manager._writer = DummyWriter()
 
-    async def fake_ensure():
+    def fake_ensure():
         return None
 
-    async def fake_read(**_):
+    def fake_read(**_):
         return b"ACK"
 
     manager.ensure_connected = fake_ensure
@@ -126,22 +126,22 @@ def test_send_and_read_ack_eof(monkeypatch):
         def write(self, _data):
             return None
 
-        async def drain(self):
+        def drain(self):
             return None
 
         def close(self):
             self._closing = True
 
-        async def wait_closed(self):
+        def wait_closed(self):
             return None
 
     manager = CloudSessionManager("example", 123)
     manager._writer = DummyWriter()
 
-    async def fake_ensure():
+    def fake_ensure():
         return None
 
-    async def fake_read(**_):
+    def fake_read(**_):
         return b""
 
     manager.ensure_connected = fake_ensure
@@ -173,7 +173,7 @@ def test_read_one_ack_frame_fallback_on_max_bytes():
         def __init__(self):
             self.calls = 0
 
-        async def read(self, _size):
+        def read(self, _size):
             self.calls += 1
             return b"x" * 10
 
@@ -199,7 +199,7 @@ def test_ensure_connected_skips_when_connected():
         def close(self):
             self._closing = True
 
-        async def wait_closed(self):
+        def wait_closed(self):
             return None
 
     manager = CloudSessionManager("example", 123)
@@ -209,7 +209,7 @@ def test_ensure_connected_skips_when_connected():
 
 
 def test_ensure_connected_general_error(monkeypatch):
-    async def fake_open(_host, _port):
+    def fake_open(_host, _port):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(cloud_session, "resolve_cloud_host", lambda host: host)
@@ -239,22 +239,22 @@ def test_send_and_read_ack_timeout(monkeypatch):
         def write(self, _data):
             return None
 
-        async def drain(self):
+        def drain(self):
             return None
 
         def close(self):
             self._closing = True
 
-        async def wait_closed(self):
+        def wait_closed(self):
             return None
 
     manager = CloudSessionManager("example", 123)
     manager._writer = DummyWriter()
 
-    async def fake_ensure():
+    def fake_ensure():
         return None
 
-    async def fake_read(**_):
+    def fake_read(**_):
         raise asyncio.TimeoutError
 
     manager.ensure_connected = fake_ensure
@@ -282,22 +282,22 @@ def test_send_and_read_ack_exception(monkeypatch):
         def write(self, _data):
             return None
 
-        async def drain(self):
+        def drain(self):
             return None
 
         def close(self):
             self._closing = True
 
-        async def wait_closed(self):
+        def wait_closed(self):
             return None
 
     manager = CloudSessionManager("example", 123)
     manager._writer = DummyWriter()
 
-    async def fake_ensure():
+    def fake_ensure():
         return None
 
-    async def fake_read(**_):
+    def fake_read(**_):
         raise RuntimeError("boom")
 
     manager.ensure_connected = fake_ensure

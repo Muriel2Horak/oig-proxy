@@ -248,7 +248,7 @@ class TestTelemetryClientMqtt:
         with patch('telemetry_client.mqtt') as mock:
             mock_client = MagicMock()
             mock.Client.return_value = mock_client
-            mock.MQTTv311 = 4
+            mock.mqtt_v311 = 4
             mock.CallbackAPIVersion = MagicMock()
             mock.CallbackAPIVersion.VERSION2 = 2
             yield mock, mock_client
@@ -822,7 +822,7 @@ class TestEdgeCases:
                 with patch('telemetry_client.mqtt') as mock_mqtt:
                     mock_client_inst = MagicMock()
                     mock_mqtt.Client.return_value = mock_client_inst
-                    mock_mqtt.MQTTv311 = 4
+                    mock_mqtt.mqtt_v311 = 4
                     mock_mqtt.CallbackAPIVersion = MagicMock()
                     mock_mqtt.CallbackAPIVersion.VERSION2 = 2
 
@@ -897,7 +897,7 @@ class TestEdgeCases:
         with patch('telemetry_client.mqtt') as mock_mqtt:
             mock_client_inst = MagicMock()
             mock_mqtt.Client.return_value = mock_client_inst
-            mock_mqtt.MQTTv311 = 4
+            mock_mqtt.mqtt_v311 = 4
             mock_mqtt.CallbackAPIVersion = MagicMock()
             mock_mqtt.CallbackAPIVersion.VERSION2 = 2
             mock_client_inst.loop_start.side_effect = lambda: (
@@ -921,7 +921,7 @@ class TestEdgeCases:
         with patch('telemetry_client.mqtt') as mock_mqtt:
             mock_client_inst = MagicMock()
             mock_mqtt.Client.return_value = mock_client_inst
-            mock_mqtt.MQTTv311 = 4
+            mock_mqtt.mqtt_v311 = 4
             mock_mqtt.CallbackAPIVersion = MagicMock()
             mock_mqtt.CallbackAPIVersion.VERSION2 = 2
 
@@ -1020,7 +1020,7 @@ class TestTelemetryClientCoverage:
                 return None
 
         class DummyMQTTModule:
-            MQTTv311 = 4
+            mqtt_v311 = 4
 
             class CallbackAPIVersion:
                 VERSION2 = 2

@@ -299,9 +299,9 @@ class ModeSequenceTest:
                     if '<Result>IsNewSet</Result>' in frame:
                         step = self.state.current_step
                         if step and self.state.waiting_for_isnewset and not step.injected:
-                            logger.info(f"")
+                            logger.info("")
                             logger.info(f"{'='*50}")
-                            logger.info(f"🎯 IsNewSet detekován")
+                            logger.info("🎯 IsNewSet detekován")
                             logger.info(f"💉 INJEKTUJI: {step.name}")
                             logger.info(f"   {step.description}")
                             logger.info(f"{'='*50}")
@@ -323,7 +323,7 @@ class ModeSequenceTest:
                         step = self.state.current_step
                         if step and step.injected and not step.ack_received:
                             step.ack_received = True
-                            logger.info(f"")
+                            logger.info("")
                             logger.info(f"{'='*50}")
                             logger.info(f"✅ ACK PŘIJAT: {step.name}")
                             logger.info(f"{'='*50}")
@@ -344,7 +344,7 @@ class ModeSequenceTest:
                                     step.event_content = content
                                     step.completed_at = datetime.now()
 
-                                    logger.info(f"")
+                                    logger.info("")
                                     logger.info(f"{'='*50}")
                                     logger.info(f"✅ EVENT PŘIJAT: {step.name}")
                                     logger.info(f"   {content}")
@@ -410,14 +410,14 @@ class ModeSequenceTest:
         self.state.advance_step()
 
         if self.state.test_completed:
-            logger.info(f"")
+            logger.info("")
             logger.info(f"{'='*50}")
-            logger.info(f"🏁 VŠECHNY TESTY DOKONČENY!")
+            logger.info("🏁 VŠECHNY TESTY DOKONČENY!")
             logger.info(f"{'='*50}")
         else:
             step = self.state.current_step
             if step:
-                logger.info(f"")
+                logger.info("")
                 logger.info(f"➡️ DALŠÍ: {step.name} - {step.description}")
 
     def detect_frame_type(self, frame: str) -> str:

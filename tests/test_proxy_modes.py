@@ -51,13 +51,13 @@ def _make_proxy(
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None
 
-    calls = {"status": 0}
+    _ = {"status": 0}
 
-    async def fake_publish_proxy_status():
-        calls["status"] += 1
+    def fake_publish_proxy_status():
+        _["status"] += 1
 
     proxy.publish_proxy_status = fake_publish_proxy_status
-    return proxy, calls
+    return proxy, _
 
 
 def test_switch_mode_tracks_changes():
@@ -94,7 +94,7 @@ def test_switch_mode_tracks_changes():
 
 def test_hybrid_record_failure_triggers_offline():
     """Test that HYBRID mode switches to offline after threshold failures."""
-    proxy, calls = _make_proxy(
+    proxy, _ = _make_proxy(
         ProxyMode.ONLINE, queue_size=0, cloud_online=True)
     proxy._configured_mode = "hybrid"
     proxy._hybrid_fail_threshold = 2
@@ -112,7 +112,7 @@ def test_hybrid_record_failure_triggers_offline():
 
 def test_hybrid_record_success_resets():
     """Test that HYBRID mode resets counters on success."""
-    proxy, calls = _make_proxy(
+    proxy, _ = _make_proxy(
         ProxyMode.OFFLINE, queue_size=3, cloud_online=True)
     proxy._configured_mode = "hybrid"
     proxy._hybrid_fail_count = 2
@@ -125,7 +125,7 @@ def test_hybrid_record_success_resets():
 
 def test_hybrid_no_fallback_before_threshold():
     """Test that HYBRID mode does NOT fallback to local ACK before reaching threshold."""
-    proxy, calls = _make_proxy(
+    proxy, _ = _make_proxy(
         ProxyMode.ONLINE, queue_size=0, cloud_online=True)
     proxy._configured_mode = "hybrid"
     proxy._hybrid_fail_threshold = 3
@@ -133,10 +133,10 @@ def test_hybrid_no_fallback_before_threshold():
     # Simulate 2 failures (below threshold)
     proxy._hybrid_record_failure(
         reason="test",
-        local_ack=False)  # fail_count = 1
+        local_ack=False)
     proxy._hybrid_record_failure(
         reason="test",
-        local_ack=False)  # fail_count = 2
+        local_ack=False)
     assert proxy._hybrid_fail_count == 2
     assert proxy._hybrid_in_offline is False  # Not in offline yet
 
@@ -146,7 +146,7 @@ def test_hybrid_no_fallback_before_threshold():
 
 def test_hybrid_fallback_after_threshold():
     """Test that HYBRID mode DOES fallback to local ACK after reaching threshold."""
-    proxy, calls = _make_proxy(
+    proxy, _ = _make_proxy(
         ProxyMode.ONLINE, queue_size=0, cloud_online=True)
     proxy._configured_mode = "hybrid"
     proxy._hybrid_fail_threshold = 3
@@ -154,10 +154,10 @@ def test_hybrid_fallback_after_threshold():
     # Simulate 3 failures (at threshold)
     proxy._hybrid_record_failure(
         reason="test",
-        local_ack=False)  # fail_count = 1
+        local_ack=False)
     proxy._hybrid_record_failure(
         reason="test",
-        local_ack=False)  # fail_count = 2
+        local_ack=False)
     # fail_count = 3 → in_offline = True
     proxy._hybrid_record_failure(reason="test", local_ack=False)
     assert proxy._hybrid_fail_count == 3
@@ -169,7 +169,7 @@ def test_hybrid_fallback_after_threshold():
 
 def test_hybrid_mode_detection():
     """Test _is_hybrid_mode detection."""
-    proxy, calls = _make_proxy(
+    proxy, _ = _make_proxy(
         ProxyMode.ONLINE, queue_size=0, cloud_online=True)
 
     proxy._configured_mode = "hybrid"

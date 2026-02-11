@@ -146,7 +146,7 @@ class MockCloudServer:
 
         addr = server.sockets[0].getsockname()
         logger.info(f"🟢 Mock Cloud Server listening on {addr}")
-        logger.info(f"   Ready to receive frames from proxy")
+        logger.info("   Ready to receive frames from proxy")
 
         async with server:
             await server.serve_forever()

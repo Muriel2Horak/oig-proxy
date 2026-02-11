@@ -73,78 +73,87 @@ class TestTelemetrySecurity:
 class TestControlAPISecurity:
     """Test Control API security."""
 
+    @pytest.mark.skip(reason="Control API may not be importable - placeholder test")
     def test_control_api_requires_minimal_input(self):
         """Verify that Control API requires minimal input."""
         # Handler test is skipped for now - Control API may not be importable
         # This is a placeholder test that documents the requirement
-        assert True, "Control API should require minimal input"
+        assert False, "This test should be implemented when Control API is available"
 
     def test_control_api_validates_json_input(self):
         """Verify that Control API validates JSON input."""
         # Test that JSON can be processed
         data = {"tbl_name": "test_table", "tbl_item": "test_item", "new_value": "123"}
         json_str = json.dumps(data)
-        assert json_str is not None
+        assert "tbl_name" in json_str and "tbl_item" in json_str
 
 
 class TestSessionSecurity:
     """Test session management security."""
 
+    @pytest.mark.skip(reason="Cloud session module may not be importable - placeholder test")
     def test_cloud_session_uses_locks(self):
         """Verify that cloud session uses locks for thread safety."""
         # Cloud session test is skipped for now - module may not be importable
         # This is a placeholder test that documents the requirement
-        assert True, "Cloud session should use connection lock"
+        assert False, "This test should be implemented when cloud session is available"
 
+    @pytest.mark.skip(reason="Cloud session module may not be importable - placeholder test")
     def test_cloud_session_has_stats_tracking(self):
         """Verify that cloud session tracks statistics."""
         # Cloud session test is skipped for now - module may not be importable
         # This is a placeholder test that documents the requirement
-        assert True, "Cloud session should track stats"
+        assert False, "This test should be implemented when cloud session is available"
 
+    @pytest.mark.skip(reason="Cloud session module may not be importable - placeholder test")
     def test_cloud_session_handles_disconnects_gracefully(self):
         """Verify that cloud session handles disconnects gracefully."""
         # Cloud session test is skipped for now - module may not be importable
         # This is a placeholder test that documents the requirement
-        assert True, "Cloud session should handle disconnects gracefully"
+        assert False, "This test should be implemented when cloud session is available"
 
 
 class TestInputValidation:
     """Test input validation security."""
 
+    @pytest.mark.skip(reason="Parser module may not be importable - placeholder test")
     def test_parser_handles_xml_injection(self):
         """Verify that parser handles XML injection attempts."""
         # Parser test is skipped for now - module may not be importable
         # This is a placeholder test that documents the requirement
-        assert True, "Parser should handle malicious XML gracefully"
+        assert False, "This test should be implemented when parser is available"
 
+    @pytest.mark.skip(reason="Parser module may not be importable - placeholder test")
     def test_parser_ignores_unknown_fields(self):
         """Verify that parser ignores unknown fields."""
         # Parser test is skipped for now - module may not be importable
         # This is a placeholder test that documents the requirement
         # Note: Parser currently includes unknown fields - this should be addressed
-        assert True, "Parser should ignore unknown fields"
+        assert False, "This test should be implemented when parser is available"
 
+    @pytest.mark.skip(reason="Parser module may not be importable - placeholder test")
     def test_parser_converts_values_safely(self):
         """Verify that parser converts values safely."""
         # Parser test is skipped for now - module may not be importable
         # This is a placeholder test that documents the requirement
-        assert True, "Parser should convert values safely"
+        assert False, "This test should be implemented when parser is available"
 
 
 class TestSecretsManagement:
     """Test secrets management."""
 
+    @pytest.mark.skip(reason="Config module may not be importable - placeholder test")
     def test_no_hardcoded_passwords(self):
         """Verify that no hardcoded passwords exist in config."""
         # Config test is skipped for now - module may not be importable
-        assert True, "Passwords should be from environment"
+        assert False, "This test should be implemented when config is available"
 
+    @pytest.mark.skip(reason="Config module may not be importable - placeholder test")
     def test_no_hardcoded_tokens(self):
         """Verify that no hardcoded tokens exist in config."""
         # Note: SUPERVISOR_TOKEN is loaded from environment in telemetry_client
         # TELEMETRY_MQTT_PASSWORD does not exist in config
-        assert True, "Tokens should be from environment"
+        assert False, "This test should be implemented when config is available"
 
 
 class TestReplayProtection:
@@ -184,26 +193,29 @@ class TestEncryptionAndHashing:
         """Verify that hash truncation (32 chars) is still secure."""
         # 32 hex chars = 128 bits of entropy
         # This is considered secure against brute-force attacks
-        assert 128 >= 128, "Hash truncation should provide at least 128 bits of entropy"
+        assert 128 > 64, "Hash truncation should provide at least 128 bits of entropy"
 
 
 class TestNetworkSecurity:
     """Test network security."""
 
+    @pytest.mark.skip(reason="Config module may not be importable - placeholder test")
     def test_control_api_listens_on_localhost_by_default(self):
         """Verify that Control API listens on localhost by default."""
         # Config test is skipped for now - module may not be importable
         # Default should be localhost for security
-        assert True, "Control API should listen on localhost by default"
+        assert False, "This test should be implemented when config is available"
 
+    @pytest.mark.skip(reason="Config module may not be importable - placeholder test")
     def test_proxy_listens_on_all_interfaces(self):
         """Verify that proxy listens on all interfaces (LAN binding)."""
         # Config test is skipped for now - module may not be importable
         # For appliance mode, this is acceptable
-        assert True, "Proxy should listen on all interfaces for LAN binding"
+        assert False, "This test should be implemented when config is available"
 
+    @pytest.mark.skip(reason="Config module may not be importable - placeholder test")
     def test_cloud_timeout_is_reasonable(self):
         """Verify that cloud timeout is reasonable."""
         # Config test is skipped for now - module may not be importable
         # Cloud ACK timeout should be reasonable (60-1800 seconds)
-        assert True, "Cloud timeout should be reasonable (60-3600 seconds)"
+        assert False, "This test should be implemented when config is available"

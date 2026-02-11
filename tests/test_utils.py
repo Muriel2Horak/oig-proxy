@@ -285,7 +285,7 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
             super().__init__([TEST_IP])
             self.rrset = type("R", (), {"ttl": 60})()
 
-    class DummyResolver:
+    class Dummyresolver:
         def __init__(self, configure=False):
             self.nameservers = []
 
@@ -294,7 +294,7 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
 
     class DummyDNS:
         class resolver:
-            Resolver = DummyResolver
+            resolver = Dummyresolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
     monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
@@ -304,7 +304,7 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
 
 
 def test_resolve_public_dns_error(monkeypatch):
-    class DummyResolver:
+    class Dummyresolver:
         def __init__(self, configure=False):
             self.nameservers = []
 
@@ -313,7 +313,7 @@ def test_resolve_public_dns_error(monkeypatch):
 
     class DummyDNS:
         class resolver:
-            Resolver = DummyResolver
+            resolver = Dummyresolver
 
     monkeypatch.setattr(utils, "dns", DummyDNS)
     monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])

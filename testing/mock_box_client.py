@@ -48,7 +48,7 @@ class MockBoxClient:
             reader, writer = await asyncio.open_connection(
                 self.proxy_host, self.proxy_port
             )
-            logger.info(f"✅ Connected to proxy")
+            logger.info("✅ Connected to proxy")
 
             for i, frame_data in enumerate(frames, 1):
                 frame = frame_data["frame"]
@@ -81,7 +81,7 @@ class MockBoxClient:
                             f"   ← ACK ({latency:.1f}ms): {response_text[:50]}..."
                         )
                     else:
-                        logger.error(f"   ✗ Empty response!")
+                        logger.error("   ✗ Empty response!")
 
                 except asyncio.TimeoutError:
                     logger.error(

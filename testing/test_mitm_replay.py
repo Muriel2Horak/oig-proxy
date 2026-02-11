@@ -174,8 +174,6 @@ class MITMProxy:
 
             # Detekce IsNewSet
             is_new_set = result == "IsNewSet"
-            is_ack = result == "ACK"
-            is_nack = result == "NACK"
 
             # Loguj VŠECHNO
             logger.info(f"{'='*60}")
@@ -198,10 +196,10 @@ class MITMProxy:
                 if self.inject_count < self.max_inject:
                     logger.info("=" * 60)
                     logger.info("🚀 INJECTING Setting frame!")
-                    logger.info(f"   MODE=3 (No Limit)")
-                    logger.info(f"   Original timestamp: 07.12.2025 20:41:21")
-                    logger.info(f"   ID_Set: 1765136481")
-                    logger.info(f"   CRC: 16664")
+                    logger.info("   MODE=3 (No Limit)")
+                    logger.info("   Original timestamp: 07.12.2025 20:41:21")
+                    logger.info("   ID_Set: 1765136481")
+                    logger.info("   CRC: 16664")
                     logger.info("=" * 60)
 
                     # Pošli Setting frame BOXu
@@ -255,7 +253,7 @@ class MITMProxy:
                             logger.info("=" * 60)
                             self.test_result = f"NACK:{r_reason}"
                         else:
-                            logger.info(f"   Unexpected response type")
+                            logger.info("   Unexpected response type")
                             self.test_result = f"UNEXPECTED:{r_result}"
 
                         # Pošli END frame

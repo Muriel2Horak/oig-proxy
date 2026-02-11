@@ -29,7 +29,8 @@ except ImportError:
     mqtt = None  # type: ignore[assignment]
 
 BUFFER_MAX_MESSAGES = 1000
-BUFFER_MAX_AGE_HOURS = 24
+BUFFER_MAX_AGE_HOURS = 168
+SQL_SELECT_COUNT = "SELECT COUNT(*) FROM messages"
 BUFFER_DB_PATH = Path("/data/telemetry_buffer.db")
 
 MQTT_DISCONNECT_WAIT_S = 2.0
@@ -72,8 +73,7 @@ class TelemetryBuffer:
                 "CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)")
             self._conn.commit()
             self._cleanup()
-            count = self._conn.execute(
-                "SELECT COUNT(*) FROM messages").fetchone()[0]
+            count = self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
             if count > 0:
                 logger.debug("📡 Telemetry buffer: %d pending messages", count)
         except Exception as e:
@@ -108,8 +108,7 @@ class TelemetryBuffer:
                 (topic, payload_json, time.time())
             )
             self._conn.commit()
-            count = self._conn.execute(
-                "SELECT COUNT(*) FROM messages").fetchone()[0]
+            count = self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
             if count > BUFFER_MAX_MESSAGES:
                 self._cleanup()
             return True
@@ -156,8 +155,7 @@ class TelemetryBuffer:
         if not self._conn:
             return 0
         try:
-            return self._conn.execute(
-                "SELECT COUNT(*) FROM messages").fetchone()[0]
+            return self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
         except Exception:
             return 0
 

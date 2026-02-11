@@ -26,6 +26,7 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(raw)
 
@@ -94,7 +95,6 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
     def log_message(self, _fmt: str, *args: Any) -> None:  # pylint: disable=arguments-differ
         """Potlačí výpisy do stdout."""
         # Keep stdout clean; proxy logs are elsewhere.
-        return
 
 
 class ControlAPIServer:

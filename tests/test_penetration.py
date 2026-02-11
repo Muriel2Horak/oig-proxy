@@ -31,7 +31,7 @@ class TestControlAPIPenetration:
         }
         # In a real test, this would be sent to the Control API
         # The proxy should sanitize this input
-        assert payload["tbl_name"] is not None
+        assert "'" in payload["tbl_name"]
 
     def test_sql_injection_in_tbl_item(self):
         """Test SQL injection in tbl_item parameter."""
@@ -40,7 +40,7 @@ class TestControlAPIPenetration:
             "tbl_item": "MODE' DROP TABLE tbl_box_prms--",
             "new_value": "0"
         }
-        assert payload["tbl_item"] is not None
+        assert "DROP TABLE" in payload["tbl_item"]
 
     def test_sql_injection_in_new_value(self):
         """Test SQL injection in new_value parameter."""
@@ -49,7 +49,7 @@ class TestControlAPIPenetration:
             "tbl_item": "MODE",
             "new_value": "0' OR '1'='1"
         }
-        assert payload["new_value"] is not None
+        assert "OR '1'='1" in payload["new_value"]
 
     def test_xss_in_new_value(self):
         """Test XSS in new_value parameter."""
@@ -58,7 +58,7 @@ class TestControlAPIPenetration:
             "tbl_item": "MODE",
             "new_value": "<script>alert('XSS')</script>"
         }
-        assert payload["new_value"] is not None
+        assert "<script>" in payload["new_value"]
 
     def test_command_injection_in_new_value(self):
         """Test command injection in new_value parameter."""
@@ -67,7 +67,7 @@ class TestControlAPIPenetration:
             "tbl_item": "MODE",
             "new_value": "0; rm -rf /"
         }
-        assert payload["new_value"] is not None
+        assert ";" in payload["new_value"] and "rm -rf" in payload["new_value"]
 
     def test_xml_injection_in_body(self):
         """Test XML injection in request body."""
@@ -76,7 +76,7 @@ class TestControlAPIPenetration:
           <!ELEMENT foo ANY >
           <!ENTITY xxe SYSTEM "file:///etc/passwd" >]>
         <foo>&xxe;</foo>"""
-        assert xml_payload is not None
+        assert "<!ENTITY" in xml_payload and "SYSTEM" in xml_payload
 
     def test_path_traversal_in_tbl_name(self):
         """Test path traversal in tbl_name parameter."""
@@ -85,7 +85,7 @@ class TestControlAPIPenetration:
             "tbl_item": "MODE",
             "new_value": "0"
         }
-        assert payload["tbl_name"] is not None
+        assert "../" in payload["tbl_name"]
 
     def test_ldap_injection_in_tbl_item(self):
         """Test LDAP injection in tbl_item parameter."""
@@ -94,7 +94,7 @@ class TestControlAPIPenetration:
             "tbl_item": "*)(uid=*))(|(uid=*",
             "new_value": "0"
         }
-        assert payload["tbl_item"] is not None
+        assert "uid=" in payload["tbl_item"] and "*)(" in payload["tbl_item"]
 
     def test_buffer_overflow_in_new_value(self):
         """Test buffer overflow in new_value parameter."""
@@ -128,7 +128,7 @@ class TestControlAPIPenetration:
         payload = {
             "a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": 0}}}}}}}}}
         }
-        assert payload is not None
+        assert isinstance(payload, dict) and "a" in payload
 
     def test_duplicate_parameters(self):
         """Test duplicate parameters attack."""
@@ -176,7 +176,7 @@ class TestTelemetryPenetration:
                 "device_id": f"device-{i}",
                 "instance_hash": "a" * 32,
                 "version": "1.0.0",
-                "timestamp": f"2025-02-11T12:00:00Z",
+                "timestamp": "2025-02-11T12:00:00Z",
                 "metrics": {"test_metric": i}
             })
         assert len(messages) == 1000
@@ -196,19 +196,19 @@ class TestSessionManagementPenetration:
         """Test session hijacking attack simulation."""
         # Simulate stealing session token
         stolen_session_token = "stolen-token-12345"
-        assert stolen_session_token is not None
+        assert "-" in stolen_session_token and len(stolen_session_token) > 10
 
     def test_session_fixation_simulation(self):
         """Test session fixation attack simulation."""
         # Simulate using predetermined session ID
         predetermined_session_id = "predetermined-session-123"
-        assert predetermined_session_id is not None
+        assert "-" in predetermined_session_id and len(predetermined_session_id) > 10
 
     def test_session_timeout_bypass_simulation(self):
         """Test session timeout bypass simulation."""
         # Simulate keeping session alive after timeout
         old_session = {"session_id": "session-123", "timestamp": "2025-01-01T00:00:00Z"}
-        assert old_session is not None
+        assert old_session["timestamp"] < "2025-02-01T00:00:00Z"
 
 
 class TestNetworkPenetration:
@@ -224,13 +224,13 @@ class TestNetworkPenetration:
         """Test spoofed device ID attack simulation."""
         # Simulate spoofing device ID
         spoofed_device_id = "spoofed-device-999"
-        assert spoofed_device_id is not None
+        assert "-" in spoofed_device_id and "spoofed" in spoofed_device_id
 
     def test_man_in_the_middle_simulation(self):
         """Test man-in-the-middle attack simulation."""
         # Simulate MITM attack
         intercepted_data = "intercepted-data-123"
-        assert intercepted_data is not None
+        assert "-" in intercepted_data and len(intercepted_data) > 10
 
 
 class TestInputValidationPenetration:

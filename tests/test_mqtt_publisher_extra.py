@@ -20,7 +20,7 @@ class DummyResult:
         self.mid = 1
 
 
-class DummyClient:
+class Dummyclient:
     def __init__(self, *args, **kwargs) -> None:
         self.published = []
         self.subscribed = []
@@ -56,8 +56,8 @@ class DummyMQTTModule:
     class CallbackAPIVersion:
         VERSION1 = object()
 
-    MQTTv311 = 4
-    Client = DummyClient
+    mqtt_v311 = 4
+    client = Dummyclient
 
 
 def test_connect_skips_when_mqtt_unavailable(monkeypatch):
@@ -84,7 +84,7 @@ def test_connect_success_and_disconnect(monkeypatch):
 
 
 def test_connect_timeout_and_exception_paths(monkeypatch):
-    class DummyClientNoConnect(DummyClient):
+    class DummyclientNoConnect(Dummyclient):
         def connect(self, host, port, _keepalive):
             return None
 
@@ -92,10 +92,10 @@ def test_connect_timeout_and_exception_paths(monkeypatch):
         class CallbackAPIVersion:
             VERSION1 = object()
 
-        MQTTv311 = 4
-        Client = DummyClientNoConnect
+        mqtt_v311 = 4
+        client = DummyclientNoConnect
 
-    class DummyClientFail(DummyClient):
+    class DummyclientFail(Dummyclient):
         def connect(self, host, port, _keepalive):
             raise RuntimeError("fail")
 
@@ -103,8 +103,8 @@ def test_connect_timeout_and_exception_paths(monkeypatch):
         class CallbackAPIVersion:
             VERSION1 = object()
 
-        MQTTv311 = 4
-        Client = DummyClientFail
+        mqtt_v311 = 4
+        client = DummyclientFail
 
     monkeypatch.setattr(mqtt_publisher, "MQTT_AVAILABLE", True)
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
@@ -126,14 +126,14 @@ def test_cleanup_client_handles_errors(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
 
-    class BrokenClient:
+    class Brokenclient:
         def loop_stop(self):
             raise RuntimeError("stop")
 
         def disconnect(self):
             raise RuntimeError("disconnect")
 
-    publisher.client = BrokenClient()
+    publisher.client = Brokenclient()
     publisher.connected = True
     publisher._cleanup_client()
     assert publisher.connected is False
@@ -151,11 +151,11 @@ def test_on_connect_subscribe_failure(monkeypatch):
     publisher._message_handlers["topic"] = (1, handler)
     publisher._wildcard_handlers.append(("t/+", 1, handler))
 
-    class SubscribeFailClient(DummyClient):
+    class SubscribeFailclient(Dummyclient):
         def subscribe(self, topic, qos=0):
             raise RuntimeError("nope")
 
-    client = SubscribeFailClient()
+    client = SubscribeFailclient()
     publisher._on_connect(client, None, {}, 0)
     assert publisher.connected is True
 
@@ -164,14 +164,14 @@ def test_on_disconnect_clean(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
     publisher.connected = True
-    publisher._on_disconnect(DummyClient(), None, 0)
+    publisher._on_disconnect(Dummyclient(), None, 0)
     assert publisher.connected is False
 
 
 def test_publish_raw_when_ready(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.client = DummyClient()
+    publisher.client = Dummyclient()
     publisher.connected = True
 
     async def run():
@@ -189,22 +189,22 @@ def test_replay_queue_publish_failure(monkeypatch):
         def size(self) -> int:
             return 1
 
-        async def get_next(self):
+        def get_next(self):
             self.calls.append("get_next")
             return (1, "t", "p", False)
 
-        async def remove(self, _msg_id):
+        def remove(self, _msg_id):
             self.calls.append("remove")
             return True
 
-    class PublishFailClient(DummyClient):
+    class PublishFailclient(Dummyclient):
         def publish(self, topic, payload, qos=0, retain=False):
             return DummyResult(rc=1)
 
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
     publisher.queue = DummyQueueWithItem()
-    publisher.client = PublishFailClient()
+    publisher.client = PublishFailclient()
     publisher.connected = True
     asyncio.run(publisher.replay_queue())
     assert publisher.queue.calls == ["get_next"]
@@ -225,7 +225,7 @@ def test_send_discovery_skips_when_disconnected(monkeypatch):
 def test_send_discovery_connected(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.client = DummyClient()
+    publisher.client = Dummyclient()
     publisher.connected = True
     cfg = SensorConfig(name="Mode", unit="")
     publisher.send_discovery(
@@ -241,18 +241,18 @@ def test_on_publish_updates_stats(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
     setattr(publisher, "PUBLISH_LOG_EVERY", 1)
-    publisher._on_publish(DummyClient(), None, 1)
+    publisher._on_publish(Dummyclient(), None, 1)
     assert publisher.publish_success == 1
 
 
 def test_add_message_handler_subscribe_failure(monkeypatch):
-    class FailClient(DummyClient):
+    class Failclient(Dummyclient):
         def subscribe(self, topic, qos=0):
             raise RuntimeError("nope")
 
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.client = FailClient()
+    publisher.client = Failclient()
     publisher.connected = True
     publisher.add_message_handler(topic="t", handler=lambda *_: None, qos=1)
 
@@ -275,7 +275,7 @@ def test_on_message_handler_exception(monkeypatch):
 def test_on_connect_error_sets_status(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.client = DummyClient()
+    publisher.client = Dummyclient()
     publisher._on_connect(publisher.client, None, {}, 5)
     assert publisher.connected is False
     assert publisher.last_error_msg
@@ -309,11 +309,11 @@ def test_replay_queue_interrupts_when_disconnected(monkeypatch):
         def size(self) -> int:
             return 1
 
-        async def get_next(self):
+        def get_next(self):
             self.calls.append("get_next")
             return (1, "t", "p", False)
 
-        async def remove(self, _msg_id):
+        def remove(self, _msg_id):
             self.calls.append("remove")
             return True
 
@@ -335,7 +335,7 @@ def test_health_check_loop_reconnects(monkeypatch):
         calls["connect"] += 1
         return True
 
-    async def fake_sleep(_interval):
+    def fake_sleep(_interval):
         calls["sleep"] += 1
         if calls["sleep"] == 1:
             return None
@@ -356,7 +356,7 @@ def test_health_check_loop_reconnects(monkeypatch):
 def test_publish_availability(monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.client = DummyClient()
+    publisher.client = Dummyclient()
     publisher.connected = True
     publisher.publish_availability()
     assert publisher.client.published

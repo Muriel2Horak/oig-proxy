@@ -475,7 +475,8 @@ class ProxySimulator:
         self._hybrid_in_offline = False
         
     async def _forward_to_cloud(self, frame: str, timeout: float = 3.0) -> Optional[str]:
-        """Forward frame to cloud and return response."""
+        """Forward frame to cloud and return response.
+        NOTE: timeout parameter used with asyncio.wait_for, consider using context manager in production."""
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(self.cloud_host, self.cloud_port),
@@ -494,7 +495,7 @@ class ProxySimulator:
             
         except asyncio.TimeoutError:
             return None
-        except Exception as e:
+        except Exception:
             raise
             
     def _generate_local_ack(self, frame: str) -> str:
@@ -657,8 +658,7 @@ class TestRunner:
             
             # Všechny by měly dostat nějaký ACK (lokální po fallbacku)
             acks = [r for r in results if r.get("response") and "ACK" in r["response"]]
-            local_acks = [r for r in results if r.get("response") and "local_" in r.get("response", "")]
-            
+
             stats = proxy.get_stats()
             
             # Po 3 selháních by měl přepnout na offline

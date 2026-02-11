@@ -38,6 +38,9 @@ if MQTT_AVAILABLE:
 
 logger = logging.getLogger(__name__)
 
+_MQTT_LOG_SUBSCRIBED = "MQTT: Subscribed %s"
+_MQTT_LOG_SUBSCRIBE_FAILED = "MQTT: Subscribe failed %s: %s"
+
 
 # ============================================================================
 # MQTT Queue - Persistentní fronta pro offline režim
@@ -343,15 +346,15 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             for topic, (qos, _) in self._message_handlers.items():
                 try:
                     client.subscribe(topic, qos=qos)
-                    logger.debug("MQTT: Subscribed %s", topic)
+                    logger.debug(_MQTT_LOG_SUBSCRIBED), topic)
                 except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.warning("MQTT: Subscribe failed %s: %s", topic, e)
+                    logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED), topic, e)
             for topic, qos, _ in self._wildcard_handlers:
                 try:
                     client.subscribe(topic, qos=qos)
-                    logger.debug("MQTT: Subscribed %s", topic)
+                    logger.debug(_MQTT_LOG_SUBSCRIBED), topic)
                 except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.warning("MQTT: Subscribe failed %s: %s", topic, e)
+                    logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED), topic, e)
 
             # Trigger replay
             self._schedule_replay()
@@ -409,9 +412,9 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         if self.client and self.connected:
             try:
                 self.client.subscribe(topic, qos=qos)
-                logger.debug("MQTT: Subscribed %s", topic)
+                logger.debug(_MQTT_LOG_SUBSCRIBED), topic)
             except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.warning("MQTT: Subscribe failed %s: %s", topic, e)
+                logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED), topic, e)
 
     def _on_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
         try:

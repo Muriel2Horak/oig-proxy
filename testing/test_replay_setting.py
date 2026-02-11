@@ -126,7 +126,7 @@ class ReplayTestServer:
                     # BOX se ptá na nová nastavení → pošleme starý Setting frame
                     logger.info("=" * 60)
                     logger.info("🎯 IsNewSet detekován! Posílám starý Setting frame (MODE=3)...")
-                    logger.info(f"   Timestamp v frame: 07.12.2025 20:41:21 (4 dny starý)")
+                    logger.info("   Timestamp v frame: 07.12.2025 20:41:21 (4 dny starý)")
                     logger.info("=" * 60)
 
                     writer.write(SETTING_FRAME_MODE3.encode('utf-8'))
@@ -152,12 +152,12 @@ class ReplayTestServer:
                 elif is_nack and setting_sent:
                     # BOX odmítl Setting
                     logger.info("=" * 60)
-                    logger.info(f"❌ FAIL! BOX odmítl Setting frame!")
+                    logger.info("❌ FAIL! BOX odmítl Setting frame!")
                     logger.info(f"   Reason: {reason}")
                     if reason == "WC":
                         logger.info("   → Špatné CRC (nemělo by se stát u replay)")
                     else:
-                        logger.info(f"   → Možná validace času nebo ID_Set")
+                        logger.info("   → Možná validace času nebo ID_Set")
                     logger.info("=" * 60)
                     self.test_result = f"FAIL:{reason}"
 

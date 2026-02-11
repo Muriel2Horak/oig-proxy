@@ -188,7 +188,7 @@ def load_mode_state() -> tuple[int | None, str | None]:
                         device_id,
                     )
                     return mode_int, device_id
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("MODE: Failed to load state: %s", exc)
     return None, None
 
@@ -264,7 +264,7 @@ def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
         if not isinstance(loaded, dict):
             return {}, None
         return _split_prms_state(loaded)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("STATE: Failed to load table state: %s", exc)
         return {}, None
 
@@ -565,7 +565,7 @@ def load_sensor_map() -> None:
 
         WARNING_MAP = _build_warning_map(loaded)
         _last_map_load = now
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Sensor map load failed: %s", exc)
 
 

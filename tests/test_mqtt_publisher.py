@@ -108,7 +108,7 @@ def test_publish_raw_queues_when_offline(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(
+        def add(
                 self,
                 topic: str,
                 payload: str,
@@ -144,7 +144,7 @@ def test_publish_data_offline_queues_and_dedupes(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(
+        def add(
                 self,
                 topic: str,
                 payload: str,
@@ -187,7 +187,7 @@ def test_publish_data_online_success_maps_and_calls_discovery(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(
+        def add(
                 self,
                 topic: str,
                 payload: str,
@@ -261,7 +261,7 @@ def test_publish_data_online_failure_queues(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
 
-        async def add(
+        def add(
                 self,
                 topic: str,
                 payload: str,

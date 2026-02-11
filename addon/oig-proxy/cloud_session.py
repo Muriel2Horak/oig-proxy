@@ -192,7 +192,7 @@ class CloudSessionManager:
                     )
                     self._last_warn_ts = now
                 raise
-            except (OSError, ConnectionError, RuntimeError) as exc:
+            except (OSError, RuntimeError) as exc:
                 self.stats.errors += 1
                 await self._close_locked()
                 self._backoff_s = min(
