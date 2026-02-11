@@ -294,7 +294,7 @@ def test_resolve_public_dns_with_dummy(monkeypatch):
 
     class DummyDNS:
         Resolver = Dummyresolver
-        
+
         class resolver:
             Resolver = Dummyresolver
 
@@ -315,7 +315,7 @@ def test_resolve_public_dns_error(monkeypatch):
 
     class DummyDNS:
         Resolver = Dummyresolver
-        
+
         class resolver:
             Resolver = Dummyresolver
 
