@@ -148,4 +148,6 @@ regexes = [
   '''logging\.''',
   '''print\(''',
   '''print\("''',
+  '''sonarcloud-github-action@[a-f0-9]{40}''',
+  '''gitleaks-action@[a-f0-9]{40}''',
 ]
