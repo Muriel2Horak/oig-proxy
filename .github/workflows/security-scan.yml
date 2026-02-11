@@ -70,7 +70,7 @@ jobs:
       
       - name: Run Safety (Dependency vulnerabilities)
         run: |
-          python -m safety check -r addon/oig-proxy/requirements.txt --json --output reports/safety.json || true
+          python -m safety check -r addon/oig-proxy/requirements.txt --output json > reports/safety.json || true
         continue-on-error: true
       
       - name: Run Semgrep (Advanced SAST)
@@ -154,7 +154,10 @@ jobs:
           script: |
             const fs = require('fs');
             const bandit = JSON.parse(fs.readFileSync('reports/bandit.json', 'utf8'));
-            const safety = JSON.parse(fs.readFileSync('reports/safety.json', 'utf8'));
+            let safety = { results: [] };
+            if (fs.existsSync('reports/safety.json')) {
+              safety = JSON.parse(fs.readFileSync('reports/safety.json', 'utf8'));
+            }
             
             const comment = `## 🔒 Security Scan Results
             
