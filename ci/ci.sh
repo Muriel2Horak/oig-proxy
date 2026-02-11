@@ -11,7 +11,19 @@ fi
 PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PYTHON_BIN}}"
 REPORT_DIR="${REPORT_DIR:-${ROOT_DIR}/reports}"
 
+# Check if running on GitHub Actions
+if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
+  RUNNING_ON_GITHUB=1
+else
+  RUNNING_ON_GITHUB=0
+fi
+
+# ==============================================================================
 # Parse command line arguments
+# ==============================================================================
+
+RUNNING_ON_GITHUB="${RUNNING_ON_GITHUB:-0}"
+
 RUN_TESTS="${RUN_TESTS:-1}"
 RUN_SECURITY="${RUN_SECURITY:-1}"
 RUN_LINT="${RUN_LINT:-1}"
@@ -26,7 +38,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-security)
       RUN_SECURITY=0
-      shift
+           shift
       ;;
     --no-lint)
       RUN_LINT=0
@@ -254,9 +266,26 @@ if [[ "${RUN_SONAR}" == "1" ]]; then
     exit 1
   fi
 
-  "${ROOT_DIR}/.github/scripts/run_sonar.sh"
+  # Skip Sonar on GitHub Actions (use separate security-scan.yml workflow)
+  if [[ "${RUNNING_ON_GITHUB}" == "1" ]]; then
+    echo "⏭️  Skipping SonarQube on GitHub Actions (use Security Scan workflow)"
+  else
+    "${ROOT_DIR}/.github/scripts/run_sonar.sh"
+  fi
+  echo ""
 else
   echo "⏭️  Skipping SonarQube (use --sonar to enable)"
+  echo ""
+fi
+
+  "${ROOT_DIR}/.github/scripts/run_security.sh"
+else
+  if [[ "${RUN_SONAR}" == "0" ]]; then
+    echo "⏭️  Skipping SonarQube (use --sonar to enable)"
+  elif [[ "${RUNNING_ON_GITHUB}" == "1" ]]; then
+    echo "⏭️  Skipping SonarQube (use local command instead)"
+  else
+    echo "⚠️  SonarQube disabled (no .env or SONAR_TOKEN not set)"
   echo ""
 fi
 
