@@ -159,18 +159,13 @@ jobs:
               safety = JSON.parse(fs.readFileSync('reports/safety.json', 'utf8'));
             }
             
-            const comment = [
-              "## 🔒 Security Scan Results",
-              "",
-              "### Bandit (Python SAST)",
-              `- **Errors**: ${bandit.results.length}`,
-              `- **Severity**: ${JSON.stringify(bandit.metrics._totals)}`,
-              "",
-              "### Safety (Dependency Vulnerabilities)",
-              `- **Vulnerabilities found**: ${safety.results ? safety.results.length : 0}`,
-              "",
-              "📊 Full reports available in the artifacts."
-            ].join("\n");
+            const comment = "## 🔒 Security Scan Results\n\n" +
+              "### Bandit (Python SAST)\n" +
+              "- **Errors**: " + bandit.results.length + "\n" +
+              "- **Severity**: " + JSON.stringify(bandit.metrics._totals) + "\n\n" +
+              "### Safety (Dependency Vulnerabilities)\n" +
+              "- **Vulnerabilities found**: " + (safety.results ? safety.results.length : 0) + "\n\n" +
+              "📊 Full reports available in the artifacts.";
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
