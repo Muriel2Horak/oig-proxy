@@ -3311,17 +3311,103 @@ class OIGProxy:
         }
 
     def control_api_send_setting(
-        self,
-        *,
-        tbl_name: str,
-        tbl_item: str,
-        new_value: str,
-        confirm: str = "New",
+            self,
+            *,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+            confirm: str = "New",
     ) -> dict[str, Any]:
         """Odešle Setting do BOXu přes event loop a vrátí výsledek."""
-        if self._loop is None:
+        if not self._validate_event_loop_ready():
             return {"ok": False, "error": "event_loop_not_ready"}
 
+        return self._send_setting_via_event_loop(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=new_value,
+            confirm=confirm,
+        )
+
+    def _validate_event_loop_ready(self) -> bool:
+        """Ověří že event loop je připraven."""
+        return self._loop is not None
+
+    def _send_setting_via_event_loop(
+            self,
+            *,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+            confirm: str,
+    ) -> dict[str, Any]:
+        """Pošle setting přes event loop s timeoutem."""
+        validation = self._validate_control_parameters(
+            tbl_name, tbl_item, new_value
+        )
+        if not validation["ok"]:
+            return validation
+
+        frame = self._build_control_frame(
+            tbl_name, tbl_item, new_value, confirm
+        )
+        return self._run_coroutine_threadsafe(frame)
+
+    def _validate_control_parameters(
+            self,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+    ) -> dict[str, Any]:
+        """Validace parametrů pro control."""
+        if not self.box_connected:
+            return {"ok": False, "error": "box_not_connected"}
+        if self._last_data_epoch is None or (
+                time.time() - self._last_data_epoch) > 30:
+            return {"ok": False, "error": "box_not_sending_data"}
+        if self.device_id == "AUTO":
+            return {"ok": False, "error": "device_id_unknown"}
+        return {"ok": True}
+
+    def _build_control_frame(
+            self,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+            confirm: str,
+    ) -> bytes:
+        """Sestaví rámec pro nastavení."""
+        msg_id = secrets.randbelow(90_000_000) + 10_000_000
+        id_set = int(time.time())
+        now_local = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+
+        inner = (
+            f"<ID>{msg_id}</ID>"
+            f"<ID_Device>{self.device_id}</ID_Device>"
+            f"<ID_Set>{id_set}</ID_Set>"
+            "<ID_SubD>0</ID_SubD>"
+            f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+            f"<NewValue>{new_value}</NewValue>"
+            f"<Confirm>{confirm}</Confirm>"
+            f"<TblName>{tbl_name}</TblName>"
+            f"<TblItem>{tbl_item}</TblItem>"
+            "<ID_Server>5</ID_Server>"
+            "<mytimediff>0</mytimediff>"
+            "<Reason>Setting</Reason>"
+            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+            "<ver>55734</ver>"
+        )
+        return build_frame(
+            inner,
+            add_crlf=True).encode(
+            "utf-8",
+            errors="strict")
+
+    def _run_coroutine_threadsafe(
+            self, tbl_name: str, tbl_item: str, new_value: str, confirm: str
+    ) -> dict[str, Any]:
+        """Spustí coroutines threadsafe s timeoutem."""
         fut = asyncio.run_coroutine_threadsafe(
             self._send_setting_to_box(
                 tbl_name=tbl_name,
@@ -3329,12 +3415,77 @@ class OIGProxy:
                 new_value=new_value,
                 confirm=confirm,
             ),
-            self._loop,
+            self._loop if self._loop else None,  # type: ignore[arg-type]
         )
         try:
             return fut.result(timeout=5.0)
         except Exception as e:
             return {"ok": False, "error": f"send_failed:{type(e).__name__}"}
+
+    async def _send_setting_to_box(  # noqa: C901 - complex but necessary
+            self,
+            *,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+            confirm: str,
+            tx_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Pošle setting do BOXu (async)."""
+        async with self._box_conn_lock:
+            writer = self._active_box_writer
+        if writer is None:
+            logger.warning("No active box writer to send frame")
+            return {"ok": False, "error": "no_writer"}
+
+        msg_id = secrets.randbelow(90_000_000) + 10_000_000
+        id_set = int(time.time())
+        now_local = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+
+        inner = (
+            f"<ID>{msg_id}</ID>"
+            f"<ID_Device>{self.device_id}</ID_Device>"
+            f"<ID_Set>{id_set}</ID_Set>"
+            "<ID_SubD>0</ID_SubD>"
+            f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+            f"<NewValue>{new_value}</NewValue>"
+            f"<Confirm>{confirm}</Confirm>"
+            f"<TblName>{tbl_name}</TblName>"
+            f"<TblItem>{tbl_item}</TblItem>"
+            "<ID_Server>5</ID_Server>"
+            "<mytimediff>0</mytimediff>"
+            "<Reason>Setting</Reason>"
+            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+            "<ver>55734</ver>"
+        )
+        frame = build_frame(
+            inner,
+            add_crlf=True).encode(
+            "utf-8",
+            errors="strict")
+
+        self._local_setting_pending = {
+            "sent_at": time.monotonic(),
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": new_value,
+            "id": msg_id,
+            "id_set": id_set,
+            "tx_id": tx_id,
+        }
+
+        writer.write(frame)
+        await writer.drain()
+
+        logger.info(
+            "CONTROL: Sent Setting %s/%s=%s (id=%s id_set=%s)",
+            tbl_name,
+            tbl_item,
+            new_value,
+            msg_id,
+            id_set,
+        )
 
     async def _send_setting_to_box(
         self,
