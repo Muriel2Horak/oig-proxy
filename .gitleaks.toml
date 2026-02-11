@@ -150,4 +150,6 @@ regexes = [
   '''print\("''',
   '''sonarcloud-github-action@[a-f0-9]{40}''',
   '''gitleaks-action@[a-f0-9]{40}''',
+  '''sonarsource/sonarcloud-github-action@[a-f0-9]{40}''',
+  '''SonarSource/sonarcloud-github-action@[a-f0-9]{40}''',
 ]
