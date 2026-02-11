@@ -147,29 +147,3 @@ jobs:
           name: penetration-tests-report
           path: reports/penetration-junit.xml
       
-      - name: Comment PR with security results
-        uses: actions/github-script@v7
-        if: github.event_name == 'pull_request'
-        with:
-          script: |
-            const fs = require('fs');
-            const bandit = JSON.parse(fs.readFileSync('reports/bandit.json', 'utf8'));
-            let safety = { results: [] };
-            if (fs.existsSync('reports/safety.json')) {
-              safety = JSON.parse(fs.readFileSync('reports/safety.json', 'utf8'));
-            }
-            
-            const comment = "## 🔒 Security Scan Results\n\n" +
-              "### Bandit (Python SAST)\n" +
-              "- **Errors**: " + bandit.results.length + "\n" +
-              "- **Severity**: " + JSON.stringify(bandit.metrics._totals) + "\n\n" +
-              "### Safety (Dependency Vulnerabilities)\n" +
-              "- **Vulnerabilities found**: " + (safety.results ? safety.results.length : 0) + "\n\n" +
-              "📊 Full reports available in the artifacts.";
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
