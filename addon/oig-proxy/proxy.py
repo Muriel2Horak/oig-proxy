@@ -1134,20 +1134,47 @@ class OIGProxy:
     def _init_telemetry(self) -> None:
         """Initialize telemetry client (fail-safe)."""
         try:
-            # pylint: disable=import-outside-toplevel
-            from importlib.metadata import version as pkg_version
-            try:
-                proxy_version = pkg_version("oig-proxy")
-            except Exception:
-                proxy_version = "1.5.3"
+            # Try to load version from config.json
+            proxy_version = self._load_version_from_config()
             device_id = self.device_id if self.device_id != "AUTO" else ""
             self._telemetry_client = TelemetryClient(device_id, proxy_version)
             logger.info(
-                "📊 Telemetry client initialized (interval=%ss)",
+                "📊 Telemetry client initialized (version=%s, interval=%ss)",
+                proxy_version,
                 self._telemetry_interval_s)
         except Exception as e:
             logger.warning("Telemetry init failed (disabled): %s", e)
             self._telemetry_client = None
+
+    def _load_version_from_config(self) -> str:
+        """Load version from config.json or fallback to package metadata."""
+        import os
+        try:
+            # First try config.json in addon directory
+            config_path = os.path.join(os.path.dirname(__file__), "config.json")
+            if os.path.exists(config_path):
+                with open(config_path, encoding="utf-8") as f:
+                    config_data = json.load(f)
+                    version = config_data.get("version")
+                    if version:
+                        logger.debug("Loaded version %s from config.json", version)
+                        return version
+        except Exception as e:
+            logger.debug("Failed to load version from config.json: %s", e)
+
+        # Fallback to package metadata
+        try:
+            # pylint: disable=import-outside-toplevel
+            from importlib.metadata import version as pkg_version
+            version = pkg_version("oig-proxy")
+            logger.debug("Loaded version %s from package metadata", version)
+            return version
+        except Exception as e:
+            logger.debug("Failed to load version from package metadata: %s", e)
+
+        # Final fallback
+        logger.warning("Could not determine version, using default 1.6.2")
+        return "1.6.2"
 
     async def _telemetry_loop(self) -> None:
         """Periodically send telemetry metrics to diagnostic server."""
