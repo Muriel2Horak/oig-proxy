@@ -2351,8 +2351,8 @@ class OIGProxy:
         if not self._control_queue:
             return removed
         kept: deque[dict[str, Any]] = deque()
-        for tx in self._control_queue:
-            if tx.get("tx_key") != POST_DRAIN_SA_KEY:
+        for tx in self._control_queue:  # noqa: PLW0640
+            if tx.get("tx_key") != self._POST_DRAIN_SA_KEY:
                 kept.append(tx)
             else:
                 removed.append(tx)
