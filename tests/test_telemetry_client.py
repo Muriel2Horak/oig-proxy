@@ -113,8 +113,8 @@ class TestTelemetryBuffer:
 
     def test_cleanup_old_messages(self, temp_db):
         buffer = telemetry_client.TelemetryBuffer(temp_db)
-        # Insert old message
-        old_time = time.time() - (25 * 3600)
+        # Insert old message (older than BUFFER_MAX_AGE_HOURS = 168h)
+        old_time = time.time() - (200 * 3600)
         buffer._conn.execute(
             "INSERT INTO messages (topic, payload, timestamp) VALUES (?, ?, ?)",
             ("topic", json.dumps({"a": 1}), old_time)

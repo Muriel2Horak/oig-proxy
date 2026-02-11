@@ -73,7 +73,7 @@ class DummyMQTT:
     def publish_data(self, payload: dict):
         self.published_data.append(payload)
 
-    def publish_raw(
+    async def publish_raw(
             self,
             *,
             topic: str,
@@ -384,7 +384,7 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     calls = []
 
-    def fake_publish(*args, **kwargs):
+    async def fake_publish(*args, **kwargs):
         calls.append((args, kwargs))
 
     monkeypatch.setattr(proxy, "_publish_mode_if_ready", fake_publish)
@@ -444,7 +444,7 @@ def test_register_and_unregister_box_connection(tmp_path):
     proxy = _make_proxy(tmp_path)
     closed = []
 
-    def fake_close(writer):
+    async def fake_close(writer):
         closed.append(writer)
 
     proxy._close_writer = fake_close
@@ -533,7 +533,7 @@ def test_control_message_validation_and_accept(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    def fake_publish_result(
+    async def fake_publish_result(
         *,
         tx,
         status,
@@ -542,7 +542,7 @@ def test_control_message_validation_and_accept(tmp_path):
             extra=None):
         results.append((status, error, detail))
 
-    def fake_maybe_start():
+    async def fake_maybe_start():
         results.append(("start", None, None))
 
     proxy._control_publish_result = fake_publish_result
@@ -591,7 +591,7 @@ def test_control_start_inflight_paths(tmp_path):
     finished = []
     deferred = []
 
-    def fake_publish_result(
+    async def fake_publish_result(
         *,
         tx,
         status,
@@ -600,10 +600,10 @@ def test_control_start_inflight_paths(tmp_path):
             extra=None):
         results.append(status)
 
-    def fake_finish():
+    async def fake_finish():
         finished.append(True)
 
-    def fake_defer(*, reason):
+    async def fake_defer(*, reason):
         deferred.append(reason)
 
     proxy._control_publish_result = fake_publish_result
@@ -655,7 +655,7 @@ def test_control_on_box_setting_ack(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    def fake_publish_result(
+    async def fake_publish_result(
         *,
         tx,
         status,
@@ -664,7 +664,7 @@ def test_control_on_box_setting_ack(tmp_path):
             extra=None):
         results.append((status, error))
 
-    def fake_finish():
+    async def fake_finish():
         results.append(("finish", None))
 
     proxy._control_publish_result = fake_publish_result

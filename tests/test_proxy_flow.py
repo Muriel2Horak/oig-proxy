@@ -21,13 +21,13 @@ class DummyWriter:
     def write(self, data):
         self.data.append(data)
 
-    def drain(self):
+    async def drain(self):
         return None
 
     def close(self):
         self._closing = True
 
-    def wait_closed(self):
+    async def wait_closed(self):
         return None
 
 
@@ -35,7 +35,7 @@ class DummyReader:
     def __init__(self, payload: bytes):
         self._payload = payload
 
-    def read(self, _size):
+    async def read(self, _size):
         return self._payload
 
 
@@ -43,7 +43,7 @@ class DummyCloudQueue:
     def __init__(self):
         self.added = []
 
-    def add(self, frame_bytes, table_name, device_id):
+    async def add(self, frame_bytes, table_name, device_id):
         self.added.append((frame_bytes, table_name, device_id))
 
     def size(self):
@@ -63,10 +63,10 @@ class DummyMQTT(DummyMQTTMixin):
     def publish_availability(self):
         self.published.append("availability")
 
-    def publish_data(self, payload):
+    async def publish_data(self, payload):
         self.published.append(payload)
 
-    def publish_raw(self, *, topic, payload, qos, retain):
+    async def publish_raw(self, *, topic, payload, qos, retain):
         self.published.append((topic, payload, qos, retain))
 
     def add_message_handler(self, *, topic, handler, qos):
@@ -171,16 +171,16 @@ def test_extract_and_autodetect_device_id(tmp_path, monkeypatch):
         {"_device_id": "DEV2", "_table": "tbl_box_prms", "MODE": 1})
     called = []
 
-    def fake_handle(*_args, **_kwargs):
+    async def fake_handle(*_args, **_kwargs):
         called.append("handle")
 
-    def fake_observe(*_args, **_kwargs):
+    async def fake_observe(*_args, **_kwargs):
         called.append("observe")
 
-    def fake_mode(*_args, **_kwargs):
+    async def fake_mode(*_args, **_kwargs):
         called.append("mode")
 
-    def fake_start(*_args, **_kwargs):
+    async def fake_start(*_args, **_kwargs):
         called.append("start")
 
     proxy._handle_setting_event = fake_handle
@@ -256,10 +256,10 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
 
     called = []
 
-    def fake_process(*_args, **_kwargs):
+    async def fake_process(*_args, **_kwargs):
         called.append("process")
 
-    def fake_note(*_args, **_kwargs):
+    async def fake_note(*_args, **_kwargs):
         called.append("note")
 
     proxy._process_frame_offline = fake_process
@@ -282,7 +282,7 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
 def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
 
-    def fake_open(_host, _port):
+    async def fake_open(_host, _port):
         return DummyReader(b"ACK"), DummyWriter()
 
     monkeypatch.setattr(proxy_module, "resolve_cloud_host", lambda host: host)
@@ -301,7 +301,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     assert reader is not None
     assert writer is not None
 
-    def fake_fail(_host, _port):
+    async def fake_fail(_host, _port):
         raise RuntimeError("fail")
 
     monkeypatch.setattr(asyncio, "open_connection", fake_fail)
@@ -325,7 +325,7 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     writer = DummyWriter()
     cloud_writer = DummyWriter()
 
-    def fake_ensure(*_args, **_kwargs):
+    async def fake_ensure(*_args, **_kwargs):
         return DummyReader(b"<ACK/>"), cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure
@@ -354,13 +354,13 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     proxy._configured_mode = "hybrid"
     proxy._hybrid_in_offline = True  # Already reached threshold
 
-    def fake_ensure_eof(*_args, **_kwargs):
+    async def fake_ensure_eof(*_args, **_kwargs):
         return DummyReader(b""), cloud_writer, True
 
     proxy._ensure_cloud_connected = fake_ensure_eof
     called = []
 
-    def fake_fallback(*_args, **_kwargs):
+    async def fake_fallback(*_args, **_kwargs):
         called.append("fallback")
         return None, None
 
@@ -386,7 +386,7 @@ def test_control_observe_box_frame_setting(tmp_path):
     proxy = _make_proxy(tmp_path)
     results = []
 
-    def fake_publish_result(
+    async def fake_publish_result(
         *,
         tx,
         status,
@@ -395,7 +395,7 @@ def test_control_observe_box_frame_setting(tmp_path):
             extra=None):
         results.append((status, detail))
 
-    def fake_finish():
+    async def fake_finish():
         results.append(("finish", None))
 
     proxy._control_publish_result = fake_publish_result
@@ -440,7 +440,7 @@ def test_control_observe_box_frame_setting(tmp_path):
 def test_setup_mqtt_handlers(tmp_path):
     proxy = _make_proxy(tmp_path)
 
-    def run():
+    async def run():
         proxy._loop = asyncio.get_running_loop()
         proxy.device_id = "DEV1"
         proxy.mqtt_publisher.device_id = "DEV1"

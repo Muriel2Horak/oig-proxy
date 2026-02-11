@@ -24,7 +24,7 @@ def test_main_runs_with_device_id(monkeypatch):
         def __init__(self, device_id):
             calls.append(("init", device_id))
 
-        def start(self):
+        async def start(self):
             calls.append(("start", None))
 
     async def run():
@@ -48,7 +48,7 @@ def test_main_runs_without_device_id(monkeypatch):
         def __init__(self, device_id):
             calls.append(("init", device_id))
 
-        def start(self):
+        async def start(self):
             calls.append(("start", None))
 
     async def run():
@@ -66,7 +66,7 @@ def test_main_handles_exception(monkeypatch):
         def __init__(self, _device_id):
             return None
 
-        def start(self):
+        async def start(self):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(main_module, "OIGProxy", DummyProxy)

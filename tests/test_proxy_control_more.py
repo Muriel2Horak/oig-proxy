@@ -26,7 +26,7 @@ class DummyMQTT:
         self.published_raw = []
         self.queue = DummyQueue()
 
-    def publish_raw(
+    async def publish_raw(
             self,
             *,
             topic: str,
@@ -67,13 +67,13 @@ class DummyWriter:
     def write(self, data):
         self.data.append(data)
 
-    def drain(self):
+    async def drain(self):
         return None
 
     def close(self):
         self._closing = True
 
-    def wait_closed(self):
+    async def wait_closed(self):
         return None
 
     def is_closing(self):
@@ -132,7 +132,7 @@ def test_control_publish_result_and_key_status(tmp_path):
     proxy._control_log_enabled = True
     proxy._control_log_path = str(tmp_path / "control.jsonl")
 
-    def fake_status():
+    async def fake_status():
         return None
 
     proxy.publish_proxy_status = fake_status
@@ -184,7 +184,7 @@ def test_control_publish_restart_errors(tmp_path):
     proxy._control_pending_keys = {"tbl_box_prms/MODE/1"}
     results = []
 
-    def fake_publish(**kwargs):
+    async def fake_publish(**kwargs):
         results.append(kwargs["status"])
 
     proxy._control_publish_result = fake_publish
@@ -281,10 +281,10 @@ def test_control_on_mqtt_message_accepts(tmp_path):
     proxy = make_proxy(tmp_path)
     results = []
 
-    def fake_publish_result(*, tx, status, **_kwargs):
+    async def fake_publish_result(*, tx, status, **_kwargs):
         results.append(status)
 
-    def fake_start():
+    async def fake_start():
         results.append("start")
 
     proxy._control_publish_result = fake_publish_result
@@ -315,13 +315,13 @@ def test_control_defer_inflight_max_attempts(tmp_path):
     proxy._control_inflight = {"_attempts": 2}
     results = []
 
-    def fake_publish_result(*, tx, status, **_kwargs):
+    async def fake_publish_result(*, tx, status, **_kwargs):
         results.append(status)
 
-    def fake_start_next():
+    async def fake_start_next():
         results.append("start")
 
-    def fake_post_drain(*_args, **_kwargs):
+    async def fake_post_drain(*_args, **_kwargs):
         results.append("post_drain")
 
     proxy._control_publish_result = fake_publish_result
@@ -338,7 +338,7 @@ def test_control_ack_and_applied_timeouts(tmp_path):
     proxy.box_connected = False
     deferred = []
 
-    def fake_defer(*, reason):
+    async def fake_defer(*, reason):
         deferred.append(reason)
 
     proxy._control_defer_inflight = fake_defer
@@ -348,10 +348,10 @@ def test_control_ack_and_applied_timeouts(tmp_path):
     proxy._control_inflight = {"stage": "box_ack"}
     results = []
 
-    def fake_publish(*, tx, status, **_kwargs):
+    async def fake_publish(*, tx, status, **_kwargs):
         results.append(status)
 
-    def fake_finish():
+    async def fake_finish():
         results.append("finish")
 
     proxy._control_publish_result = fake_publish
@@ -368,10 +368,10 @@ def test_control_quiet_wait_completes(tmp_path):
         "applied_at_mono": time.monotonic() - 1}
     results = []
 
-    def fake_publish(*, tx, status, **_kwargs):
+    async def fake_publish(*, tx, status, **_kwargs):
         results.append(status)
 
-    def fake_finish():
+    async def fake_finish():
         results.append("finish")
 
     proxy._control_publish_result = fake_publish
@@ -386,7 +386,7 @@ def test_control_maybe_queue_post_drain_refresh(tmp_path):
     proxy._control_post_drain_refresh_pending = True
     called = []
 
-    def fake_enqueue(*, reason):
+    async def fake_enqueue(*, reason):
         called.append(reason)
 
     proxy._control_enqueue_internal_sa = fake_enqueue
@@ -407,10 +407,10 @@ def test_control_observe_box_frame_setting(tmp_path):
     }
     results = []
 
-    def fake_publish(*, tx, status, **_kwargs):
+    async def fake_publish(*, tx, status, **_kwargs):
         results.append(status)
 
-    def fake_finish():
+    async def fake_finish():
         results.append("finish")
 
     proxy._control_publish_result = fake_publish
@@ -456,7 +456,7 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
     proxy._control_ack_timeout_s = 10.0
     results = []
 
-    def fake_ack(**_kwargs):
+    async def fake_ack(**_kwargs):
         results.append("ack")
 
     proxy._control_on_box_setting_ack = fake_ack
