@@ -3,13 +3,6 @@ name: CI
 on:
   push:
   pull_request:
-  workflow_dispatch:
-    inputs:
-      run_local_ci:
-        description: 'Run full local CI (lint, tests, security, Sonar)'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
