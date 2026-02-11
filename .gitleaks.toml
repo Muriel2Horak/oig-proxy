@@ -55,7 +55,7 @@ tags = ["slack", "webhook"]
 [[rules]]
 description = "Sonar Token"
 id = "sonar-token"
-regex = '''[a-f0-9]{32,40}'''
+regex = '''(?i)sonar_token\s*[:=]\s*[a-f0-9]{32,40}'''
 entropy = 3.5
 tags = ["sonar", "token"]
 
@@ -97,7 +97,7 @@ tags = ["jwt", "token"]
 [[rules]]
 description = "SonarCloud Token"
 id = "sonar-cloud-token"
-regex = '''[a-f0-9]{40}'''
+regex = '''(?i)sonar_cloud_token\s*[:=]\s*[a-f0-9]{40}'''
 entropy = 3.5
 tags = ["sonarcloud", "token"]
 
