@@ -412,9 +412,9 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         if self.client and self.connected:
             try:
                 self.client.subscribe(topic, qos=qos)
-                logger.debug(_MQTT_LOG_SUBSCRIBED), topic)
+                logger.debug(_MQTT_LOG_SUBSCRIBED, topic)
             except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED), topic, e)
+                logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED, topic, e)
 
     def _on_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
         try:
