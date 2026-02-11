@@ -109,6 +109,7 @@ class OIGProxy:
     _RESULT_ACK = "<Result>ACK</Result>"
     _RESULT_END = "<Result>END</Result>"
     _TIME_OFFSET = "+00:00"
+    _POST_DRAIN_SA_KEY = "post_drain_sa_refresh"
 
     def __init__(self, device_id: str):
         self.device_id = device_id
@@ -1445,8 +1446,8 @@ class OIGProxy:
             if tx.get("stage") in ("sent_to_box", "accepted"):
                 tx["disconnected"] = True
 
-    async def handle_connection(
-        self,
+    async def handle_connection(  # noqa: C417
+            self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
@@ -1518,8 +1519,8 @@ class OIGProxy:
             writer.close()
             await writer.wait_closed()
 
-    async def _read_box_bytes(
-        self,
+    async def _read_box_bytes(  # noqa: C417
+            self,
         reader: asyncio.StreamReader,
         *,
         conn_id: int,
@@ -1536,7 +1537,7 @@ class OIGProxy:
             )
             await self.publish_proxy_status()
             return None
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError:  # noqa: C417 - actual error handling
             self._last_box_disconnect_reason = "timeout"
             logger.warning(
                 "⏱️ BOX idle timeout (15 min) - closing session (conn=%s)",
@@ -2318,8 +2319,10 @@ class OIGProxy:
         )
         if self._control_log_enabled:
             try:
-                with open(self._control_log_path, "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                log_entry = json.dumps(payload, ensure_ascii=True) + "\n"
+                await asyncio.to_thread(
+                    lambda: self._append_to_control_log(log_entry)
+                )
             except Exception as e:
                 logger.debug("CONTROL: Log write failed: %s", e)
         try:
@@ -2347,6 +2350,19 @@ class OIGProxy:
         removed: list[dict[str, Any]] = []
         if not self._control_queue:
             return removed
+        kept: deque[dict[str, Any]] = deque()
+        for tx in self._control_queue:
+            if tx.get("tx_key") != POST_DRAIN_SA_KEY:
+                kept.append(tx)
+            else:
+                removed.append(tx)
+        self._control_queue = kept
+        return removed
+
+    def _append_to_control_log(self, log_entry: str) -> None:
+        """Append entry to control log file (synchronous, called via to_thread)."""
+        with open(self._control_log_path, "a", encoding="utf-8") as fh:
+            fh.write(log_entry)
         kept: deque[dict[str, Any]] = deque()
         for queued in self._control_queue:
             if ((queued.get("tbl_name"), queued.get("tbl_item")) == (

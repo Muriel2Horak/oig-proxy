@@ -571,7 +571,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self.client.publish(topic, "online", retain=True, qos=1)
         logger.debug("MQTT: Availability published to %s", topic)
 
-    async def start_health_check(self) -> None:
+    async def start_health_check(self) -> None:  # noqa: C417 - uses asyncio.create_task
         """Spustí health check jako background task."""
         if self._health_check_task is None or self._health_check_task.done():
             self._health_check_task = asyncio.create_task(
