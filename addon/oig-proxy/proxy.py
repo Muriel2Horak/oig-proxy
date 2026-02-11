@@ -3342,9 +3342,9 @@ class OIGProxy:
 
     def _validate_control_parameters(
             self,
-            tbl_name: str,
-            tbl_item: str,
-            new_value: str,
+            tbl_name: str,  # noqa: ARG001 - parameter reserved for future use
+            tbl_item: str,  # noqa: ARG001 - parameter reserved for future use
+            new_value: str,  # noqa: ARG001 - parameter reserved for future use
     ) -> dict[str, Any]:
         """Validace parametrů pro control."""
         if not self.box_connected:
