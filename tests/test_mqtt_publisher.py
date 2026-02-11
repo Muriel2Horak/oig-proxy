@@ -67,6 +67,7 @@ def test_mqtt_queue_retain_dedupes(tmp_path):
 def test_build_discovery_payload_binary(monkeypatch):
     class DummyQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0
@@ -303,6 +304,7 @@ def test_publish_data_online_failure_queues(monkeypatch):
 def test_coerce_state_value_timestamp(monkeypatch):
     class DummyQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0
@@ -320,6 +322,7 @@ def test_coerce_state_value_timestamp(monkeypatch):
 def test_coerce_state_value_timestamp_passthrough(monkeypatch):
     class DummyQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0
@@ -344,6 +347,7 @@ def test_topic_matches_patterns():
 def test_add_message_handler_subscribes_when_connected(monkeypatch):
     class DummyQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0
@@ -420,6 +424,7 @@ def test_replay_queue_sends_and_clears(tmp_path, monkeypatch):
 def test_build_discovery_payload_with_options(monkeypatch):
     class DummyQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0

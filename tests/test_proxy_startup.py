@@ -30,6 +30,7 @@ class DummyServer:
 def test_proxy_init_and_start(tmp_path, monkeypatch):
     class DummyMQTTQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0
@@ -84,12 +85,14 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
 def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     class DummyMQTTQueue:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def size(self) -> int:
             return 0
 
     class DummyControlAPI:
         def __init__(self, *args, **kwargs) -> None:
+            """Mock class."""
 
         def start(self) -> None:
             return None
