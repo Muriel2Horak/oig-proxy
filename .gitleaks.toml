@@ -55,7 +55,7 @@ tags = ["slack", "webhook"]
 [[rules]]
 description = "Sonar Token"
 id = "sonar-token"
-regex = '''[a-f0-9]{32,40}'''
+regex = '''(?i)sonar_token\s*[:=]\s*[a-f0-9]{32,40}'''
 entropy = 3.5
 tags = ["sonar", "token"]
 
@@ -97,7 +97,7 @@ tags = ["jwt", "token"]
 [[rules]]
 description = "SonarCloud Token"
 id = "sonar-cloud-token"
-regex = '''[a-f0-9]{40}'''
+regex = '''(?i)sonar_cloud_token\s*[:=]\s*[a-f0-9]{40}'''
 entropy = 3.5
 tags = ["sonarcloud", "token"]
 
@@ -109,7 +109,7 @@ entropy = 3.7
 tags = ["bearer", "token"]
 
 [allowlist]
-description = "Global Allowlist"
+description = "Global allowlist"
 paths = [
   '''\.venv/''',
   '''\.git/''',
@@ -126,16 +126,8 @@ paths = [
   '''test_.*\.py''',
   '''local_.*\.py''',
 ]
-
-[allowlist]
-description = "Allow comments and documentation"
 regexes = [
   '''#[^"]*['"][^"]*['"][^"]*$''',  # Comments with quotes
-]
-
-[allowlist]
-description = "Allow localhost and test values"
-regexes = [
   '''localhost''',
   '''127\.0\.0\.1''',
   '''test-host''',
@@ -143,32 +135,21 @@ regexes = [
   '''test-user''',
   '''test-pass''',
   '''example\.com''',
-]
-
-[allowlist]
-description = "Allow empty or placeholder values"
-regexes = [
   '''['"][\s]*['"]''',  # Empty strings
   '''null''',  # Null values
   '''placeholder''',
   '''TODO''',
   '''FIXME''',
-]
-
-[allowlist]
-description = "Allow environment variable references"
-regexes = [
   '''os\.getenv''',
   '''os\.environ''',
   '''getenv\(''',
   '''getenv\("''',
-]
-
-[allowlist]
-description = "Allow log messages"
-regexes = [
   '''logger\.''',
   '''logging\.''',
   '''print\(''',
   '''print\("''',
+  '''sonarcloud-github-action@[a-f0-9]{40}''',
+  '''gitleaks-action@[a-f0-9]{40}''',
+  '''sonarsource/sonarcloud-github-action@[a-f0-9]{40}''',
+  '''SonarSource/sonarcloud-github-action@[a-f0-9]{40}''',
 ]
