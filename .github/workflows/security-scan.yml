@@ -44,15 +44,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install trivy
       
-      - name: Install Gitleaks
-        run: |
-          wget https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.21.0_linux_x64.tar.gz
-          tar -xzf gitleaks_8.21.0_linux_x64.tar.gz
-          sudo mv gitleaks /usr/local/bin/ || true
-        continue-on-error: true
-      
       - name: Create reports directory
         run: mkdir -p reports
+      
+      - name: Run Gitleaks (Secret leak detection)
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: .gitleaks.toml
+          args: detect --source . --report-path reports/gitleaks.json --report-format json --exit-code 0
       
       - name: Run Bandit (Python SAST)
         run: |
@@ -74,10 +73,6 @@ jobs:
           trivy filesystem --quiet --security-checks vuln,license --format json --output reports/trivy.json addon/oig-proxy || true
         continue-on-error: true
       
-      - name: Run Gitleaks (Secret leak detection)
-        run: |
-          gitleaks detect --source . --report-path reports/gitleaks.json --report-format json --exit-code 0 || true
-        continue-on-error: true
       
       - name: Run security unit tests
         run: |
