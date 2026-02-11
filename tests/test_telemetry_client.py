@@ -1020,12 +1020,13 @@ class TestTelemetryClientCoverage:
                 return None
 
         class DummyMQTTModule:
-            mqtt_v311 = 4
+            MQTTv311 = 4
 
             class CallbackAPIVersion:
                 VERSION2 = 2
 
-            def Client(self, *args, **kwargs):
+            @staticmethod
+            def Client(*args, **kwargs):
                 return DummyClient()
 
         monkeypatch.setattr(telemetry_client, "mqtt", DummyMQTTModule())
