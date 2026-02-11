@@ -105,6 +105,11 @@ class _TelemetryLogHandler(logging.Handler):
 class OIGProxy:
     """OIG Proxy s podporou ONLINE/HYBRID/OFFLINE režimů."""
 
+    # Frame string constants
+    _RESULT_ACK = "<Result>ACK</Result>"
+    _RESULT_END = "<Result>END</Result>"
+    _TIME_OFFSET = "+00:00"
+
     def __init__(self, device_id: str):
         self.device_id = device_id
 
@@ -459,7 +464,7 @@ class OIGProxy:
 
     @staticmethod
     def _build_ack_only_frame() -> bytes:
-        inner = "<Result>ACK</Result>"
+        inner = OIGProxy._RESULT_ACK
         return build_frame(inner).encode("utf-8", errors="strict")
 
     def _build_offline_ack_frame(self, table_name: str | None) -> bytes:
@@ -468,7 +473,7 @@ class OIGProxy:
         if table_name == "IsNewSet":
             return self._build_end_time_frame()
         if table_name in ("IsNewWeather", "IsNewFW"):
-            return build_frame("<Result>END</Result>").encode("utf-8", errors="strict")
+            return build_frame(OIGProxy._RESULT_END).encode("utf-8", errors="strict")
         return self._build_ack_only_frame()
 
     @staticmethod
@@ -687,7 +692,6 @@ class OIGProxy:
         _device_id: str | None,
     ) -> None:
         """Uloží poslední známé hodnoty pro vybrané tabulky (pro obnovu po restartu)."""
-        return
 
     async def _publish_prms_if_ready(
             self, *, reason: str | None = None) -> None:
@@ -2301,7 +2305,7 @@ class OIGProxy:
             "status": status,
             "error": error,
             "detail": detail,
-            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "ts": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
         }
         if extra:
             payload.update(extra)
@@ -2414,7 +2418,7 @@ class OIGProxy:
             "tbl_item": tx.get("tbl_item"),
             "new_value": tx.get("new_value"),
             "detail": detail,
-            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "ts": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
         }
         self._control_key_state[request_key] = payload
         self._control_update_pending_keys(request_key=request_key, state=state)
@@ -2686,7 +2690,7 @@ class OIGProxy:
                         "tx_id": None,
                         "status": "error",
                         "error": "bad_json",
-                        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "ts": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
                     }
                 ),
                 qos=self._control_qos,
@@ -2717,7 +2721,7 @@ class OIGProxy:
             "tbl_item": tbl_item,
             "new_value": data.get("new_value"),
             "confirm": str(data.get("confirm") or "New"),
-            "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "received_at": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
             "_attempts": 0,
         }
 
@@ -3172,7 +3176,7 @@ class OIGProxy:
             "tbl_item": "SA",
             "new_value": "1",
             "confirm": "New",
-            "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "received_at": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
             "_attempts": 0,
             "_canon": "1",
             "request_key": request_key,

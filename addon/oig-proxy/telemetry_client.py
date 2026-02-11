@@ -422,11 +422,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 logger.debug("📡 Event sent: %s", event_type)
                 return True
             # Failed to send - buffer for later
-            if self._buffer:
-                if self._buffer.store(topic, payload):
-                    logger.debug(
-                        "📡 Event buffered: %s (MQTT unavailable)", event_type)
-                    return True
+            if self._buffer and self._buffer.store(topic, payload):
+                logger.debug(
+                    "📡 Event buffered: %s (MQTT unavailable)", event_type)
+                return True
             return False
 
     # Convenience methods for common error events
