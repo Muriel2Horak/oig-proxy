@@ -2255,7 +2255,7 @@ class OIGProxy:
             return
 
         raw_values: dict[str, Any] = {}
-        for key, value in payload.items():
+        for key, value in payload.items():  # noqa: C901
             if key.startswith("_"):
                 continue
             raw_value = self._mqtt_state_to_raw_value(
