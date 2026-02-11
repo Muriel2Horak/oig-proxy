@@ -2363,16 +2363,6 @@ class OIGProxy:
         """Append entry to control log file (synchronous, called via to_thread)."""
         with open(self._control_log_path, "a", encoding="utf-8") as fh:
             fh.write(log_entry)
-        kept: deque[dict[str, Any]] = deque()
-        for queued in self._control_queue:
-            if ((queued.get("tbl_name"), queued.get("tbl_item")) == (
-                    "tbl_box_prms", "SA") and queued.get("_internal") == "post_drain_sa"):
-                removed.append(queued)
-                continue
-            kept.append(queued)
-        if removed:
-            self._control_queue = kept
-        return removed
 
     def _control_cancel_post_drain_sa_inflight_locked(
             self) -> dict[str, Any] | None:
@@ -3348,10 +3338,7 @@ class OIGProxy:
         if not validation["ok"]:
             return validation
 
-        frame = self._build_control_frame(
-            tbl_name, tbl_item, new_value, confirm
-        )
-        return self._run_coroutine_threadsafe(frame)
+        return self._run_coroutine_threadsafe(tbl_name, tbl_item, new_value, confirm)
 
     def _validate_control_parameters(
             self,
