@@ -12,7 +12,7 @@ PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PYTHON_BIN}}"
 REPORT_DIR="${REPORT_DIR:-${ROOT_DIR}/reports}"
 
 # Check if running on GitHub Actions
-if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
+if [[ -n "${GITHUB_ACTIONS+x}" ]]; then
   RUNNING_ON_GITHUB=1
 else
   RUNNING_ON_GITHUB=0
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-security)
       RUN_SECURITY=0
-           shift
+      shift
       ;;
     --no-lint)
       RUN_LINT=0
@@ -278,16 +278,7 @@ else
   echo ""
 fi
 
-  "${ROOT_DIR}/.github/scripts/run_security.sh"
-else
-  if [[ "${RUN_SONAR}" == "0" ]]; then
-    echo "⏭️  Skipping SonarQube (use --sonar to enable)"
-  elif [[ "${RUNNING_ON_GITHUB}" == "1" ]]; then
-    echo "⏭️  Skipping SonarQube (use local command instead)"
-  else
-    echo "⚠️  SonarQube disabled (no .env or SONAR_TOKEN not set)"
-  echo ""
-fi
+"${ROOT_DIR}/.github/scripts/run_security.sh"
 
 # ==============================================================================
 # SUMMARY
