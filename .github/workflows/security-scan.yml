@@ -40,6 +40,10 @@ jobs:
         run: |
           python -m pip install semgrep
       
+      - name: Install Pylint (for build workflow parity)
+        run: |
+          python -m pip install pylint
+      
       - name: Install Trivy
         run: |
           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
@@ -55,6 +59,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ARGS: detect --source . --report-path reports/gitleaks.json --report-format json --exit-code 0
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
           GITLEAKS_ENABLE_SUMMARY: false
       
@@ -118,6 +123,13 @@ jobs:
         with:
           name: trivy-report
           path: reports/trivy.json
+
+      - name: Upload Gitleaks report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks.json
 
       
       

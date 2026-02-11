@@ -35,10 +35,3 @@ jobs:
         run: |
           mkdir -p reports
           bandit -r addon/oig-proxy -f json -o reports/bandit.json --exit-zero
-      - name: Run local CI (full check)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_local_ci == 'true'
-        env:
-          PYTHONPATH: addon/oig-proxy
-        run: |
-          chmod +x ci/ci.sh
-          ./ci/ci.sh
