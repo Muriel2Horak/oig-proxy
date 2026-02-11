@@ -14,6 +14,9 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     name: Security Scan
+    permissions:
+      contents: read
+      pull-requests: write
     
     steps:
       - name: Checkout code
@@ -49,9 +52,9 @@ jobs:
       
       - name: Run Gitleaks (Secret leak detection)
         uses: gitleaks/gitleaks-action@v2
-        with:
-          config-path: .gitleaks.toml
-          args: detect --source . --report-path reports/gitleaks.json --report-format json --exit-code 0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
       
       - name: Run Bandit (Python SAST)
         run: |
@@ -113,13 +116,14 @@ jobs:
         with:
           name: trivy-report
           path: reports/trivy.json
-      
+
       - name: Upload Gitleaks report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: gitleaks-report
-          path: reports/gitleaks.json
+          path: gitleaks.sarif
+      
       
       - name: Upload security test report
         uses: actions/upload-artifact@v4
