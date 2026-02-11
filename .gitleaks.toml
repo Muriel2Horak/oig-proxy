@@ -108,7 +108,7 @@ regex = '''Bearer\s+[a-zA-Z0-9\-_\.]{10,}'''
 entropy = 3.7
 tags = ["bearer", "token"]
 
-[allowlist]
+[[allowlist]]
 description = "Global Allowlist"
 paths = [
   '''\.venv/''',
@@ -127,13 +127,13 @@ paths = [
   '''local_.*\.py''',
 ]
 
-[allowlist]
+[[allowlist]]
 description = "Allow comments and documentation"
 regexes = [
   '''#[^"]*['"][^"]*['"][^"]*$''',  # Comments with quotes
 ]
 
-[allowlist]
+[[allowlist]]
 description = "Allow localhost and test values"
 regexes = [
   '''localhost''',
@@ -145,7 +145,7 @@ regexes = [
   '''example\.com''',
 ]
 
-[allowlist]
+[[allowlist]]
 description = "Allow empty or placeholder values"
 regexes = [
   '''['"][\s]*['"]''',  # Empty strings
@@ -155,7 +155,7 @@ regexes = [
   '''FIXME''',
 ]
 
-[allowlist]
+[[allowlist]]
 description = "Allow environment variable references"
 regexes = [
   '''os\.getenv''',
