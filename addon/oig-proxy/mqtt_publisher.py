@@ -346,15 +346,15 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             for topic, (qos, _) in self._message_handlers.items():
                 try:
                     client.subscribe(topic, qos=qos)
-                    logger.debug(_MQTT_LOG_SUBSCRIBED), topic)
+                    logger.debug(_MQTT_LOG_SUBSCRIBED, topic)
                 except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED), topic, e)
+                    logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED, topic, e)
             for topic, qos, _ in self._wildcard_handlers:
                 try:
                     client.subscribe(topic, qos=qos)
-                    logger.debug(_MQTT_LOG_SUBSCRIBED), topic)
+                    logger.debug(_MQTT_LOG_SUBSCRIBED, topic)
                 except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED), topic, e)
+                    logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED, topic, e)
 
             # Trigger replay
             self._schedule_replay()
