@@ -32,11 +32,16 @@ class DummyWriter:
 class DummyReader:
     """Dummy reader for testing."""
 
-    def __init__(self, payload: bytes):
-        self._payload = payload
+    def __init__(self, payloads: list[bytes]):
+        self._payloads = payloads
 
     async def read(self, _size):
-        return self._payload
+        if not self._payloads:
+            return b""
+        item = self._payloads.pop(0)
+        if item == b"" or item == "":
+            return None
+        return item
 
     def get_extra_info(self, name):
         if name == "peername":
