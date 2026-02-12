@@ -110,6 +110,7 @@ class OIGProxy:
     _RESULT_END = "<Result>END</Result>"
     _TIME_OFFSET = "+00:00"
     _POST_DRAIN_SA_KEY = "post_drain_sa_refresh"
+    _CLOUD_ACK_MAX_BYTES = 4096
 
     @staticmethod
     def _get_current_timestamp() -> str:
@@ -271,32 +272,31 @@ class OIGProxy:
         self.cloud_session_connected = False
         self._cloud_connected_since_epoch: float | None = None
         self._cloud_peer: str | None = None
+        self._cloud_rx_buf = bytearray()
         self._last_hb_ts: float = 0.0
         self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
 
-    async def start(self):
-        """Spustí proxy server."""
-        self._loop = asyncio.get_running_loop()
-        self.mqtt_publisher.attach_loop(self._loop)
+    def _initialize_control_api(self) -> None:
+        if not (CONTROL_API_PORT and CONTROL_API_PORT > 0):
+            return
+        try:
+            self._control_api = ControlAPIServer(
+                host=CONTROL_API_HOST,
+                port=CONTROL_API_PORT,
+                proxy=self,
+            )
+            self._control_api.start()
+            logger.info(
+                "🧪 Control API listening on http://%s:%s",
+                CONTROL_API_HOST,
+                CONTROL_API_PORT,
+            )
+        except Exception as e:
+            logger.error("Control API start failed: %s", e)
 
-        if CONTROL_API_PORT and CONTROL_API_PORT > 0:
-            try:
-                self._control_api = ControlAPIServer(
-                    host=CONTROL_API_HOST,
-                    port=CONTROL_API_PORT,
-                    proxy=self,
-                )
-                self._control_api.start()
-                logger.info(
-                    "🧪 Control API listening on http://%s:%s",
-                    CONTROL_API_HOST,
-                    CONTROL_API_PORT,
-                )
-            except Exception as e:
-                logger.error("Control API start failed: %s", e)
-
-        # MQTT connect
-        if self.mqtt_publisher.connect():
+    async def _initialize_mqtt(self) -> None:
+        connected = await asyncio.to_thread(self.mqtt_publisher.connect)
+        if connected:
             await self.mqtt_publisher.start_health_check()
         else:
             logger.warning(
@@ -307,44 +307,36 @@ class OIGProxy:
             self._setup_control_mqtt()
         self._setup_mqtt_state_cache()
 
-        # Pokud máme uložené device_id a aktuální device je AUTO, použij ho
-        if self.device_id == "AUTO":
-            restored_device_id = self._mode_device_id or self._prms_device_id
-            if restored_device_id:
-                self.device_id = restored_device_id
-                self.mqtt_publisher.device_id = restored_device_id
-                logger.info(
-                    "🔑 Restoring device_id from saved state: %s",
-                    self.device_id,
-                )
-                self.mqtt_publisher.publish_availability()
-                self._setup_mqtt_state_cache()
-
-        # Log startup mode
+    def _restore_device_id(self) -> None:
+        if self.device_id != "AUTO":
+            return
+        restored_device_id = self._mode_device_id or self._prms_device_id
+        if not restored_device_id:
+            return
+        self.device_id = restored_device_id
+        self.mqtt_publisher.device_id = restored_device_id
         logger.info(
-            "🚀 Proxy mode: %s (configured: %s)",
-            self.mode.value,
-            self._configured_mode,
+            "🔑 Restoring device_id from saved state: %s",
+            self.device_id,
         )
+        self.mqtt_publisher.publish_availability()
+        self._setup_mqtt_state_cache()
 
-        # Po připojení MQTT publikuj stav (init)
-        await self.publish_proxy_status()
-        await self._control_publish_restart_errors()
-        self._mqtt_was_ready = self.mqtt_publisher.is_ready()
+    def _start_background_tasks(self) -> None:
         if self._status_task is None or self._status_task.done():
             self._status_task = asyncio.create_task(self._proxy_status_loop())
         if self._full_refresh_task is None or self._full_refresh_task.done():
             self._full_refresh_task = asyncio.create_task(
                 self._full_refresh_loop())
 
-        # Initialize telemetry client (fail-safe, async provisioning)
-        if TELEMETRY_ENABLED:
-            self._init_telemetry()
-            if self._telemetry_task is None or self._telemetry_task.done():
-                self._telemetry_task = asyncio.create_task(
-                    self._telemetry_loop())
+        if not TELEMETRY_ENABLED:
+            return
+        self._init_telemetry()
+        if self._telemetry_task is None or self._telemetry_task.done():
+            self._telemetry_task = asyncio.create_task(
+                self._telemetry_loop())
 
-        # Spustíme TCP server
+    async def _start_tcp_server(self) -> None:
         server = await asyncio.start_server(
             self.handle_connection,
             PROXY_LISTEN_HOST,
@@ -358,6 +350,28 @@ class OIGProxy:
 
         async with server:
             await server.serve_forever()
+
+    async def start(self):
+        """Spustí proxy server."""
+        self._loop = asyncio.get_running_loop()
+        self.mqtt_publisher.attach_loop(self._loop)
+
+        self._initialize_control_api()
+        await self._initialize_mqtt()
+        self._restore_device_id()
+
+        logger.info(
+            "🚀 Proxy mode: %s (configured: %s)",
+            self.mode.value,
+            self._configured_mode,
+        )
+
+        await self.publish_proxy_status()
+        await self._control_publish_restart_errors()
+        self._mqtt_was_ready = self.mqtt_publisher.is_ready()
+        self._start_background_tasks()
+
+        await self._start_tcp_server()
 
     def _build_status_payload(self) -> dict[str, Any]:
         """Vytvoří payload pro proxy_status MQTT sensor."""
@@ -1234,28 +1248,31 @@ class OIGProxy:
             except Exception as e:
                 logger.debug("Telemetry send failed: %s", e)
 
-    def _collect_telemetry_metrics(self) -> dict[str, Any]:
-        """Collect current proxy metrics for telemetry."""
-        uptime_s = int(time.time() - self._start_time)
-        # Get and clear SET commands buffer
-        set_commands = self._set_commands_buffer[:]
-        self._set_commands_buffer.clear()
-        debug_active = getattr(self, "_telemetry_debug_windows_remaining", 0) > 0
+    def _get_box_connected_window_status(self) -> bool:
         box_connected_window = self.box_connected or self._telemetry_box_seen_in_window
         self._telemetry_box_seen_in_window = False
-        include_logs = (
-            debug_active
-            or not box_connected_window
-        )
+        return box_connected_window
+
+    def _should_include_telemetry_logs(
+        self,
+        debug_active: bool,
+        box_connected_window: bool,
+    ) -> bool:
+        return debug_active or not box_connected_window
+
+    def _get_telemetry_logs(
+        self,
+        debug_active: bool,
+        include_logs: bool,
+    ) -> list[dict[str, Any]]:
         logs = self._flush_log_buffer() if include_logs else []
         if not include_logs:
             self._telemetry_logs.clear()
         if debug_active:
             self._telemetry_debug_windows_remaining -= 1
-        # cloud_online window logic:
-        # - any successful cloud response -> green (success wins)
-        # - otherwise: failures (timeout/connect error) or very short EOF (<1s) -> red
-        # - otherwise: if session is currently connected -> green
+        return logs
+
+    def _get_cloud_online_window_status(self) -> bool:
         if self._telemetry_cloud_ok_in_window:
             cloud_online_window = True
         elif self._telemetry_cloud_failed_in_window or self._telemetry_cloud_eof_short_in_window:
@@ -1267,6 +1284,9 @@ class OIGProxy:
         self._telemetry_cloud_ok_in_window = False
         self._telemetry_cloud_failed_in_window = False
         self._telemetry_cloud_eof_short_in_window = False
+        return cloud_online_window
+
+    def _collect_hybrid_sessions(self) -> list[dict[str, Any]]:
         hybrid_sessions = list(self._telemetry_hybrid_sessions)
         if self._configured_mode == "hybrid" and self._hybrid_state_since_epoch is not None:
             now = time.time()
@@ -1283,10 +1303,16 @@ class OIGProxy:
                 ),
                 "mode": self.mode.value,
             })
+        return hybrid_sessions
+
+    def _collect_and_clear_window_metrics(
+        self,
+        logs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         window_metrics = {
             "box_sessions": list(self._telemetry_box_sessions),
             "cloud_sessions": list(self._telemetry_cloud_sessions),
-            "hybrid_sessions": hybrid_sessions,
+            "hybrid_sessions": self._collect_hybrid_sessions(),
             "offline_events": list(self._telemetry_offline_events),
             "tbl_events": list(self._telemetry_tbl_events),
             "error_context": list(self._telemetry_error_context),
@@ -1300,6 +1326,41 @@ class OIGProxy:
         self._telemetry_tbl_events.clear()
         self._telemetry_error_context.clear()
         self._telemetry_force_logs_this_window = True
+        return window_metrics
+
+    def _build_device_specific_metrics(self, device_id: str) -> dict[str, Any]:
+        return {
+            "isnewfw_fw": self._telemetry_cached_state_value(
+                device_id, "isnewfw", "fw"
+            ),
+            "isnewset_lat": self._telemetry_cached_state_value(
+                device_id, "isnewset", "lat"
+            ),
+            "tbl_box_tmlastcall": self._telemetry_cached_state_value(
+                device_id, "tbl_box", "tmlastcall"
+            ),
+            "isnewweather_loadedon": self._telemetry_cached_state_value(
+                device_id, "isnewweather", "loadedon"
+            ),
+            "tbl_box_strnght": self._telemetry_cached_state_value(
+                device_id, "tbl_box", "strnght"
+            ),
+            "tbl_invertor_prms_model": self._telemetry_cached_state_value(
+                device_id, "tbl_invertor_prms", "model"
+            ),
+        }
+
+    def _collect_telemetry_metrics(self) -> dict[str, Any]:
+        uptime_s = int(time.time() - self._start_time)
+        set_commands = self._set_commands_buffer[:]
+        self._set_commands_buffer.clear()
+        debug_active = getattr(self, "_telemetry_debug_windows_remaining", 0) > 0
+        box_connected_window = self._get_box_connected_window_status()
+        include_logs = self._should_include_telemetry_logs(debug_active, box_connected_window)
+        logs = self._get_telemetry_logs(debug_active, include_logs)
+        cloud_online_window = self._get_cloud_online_window_status()
+        window_metrics = self._collect_and_clear_window_metrics(logs)
+
         metrics: dict[str, Any] = {
             "timestamp": self._utc_iso(),
             "interval_s": int(self._telemetry_interval_s),
@@ -1322,26 +1383,7 @@ class OIGProxy:
         }
         device_id = self.device_id if self.device_id != "AUTO" else ""
         if device_id:
-            metrics.update({
-                "isnewfw_fw": self._telemetry_cached_state_value(
-                    device_id, "isnewfw", "fw"
-                ),
-                "isnewset_lat": self._telemetry_cached_state_value(
-                    device_id, "isnewset", "lat"
-                ),
-                "tbl_box_tmlastcall": self._telemetry_cached_state_value(
-                    device_id, "tbl_box", "tmlastcall"
-                ),
-                "isnewweather_loadedon": self._telemetry_cached_state_value(
-                    device_id, "isnewweather", "loadedon"
-                ),
-                "tbl_box_strnght": self._telemetry_cached_state_value(
-                    device_id, "tbl_box", "strnght"
-                ),
-                "tbl_invertor_prms_model": self._telemetry_cached_state_value(
-                    device_id, "tbl_invertor_prms", "model"
-                ),
-            })
+            metrics.update(self._build_device_specific_metrics(device_id))
         return metrics
 
     def _telemetry_cached_state_value(
@@ -1673,6 +1715,291 @@ class OIGProxy:
             await self._close_writer(cloud_writer)
             return None, None, True
 
+    async def _handle_cloud_connection_failed(
+        self,
+        *,
+        conn_id: int,
+        table_name: str | None,
+        frame_bytes: bytes,
+        device_id: str | None,
+        box_writer: asyncio.StreamWriter,
+        cloud_writer: asyncio.StreamWriter | None,
+        cloud_attempted: bool,
+    ) -> tuple[None, None]:
+        self._telemetry_cloud_failed_in_window = True
+        if cloud_attempted:
+            self._telemetry_fire_event(
+                "error_cloud_connect",
+                cloud_host=TARGET_SERVER,
+                reason="connect_failed",
+            )
+        if self._is_hybrid_mode():
+            self._hybrid_record_failure(
+                reason="connect_failed", local_ack=True)
+            return await self._fallback_offline_from_cloud_issue(
+                reason="connect_failed",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+                note_cloud_failure=False,
+                conn_id=conn_id,
+            )
+        if self._cloud_rx_buf:
+            self._cloud_rx_buf.clear()
+        self._telemetry_record_timeout(conn_id=conn_id)
+        return None, None
+
+    async def _handle_cloud_eof(
+        self,
+        *,
+        conn_id: int,
+        table_name: str | None,
+        frame_bytes: bytes,
+        device_id: str | None,
+        box_writer: asyncio.StreamWriter,
+        cloud_writer: asyncio.StreamWriter | None,
+    ) -> tuple[None, None]:
+        self._telemetry_cloud_failed_in_window = True
+        logger.warning(
+            "⚠️ Cloud closed connection (conn=%s, table=%s)",
+            conn_id,
+            table_name,
+        )
+        self.cloud_disconnects += 1
+        if self.cloud_session_connected:
+            self._record_cloud_session_end(reason="eof")
+        self._telemetry_fire_event(
+            "error_cloud_disconnect", reason="eof")
+        self._hybrid_record_failure(
+            reason="cloud_eof",
+            local_ack=self._is_hybrid_mode(),
+        )
+        await self._close_writer(cloud_writer)
+        self._cloud_rx_buf.clear()
+        if self._is_hybrid_mode():
+            return await self._fallback_offline_from_cloud_issue(
+                reason="cloud_eof",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=None,
+                note_cloud_failure=False,
+                conn_id=conn_id,
+            )
+        self._telemetry_record_timeout(conn_id=conn_id)
+        return None, None
+
+    async def _handle_cloud_timeout(
+        self,
+        *,
+        conn_id: int,
+        table_name: str | None,
+        frame_bytes: bytes,
+        device_id: str | None,
+        box_writer: asyncio.StreamWriter,
+        cloud_reader: asyncio.StreamReader,
+        cloud_writer: asyncio.StreamWriter | None,
+    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+        self._telemetry_cloud_failed_in_window = True
+        self.cloud_timeouts += 1
+        self._telemetry_fire_event(
+            "error_cloud_timeout",
+            cloud_host=TARGET_SERVER,
+            timeout_s=CLOUD_ACK_TIMEOUT,
+        )
+        self._hybrid_record_failure(
+            reason="ack_timeout",
+            local_ack=self._is_hybrid_mode(),
+        )
+        logger.warning(
+            "⏱️ Cloud ACK timeout (%.1fs) (conn=%s, table=%s)",
+            CLOUD_ACK_TIMEOUT,
+            conn_id,
+            table_name,
+        )
+        if self._is_hybrid_mode():
+            if table_name == "END":
+                logger.info(
+                    "📤 HYBRID: Sending local END (conn=%s)",
+                    conn_id,
+                )
+                end_frame = self._build_end_time_frame()
+                self._telemetry_record_response(
+                    end_frame.decode("utf-8", errors="replace"),
+                    source="local",
+                    conn_id=conn_id,
+                )
+                box_writer.write(end_frame)
+                await box_writer.drain()
+                self.stats["acks_local"] += 1
+                return cloud_reader, cloud_writer
+            return await self._fallback_offline_from_cloud_issue(
+                reason="ack_timeout",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+                note_cloud_failure=False,
+                conn_id=conn_id,
+            )
+        if self.cloud_session_connected:
+            self._record_cloud_session_end(reason="timeout")
+        await self._close_writer(cloud_writer)
+        self._cloud_rx_buf.clear()
+        self._telemetry_record_timeout(conn_id=conn_id)
+        return None, None
+
+    async def _handle_cloud_error(
+        self,
+        *,
+        error: Exception,
+        conn_id: int,
+        table_name: str | None,
+        frame_bytes: bytes,
+        device_id: str | None,
+        box_writer: asyncio.StreamWriter,
+        cloud_writer: asyncio.StreamWriter | None,
+    ) -> tuple[None, None]:
+        self._telemetry_cloud_failed_in_window = True
+        logger.warning(
+            "⚠️ Cloud error: %s (conn=%s, table=%s)",
+            error,
+            conn_id,
+            table_name,
+        )
+        self.cloud_errors += 1
+        if self.cloud_session_connected:
+            self._record_cloud_session_end(reason="cloud_error")
+        self._hybrid_record_failure(
+            reason="cloud_error",
+            local_ack=self._is_hybrid_mode(),
+        )
+        await self._close_writer(cloud_writer)
+        self._cloud_rx_buf.clear()
+        if self._is_hybrid_mode():
+            return await self._fallback_offline_from_cloud_issue(
+                reason="cloud_error",
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=None,
+                note_cloud_failure=False,
+                conn_id=conn_id,
+            )
+        self._telemetry_record_timeout(conn_id=conn_id)
+        return None, None
+
+    async def _send_frame_to_cloud(
+        self,
+        *,
+        frame_bytes: bytes,
+        cloud_writer: asyncio.StreamWriter,
+        cloud_reader: asyncio.StreamReader,
+        table_name: str | None,
+        conn_id: int,
+    ) -> tuple[bytes | None, None]:
+        cloud_writer.write(frame_bytes)
+        await cloud_writer.drain()
+        self.stats["frames_forwarded"] += 1
+        self._telemetry_cloud_ok_in_window = True
+        ack_data = await self._read_cloud_ack(
+            cloud_reader=cloud_reader,
+            ack_timeout_s=CLOUD_ACK_TIMEOUT,
+            ack_max_bytes=self._CLOUD_ACK_MAX_BYTES,
+        )
+        if not ack_data:
+            raise EOFError("Cloud closed connection")
+        return ack_data, None
+
+    async def _read_cloud_ack(
+        self,
+        *,
+        cloud_reader: asyncio.StreamReader,
+        ack_timeout_s: float,
+        ack_max_bytes: int,
+    ) -> bytes:
+        existing = self._extract_one_xml_frame(self._cloud_rx_buf)
+        if existing is not None:
+            return existing
+
+        async def _read_until_frame() -> bytes:
+            while True:
+                chunk = await cloud_reader.read(4096)
+                if not chunk:
+                    return b""
+                self._cloud_rx_buf.extend(chunk)
+                frame = self._extract_one_xml_frame(self._cloud_rx_buf)
+                if frame is not None:
+                    return frame
+                if len(self._cloud_rx_buf) > ack_max_bytes:
+                    data = bytes(self._cloud_rx_buf)
+                    self._cloud_rx_buf.clear()
+                    return data
+
+        return await asyncio.wait_for(_read_until_frame(), timeout=ack_timeout_s)
+
+    @staticmethod
+    def _extract_one_xml_frame(buf: bytearray) -> bytes | None:
+        end_tag = b"</Frame>"
+        end_idx = buf.find(end_tag)
+        if end_idx < 0:
+            return None
+
+        frame_end = end_idx + len(end_tag)
+        if len(buf) > frame_end:
+            if buf[frame_end:frame_end + 2] == b"\r\n":
+                frame_end += 2
+            elif buf[frame_end:frame_end + 1] == b"\n":
+                frame_end += 1
+            elif buf[frame_end:frame_end + 1] == b"\r":
+                if len(buf) < frame_end + 2:
+                    return None
+                frame_end += 1
+
+        frame = bytes(buf[:frame_end])
+        del buf[:frame_end]
+        return frame
+
+    async def _forward_ack_to_box(
+        self,
+        *,
+        ack_data: bytes,
+        table_name: str | None,
+        box_writer: asyncio.StreamWriter,
+        conn_id: int,
+    ) -> None:
+        self._hybrid_record_success()
+        ack_str = ack_data.decode("utf-8", errors="replace")
+        self._telemetry_cloud_ok_in_window = True
+        capture_payload(
+            None,
+            table_name,
+            ack_str,
+            ack_data,
+            {},
+            direction="cloud_to_proxy",
+            length=len(ack_data),
+            conn_id=conn_id,
+            peer=self._active_box_peer,
+        )
+        self._telemetry_record_response(
+            ack_str, source="cloud", conn_id=conn_id
+        )
+        if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
+            self._isnew_last_response = self._last_data_iso
+            if self._isnew_last_poll_epoch:
+                self._isnew_last_rtt_ms = round(
+                    (time.time() - self._isnew_last_poll_epoch) * 1000, 1
+                )
+        box_writer.write(ack_data)
+        await box_writer.drain()
+        self.stats["acks_cloud"] += 1
+
     async def _forward_frame_online(
         self,
         *,
@@ -1685,12 +2012,6 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
-        """Forward frame to cloud.
-
-        HYBRID mode: Immediate offline switch + local ACK if cloud fails.
-        ONLINE mode: Transparent - no local ACK, BOX handles timeout itself.
-        """
-        # OFFLINE mode should not reach here, but just in case
         if self._force_offline_enabled():
             return await self._handle_frame_offline_mode(
                 frame_bytes=frame_bytes,
@@ -1709,195 +2030,72 @@ class OIGProxy:
             connect_timeout_s=connect_timeout_s,
         )
 
-        # Connection failed
         if cloud_writer is None or cloud_reader is None:
-            self._telemetry_cloud_failed_in_window = True
-            if cloud_attempted:
-                self._telemetry_fire_event(
-                    "error_cloud_connect",
-                    cloud_host=TARGET_SERVER,
-                    reason="connect_failed",
-                )
-            if self._is_hybrid_mode():
-                self._hybrid_record_failure(
-                    reason="connect_failed", local_ack=True)
-                # HYBRID: immediate offline + local ACK (threshold=1)
-                return await self._fallback_offline_from_cloud_issue(
-                    reason="connect_failed",
-                    frame_bytes=frame_bytes,
+            return await self._handle_cloud_connection_failed(
+                conn_id=conn_id,
+                table_name=table_name,
+                frame_bytes=frame_bytes,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+                cloud_attempted=cloud_attempted,
+            )
+
+        try:
+            ack_data, _ = await self._send_frame_to_cloud(
+                frame_bytes=frame_bytes,
+                cloud_writer=cloud_writer,
+                cloud_reader=cloud_reader,
+                table_name=table_name,
+                conn_id=conn_id,
+            )
+            if not ack_data:
+                return await self._handle_cloud_eof(
+                    conn_id=conn_id,
                     table_name=table_name,
+                    frame_bytes=frame_bytes,
                     device_id=device_id,
                     box_writer=box_writer,
                     cloud_writer=cloud_writer,
-                    note_cloud_failure=False,
-                    conn_id=conn_id,
                 )
-            # ONLINE: no local ACK, BOX will timeout
-            self._telemetry_record_timeout(conn_id=conn_id)
-            return None, None
 
-        try:
-            cloud_writer.write(frame_bytes)
-            await cloud_writer.drain()
-            self.stats["frames_forwarded"] += 1
-            # Frame successfully sent to cloud in this window
-            self._telemetry_cloud_ok_in_window = True
-
-            ack_data = await asyncio.wait_for(
-                cloud_reader.read(4096),
-                timeout=CLOUD_ACK_TIMEOUT,
-            )
-            if not ack_data:
-                self._telemetry_cloud_failed_in_window = True
-                logger.warning(
-                    "⚠️ Cloud closed connection (conn=%s, table=%s)",
-                    conn_id,
-                    table_name,
-                )
-                self.cloud_disconnects += 1
-                if self.cloud_session_connected:
-                    self._record_cloud_session_end(reason="eof")
-                self._telemetry_fire_event(
-                    "error_cloud_disconnect", reason="eof")
-                self._hybrid_record_failure(
-                    reason="cloud_eof",
-                    local_ack=self._is_hybrid_mode(),
-                )
-                await self._close_writer(cloud_writer)
-                # HYBRID: fallback to local ACK
-                if self._is_hybrid_mode():
-                    return await self._fallback_offline_from_cloud_issue(
-                        reason="cloud_eof",
-                        frame_bytes=frame_bytes,
-                        table_name=table_name,
-                        device_id=device_id,
-                        box_writer=box_writer,
-                        cloud_writer=None,
-                        note_cloud_failure=False,
-                        conn_id=conn_id,
-                    )
-                # ONLINE: no local ACK
-                self._telemetry_record_timeout(conn_id=conn_id)
-                return None, None
-
-            # Success - forward ACK to BOX
-            self._hybrid_record_success()
-            ack_str = ack_data.decode("utf-8", errors="replace")
-            self._telemetry_cloud_ok_in_window = True
-            capture_payload(
-                None,
-                table_name,
-                ack_str,
-                ack_data,
-                {},
-                direction="cloud_to_proxy",
-                length=len(ack_data),
+            await self._forward_ack_to_box(
+                ack_data=ack_data,
+                table_name=table_name,
+                box_writer=box_writer,
                 conn_id=conn_id,
-                peer=self._active_box_peer,
             )
-            self._telemetry_record_response(
-                ack_str, source="cloud", conn_id=conn_id
-            )
-            if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
-                self._isnew_last_response = self._last_data_iso
-                if self._isnew_last_poll_epoch:
-                    self._isnew_last_rtt_ms = round(
-                        (time.time() - self._isnew_last_poll_epoch) * 1000, 1
-                    )
-
-            box_writer.write(ack_data)
-            await box_writer.drain()
-            self.stats["acks_cloud"] += 1
             return cloud_reader, cloud_writer
 
         except asyncio.TimeoutError:
-            self._telemetry_cloud_failed_in_window = True
-            self.cloud_timeouts += 1
-            self._telemetry_fire_event(
-                "error_cloud_timeout",
-                cloud_host=TARGET_SERVER,
-                timeout_s=CLOUD_ACK_TIMEOUT,
+            return await self._handle_cloud_timeout(
+                conn_id=conn_id,
+                table_name=table_name,
+                frame_bytes=frame_bytes,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_reader=cloud_reader,
+                cloud_writer=cloud_writer,
             )
-            self._hybrid_record_failure(
-                reason="ack_timeout",
-                local_ack=self._is_hybrid_mode(),
+        except EOFError:
+            return await self._handle_cloud_eof(
+                conn_id=conn_id,
+                table_name=table_name,
+                frame_bytes=frame_bytes,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
             )
-
-            logger.warning(
-                "⏱️ Cloud ACK timeout (%.1fs) (conn=%s, table=%s)",
-                CLOUD_ACK_TIMEOUT,
-                conn_id,
-                table_name,
-            )
-
-            # HYBRID: send local ACK (including END)
-            if self._is_hybrid_mode():
-                if table_name == "END":
-                    logger.info(
-                        "📤 HYBRID: Sending local END (conn=%s)",
-                        conn_id,
-                    )
-                    end_frame = self._build_end_time_frame()
-                    self._telemetry_record_response(
-                        end_frame.decode("utf-8", errors="replace"),
-                        source="local",
-                        conn_id=conn_id,
-                    )
-                    box_writer.write(end_frame)
-                    await box_writer.drain()
-                    self.stats["acks_local"] += 1
-                    return cloud_reader, cloud_writer
-                # Non-END: fallback to local ACK
-                return await self._fallback_offline_from_cloud_issue(
-                    reason="ack_timeout",
-                    frame_bytes=frame_bytes,
-                    table_name=table_name,
-                    device_id=device_id,
-                    box_writer=box_writer,
-                    cloud_writer=cloud_writer,
-                    note_cloud_failure=False,
-                    conn_id=conn_id,
-                )
-
-            # ONLINE: no local ACK, close connection
-            if self.cloud_session_connected:
-                self._record_cloud_session_end(reason="timeout")
-            await self._close_writer(cloud_writer)
-            self._telemetry_record_timeout(conn_id=conn_id)
-            return None, None
-
         except Exception as e:
-            self._telemetry_cloud_failed_in_window = True
-            logger.warning(
-                "⚠️ Cloud error: %s (conn=%s, table=%s)",
-                e,
-                conn_id,
-                table_name,
+            return await self._handle_cloud_error(
+                error=e,
+                conn_id=conn_id,
+                table_name=table_name,
+                frame_bytes=frame_bytes,
+                device_id=device_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
             )
-            self.cloud_errors += 1
-            if self.cloud_session_connected:
-                self._record_cloud_session_end(reason="cloud_error")
-            self._hybrid_record_failure(
-                reason="cloud_error",
-                local_ack=self._is_hybrid_mode(),
-            )
-            await self._close_writer(cloud_writer)
-
-            # HYBRID: fallback to local ACK
-            if self._is_hybrid_mode():
-                return await self._fallback_offline_from_cloud_issue(
-                    reason="cloud_error",
-                    frame_bytes=frame_bytes,
-                    table_name=table_name,
-                    device_id=device_id,
-                    box_writer=box_writer,
-                    cloud_writer=None,
-                    note_cloud_failure=False,
-                    conn_id=conn_id,
-                )
-            # ONLINE: no local ACK
-            self._telemetry_record_timeout(conn_id=conn_id)
-            return None, None
 
     async def _process_box_frame_common(
         self, *, frame_bytes: bytes, frame: str, conn_id: int
@@ -2086,6 +2284,7 @@ class OIGProxy:
             if self.cloud_session_connected:
                 self._record_cloud_session_end(reason="box_disconnect")
             self.cloud_session_connected = False
+            self._cloud_rx_buf.clear()
 
     async def _process_frame_offline(
         self,
@@ -2233,34 +2432,28 @@ class OIGProxy:
                     return idx
         return self._control_coerce_value(value)
 
-    async def _handle_mqtt_state_message(
-        self,
-        *,
-        topic: str,
-        payload_text: str,
-        retain: bool,
-    ) -> None:
-        _ = retain
-        device_id, table_name = self._parse_mqtt_state_topic(topic)
-        if not device_id or not table_name:
-            return
+    def _validate_mqtt_state_device(self, device_id: str) -> bool:
         target_device_id = self.mqtt_publisher.device_id or self.device_id
         if not target_device_id or target_device_id == "AUTO":
-            return
-        if device_id != target_device_id:
-            return
-        self.mqtt_publisher.set_cached_payload(topic, payload_text)
-        if not table_name.startswith("tbl_"):
-            return
+            return False
+        return device_id == target_device_id
+
+    def _parse_mqtt_state_payload(self, payload_text: str) -> dict[str, Any] | None:
         try:
             payload = json.loads(payload_text)
         except Exception:
-            return
+            return None
         if not isinstance(payload, dict):
-            return
+            return None
+        return payload
 
+    def _transform_mqtt_state_values(
+        self,
+        payload: dict[str, Any],
+        table_name: str,
+    ) -> dict[str, Any]:
         raw_values: dict[str, Any] = {}
-        for key, value in payload.items():  # noqa: C901
+        for key, value in payload.items():
             if key.startswith("_"):
                 continue
             raw_value = self._mqtt_state_to_raw_value(
@@ -2275,22 +2468,51 @@ class OIGProxy:
                 raw_value=raw_value,
                 update_mode=True,
             )
+        return raw_values
 
+    def _persist_mqtt_state_values(
+        self,
+        table_name: str,
+        raw_values: dict[str, Any],
+        device_id: str,
+    ) -> None:
+        try:
+            save_prms_state(table_name, raw_values, device_id)
+        except Exception as e:
+            logger.debug(
+                "STATE: snapshot update failed (%s): %s",
+                table_name,
+                e)
+        existing = self._prms_tables.get(table_name, {})
+        merged: dict[str, Any] = {}
+        if isinstance(existing, dict):
+            merged.update(existing)
+        merged.update(raw_values)
+        self._prms_tables[table_name] = merged
+        self._prms_device_id = device_id
+
+    async def _handle_mqtt_state_message(
+        self,
+        *,
+        topic: str,
+        payload_text: str,
+        retain: bool,
+    ) -> None:
+        _ = retain
+        device_id, table_name = self._parse_mqtt_state_topic(topic)
+        if not device_id or not table_name:
+            return
+        if not self._validate_mqtt_state_device(device_id):
+            return
+        self.mqtt_publisher.set_cached_payload(topic, payload_text)
+        if not table_name.startswith("tbl_"):
+            return
+        payload = self._parse_mqtt_state_payload(payload_text)
+        if payload is None:
+            return
+        raw_values = self._transform_mqtt_state_values(payload, table_name)
         if raw_values and self._should_persist_table(table_name):
-            try:
-                save_prms_state(table_name, raw_values, device_id)
-            except Exception as e:
-                logger.debug(
-                    "STATE: snapshot update failed (%s): %s",
-                    table_name,
-                    e)
-            existing = self._prms_tables.get(table_name, {})
-            merged: dict[str, Any] = {}
-            if isinstance(existing, dict):
-                merged.update(existing)
-            merged.update(raw_values)
-            self._prms_tables[table_name] = merged
-            self._prms_device_id = device_id
+            self._persist_mqtt_state_values(table_name, raw_values, device_id)
 
     async def _control_publish_result(
         self,
@@ -2604,6 +2826,127 @@ class OIGProxy:
             return False, "box_not_sending_data"
         return True, None
 
+    async def _validate_control_request(
+        self,
+        payload: bytes,
+    ) -> dict[str, Any] | None:
+        try:
+            data = json.loads(payload.decode("utf-8", errors="strict"))
+        except Exception:
+            await self.mqtt_publisher.publish_raw(
+                topic=self._control_result_topic,
+                payload=json.dumps(
+                    {
+                        "tx_id": None,
+                        "status": "error",
+                        "error": "bad_json",
+                        "ts": OIGProxy._get_current_timestamp(),
+                    }
+                ),
+                qos=self._control_qos,
+                retain=self._control_retain,
+            )
+            return None
+        return data
+
+    def _build_control_tx(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        tx_id = str(data.get("tx_id") or "").strip()
+        tbl_name = str(data.get("tbl_name") or "").strip()
+        tbl_item = str(data.get("tbl_item") or "").strip()
+        if not tx_id or not tbl_name or not tbl_item or "new_value" not in data:
+            return None
+
+        return {
+            "tx_id": tx_id,
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": data.get("new_value"),
+            "confirm": str(data.get("confirm") or "New"),
+            "received_at": OIGProxy._get_current_timestamp(),
+            "_attempts": 0,
+        }
+
+    async def _check_whitelist_and_normalize(
+        self,
+        tx: dict[str, Any],
+    ) -> tuple[bool, str | None]:
+        tbl_name = tx["tbl_name"]
+        tbl_item = tx["tbl_item"]
+
+        allowed = tbl_item in self._control_whitelist.get(tbl_name, set())
+        if not allowed:
+            await self._control_publish_result(tx=tx, status="error", error="not_allowed")
+            return False, "not_allowed"
+
+        send_value, err = self._control_normalize_value(
+            tbl_name=tbl_name, tbl_item=tbl_item, new_value=tx["new_value"]
+        )
+        if send_value is None:
+            await self._control_publish_result(tx=tx, status="error", error=err)
+            return False, err
+
+        tx["new_value"] = send_value
+        tx["_canon"] = send_value
+        return True, None
+
+    async def _handle_duplicate_or_noop(
+        self,
+        tx: dict[str, Any],
+        request_key: str,
+    ) -> bool:
+        tbl_name = tx["tbl_name"]
+        tbl_item = tx["tbl_item"]
+        send_value = tx["_canon"]
+
+        async with self._control_lock:
+            active_state = (
+                self._control_key_state.get(request_key, {}).get("state")
+                if request_key
+                else None
+            )
+
+            if active_state in ("queued", "sent", "acked", "applied"):
+                await self._control_publish_result(
+                    tx=tx, status="completed", detail="duplicate_ignored"
+                )
+                return True
+
+            current = self._last_values.get((tbl_name, tbl_item))
+            if current is not None:
+                current_norm, _ = self._control_normalize_value(
+                    tbl_name=tbl_name, tbl_item=tbl_item, new_value=current
+                )
+                if (
+                    current_norm is not None
+                    and str(current_norm) == str(send_value)
+                    and self._control_inflight is None
+                    and not self._control_queue
+                ):
+                    await self._control_publish_result(
+                        tx=tx, status="completed", detail="noop_already_set"
+                    )
+                    return True
+
+        return False
+
+    async def _enqueue_control_tx(
+        self,
+        tx: dict[str, Any],
+        request_key: str,
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        canceled_sa = None
+        dropped_sa = []
+
+        async with self._control_lock:
+            canceled_sa = self._control_cancel_post_drain_sa_inflight_locked()
+            dropped_sa = self._control_drop_post_drain_sa_locked()
+            self._control_queue.append(tx)
+
+        return canceled_sa, dropped_sa
+
     async def _control_defer_inflight(self, *, reason: str) -> None:
         """Requeue inflight command for retry; stop after max attempts."""
         async with self._control_lock:
@@ -2691,28 +3034,15 @@ class OIGProxy:
     ) -> None:
         _ = topic
         _ = retain
-        try:
-            data = json.loads(payload.decode("utf-8", errors="strict"))
-        except Exception:
-            await self.mqtt_publisher.publish_raw(
-                topic=self._control_result_topic,
-                payload=json.dumps(
-                    {
-                        "tx_id": None,
-                        "status": "error",
-                        "error": "bad_json",
-                        "ts": OIGProxy._get_current_timestamp(),
-                    }
-                ),
-                qos=self._control_qos,
-                retain=self._control_retain,
-            )
+        data = await self._validate_control_request(payload)
+        if data is None:
             return
 
-        tx_id = str(data.get("tx_id") or "").strip()
-        tbl_name = str(data.get("tbl_name") or "").strip()
-        tbl_item = str(data.get("tbl_item") or "").strip()
-        if not tx_id or not tbl_name or not tbl_item or "new_value" not in data:
+        tx = self._build_control_tx(data)
+        if tx is None:
+            tx_id = str(data.get("tx_id") or "").strip()
+            tbl_name = str(data.get("tbl_name") or "").strip()
+            tbl_item = str(data.get("tbl_item") or "").strip()
             tx_payload = {
                 "tx_id": tx_id or None,
                 "tbl_name": tbl_name,
@@ -2726,71 +3056,24 @@ class OIGProxy:
             )
             return
 
-        tx: dict[str, Any] = {
-            "tx_id": tx_id,
-            "tbl_name": tbl_name,
-            "tbl_item": tbl_item,
-            "new_value": data.get("new_value"),
-            "confirm": str(data.get("confirm") or "New"),
-            "received_at": OIGProxy._get_current_timestamp(),
-            "_attempts": 0,
-        }
-
-        allowed = tbl_item in self._control_whitelist.get(tbl_name, set())
+        allowed, err = await self._check_whitelist_and_normalize(tx)
         if not allowed:
-            await self._control_publish_result(tx=tx, status="error", error="not_allowed")
             return
 
-        send_value, err = self._control_normalize_value(
-            tbl_name=tbl_name, tbl_item=tbl_item, new_value=tx["new_value"]
-        )
-        if send_value is None:
-            await self._control_publish_result(tx=tx, status="error", error=err)
-            return
-        tx["new_value"] = send_value
-        tx["_canon"] = send_value
         request_key_raw = str(data.get("request_key") or "").strip()
         request_key = self._control_build_request_key(
-            tbl_name=tbl_name, tbl_item=tbl_item, canon_value=send_value
+            tbl_name=tx["tbl_name"],
+            tbl_item=tx["tbl_item"],
+            canon_value=tx["_canon"]
         )
         if request_key_raw and request_key_raw != request_key:
             tx["request_key_raw"] = request_key_raw
         tx["request_key"] = request_key
 
-        active_state = None
-        dropped_sa: list[dict[str, Any]] = []
-        canceled_sa: dict[str, Any] | None = None
-        async with self._control_lock:
-            active_state = (
-                self._control_key_state.get(request_key, {}).get("state")
-                if request_key
-                else None
-            )
-            current = self._last_values.get((tbl_name, tbl_item))
-            if current is not None:
-                current_norm, _ = self._control_normalize_value(
-                    tbl_name=tbl_name, tbl_item=tbl_item, new_value=current
-                )
-                if (
-                    current_norm is not None
-                    and str(current_norm) == str(send_value)
-                    and self._control_inflight is None
-                    and not self._control_queue
-                ):
-                    await self._control_publish_result(
-                        tx=tx, status="completed", detail="noop_already_set"
-                    )
-                    return
+        if await self._handle_duplicate_or_noop(tx, request_key):
+            return
 
-            if active_state in ("queued", "sent", "acked", "applied"):
-                await self._control_publish_result(
-                    tx=tx, status="completed", detail="duplicate_ignored"
-                )
-                return
-
-            canceled_sa = self._control_cancel_post_drain_sa_inflight_locked()
-            dropped_sa = self._control_drop_post_drain_sa_locked()
-            self._control_queue.append(tx)
+        canceled_sa, dropped_sa = await self._enqueue_control_tx(tx, request_key)
 
         if canceled_sa:
             logger.info(
@@ -3206,6 +3489,101 @@ class OIGProxy:
         await self._control_publish_result(tx=tx, status="accepted", detail=f"internal_sa:{reason}")
         await self._control_maybe_start_next()
 
+    async def _get_valid_tx_with_lock(
+        self,
+        tx_id: str,
+    ) -> dict[str, Any] | None:
+        async with self._control_lock:
+            tx = self._control_inflight
+            if tx is None or tx.get("tx_id") != tx_id:
+                return None
+            return tx
+
+    async def _handle_marker_frames(
+        self,
+        tx: dict[str, Any],
+        table_name: str,
+    ) -> None:
+        tx_id = tx.get("tx_id")
+        if tx_id is None:
+            return
+        tx2 = await self._get_valid_tx_with_lock(tx_id)
+        if tx2 is None:
+            return
+        stage = tx2.get("stage")
+        if stage in ("box_ack", "applied"):
+            await self._control_publish_result(
+                tx=tx, status="completed", detail=f"box_marker:{table_name}"
+            )
+            await self._control_finish_inflight()
+
+    async def _handle_setting_event_control(
+        self,
+        tx: dict[str, Any],
+        content: str,
+    ) -> None:
+        ev = self._parse_setting_event(content)
+        if not ev:
+            return
+        ev_tbl, ev_item, old_v, new_v = ev
+        if ev_tbl != tx.get("tbl_name") or ev_item != tx.get("tbl_item"):
+            return
+        desired = str(tx.get("new_value"))
+        if str(new_v) != desired:
+            return
+        tx_id = tx.get("tx_id")
+        if tx_id is None:
+            return
+        async with self._control_lock:
+            tx2 = self._control_inflight
+            if tx2 is None or tx2.get("tx_id") != tx_id:
+                return
+            tx2["stage"] = "applied"
+            tx2["applied_at_mono"] = time.monotonic()
+            tx2["last_inv_ack_mono"] = tx2["applied_at_mono"]
+        await self._control_publish_result(
+            tx=tx,
+            status="applied",
+            extra={
+                "old_value": old_v,
+                "observed_new_value": new_v,
+            },
+        )
+
+        if (tx.get("tbl_name"), tx.get("tbl_item")) != (
+                "tbl_box_prms", "MODE"):
+            await self._control_publish_result(tx=tx, status="completed", detail="applied")
+            await self._control_finish_inflight()
+            return
+
+        if self._control_quiet_task and not self._control_quiet_task.done():
+            self._control_quiet_task.cancel()
+        self._control_quiet_task = asyncio.create_task(
+            self._control_quiet_wait())
+
+    async def _handle_invertor_ack(
+        self,
+        tx: dict[str, Any],
+        content: str,
+    ) -> None:
+        if ("Invertor ACK" not in content or
+                (tx.get("tbl_name"), tx.get("tbl_item")) != ("tbl_box_prms", "MODE")):
+            return
+        tx_id = tx.get("tx_id")
+        if tx_id is None:
+            return
+        async with self._control_lock:
+            tx2 = self._control_inflight
+            if tx2 is None or tx2.get("tx_id") != tx_id:
+                return
+            if tx2.get("stage") != "applied":
+                return
+            tx2["last_inv_ack_mono"] = time.monotonic()
+        if self._control_quiet_task and not self._control_quiet_task.done():
+            self._control_quiet_task.cancel()
+        self._control_quiet_task = asyncio.create_task(
+            self._control_quiet_wait())
+
     async def _control_observe_box_frame(
         self, parsed: dict[str, Any], table_name: str | None, _frame: str
     ) -> None:
@@ -3215,16 +3593,7 @@ class OIGProxy:
             return
 
         if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW", "END"):
-            async with self._control_lock:
-                tx2 = self._control_inflight
-                if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
-                    return
-                stage = tx2.get("stage")
-            if stage in ("box_ack", "applied"):
-                await self._control_publish_result(
-                    tx=tx, status="completed", detail=f"box_marker:{table_name}"
-                )
-                await self._control_finish_inflight()
+            await self._handle_marker_frames(tx, table_name)
             return
 
         if table_name != "tbl_events":
@@ -3236,56 +3605,10 @@ class OIGProxy:
             return
 
         if typ == "Setting":
-            ev = self._parse_setting_event(content)
-            if not ev:
-                return
-            ev_tbl, ev_item, old_v, new_v = ev
-            if ev_tbl != tx.get("tbl_name") or ev_item != tx.get("tbl_item"):
-                return
-            desired = str(tx.get("new_value"))
-            if str(new_v) != desired:
-                return
-            async with self._control_lock:
-                tx2 = self._control_inflight
-                if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
-                    return
-                tx2["stage"] = "applied"
-                tx2["applied_at_mono"] = time.monotonic()
-                tx2["last_inv_ack_mono"] = tx2["applied_at_mono"]
-            await self._control_publish_result(
-                tx=tx,
-                status="applied",
-                extra={
-                    "old_value": old_v,
-                    "observed_new_value": new_v,
-                },
-            )
-
-            if (tx.get("tbl_name"), tx.get("tbl_item")) != (
-                    "tbl_box_prms", "MODE"):
-                await self._control_publish_result(tx=tx, status="completed", detail="applied")
-                await self._control_finish_inflight()
-                return
-
-            if self._control_quiet_task and not self._control_quiet_task.done():
-                self._control_quiet_task.cancel()
-            self._control_quiet_task = asyncio.create_task(
-                self._control_quiet_wait())
+            await self._handle_setting_event_control(tx, content)
             return
 
-        if ("Invertor ACK" in content and (tx.get("tbl_name"),
-                                           tx.get("tbl_item")) == ("tbl_box_prms", "MODE")):
-            async with self._control_lock:
-                tx2 = self._control_inflight
-                if tx2 is None or tx2.get("tx_id") != tx.get("tx_id"):
-                    return
-                if tx2.get("stage") != "applied":
-                    return
-                tx2["last_inv_ack_mono"] = time.monotonic()
-            if self._control_quiet_task and not self._control_quiet_task.done():
-                self._control_quiet_task.cancel()
-            self._control_quiet_task = asyncio.create_task(
-                self._control_quiet_wait())
+        await self._handle_invertor_ack(tx, content)
 
     # ---------------------------------------------------------------------
     # Control API (prototype)
