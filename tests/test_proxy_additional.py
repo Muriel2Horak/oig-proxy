@@ -6,6 +6,7 @@
 import asyncio
 import time
 from collections import deque, defaultdict
+import pytest
 
 import proxy as proxy_module
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
