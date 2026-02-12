@@ -17,6 +17,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 
 from utils import resolve_cloud_host
+from backoff import BackoffStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -45,21 +46,24 @@ class CloudSessionManager:
         port: int,
         stats: CloudStats | None = None,
         connect_timeout_s: float = 5.0,
-        min_reconnect_s: float = 0.5,
-        max_reconnect_s: float = 10.0,
     ) -> None:
         self.host = host
         self.port = port
         self.stats = stats or CloudStats()
         self.connect_timeout_s = connect_timeout_s
-        self.min_reconnect_s = min_reconnect_s
-        self.max_reconnect_s = max_reconnect_s
+
+        # Backoff strategy for connection retry
+        self.backoff = BackoffStrategy(
+            max_retries=3,
+            initial_backoff_s=0.5,
+            max_backoff_s=10.0,
+            backoff_multiplier=2.0,
+        )
 
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._conn_lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
-        self._backoff_s = min_reconnect_s
         self._last_connect_attempt = 0.0
         self._last_warn_ts = 0.0
         self._rx_buf = bytearray()
