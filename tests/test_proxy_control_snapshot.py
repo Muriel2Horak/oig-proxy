@@ -2,6 +2,7 @@
 
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+# pylint: disable=no-member,use-implicit-booleaness-not-comparison,wrong-import-position
 
 from unittest.mock import AsyncMock, MagicMock
 

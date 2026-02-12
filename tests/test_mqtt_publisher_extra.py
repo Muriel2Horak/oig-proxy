@@ -2,7 +2,7 @@
 # pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,unused-variable
 # pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
-# pylint: disable=duplicate-code
+# pylint: disable=duplicate-code,bad-indentation
 import asyncio
 
 import mqtt_publisher
@@ -675,7 +675,7 @@ def test_connect_timeout_logs(monkeypatch):
 
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
     publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
-    publisher.CONNECT_TIMEOUT = 0.1
+    setattr(publisher, "CONNECT_TIMEOUT", 0.1)
 
     class DummyNoConnectclient:
         def __init__(self, *args, **kwargs):

@@ -114,7 +114,7 @@ def test_process_message_malformed_json():
 def test_value_transformer():
     """Test value transformer interface."""
     transformer = DummyTransformer()
-    
+
     assert transformer.transform("tbl_box_prms", "SA", 1) == "1"
     assert transformer.transform("tbl_box_prms", "SB", 0) == "0"
 
@@ -122,9 +122,9 @@ def test_value_transformer():
 def test_state_persistence():
     """Test state persistence interface."""
     persistence = DummyPersistence()
-    
+
     persistence.save("tbl_box_prms", "DEV1", {"SA": 1})
     loaded = persistence.load("tbl_box_prms", "DEV1")
-    
+
     assert loaded["SA"] == 1
     assert persistence.load("tbl_box_prms", "OTHER") == {}

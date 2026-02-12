@@ -1,5 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,protected-access
-# pylint: disable=too-few-public-methods,unused-argument
+# pylint: disable=too-few-public-methods,unused-argument,missing-class-docstring
+# pylint: disable=use-implicit-booleaness-not-comparison
 import asyncio
 import logging
 import time
