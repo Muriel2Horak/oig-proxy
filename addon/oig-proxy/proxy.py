@@ -111,6 +111,11 @@ class OIGProxy:
     _TIME_OFFSET = "+00:00"
     _POST_DRAIN_SA_KEY = "post_drain_sa_refresh"
 
+    @staticmethod
+    def _get_current_timestamp() -> str:
+        """Get current timestamp in ISO format."""
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     def __init__(self, device_id: str):
         self.device_id = device_id
 
@@ -2306,7 +2311,7 @@ class OIGProxy:
             "status": status,
             "error": error,
             "detail": detail,
-            "ts": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
+            "ts": OIGProxy._get_current_timestamp(),
         }
         if extra:
             payload.update(extra)
@@ -2424,7 +2429,7 @@ class OIGProxy:
             "tbl_item": tx.get("tbl_item"),
             "new_value": tx.get("new_value"),
             "detail": detail,
-            "ts": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
+            "ts": OIGProxy._get_current_timestamp(),
         }
         self._control_key_state[request_key] = payload
         self._control_update_pending_keys(request_key=request_key, state=state)
@@ -2696,7 +2701,7 @@ class OIGProxy:
                         "tx_id": None,
                         "status": "error",
                         "error": "bad_json",
-                        "ts": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
+                        "ts": OIGProxy._get_current_timestamp(),
                     }
                 ),
                 qos=self._control_qos,
@@ -2727,7 +2732,7 @@ class OIGProxy:
             "tbl_item": tbl_item,
             "new_value": data.get("new_value"),
             "confirm": str(data.get("confirm") or "New"),
-            "received_at": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
+            "received_at": OIGProxy._get_current_timestamp(),
             "_attempts": 0,
         }
 
@@ -3182,7 +3187,7 @@ class OIGProxy:
             "tbl_item": "SA",
             "new_value": "1",
             "confirm": "New",
-            "received_at": datetime.now(timezone.utc).isoformat().replace(OIGProxy._TIME_OFFSET, "Z"),
+            "received_at": OIGProxy._get_current_timestamp(),
             "_attempts": 0,
             "_canon": "1",
             "request_key": request_key,
