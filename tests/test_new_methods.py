@@ -3,6 +3,7 @@
 import asyncio
 import time
 
+# pylint: disable=protected-access
 import proxy as proxy_module
 from models import ProxyMode
 
