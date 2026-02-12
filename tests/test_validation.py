@@ -4,7 +4,7 @@ import pytest
 
 # pylint: disable=protected-access
 import proxy as proxy_module
-from models import ProxyMode
+import models # from models import ProxyMode
 from tests.helpers import make_proxy
 
 
