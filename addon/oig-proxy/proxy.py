@@ -3269,45 +3269,6 @@ class OIGProxy:
                     return cfg.options[idx]
         return self._control_coerce_value(value)
 
-    def _control_update_persisted_snapshot(
-        self,
-        *,
-        tbl_name: str,
-        tbl_item: str,
-        raw_value: Any,
-    ) -> None:
-        """Upraví perzistentní snapshot (prms_state) bez zásahu do cache."""
-        if not tbl_name or not tbl_item:
-            return
-        if not self._should_persist_table(tbl_name):
-            return
-
-        resolved_device_id = (
-            (self.device_id if self.device_id != "AUTO" else None)
-            or self._prms_device_id
-        )
-
-        try:
-            save_prms_state(
-                tbl_name, {
-                    tbl_item: raw_value}, resolved_device_id)
-        except Exception as e:
-            logger.debug(
-                "STATE: snapshot update failed (%s/%s): %s",
-                tbl_name,
-                tbl_item,
-                e,
-            )
-
-        existing = self._prms_tables.get(tbl_name, {})
-        merged: dict[str, Any] = {}
-        if isinstance(existing, dict):
-            merged.update(existing)
-        merged[tbl_item] = raw_value
-        self._prms_tables[tbl_name] = merged
-        if resolved_device_id:
-            self._prms_device_id = resolved_device_id
-
     async def _publish_setting_event_state(
         self,
         *,

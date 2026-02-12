@@ -213,7 +213,7 @@ def test_control_normalize_and_coerce(tmp_path):
     assert proxy._control_coerce_value("text") == "text"
 
 
-def test_control_map_optimistic_value_and_snapshot(tmp_path, monkeypatch):
+def test_control_map_optimistic_value(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
     monkeypatch.setattr(proxy_module, "get_sensor_config",
@@ -222,17 +222,6 @@ def test_control_map_optimistic_value_and_snapshot(tmp_path, monkeypatch):
     assert proxy._control_map_optimistic_value(
         tbl_name="tbl_box_prms", tbl_item="MODE", value="1"
     ) == "B"
-
-    calls = []
-    monkeypatch.setattr(
-        proxy_module,
-        "save_prms_state",
-        lambda *args: calls.append(args))
-    proxy._control_update_persisted_snapshot(
-        tbl_name="tbl_box_prms", tbl_item="MODE", raw_value=1
-    )
-    assert calls
-    assert proxy._prms_tables["tbl_box_prms"]["MODE"] == 1
 
 
 def test_control_is_box_ready_conditions(tmp_path):

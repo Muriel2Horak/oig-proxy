@@ -1,4 +1,4 @@
-"""Tests for control persisted snapshot and state publishing."""
+"""Tests for control state publishing."""
 
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
@@ -26,34 +26,6 @@ def _make_proxy():
     return proxy
 
 
-def test_control_update_persisted_snapshot_updates_tables(monkeypatch):
-    proxy = _make_proxy()
-    monkeypatch.setattr(proxy_module, "save_prms_state", MagicMock())
-
-    proxy._control_update_persisted_snapshot(
-        tbl_name="tbl_box_prms",
-        tbl_item="SA",
-        raw_value="1",
-    )
-
-    proxy_module.save_prms_state.assert_called_once()
-    assert proxy._prms_tables["tbl_box_prms"]["SA"] == "1"
-    assert proxy._prms_device_id == "DEV1"
-
-
-def test_control_update_persisted_snapshot_skip():
-    proxy = _make_proxy()
-    proxy._should_persist_table = MagicMock(return_value=False)
-
-    proxy._control_update_persisted_snapshot(
-        tbl_name="tbl_box_prms",
-        tbl_item="SA",
-        raw_value="1",
-    )
-
-    assert proxy._prms_tables == {}
-
-
 import pytest
 
 
@@ -62,7 +34,6 @@ async def test_publish_setting_event_state(monkeypatch):
     proxy = _make_proxy()
     proxy._control_coerce_value = MagicMock(return_value="1")
     proxy._control_map_optimistic_value = MagicMock(return_value="ON")
-    proxy._control_update_persisted_snapshot = MagicMock()
     proxy._prms_tables["tbl_box_prms"] = {"MODE": "0"}
     proxy.mqtt_publisher.get_cached_payload = MagicMock(return_value=None)
     proxy.mqtt_publisher.map_data_for_publish = MagicMock(return_value=({"MODE": "ON"}, 1))
