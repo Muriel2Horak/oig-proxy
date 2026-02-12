@@ -1,4 +1,5 @@
 """Additional coverage tests for telemetry_client."""
+# pylint: disable=missing-function-docstring,protected-access,exec-used,unspecified-encoding
 
 from types import ModuleType
 from pathlib import Path

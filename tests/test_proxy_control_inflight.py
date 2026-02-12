@@ -1,5 +1,8 @@
 """Tests for control inflight handling and timeouts."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

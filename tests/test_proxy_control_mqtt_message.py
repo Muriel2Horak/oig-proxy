@@ -1,5 +1,8 @@
 """Tests for control MQTT message handling."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 import asyncio
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock

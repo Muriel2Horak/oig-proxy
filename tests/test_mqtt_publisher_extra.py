@@ -1,5 +1,5 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
-# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long
+# pylint: disable=unused-argument,too-few-public-methods,no-member,use-implicit-booleaness-not-comparison,line-too-long,unused-variable
 # pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
@@ -53,13 +53,11 @@ class Dummyclient:
 
 
 class DummyMQTTModule:
-    class CallbackAPIVersion:
-        VERSION1 = object()
-
-    mqtt_v311 = 4
     MQTTv311 = 4
-    client = Dummyclient
     Client = Dummyclient
+
+    class CallbackAPIVersion:
+            VERSION1 = object()
 
 
 def test_connect_skips_when_mqtt_unavailable(monkeypatch):
@@ -1112,4 +1110,3 @@ def test_connect_timeout(monkeypatch):
     class DummyMQTTTimeout:
         class CallbackAPIVersion:
             VERSION1 = object()
-

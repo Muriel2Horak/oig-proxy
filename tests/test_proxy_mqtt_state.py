@@ -1,5 +1,8 @@
 """Tests for MQTT state and control helpers in proxy.py."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 import asyncio
 import json
 import tempfile

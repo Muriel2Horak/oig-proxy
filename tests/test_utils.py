@@ -585,7 +585,7 @@ def test_save_prms_state_os_error(monkeypatch, tmp_path):
     import os
     path = tmp_path / "/invalid/path/that/does/not/exist.json"
     monkeypatch.setattr(utils, "PRMS_STATE_PATH", str(path))
-    
+
     utils.save_prms_state("tbl_test", {"MODE": 1}, "DEV1")
 
 
@@ -593,5 +593,5 @@ def test_save_prms_state_value_error(monkeypatch, tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("not json data", encoding="utf-8")
     monkeypatch.setattr(utils, "PRMS_STATE_PATH", str(path))
-    
+
     utils.save_prms_state("tbl_test", {"MODE": 1}, "DEV1")

@@ -1,4 +1,5 @@
 """Tests for backoff module."""
+# pylint: disable=protected-access
 
 import pytest
 
@@ -36,22 +37,22 @@ def test_backoff_strategy_get_delay():
         max_backoff_s=10.0,
         backoff_multiplier=2.0,
     )
-    
+
     # First attempt
     assert strategy.get_backoff_delay() == 1.0
-    
+
     strategy.record_failure()
     # Second attempt
     assert strategy.get_backoff_delay() == 2.0
-    
+
     strategy.record_failure()
     # Third attempt
     assert strategy.get_backoff_delay() == 4.0
-    
+
     strategy.record_failure()
     # Fourth attempt (should be 8.0, less than max_backoff)
     assert strategy.get_backoff_delay() == 8.0
-    
+
     strategy.record_failure()
     # Fifth attempt (still below max_backoff)
     assert strategy.get_backoff_delay() == 10.0
@@ -60,17 +61,17 @@ def test_backoff_strategy_get_delay():
 def test_backoff_strategy_should_retry():
     """Test BackoffStrategy.should_retry."""
     strategy = BackoffStrategy(max_retries=3)
-    
+
     # Initially should retry
     assert strategy.should_retry() is True
-    
+
     # After 3 failures, should not retry
     strategy.record_failure()
     assert strategy.should_retry() is True
-    
+
     strategy.record_failure()
     assert strategy.should_retry() is True
-    
+
     strategy.record_failure()
     assert strategy.should_retry() is False
 
@@ -78,12 +79,12 @@ def test_backoff_strategy_should_retry():
 def test_backoff_strategy_reset():
     """Test BackoffStrategy.reset."""
     strategy = BackoffStrategy(max_retries=3)
-    
+
     strategy.record_failure()
     strategy.record_failure()
     assert strategy._attempt == 2
     assert strategy.should_retry() is True
-    
+
     strategy.reset()
     assert strategy._attempt == 0
     assert strategy.should_retry() is True

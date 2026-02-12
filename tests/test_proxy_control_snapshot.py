@@ -1,5 +1,8 @@
 """Tests for control persisted snapshot and state publishing."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 from unittest.mock import AsyncMock, MagicMock
 
 import proxy as proxy_module

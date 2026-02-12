@@ -1,4 +1,6 @@
 """Additional coverage tests for utils capture paths."""
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,exec-used,unspecified-encoding
 
 import queue
 import sqlite3

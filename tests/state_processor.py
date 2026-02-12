@@ -2,6 +2,7 @@
 
 Extracts and transforms state values for cleaner code.
 """
+# pylint: disable=unnecessary-pass,too-few-public-methods,broad-exception-caught
 
 import json
 import logging

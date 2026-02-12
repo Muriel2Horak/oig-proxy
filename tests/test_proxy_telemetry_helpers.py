@@ -1,5 +1,8 @@
 """Tests for proxy telemetry helper methods."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 from collections import Counter, deque
 from unittest.mock import MagicMock
 

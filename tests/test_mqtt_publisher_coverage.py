@@ -1,4 +1,6 @@
 """Additional coverage tests for mqtt_publisher."""
+# pylint: disable=missing-class-docstring,missing-function-docstring,protected-access,too-few-public-methods
+# pylint: disable=invalid-name,no-member,unnecessary-lambda-assignment
 
 import asyncio
 import sqlite3

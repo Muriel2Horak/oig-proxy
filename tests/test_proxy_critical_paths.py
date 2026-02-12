@@ -1,5 +1,8 @@
 """Tests for critical paths in proxy.py."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 import asyncio
 import time
 from enum import Enum

@@ -32,12 +32,12 @@ from config import (
 )
 from models import SensorConfig
 from utils import get_sensor_config, iso_now
- 
+
 if MQTT_AVAILABLE:  # pragma: no cover
     import paho.mqtt.client as mqtt  # pragma: no cover
 else:  # pragma: no cover
-    mqtt = None  # type: ignore[assignment]
- 
+    mqtt = None  # type: ignore[assignment]  # pylint: disable=invalid-name
+
 logger = logging.getLogger(__name__)
 
 _MQTT_LOG_SUBSCRIBED = "MQTT: Subscribed %s"

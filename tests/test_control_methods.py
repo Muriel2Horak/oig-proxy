@@ -1,4 +1,5 @@
 """Tests for new control methods added in proxy.py."""
+# pylint: disable=protected-access
 
 import asyncio
 import os

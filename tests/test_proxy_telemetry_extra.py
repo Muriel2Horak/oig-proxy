@@ -1,5 +1,8 @@
 """Additional coverage tests for proxy telemetry helpers."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 from collections import Counter, deque
 import time
 

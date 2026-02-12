@@ -1,5 +1,8 @@
 """Tests for new methods added in telemetry/sonar PR."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
+
 import asyncio
 import time
 import pytest

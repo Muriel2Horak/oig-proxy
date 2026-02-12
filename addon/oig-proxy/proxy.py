@@ -3058,7 +3058,7 @@ class OIGProxy:
             )
             return
 
-        allowed, err = await self._check_whitelist_and_normalize(tx)
+        allowed, _err = await self._check_whitelist_and_normalize(tx)
         if not allowed:
             return
 
