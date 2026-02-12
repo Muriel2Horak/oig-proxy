@@ -59,47 +59,6 @@ class DummyParser:
         return None
 
 
-class DummyWriter:
-    def __init__(self):
-        self.data = []
-        self._closing = False
-
-    def write(self, data):
-        self.data.append(data)
-
-    async def drain(self):
-        return None
-
-    def close(self):
-        self._closing = True
-
-    async def wait_closed(self):
-        return None
-
-    def is_closing(self):
-        return self._closing
-
-    def get_extra_info(self, name):
-        if name == "peername":
-            return ("1.2.3.4", 1234)
-        if name == "socket":
-            return None
-        return None
-
-
-class DummyReader:
-    def __init__(self, payloads):
-        self._payloads = list(payloads)
-
-    async def read(self, _size):
-        if not self._payloads:
-            return b""
-        item = self._payloads.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-
 def make_proxy(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "DEV1"
