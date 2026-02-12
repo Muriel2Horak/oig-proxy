@@ -6,7 +6,9 @@ import time
 import pytest
 
 from tests.helpers import make_proxy
-from models import ProxyMode
+from tests.helpers import make_proxy
+
+import models.ProxyMode
 
 
 @pytest.mark.skip("async mocking complexity, not priority for SonarCloud")

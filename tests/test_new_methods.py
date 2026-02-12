@@ -5,7 +5,9 @@ import time
 import pytest
 
 from tests.helpers import make_proxy
-from models import ProxyMode
+from tests.helpers import make_proxy
+
+import models.ProxyMode
 
 
 def test_validate_event_loop_ready(tmp_path):
