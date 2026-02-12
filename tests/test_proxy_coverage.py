@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import oig_frame
 import proxy as proxy_module
 from models import ProxyMode
+from telemetry_collector import TelemetryCollector
 
 
 class MockMQTTPublisher:
@@ -35,16 +36,12 @@ def make_proxy(tmp_path):
     proxy._last_data_epoch = time.time()
     proxy.box_connected = True
     proxy._loop = None
-    proxy._telemetry_box_seen_in_window = False
-    proxy._telemetry_cloud_ok_in_window = False
-    proxy._telemetry_cloud_failed_in_window = False
-    proxy._telemetry_cloud_eof_short_in_window = False
     proxy.cloud_session_connected = False
-    proxy._telemetry_debug_windows_remaining = 0
     proxy.mqtt_publisher = MockMQTTPublisher()
     proxy._last_values = {}
     proxy._control_key_state = {}
     proxy._update_cached_value = lambda **kwargs: None
+    proxy._tc = MagicMock()
     return proxy
 
 
@@ -147,57 +144,56 @@ def test_validate_event_loop_ready(tmp_path):
 
 def test_get_box_connected_window_status(tmp_path, monkeypatch):
     """Test _get_box_connected_window_status returns correct status."""
-    proxy = make_proxy(tmp_path)
-    proxy._telemetry_box_seen_in_window = False
+    mock_proxy = MagicMock()
+    mock_proxy.box_connected = True
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
+    tc.box_seen_in_window = False
 
     # Box connected
-    proxy.box_connected = True
-    assert proxy._get_box_connected_window_status() is True
-    assert proxy._telemetry_box_seen_in_window is False
+    assert tc._get_box_connected_window_status() is True
+    assert tc.box_seen_in_window is False
 
     # Box not connected but seen in window
-    proxy.box_connected = False
-    proxy._telemetry_box_seen_in_window = True
-    assert proxy._get_box_connected_window_status() is True
+    mock_proxy.box_connected = False
+    tc.box_seen_in_window = True
+    assert tc._get_box_connected_window_status() is True
 
 
 def test_should_include_telemetry_logs(tmp_path):
-    """Test _should_include_telemetry_logs returns correct decision."""
-    proxy = make_proxy(tmp_path)
-
+    """Test _should_include_logs returns correct decision."""
     # Debug active - always include
-    proxy._telemetry_debug_windows_remaining = 1
-    assert proxy._should_include_telemetry_logs(True, True) is True
+    assert TelemetryCollector._should_include_logs(True, True) is True
 
     # Box not connected - include logs
-    assert proxy._should_include_telemetry_logs(False, False) is True
+    assert TelemetryCollector._should_include_logs(False, False) is True
 
     # Debug inactive and box connected - don't include
-    proxy._telemetry_debug_windows_remaining = 0
-    assert proxy._should_include_telemetry_logs(False, True) is False
+    assert TelemetryCollector._should_include_logs(False, True) is False
 
 
 def test_get_cloud_online_window_status(tmp_path):
     """Test _get_cloud_online_window_status returns correct status."""
-    proxy = make_proxy(tmp_path)
+    mock_proxy = MagicMock()
+    mock_proxy.cloud_session_connected = False
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
 
     # Cloud OK in window
-    proxy._telemetry_cloud_ok_in_window = True
-    assert proxy._get_cloud_online_window_status() is True
-    assert proxy._telemetry_cloud_ok_in_window is False
+    tc.cloud_ok_in_window = True
+    assert tc._get_cloud_online_window_status() is True
+    assert tc.cloud_ok_in_window is False
 
     # Cloud failed in window
-    proxy._telemetry_cloud_failed_in_window = True
-    assert proxy._get_cloud_online_window_status() is False
-    assert proxy._telemetry_cloud_failed_in_window is False
+    tc.cloud_failed_in_window = True
+    assert tc._get_cloud_online_window_status() is False
+    assert tc.cloud_failed_in_window is False
 
     # Cloud connected but no OK or failure
-    proxy.cloud_session_connected = True
-    assert proxy._get_cloud_online_window_status() is True
+    mock_proxy.cloud_session_connected = True
+    assert tc._get_cloud_online_window_status() is True
 
     # Cloud not connected
-    proxy.cloud_session_connected = False
-    assert proxy._get_cloud_online_window_status() is False
+    mock_proxy.cloud_session_connected = False
+    assert tc._get_cloud_online_window_status() is False
 
 
 def test_validate_mqtt_state_device(tmp_path, monkeypatch):
@@ -239,8 +235,11 @@ def test_parse_mqtt_state_payload_invalid(tmp_path):
 def test_build_device_specific_metrics(tmp_path):
     """Test _build_device_specific_metrics returns expected structure."""
     proxy = make_proxy(tmp_path)
+    mock_proxy_for_tc = MagicMock()
+    mock_proxy_for_tc.mqtt_publisher = proxy.mqtt_publisher
+    tc = TelemetryCollector(mock_proxy_for_tc, interval_s=300)
 
-    metrics = proxy._build_device_specific_metrics("DEV1")
+    metrics = tc._build_device_specific_metrics("DEV1")
 
     assert "isnewfw_fw" in metrics
     assert "isnewset_lat" in metrics

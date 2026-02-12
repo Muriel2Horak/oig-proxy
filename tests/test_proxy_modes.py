@@ -6,6 +6,7 @@
 import asyncio
 from collections import deque
 from enum import Enum
+from unittest.mock import MagicMock
 
 class ProxyMode(Enum):
     OFFLINE = -1
@@ -53,8 +54,7 @@ def _make_proxy(
     proxy._hybrid_state = None
     proxy._hybrid_state_since_epoch = None
     proxy._hybrid_last_offline_reason = None
-    proxy._telemetry_hybrid_sessions = deque()
-    proxy._telemetry_offline_events = []
+    proxy._tc = MagicMock()
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None
 
@@ -82,8 +82,7 @@ def test_switch_mode_tracks_changes():
     proxy._hybrid_state = None
     proxy._hybrid_state_since_epoch = None
     proxy._hybrid_last_offline_reason = None
-    proxy._telemetry_hybrid_sessions = deque()
-    proxy._telemetry_offline_events = []
+    proxy._tc = MagicMock()
 
     async def run():
         old_mode = await proxy._switch_mode(ProxyMode.ONLINE)

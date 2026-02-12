@@ -7,10 +7,11 @@ import asyncio
 import json
 import logging
 import time
-from collections import deque, defaultdict
+from collections import deque
 
 import proxy as proxy_module
 from models import ProxyMode, SensorConfig
+from telemetry_collector import TelemetryCollector
 
 
 class DummyCloudHealth:
@@ -136,7 +137,6 @@ def _make_proxy(tmp_path):
     proxy._cloud_connected_since_epoch = None
     proxy._cloud_peer = None
     proxy._configured_mode = "online"
-    proxy._telemetry_hybrid_sessions = deque()
     proxy._hybrid_state = None
     proxy._hybrid_state_since_epoch = None
     proxy._hybrid_last_offline_reason = None
@@ -215,24 +215,10 @@ def _make_proxy(tmp_path):
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
-    proxy._telemetry_interval_s = 300
     proxy._start_time = time.time()
     proxy._set_commands_buffer = []
-    proxy._telemetry_box_sessions = deque()
-    proxy._telemetry_cloud_sessions = deque()
-    proxy._telemetry_offline_events = deque()
-    proxy._telemetry_tbl_events = deque()
-    proxy._telemetry_error_context = deque()
-    proxy._telemetry_logs = deque()
-    proxy._telemetry_log_window_s = 60
-    proxy._telemetry_log_max = 1000
-    proxy._telemetry_debug_windows_remaining = 0
-    proxy._telemetry_box_seen_in_window = False
-    proxy._telemetry_cloud_ok_in_window = False
-    proxy._telemetry_cloud_failed_in_window = False
-    proxy._telemetry_cloud_eof_short_in_window = False
-    proxy._telemetry_req_pending = defaultdict(deque)
-    proxy._telemetry_stats = {}
+    tc = TelemetryCollector(proxy, interval_s=300)
+    proxy._tc = tc
     return proxy
 
 
@@ -268,12 +254,13 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
 
 def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     proxy = _make_proxy(tmp_path)
+    tc = proxy._tc
     proxy._start_time = time.time() - 123
-    proxy._telemetry_box_sessions.append({"timestamp": "t1"})
-    proxy._telemetry_cloud_sessions.append({"timestamp": "t2"})
-    proxy._telemetry_offline_events.append({"timestamp": "t3"})
-    proxy._telemetry_tbl_events.append({"timestamp": "t4", "event_time": "t4"})
-    proxy._telemetry_error_context.append({"timestamp": "t5"})
+    tc.box_sessions.append({"timestamp": "t1"})
+    tc.cloud_sessions.append({"timestamp": "t2"})
+    tc.offline_events.append({"timestamp": "t3"})
+    tc.tbl_events.append({"timestamp": "t4", "event_time": "t4"})
+    tc.error_context.append({"timestamp": "t5"})
     record = logging.LogRecord(
         name="test",
         level=logging.WARNING,
@@ -283,9 +270,9 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
         args=(),
         exc_info=None,
     )
-    proxy._record_log_entry(record)
+    tc.record_log_entry(record)
 
-    metrics = proxy._collect_telemetry_metrics()
+    metrics = tc.collect_metrics()
     window_metrics = metrics["window_metrics"]
 
     assert metrics["interval_s"] == 300
@@ -299,12 +286,12 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     assert window_metrics["stats"] == []
     assert len(window_metrics["logs"]) == 1
 
-    assert not proxy._telemetry_box_sessions
-    assert not proxy._telemetry_cloud_sessions
-    assert not proxy._telemetry_offline_events
-    assert not proxy._telemetry_tbl_events
-    assert not proxy._telemetry_error_context
-    assert not proxy._telemetry_logs
+    assert not tc.box_sessions
+    assert not tc.cloud_sessions
+    assert not tc.offline_events
+    assert not tc.tbl_events
+    assert not tc.error_context
+    assert not tc.logs
 
     proxy._mode_value = 2
 
@@ -318,47 +305,51 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
 
 def test_cloud_online_success_wins_over_failure(tmp_path):
     proxy = _make_proxy(tmp_path)
-    proxy._telemetry_cloud_ok_in_window = True
-    proxy._telemetry_cloud_failed_in_window = True
+    tc = proxy._tc
+    tc.cloud_ok_in_window = True
+    tc.cloud_failed_in_window = True
     proxy.cloud_session_connected = False
-    metrics = proxy._collect_telemetry_metrics()
+    metrics = tc.collect_metrics()
     assert metrics["cloud_online"] is True
 
 
 def test_cloud_online_eof_short_without_success_is_false(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
+    tc = proxy._tc
     proxy._cloud_connected_since_epoch = 100.0
-    proxy._telemetry_cloud_ok_in_window = False
+    tc.cloud_ok_in_window = False
     monkeypatch.setattr(time, "time", lambda: 100.5)
-    proxy._record_cloud_session_end(reason="eof")
-    metrics = proxy._collect_telemetry_metrics()
+    tc.record_cloud_session_end(reason="eof")
+    metrics = tc.collect_metrics()
     assert metrics["cloud_online"] is False
 
 
 def test_cloud_online_eof_short_after_success_is_true(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
+    tc = proxy._tc
     proxy._cloud_connected_since_epoch = 200.0
-    proxy._telemetry_cloud_ok_in_window = True
+    tc.cloud_ok_in_window = True
     monkeypatch.setattr(time, "time", lambda: 200.2)
-    proxy._record_cloud_session_end(reason="eof")
-    metrics = proxy._collect_telemetry_metrics()
+    tc.record_cloud_session_end(reason="eof")
+    metrics = tc.collect_metrics()
     assert metrics["cloud_online"] is True
 
 
 def test_telemetry_stats_pairing_and_flush(tmp_path):
     proxy = _make_proxy(tmp_path)
+    tc = proxy._tc
     proxy._start_time = time.time() - 1
     proxy.mode = ProxyMode.OFFLINE
     conn_id = 7
-    proxy._telemetry_record_request("IsNewSet", conn_id)
-    proxy._telemetry_record_response(
+    tc.record_request("IsNewSet", conn_id)
+    tc.record_response(
         "<Frame><Result>END</Result><Time>2026-02-04 08:42:50</Time>"
         "<UTCTime>2026-02-04 08:42:50</UTCTime><CRC>33821</CRC></Frame>",
         source="local",
         conn_id=conn_id,
     )
 
-    metrics = proxy._collect_telemetry_metrics()
+    metrics = tc.collect_metrics()
     stats = metrics["window_metrics"]["stats"]
     assert len(stats) == 1
     entry = stats[0]
@@ -371,12 +362,16 @@ def test_telemetry_stats_pairing_and_flush(tmp_path):
 
 def test_telemetry_cached_state_value_pascalcase(tmp_path):
     proxy = _make_proxy(tmp_path)
+    tc = proxy._tc
     proxy.mqtt_publisher = DummyMQTT()
+    # Re-create TC with updated mqtt_publisher
+    tc = TelemetryCollector(proxy, interval_s=300)
+    proxy._tc = tc
     topic = proxy.mqtt_publisher.state_topic("DEV1", "IsNewFW")
     proxy.mqtt_publisher.set_cached_payload(
         topic, json.dumps({"Fw": "v1.2.3"})
     )
-    value = proxy._telemetry_cached_state_value("DEV1", "isnewfw", "fw")
+    value = tc._cached_state_value("DEV1", "isnewfw", "fw")
     assert value == "v1.2.3"
 
 

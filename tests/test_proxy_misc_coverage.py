@@ -4,13 +4,14 @@
 import asyncio
 import logging
 import time
-from collections import defaultdict, deque
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import proxy as proxy_module
 from models import ProxyMode
+from telemetry_collector import TelemetryCollector
 
 
 def _make_proxy() -> proxy_module.OIGProxy:
@@ -23,18 +24,7 @@ def _make_proxy() -> proxy_module.OIGProxy:
     proxy._full_refresh_task = None
     proxy._telemetry_task = None
     proxy._control_api = None
-    proxy._telemetry_logs = deque()
-    proxy._telemetry_log_window_s = 60
-    proxy._telemetry_log_max = 1000
-    proxy._telemetry_log_error = False
-    proxy._telemetry_debug_windows_remaining = 0
-    proxy._telemetry_force_logs_this_window = False
-    proxy._telemetry_req_pending = defaultdict(deque)
-    proxy._telemetry_stats = {}
-    proxy._telemetry_error_context = deque()
-    proxy._telemetry_cloud_ok_in_window = False
-    proxy._telemetry_cloud_failed_in_window = False
-    proxy._telemetry_box_seen_in_window = False
+    proxy._tc = MagicMock()
     proxy._background_tasks = set()
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.publish_data = AsyncMock()
@@ -70,7 +60,6 @@ def test_start_background_tasks_skips_telemetry(monkeypatch):
 
     proxy._proxy_status_loop = _status_loop
     proxy._full_refresh_loop = _full_refresh
-    proxy._init_telemetry = MagicMock()
 
     created = []
 
@@ -84,7 +73,7 @@ def test_start_background_tasks_skips_telemetry(monkeypatch):
 
     proxy._start_background_tasks()
     assert len(created) == 2
-    proxy._init_telemetry.assert_not_called()
+    proxy._tc.init.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -164,50 +153,54 @@ async def test_handle_mode_update_invalid_values(monkeypatch):
 
 
 def test_telemetry_record_request_trims_queue():
-    proxy = _make_proxy()
-    proxy._telemetry_record_request(None, 1)
+    mock_proxy = MagicMock()
+    mock_proxy.mode = ProxyMode.ONLINE
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
+    tc.record_request(None, 1)
     for _ in range(1001):
-        proxy._telemetry_record_request("tbl_actual", 1)
-    assert len(proxy._telemetry_req_pending[1]) == 1000
+        tc.record_request("tbl_actual", 1)
+    assert len(tc.req_pending[1]) == 1000
 
 
 def test_telemetry_record_response_mode_variants():
-    proxy = _make_proxy()
-    proxy.mode = "HYBRID"
-    proxy._telemetry_record_response("<Result>ACK</Result>", source="cloud", conn_id=1)
-    assert ("unmatched", "cloud", "hybrid") in proxy._telemetry_stats
+    mock_proxy = MagicMock()
+    mock_proxy.mode = "HYBRID"
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
+    tc.record_response("<Result>ACK</Result>", source="cloud", conn_id=1)
+    assert ("unmatched", "cloud", "hybrid") in tc.stats
 
-    proxy.mode = None
-    proxy._mode_value = 3
-    proxy._telemetry_record_response("<Result>ACK</Result>", source="cloud", conn_id=2)
-    assert ("unmatched", "cloud", "offline") in proxy._telemetry_stats
+    mock_proxy.mode = None
+    mock_proxy._mode_value = 3
+    tc.record_response("<Result>ACK</Result>", source="cloud", conn_id=2)
+    assert ("unmatched", "cloud", "offline") in tc.stats
 
 
 def test_telemetry_flush_stats_empty():
-    proxy = _make_proxy()
-    items = proxy._telemetry_flush_stats()
+    mock_proxy = MagicMock()
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
+    items = tc._flush_stats()
     assert items == []
 
 
 def test_record_error_context_fallback():
-    proxy = _make_proxy()
-    proxy._utc_iso = MagicMock(return_value="2024-01-01T00:00:00Z")
-    proxy._snapshot_logs = MagicMock(return_value=[])
+    mock_proxy = MagicMock()
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
 
-    proxy._record_error_context(event_type="test", details={"bad": {1}})
-    assert "detail" in proxy._telemetry_error_context[0]["details"]
+    tc.record_error_context(event_type="test", details={"bad": {1}})
+    assert "detail" in tc.error_context[0]["details"]
 
 
 def test_record_log_entry_skips_and_handles_exception():
-    proxy = _make_proxy()
-    proxy._telemetry_log_error = True
+    mock_proxy = MagicMock()
+    tc = TelemetryCollector(mock_proxy, interval_s=300)
+    tc.log_error = True
     record = logging.LogRecord("test", logging.INFO, "file", 1, "msg", None, None)
-    proxy._record_log_entry(record)
-    assert proxy._telemetry_logs == deque()
+    tc.record_log_entry(record)
+    assert tc.logs == deque()
 
-    proxy._telemetry_log_error = False
-    proxy._telemetry_debug_windows_remaining = 1
+    tc.log_error = False
+    tc.debug_windows_remaining = 1
     bad_record = logging.LogRecord("test", logging.INFO, "file", 1, "msg", None, None)
     bad_record.getMessage = MagicMock(side_effect=RuntimeError("boom"))
-    proxy._record_log_entry(bad_record)
-    assert proxy._telemetry_log_error is False
+    tc.record_log_entry(bad_record)
+    assert tc.log_error is False

@@ -46,6 +46,7 @@ def _make_proxy():
     proxy.stats = {"frames_received": 0, "frames_forwarded": 0, "acks_local": 0}
     proxy._active_box_peer = "peer"
     proxy._last_box_disconnect_reason = None
+    proxy._tc = MagicMock()
     proxy.publish_proxy_status = AsyncMock()
     return proxy
 
@@ -119,7 +120,6 @@ def test_extract_device_and_table_isnew():
 async def test_fallback_offline_from_cloud_issue():
     proxy = _make_proxy()
     proxy.cloud_session_connected = True
-    proxy._record_cloud_session_end = MagicMock()
     proxy._close_writer = AsyncMock()
     proxy._process_frame_offline = AsyncMock()
 
@@ -135,6 +135,6 @@ async def test_fallback_offline_from_cloud_issue():
         conn_id=1,
     )
 
-    proxy._record_cloud_session_end.assert_called_once()
+    proxy._tc.record_cloud_session_end.assert_called_once()
     proxy._close_writer.assert_called_once()
     proxy._process_frame_offline.assert_called_once()

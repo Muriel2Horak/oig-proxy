@@ -5,7 +5,8 @@
 # pylint: disable=duplicate-code
 import asyncio
 import time
-from collections import deque, defaultdict
+from collections import deque
+from unittest.mock import MagicMock
 import pytest
 
 import oig_frame
@@ -153,24 +154,8 @@ def make_proxy(tmp_path):
     proxy._full_refresh_interval_h = 1
     proxy._full_refresh_task = None
     proxy._local_setting_pending = None
-    proxy._telemetry_client = None
     proxy._set_commands_buffer = []
-    proxy._telemetry_interval_s = 300
-    proxy._telemetry_box_sessions = deque()
-    proxy._telemetry_cloud_sessions = deque()
-    proxy._telemetry_offline_events = deque()
-    proxy._telemetry_tbl_events = deque()
-    proxy._telemetry_error_context = deque()
-    proxy._telemetry_logs = deque()
-    proxy._telemetry_log_window_s = 60
-    proxy._telemetry_log_max = 1000
-    proxy._telemetry_debug_windows_remaining = 0
-    proxy._telemetry_box_seen_in_window = False
-    proxy._telemetry_cloud_ok_in_window = False
-    proxy._telemetry_cloud_failed_in_window = False
-    proxy._telemetry_cloud_eof_short_in_window = False
-    proxy._telemetry_req_pending = defaultdict(deque)
-    proxy._telemetry_stats = {}
+    proxy._tc = MagicMock()
     return proxy
 
 

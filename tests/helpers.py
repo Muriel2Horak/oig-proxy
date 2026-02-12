@@ -3,6 +3,7 @@
 import time
 import asyncio
 from collections import deque
+from unittest.mock import MagicMock
 
 # pylint: disable=protected-access
 import proxy as proxy_module
@@ -17,4 +18,5 @@ def make_proxy(tmp_path):
     proxy._last_data_epoch = time.time()
     proxy.box_connected = True
     proxy._box_conn_lock = asyncio.Lock()
+    proxy._tc = MagicMock()
     return proxy

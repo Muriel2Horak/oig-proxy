@@ -4,6 +4,7 @@
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
 import asyncio
+from unittest.mock import MagicMock
 import proxy as proxy_module
 from models import ProxyMode
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
@@ -161,7 +162,7 @@ def _make_proxy(tmp_path):
     proxy._hybrid_connect_timeout = 5.0
     proxy._hybrid_last_offline_time = 0.0
     proxy._hybrid_in_offline = False
-    proxy._telemetry_client = None
+    proxy._tc = MagicMock()
     proxy._cloud_rx_buf = bytearray()
     return proxy
 

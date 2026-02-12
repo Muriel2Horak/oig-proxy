@@ -50,16 +50,11 @@ def _make_proxy():
     proxy.cloud_session_connected = False
     proxy._cloud_connected_since_epoch = None
     proxy._cloud_peer = None
-    proxy._telemetry_cloud_failed_in_window = False
-    proxy._telemetry_cloud_ok_in_window = False
+    proxy._tc = MagicMock()
     proxy._active_box_peer = "peer"
-    proxy._record_cloud_session_end = MagicMock()
     proxy._close_writer = AsyncMock()
-    proxy._telemetry_fire_event = MagicMock()
-    proxy._telemetry_record_timeout = MagicMock()
     proxy._hybrid_record_failure = MagicMock()
     proxy._fallback_offline_from_cloud_issue = AsyncMock(return_value=(None, None))
-    proxy._telemetry_record_response = MagicMock()
     proxy._hybrid_record_success = MagicMock()
     proxy._is_hybrid_mode = MagicMock(return_value=False)
     proxy._build_end_time_frame = MagicMock(return_value=b"<Result>END</Result>")
@@ -79,7 +74,7 @@ async def test_ensure_cloud_connected_skip_when_offline(monkeypatch):
     )
 
     assert (reader, writer, attempted) == (None, None, False)
-    proxy._record_cloud_session_end.assert_called_once()
+    proxy._tc.record_cloud_session_end.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -185,7 +180,7 @@ async def test_handle_cloud_connection_failed_non_hybrid():
     )
 
     assert result == (None, None)
-    proxy._telemetry_record_timeout.assert_called_once()
+    proxy._tc.record_timeout.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -244,8 +239,8 @@ async def test_handle_cloud_timeout_non_hybrid(monkeypatch):
     )
 
     assert result == (None, None)
-    proxy._record_cloud_session_end.assert_called_once()
-    proxy._telemetry_record_timeout.assert_called_once()
+    proxy._tc.record_cloud_session_end.assert_called_once()
+    proxy._tc.record_timeout.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -270,7 +265,7 @@ async def test_send_frame_to_cloud_ok(monkeypatch):
 
     assert ack_data == ack_frame
     assert proxy.stats["frames_forwarded"] == 1
-    assert proxy._telemetry_cloud_ok_in_window is True
+    assert proxy._tc.cloud_ok_in_window is True
 
 
 @pytest.mark.asyncio

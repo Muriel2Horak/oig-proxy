@@ -19,7 +19,7 @@ import time
 import secrets
 import json
 import uuid
-from collections import Counter, defaultdict, deque
+from collections import deque
 from contextlib import suppress
 import re
 from datetime import datetime, timezone
@@ -65,7 +65,7 @@ from config import (
     TELEMETRY_INTERVAL_S,
 )
 from control_api import ControlAPIServer
-from telemetry_client import TelemetryClient
+from telemetry_collector import TelemetryCollector
 from oig_frame import (
     RESULT_ACK,
     RESULT_END,
@@ -92,12 +92,6 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 
-ISNEW_STATE_TOPIC_ALIASES = {
-    "isnewfw": "IsNewFW",
-    "isnewset": "IsNewSet",
-    "isnewweather": "IsNewWeather",
-}
-
 
 class _TelemetryLogHandler(logging.Handler):
     def __init__(self, proxy: "OIGProxy") -> None:
@@ -106,7 +100,7 @@ class _TelemetryLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         # pylint: disable=protected-access
-        self._proxy._record_log_entry(record)
+        self._proxy._tc.record_log_entry(record)
 
 
 # ============================================================================
@@ -203,35 +197,14 @@ class OIGProxy:
         self._full_refresh_task: asyncio.Task[Any] | None = None
 
         # Telemetry to diagnostic server (muriel-cz.cz)
-        self._telemetry_client: TelemetryClient | None = None
         self._telemetry_task: asyncio.Task[Any] | None = None
-        self._telemetry_interval_s: int = TELEMETRY_INTERVAL_S
         self._start_time: float = time.time()
         # prevent task GC
         self._background_tasks: set[asyncio.Task[Any]] = set()
-        self._telemetry_box_sessions: deque[dict[str, Any]] = deque()
-        self._telemetry_cloud_sessions: deque[dict[str, Any]] = deque()
-        self._telemetry_hybrid_sessions: deque[dict[str, Any]] = deque()
-        self._telemetry_offline_events: deque[dict[str, Any]] = deque()
-        self._telemetry_tbl_events: deque[dict[str, Any]] = deque()
-        self._telemetry_error_context: deque[dict[str, Any]] = deque()
-        self._telemetry_logs: deque[dict[str, Any]] = deque()
-        self._telemetry_log_window_s: int = 60
-        self._telemetry_log_max: int = 1000
-        self._telemetry_log_error: bool = False
-        self._telemetry_debug_windows_remaining: int = 0
-        self._telemetry_box_seen_in_window: bool = False
-        self._telemetry_force_logs_this_window: bool = True
-        self._telemetry_cloud_ok_in_window: bool = False
-        self._telemetry_cloud_failed_in_window: bool = False
-        # Treat very short EOFs as a timeout-like failure unless we observed a
-        # successful cloud response in the same telemetry window.
-        self._telemetry_cloud_eof_short_in_window: bool = False
         self._hybrid_state: str | None = None
         self._hybrid_state_since_epoch: float | None = None
         self._hybrid_last_offline_reason: str | None = None
-        self._telemetry_req_pending: dict[int, deque[str]] = defaultdict(deque)
-        self._telemetry_stats: dict[tuple[str, str, str], Counter[str]] = {}
+        self._tc = TelemetryCollector(self, interval_s=TELEMETRY_INTERVAL_S)
         # Create copy for safe iteration during modification
         for handler in list(logger.handlers):  # noqa: C417
             if isinstance(handler, _TelemetryLogHandler):
@@ -343,10 +316,10 @@ class OIGProxy:
 
         if not TELEMETRY_ENABLED:
             return
-        self._init_telemetry()
+        self._tc.init()
         if self._telemetry_task is None or self._telemetry_task.done():
             self._telemetry_task = asyncio.create_task(
-                self._telemetry_loop())
+                self._tc.loop())
 
     async def _start_tcp_server(self) -> None:
         server = await asyncio.start_server(
@@ -591,7 +564,7 @@ class OIGProxy:
         if self._hybrid_fail_count >= self._hybrid_fail_threshold:
             if not self._hybrid_in_offline:
                 transition_time = time.time()
-                self._record_hybrid_state_end(
+                self._tc.record_hybrid_state_end(
                     ended_at=transition_time,
                     reason=reason or "cloud_failure",
                 )
@@ -600,7 +573,7 @@ class OIGProxy:
                 self._hybrid_state = "offline"
                 self._hybrid_state_since_epoch = transition_time
                 self._hybrid_last_offline_reason = reason or "unknown"
-                self._record_offline_event(reason=reason, local_ack=local_ack)
+                self._tc.record_offline_event(reason=reason, local_ack=local_ack)
                 logger.warning(
                     "☁️ HYBRID: %d failures → switching to offline mode",
                     self._hybrid_fail_count,
@@ -614,7 +587,7 @@ class OIGProxy:
             logger.info(
                 "☁️ HYBRID: cloud recovered → switching to online mode")
             transition_time = time.time()
-            self._record_hybrid_state_end(
+            self._tc.record_hybrid_state_end(
                 ended_at=transition_time,
                 reason=self._hybrid_last_offline_reason or "cloud_recovered",
             )
@@ -858,572 +831,6 @@ class OIGProxy:
             except Exception as e:
                 logger.debug("Proxy status loop publish failed: %s", e)
 
-    # ============================================================================
-    # Telemetry to diagnostic server
-    # ============================================================================
-
-    @staticmethod
-    def _utc_iso(ts: float | None = None) -> str:
-        if ts is None:
-            ts = time.time()
-        return datetime.fromtimestamp(
-            ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    @staticmethod
-    def _utc_log_ts(ts: float) -> str:
-        return datetime.fromtimestamp(
-            ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-    def _prune_log_buffer(self) -> None:
-        cutoff = time.time() - float(self._telemetry_log_window_s)
-        while self._telemetry_logs and self._telemetry_logs[0]["_epoch"] < cutoff:
-            self._telemetry_logs.popleft()
-        while len(self._telemetry_logs) > self._telemetry_log_max:
-            self._telemetry_logs.popleft()
-
-    def _record_log_entry(self, record: logging.LogRecord) -> None:
-        if getattr(self, "_telemetry_log_error", False):
-            return
-        if record.levelno >= logging.WARNING:
-            self._telemetry_debug_windows_remaining = 2
-        if (
-            getattr(self, "_telemetry_debug_windows_remaining", 0) <= 0
-            and not getattr(self, "_telemetry_force_logs_this_window", False)
-        ):
-            return
-        try:
-            entry = {
-                "_epoch": record.created,
-                "timestamp": self._utc_log_ts(record.created),
-                "level": record.levelname,
-                "message": record.getMessage(),
-                "source": record.name,
-            }
-            self._telemetry_logs.append(entry)
-            self._prune_log_buffer()
-        except Exception:  # pylint: disable=broad-exception-caught
-            self._telemetry_log_error = True
-            try:
-                logger.exception(
-                    "Failed to record telemetry log entry for record %r",
-                    record,
-                )
-            finally:
-                self._telemetry_log_error = False
-
-    def _snapshot_logs(self) -> list[dict[str, Any]]:
-        self._prune_log_buffer()
-        return [
-            {k: v for k, v in item.items() if k != "_epoch"}
-            for item in self._telemetry_logs
-        ]
-
-    def _flush_log_buffer(self) -> list[dict[str, Any]]:
-        logs = self._snapshot_logs()
-        self._telemetry_logs.clear()
-        return logs
-
-    def _telemetry_record_request(self, table_name: str | None, conn_id: int) -> None:
-        if not hasattr(self, "_telemetry_req_pending"):
-            self._telemetry_req_pending = defaultdict(deque)
-        if not table_name:
-            return
-        queue = self._telemetry_req_pending[conn_id]
-        queue.append(table_name)
-        if len(queue) > 1000:
-            queue.popleft()
-
-    def _telemetry_response_kind(self, response_text: str) -> str:
-        if "<Result>Weather</Result>" in response_text:
-            return "resp_weather"
-        if "<Result>END</Result>" in response_text:
-            return "resp_end"
-        if "<Result>NACK</Result>" in response_text:
-            return "resp_nack"
-        if "<Result>ACK</Result>" in response_text and "<ToDo>GetAll</ToDo>" in response_text:
-            return "resp_ack_getall"
-        if "<Result>ACK</Result>" in response_text and "<ToDo>GetActual</ToDo>" in response_text:
-            return "resp_ack_getactual"
-        if "<Result>ACK</Result>" in response_text:
-            return "resp_ack"
-        return "resp_other"
-
-    def _telemetry_record_response(
-        self,
-        response_text: str,
-        *,
-        source: str,
-        conn_id: int,
-    ) -> None:
-        if not hasattr(self, "_telemetry_req_pending"):
-            self._telemetry_req_pending = defaultdict(deque)
-        if not hasattr(self, "_telemetry_stats"):
-            self._telemetry_stats = {}
-        queue = self._telemetry_req_pending.get(conn_id)
-        if queue:
-            table_name = queue.popleft()
-        else:
-            table_name = "unmatched"
-        if queue is not None and not queue:
-            self._telemetry_req_pending.pop(conn_id, None)
-        mode_value = getattr(self, "mode", None)
-        if mode_value is None:
-            mode_value = getattr(self, "_mode_value", ProxyMode.OFFLINE.value)
-        if isinstance(mode_value, ProxyMode):
-            mode_value_str = mode_value.value
-        elif isinstance(mode_value, str):
-            mode_value_str = str(mode_value).strip().lower()
-        else:
-            mode_value_str = (
-                str(mode_value).strip().lower()
-                if mode_value is not None
-                else ProxyMode.OFFLINE.value
-            )
-        if mode_value_str not in {"online", "hybrid", "offline"}:
-            mode_value_str = ProxyMode.OFFLINE.value
-        key = (table_name, source, mode_value_str)
-        stats = self._telemetry_stats.setdefault(
-            key,
-            Counter(
-                req_count=0,
-                resp_ack=0,
-                resp_end=0,
-                resp_weather=0,
-                resp_nack=0,
-                resp_ack_getall=0,
-                resp_ack_getactual=0,
-                resp_other=0,
-            ),
-        )
-        stats["req_count"] += 1
-        stats[self._telemetry_response_kind(response_text)] += 1
-        if source == "cloud":
-            self._telemetry_cloud_ok_in_window = True
-
-    def _telemetry_record_timeout(self, *, conn_id: int) -> None:
-        self._telemetry_cloud_failed_in_window = True
-        self._telemetry_record_response("", source="timeout", conn_id=conn_id)
-
-    def _telemetry_flush_stats(self) -> list[dict[str, Any]]:
-        if not hasattr(self, "_telemetry_stats"):
-            self._telemetry_stats = {}
-        items: list[dict[str, Any]] = []
-        for (table, source, mode), counts in self._telemetry_stats.items():
-            items.append({
-                "timestamp": self._utc_iso(),
-                "table": table,
-                "mode": mode,
-                "response_source": source,
-                "req_count": counts["req_count"],
-                "resp_ack": counts["resp_ack"],
-                "resp_end": counts["resp_end"],
-                "resp_weather": counts["resp_weather"],
-                "resp_nack": counts["resp_nack"],
-                "resp_ack_getall": counts["resp_ack_getall"],
-                "resp_ack_getactual": counts["resp_ack_getactual"],
-                "resp_other": counts["resp_other"],
-            })
-        self._telemetry_stats.clear()
-        return items
-
-    def _record_error_context(self, *, event_type: str,
-                              details: dict[str, Any]) -> None:
-        try:
-            details_json = json.dumps(details, ensure_ascii=False)
-        except Exception:
-            details_json = json.dumps(
-                {"detail": str(details)}, ensure_ascii=False)
-        self._telemetry_error_context.append({
-            "timestamp": self._utc_iso(),
-            "event_type": event_type,
-            "details": details_json,
-            "logs": json.dumps(self._snapshot_logs(), ensure_ascii=False),
-        })
-
-    def _record_tbl_event(
-        self,
-        *,
-        parsed: dict[str, Any],
-        device_id: str | None,
-    ) -> None:
-        event_time = self._parse_frame_dt(parsed.get("_dt"))
-        if event_time is None:
-            event_time = self._utc_iso()
-        self._telemetry_tbl_events.append({
-            "timestamp": event_time,
-            "event_time": event_time,
-            "type": parsed.get("Type"),
-            "confirm": parsed.get("Confirm"),
-            "content": parsed.get("Content"),
-            "device_id": device_id,
-        })
-
-    @staticmethod
-    def _parse_frame_dt(value: Any) -> str | None:
-        if value is None:
-            return None
-        try:
-            text = str(value).strip()
-        except Exception:
-            return None
-        if not text:
-            return None
-        try:
-            dt = datetime.fromisoformat(text)
-        except ValueError:
-            try:
-                dt = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    def _record_box_session_end(
-            self,
-            *,
-            reason: str,
-            peer: str | None) -> None:
-        if self._box_connected_since_epoch is None:
-            return
-        disconnected_at = time.time()
-        self._telemetry_box_sessions.append({
-            "timestamp": self._utc_iso(disconnected_at),
-            "connected_at": self._utc_iso(self._box_connected_since_epoch),
-            "disconnected_at": self._utc_iso(disconnected_at),
-            "duration_s": int(disconnected_at - self._box_connected_since_epoch),
-            "peer": peer,
-            "reason": reason,
-        })
-        self._box_connected_since_epoch = None
-
-    def _record_cloud_session_end(self, *, reason: str) -> None:
-        if self._cloud_connected_since_epoch is None:
-            return
-        disconnected_at = time.time()
-        duration = disconnected_at - self._cloud_connected_since_epoch
-        if (
-            reason == "eof"
-            and duration < 1.0
-            and not self._telemetry_cloud_ok_in_window
-        ):
-            self._telemetry_cloud_eof_short_in_window = True
-        self._telemetry_cloud_sessions.append({
-            "timestamp": self._utc_iso(disconnected_at),
-            "connected_at": self._utc_iso(self._cloud_connected_since_epoch),
-            "disconnected_at": self._utc_iso(disconnected_at),
-            "duration_s": int(duration),
-            "reason": reason,
-        })
-        self._cloud_connected_since_epoch = None
-
-    def _record_hybrid_state_end(
-            self,
-            *,
-            ended_at: float,
-            reason: str | None = None) -> None:
-        if self._hybrid_state_since_epoch is None or self._hybrid_state is None:
-            return
-        self._telemetry_hybrid_sessions.append({
-            "timestamp": self._utc_iso(ended_at),
-            "state": self._hybrid_state,
-            "started_at": self._utc_iso(self._hybrid_state_since_epoch),
-            "ended_at": self._utc_iso(ended_at),
-            "duration_s": int(ended_at - self._hybrid_state_since_epoch),
-            "reason": reason,
-            "mode": self.mode.value,
-        })
-        self._hybrid_state_since_epoch = None
-        self._hybrid_state = None
-
-    def _record_offline_event(
-            self,
-            *,
-            reason: str | None,
-            local_ack: bool | None) -> None:
-        self._telemetry_offline_events.append({
-            "timestamp": self._utc_iso(),
-            "reason": reason or "unknown",
-            "local_ack": bool(local_ack),
-            "mode": self.mode.value,
-        })
-
-    def _init_telemetry(self) -> None:
-        """Initialize telemetry client (fail-safe)."""
-        try:
-            # Try to load version from config.json
-            proxy_version = self._load_version_from_config()
-            device_id = self.device_id if self.device_id != "AUTO" else ""
-            self._telemetry_client = TelemetryClient(device_id, proxy_version)
-            logger.info(
-                "📊 Telemetry client initialized (version=%s, interval=%ss)",
-                proxy_version,
-                self._telemetry_interval_s)
-        except Exception as e:
-            logger.warning("Telemetry init failed (disabled): %s", e)
-            self._telemetry_client = None
-
-    def _load_version_from_config(self) -> str:
-        """Load version from config.json or fallback to package metadata."""
-        import os
-        try:
-            # First try config.json in addon directory
-            config_path = os.path.join(os.path.dirname(__file__), "config.json")
-            if os.path.exists(config_path):
-                with open(config_path, encoding="utf-8") as f:
-                    config_data = json.load(f)
-                    version = config_data.get("version")
-                    if version:
-                        logger.debug("Loaded version %s from config.json", version)
-                        return version
-        except Exception as e:
-            logger.debug("Failed to load version from config.json: %s", e)
-
-        # Fallback to package metadata
-        try:
-            # pylint: disable=import-outside-toplevel
-            from importlib.metadata import version as pkg_version
-            version = pkg_version("oig-proxy")
-            logger.debug("Loaded version %s from package metadata", version)
-            return version
-        except Exception as e:
-            logger.debug("Failed to load version from package metadata: %s", e)
-
-        # Final fallback
-        logger.warning("Could not determine version, using default 1.6.2")
-        return "1.6.2"
-
-    async def _telemetry_loop(self) -> None:
-        """Periodically send telemetry metrics to diagnostic server."""
-        if not self._telemetry_client:
-            return
-
-        # Wait a bit before first telemetry (let proxy initialize)
-        await asyncio.sleep(30)
-
-        # Try initial provisioning
-        try:
-            # Update device_id if it was detected later
-            if self._telemetry_client.device_id == "" and self.device_id != "AUTO":
-                self._telemetry_client.device_id = self.device_id
-            await self._telemetry_client.provision()
-        except Exception as e:
-            logger.debug("Initial telemetry provisioning failed: %s", e)
-
-        logger.info(
-            "📊 Telemetry loop started (every %ss)",
-            self._telemetry_interval_s)
-
-        # Send first telemetry immediately after startup
-        try:
-            if self._telemetry_client.device_id == "" and self.device_id != "AUTO":
-                self._telemetry_client.device_id = self.device_id
-            metrics = self._collect_telemetry_metrics()
-            await self._telemetry_client.send_telemetry(metrics)
-            logger.info("📊 First telemetry sent")
-        except Exception as e:
-            logger.debug("First telemetry send failed: %s", e)
-
-        while True:
-            await asyncio.sleep(self._telemetry_interval_s)
-            try:
-                # Update device_id if needed
-                if self._telemetry_client.device_id == "" and self.device_id != "AUTO":
-                    self._telemetry_client.device_id = self.device_id
-
-                # Collect metrics
-                metrics = self._collect_telemetry_metrics()
-
-                # Send (fail-safe)
-                await self._telemetry_client.send_telemetry(metrics)
-
-            except Exception as e:
-                logger.debug("Telemetry send failed: %s", e)
-
-    def _get_box_connected_window_status(self) -> bool:
-        box_connected_window = self.box_connected or self._telemetry_box_seen_in_window
-        self._telemetry_box_seen_in_window = False
-        return box_connected_window
-
-    def _should_include_telemetry_logs(
-        self,
-        debug_active: bool,
-        box_connected_window: bool,
-    ) -> bool:
-        return debug_active or not box_connected_window
-
-    def _get_telemetry_logs(
-        self,
-        debug_active: bool,
-        include_logs: bool,
-    ) -> list[dict[str, Any]]:
-        logs = self._flush_log_buffer() if include_logs else []
-        if not include_logs:
-            self._telemetry_logs.clear()
-        if debug_active:
-            self._telemetry_debug_windows_remaining -= 1
-        return logs
-
-    def _get_cloud_online_window_status(self) -> bool:
-        if self._telemetry_cloud_ok_in_window:
-            cloud_online_window = True
-        elif self._telemetry_cloud_failed_in_window or self._telemetry_cloud_eof_short_in_window:
-            cloud_online_window = False
-        elif self.cloud_session_connected:
-            cloud_online_window = True
-        else:
-            cloud_online_window = False
-        self._telemetry_cloud_ok_in_window = False
-        self._telemetry_cloud_failed_in_window = False
-        self._telemetry_cloud_eof_short_in_window = False
-        return cloud_online_window
-
-    def _collect_hybrid_sessions(self) -> list[dict[str, Any]]:
-        hybrid_sessions = list(self._telemetry_hybrid_sessions)
-        if self._configured_mode == "hybrid" and self._hybrid_state_since_epoch is not None:
-            now = time.time()
-            hybrid_sessions.append({
-                "timestamp": self._utc_iso(now),
-                "state": self._hybrid_state,
-                "started_at": self._utc_iso(self._hybrid_state_since_epoch),
-                "ended_at": None,
-                "duration_s": int(now - self._hybrid_state_since_epoch),
-                "reason": (
-                    self._hybrid_last_offline_reason
-                    if self._hybrid_state == "offline"
-                    else None
-                ),
-                "mode": self.mode.value,
-            })
-        return hybrid_sessions
-
-    def _collect_and_clear_window_metrics(
-        self,
-        logs: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        window_metrics = {
-            "box_sessions": list(self._telemetry_box_sessions),
-            "cloud_sessions": list(self._telemetry_cloud_sessions),
-            "hybrid_sessions": self._collect_hybrid_sessions(),
-            "offline_events": list(self._telemetry_offline_events),
-            "tbl_events": list(self._telemetry_tbl_events),
-            "error_context": list(self._telemetry_error_context),
-            "stats": self._telemetry_flush_stats(),
-            "logs": logs,
-        }
-        self._telemetry_box_sessions.clear()
-        self._telemetry_cloud_sessions.clear()
-        self._telemetry_hybrid_sessions.clear()
-        self._telemetry_offline_events.clear()
-        self._telemetry_tbl_events.clear()
-        self._telemetry_error_context.clear()
-        self._telemetry_force_logs_this_window = True
-        return window_metrics
-
-    def _build_device_specific_metrics(self, device_id: str) -> dict[str, Any]:
-        return {
-            "isnewfw_fw": self._telemetry_cached_state_value(
-                device_id, "isnewfw", "fw"
-            ),
-            "isnewset_lat": self._telemetry_cached_state_value(
-                device_id, "isnewset", "lat"
-            ),
-            "tbl_box_tmlastcall": self._telemetry_cached_state_value(
-                device_id, "tbl_box", "tmlastcall"
-            ),
-            "isnewweather_loadedon": self._telemetry_cached_state_value(
-                device_id, "isnewweather", "loadedon"
-            ),
-            "tbl_box_strnght": self._telemetry_cached_state_value(
-                device_id, "tbl_box", "strnght"
-            ),
-            "tbl_invertor_prms_model": self._telemetry_cached_state_value(
-                device_id, "tbl_invertor_prms", "model"
-            ),
-        }
-
-    def _collect_telemetry_metrics(self) -> dict[str, Any]:
-        uptime_s = int(time.time() - self._start_time)
-        set_commands = self._set_commands_buffer[:]
-        self._set_commands_buffer.clear()
-        debug_active = getattr(self, "_telemetry_debug_windows_remaining", 0) > 0
-        box_connected_window = self._get_box_connected_window_status()
-        include_logs = self._should_include_telemetry_logs(debug_active, box_connected_window)
-        logs = self._get_telemetry_logs(debug_active, include_logs)
-        cloud_online_window = self._get_cloud_online_window_status()
-        window_metrics = self._collect_and_clear_window_metrics(logs)
-
-        metrics: dict[str, Any] = {
-            "timestamp": self._utc_iso(),
-            "interval_s": int(self._telemetry_interval_s),
-            "uptime_s": uptime_s,
-            "mode": self.mode.value,
-            "configured_mode": self._configured_mode,
-            "box_connected": box_connected_window,
-            "box_peer": self._active_box_peer,
-            "frames_received": self.stats.get("frames_received", 0),
-            "frames_forwarded": self.stats.get("frames_forwarded", 0),
-            "cloud_connects": self.cloud_connects,
-            "cloud_disconnects": self.cloud_disconnects,
-            "cloud_timeouts": self.cloud_timeouts,
-            "cloud_errors": self.cloud_errors,
-            "cloud_online": cloud_online_window,
-            "mqtt_ok": self.mqtt_publisher.is_ready() if self.mqtt_publisher else False,
-            "mqtt_queue": self.mqtt_publisher.queue.size() if self.mqtt_publisher else 0,
-            "set_commands": set_commands,
-            "window_metrics": window_metrics,
-        }
-        device_id = self.device_id if self.device_id != "AUTO" else ""
-        if device_id:
-            metrics.update(self._build_device_specific_metrics(device_id))
-        return metrics
-
-    def _telemetry_cached_state_value(
-        self,
-        device_id: str,
-        table_name: str,
-        field_name: str,
-    ) -> Any | None:
-        if not self.mqtt_publisher:
-            return None
-        table_candidates = [table_name]
-        alias = ISNEW_STATE_TOPIC_ALIASES.get(table_name)
-        if alias:
-            table_candidates.append(alias)
-        payload = None
-        for candidate in table_candidates:
-            topic = self.mqtt_publisher.state_topic(device_id, candidate)
-            payload = self.mqtt_publisher.get_cached_payload(topic)
-            if payload:
-                break
-        if not payload:
-            return None
-        try:
-            data = json.loads(payload)
-        except Exception:
-            return payload
-        if not isinstance(data, dict):
-            return data
-        if field_name in data:
-            return data[field_name]
-        field_key = field_name.lower()
-        for key, value in data.items():
-            if str(key).lower() == field_key:
-                return value
-        return None
-
-    def _telemetry_fire_event(self, event_name: str, **kwargs: Any) -> None:
-        """Fire telemetry event (non-blocking, fire and forget)."""
-        if not self._telemetry_client:
-            return
-        if event_name.startswith(("error_", "warning_")):
-            self._record_error_context(event_type=event_name, details=kwargs)
-        method = getattr(self._telemetry_client, f"event_{event_name}", None)
-        if method:
-            task = asyncio.create_task(method(**kwargs))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-
 
     async def _register_box_connection(
         self, writer: asyncio.StreamWriter, addr: Any
@@ -1432,7 +839,7 @@ class OIGProxy:
             previous = self._active_box_writer
             if previous is not None and not previous.is_closing():
                 self._last_box_disconnect_reason = "forced"
-                self._record_box_session_end(
+                self._tc.record_box_session_end(
                     reason="forced",
                     peer=self._active_box_peer,
                 )
@@ -1494,8 +901,8 @@ class OIGProxy:
 
         logger.info("🔌 BOX connected (conn=%s, peer=%s)", conn_id, addr)
         self.box_connected = True
-        self._telemetry_box_seen_in_window = True
-        self._telemetry_force_logs_this_window = False
+        self._tc.box_seen_in_window = True
+        self._tc.force_logs_this_window = False
         self.box_connections += 1
         self._box_connected_since_epoch = time.time()
         self._last_box_disconnect_reason = None
@@ -1517,12 +924,12 @@ class OIGProxy:
             self._local_getactual_task = None
             await self._close_writer(writer)
             self.box_connected = False
-            self._record_box_session_end(
+            self._tc.record_box_session_end(
                 reason=self._last_box_disconnect_reason or "unknown",
                 peer=self._active_box_peer or (f"{addr[0]}:{addr[1]}" if addr else None),
             )
             self._last_box_disconnect_reason = None
-            self._telemetry_fire_event(
+            self._tc.fire_event(
                 "error_box_disconnect",
                 box_peer=self._active_box_peer or str(addr))
             if self._control_mqtt_enabled:
@@ -1638,7 +1045,7 @@ class OIGProxy:
         conn_id: int | None = None,
     ) -> tuple[None, None]:
         if self.cloud_session_connected:
-            self._record_cloud_session_end(reason=reason)
+            self._tc.record_cloud_session_end(reason=reason)
         self.cloud_session_connected = False
         await self._close_writer(cloud_writer)
         await self._process_frame_offline(
@@ -1666,7 +1073,7 @@ class OIGProxy:
         if not self._should_try_cloud():
             await self._close_writer(cloud_writer)
             if self.cloud_session_connected:
-                self._record_cloud_session_end(reason="manual_offline")
+                self._tc.record_cloud_session_end(reason="manual_offline")
             self.cloud_session_connected = False
             return None, None, False
         if cloud_writer is not None and not cloud_writer.is_closing():
@@ -1715,9 +1122,9 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
         cloud_attempted: bool,
     ) -> tuple[None, None]:
-        self._telemetry_cloud_failed_in_window = True
+        self._tc.cloud_failed_in_window = True
         if cloud_attempted:
-            self._telemetry_fire_event(
+            self._tc.fire_event(
                 "error_cloud_connect",
                 cloud_host=TARGET_SERVER,
                 reason="connect_failed",
@@ -1737,7 +1144,7 @@ class OIGProxy:
             )
         if self._cloud_rx_buf:
             self._cloud_rx_buf.clear()
-        self._telemetry_record_timeout(conn_id=conn_id)
+        self._tc.record_timeout(conn_id=conn_id)
         return None, None
 
     async def _handle_cloud_eof(
@@ -1750,7 +1157,7 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter,
         cloud_writer: asyncio.StreamWriter | None,
     ) -> tuple[None, None]:
-        self._telemetry_cloud_failed_in_window = True
+        self._tc.cloud_failed_in_window = True
         logger.warning(
             "⚠️ Cloud closed connection (conn=%s, table=%s)",
             conn_id,
@@ -1758,8 +1165,8 @@ class OIGProxy:
         )
         self.cloud_disconnects += 1
         if self.cloud_session_connected:
-            self._record_cloud_session_end(reason="eof")
-        self._telemetry_fire_event(
+            self._tc.record_cloud_session_end(reason="eof")
+        self._tc.fire_event(
             "error_cloud_disconnect", reason="eof")
         self._hybrid_record_failure(
             reason="cloud_eof",
@@ -1778,7 +1185,7 @@ class OIGProxy:
                 note_cloud_failure=False,
                 conn_id=conn_id,
             )
-        self._telemetry_record_timeout(conn_id=conn_id)
+        self._tc.record_timeout(conn_id=conn_id)
         return None, None
 
     async def _handle_cloud_timeout(
@@ -1792,9 +1199,9 @@ class OIGProxy:
         cloud_reader: asyncio.StreamReader,
         cloud_writer: asyncio.StreamWriter | None,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
-        self._telemetry_cloud_failed_in_window = True
+        self._tc.cloud_failed_in_window = True
         self.cloud_timeouts += 1
-        self._telemetry_fire_event(
+        self._tc.fire_event(
             "error_cloud_timeout",
             cloud_host=TARGET_SERVER,
             timeout_s=CLOUD_ACK_TIMEOUT,
@@ -1816,7 +1223,7 @@ class OIGProxy:
                     conn_id,
                 )
                 end_frame = self._build_end_time_frame()
-                self._telemetry_record_response(
+                self._tc.record_response(
                     end_frame.decode("utf-8", errors="replace"),
                     source="local",
                     conn_id=conn_id,
@@ -1836,10 +1243,10 @@ class OIGProxy:
                 conn_id=conn_id,
             )
         if self.cloud_session_connected:
-            self._record_cloud_session_end(reason="timeout")
+            self._tc.record_cloud_session_end(reason="timeout")
         await self._close_writer(cloud_writer)
         self._cloud_rx_buf.clear()
-        self._telemetry_record_timeout(conn_id=conn_id)
+        self._tc.record_timeout(conn_id=conn_id)
         return None, None
 
     async def _handle_cloud_error(
@@ -1853,7 +1260,7 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter,
         cloud_writer: asyncio.StreamWriter | None,
     ) -> tuple[None, None]:
-        self._telemetry_cloud_failed_in_window = True
+        self._tc.cloud_failed_in_window = True
         logger.warning(
             "⚠️ Cloud error: %s (conn=%s, table=%s)",
             error,
@@ -1862,7 +1269,7 @@ class OIGProxy:
         )
         self.cloud_errors += 1
         if self.cloud_session_connected:
-            self._record_cloud_session_end(reason="cloud_error")
+            self._tc.record_cloud_session_end(reason="cloud_error")
         self._hybrid_record_failure(
             reason="cloud_error",
             local_ack=self._is_hybrid_mode(),
@@ -1880,7 +1287,7 @@ class OIGProxy:
                 note_cloud_failure=False,
                 conn_id=conn_id,
             )
-        self._telemetry_record_timeout(conn_id=conn_id)
+        self._tc.record_timeout(conn_id=conn_id)
         return None, None
 
     async def _send_frame_to_cloud(
@@ -1895,7 +1302,7 @@ class OIGProxy:
         cloud_writer.write(frame_bytes)
         await cloud_writer.drain()
         self.stats["frames_forwarded"] += 1
-        self._telemetry_cloud_ok_in_window = True
+        self._tc.cloud_ok_in_window = True
         ack_data = await self._read_cloud_ack(
             cloud_reader=cloud_reader,
             ack_timeout_s=CLOUD_ACK_TIMEOUT,
@@ -1944,7 +1351,7 @@ class OIGProxy:
     ) -> None:
         self._hybrid_record_success()
         ack_str = ack_data.decode("utf-8", errors="replace")
-        self._telemetry_cloud_ok_in_window = True
+        self._tc.cloud_ok_in_window = True
         capture_payload(
             None,
             table_name,
@@ -1956,7 +1363,7 @@ class OIGProxy:
             conn_id=conn_id,
             peer=self._active_box_peer,
         )
-        self._telemetry_record_response(
+        self._tc.record_response(
             ack_str, source="cloud", conn_id=conn_id
         )
         if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
@@ -2070,8 +1477,8 @@ class OIGProxy:
         self, *, frame_bytes: bytes, frame: str, conn_id: int
     ) -> tuple[str | None, str | None]:
         self.stats["frames_received"] += 1
-        self._telemetry_box_seen_in_window = True
-        self._telemetry_force_logs_this_window = False
+        self._tc.box_seen_in_window = True
+        self._tc.force_logs_this_window = False
         self._touch_last_data()
 
         parsed = self.parser.parse_xml_frame(frame)
@@ -2095,7 +1502,7 @@ class OIGProxy:
             conn_id=conn_id,
             peer=self._active_box_peer,
         )
-        self._telemetry_record_request(table_name, conn_id)
+        self._tc.record_request(table_name, conn_id)
 
         if parsed:
             if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
@@ -2103,7 +1510,7 @@ class OIGProxy:
                 self._isnew_last_poll_epoch = time.time()
                 self._isnew_last_poll_iso = self._last_data_iso
             if table_name == "tbl_events":
-                self._record_tbl_event(parsed=parsed, device_id=device_id)
+                self._tc.record_tbl_event(parsed=parsed, device_id=device_id)
             self._cache_last_values(parsed, table_name)
             await self._handle_setting_event(parsed, table_name, device_id)
             await self._control_observe_box_frame(parsed, table_name, frame)
@@ -2134,7 +1541,7 @@ class OIGProxy:
     ) -> tuple[None, None]:
         await self._close_writer(cloud_writer)
         if self.cloud_session_connected:
-            self._record_cloud_session_end(reason="manual_offline")
+            self._tc.record_cloud_session_end(reason="manual_offline")
         self.cloud_session_connected = False
         await self._process_frame_offline(
             frame_bytes,
@@ -2186,7 +1593,7 @@ class OIGProxy:
                     frame, box_writer, conn_id=conn_id
                 ):
                     continue
-                self._telemetry_force_logs_this_window = False
+                self._tc.force_logs_this_window = False
                 current_mode = await self._get_current_mode()
 
                 if current_mode == ProxyMode.OFFLINE:
@@ -2239,7 +1646,7 @@ class OIGProxy:
         finally:
             await self._close_writer(cloud_writer)
             if self.cloud_session_connected:
-                self._record_cloud_session_end(reason="box_disconnect")
+                self._tc.record_cloud_session_end(reason="box_disconnect")
             self.cloud_session_connected = False
             self._cloud_rx_buf.clear()
 
@@ -2257,7 +1664,7 @@ class OIGProxy:
         if send_ack:
             ack_response = self._build_offline_ack_frame(table_name)
             if conn_id is not None:
-                self._telemetry_record_response(
+                self._tc.record_response(
                     ack_response.decode("utf-8", errors="replace"),
                     source="local",
                     conn_id=conn_id,
