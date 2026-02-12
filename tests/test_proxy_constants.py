@@ -3,6 +3,7 @@
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
 
+import oig_frame
 import proxy as proxy_module
 
 
@@ -33,12 +34,13 @@ def test_get_current_timestamp_unique(tmp_path):
 
 def test_constants_defined(tmp_path):
     """Test all string constants are properly defined."""
-    assert hasattr(proxy_module.OIGProxy, "_RESULT_ACK")
-    assert hasattr(proxy_module.OIGProxy, "_RESULT_END")
-    assert hasattr(proxy_module.OIGProxy, "_TIME_OFFSET")
-    assert hasattr(proxy_module.OIGProxy, "_POST_DRAIN_SA_KEY")
-
+    # Constants are now in oig_frame module but still accessible via OIGProxy
+    assert oig_frame.RESULT_ACK == "<Result>ACK</Result>"
+    assert oig_frame.RESULT_END == "<Result>END</Result>"
+    # Backward compatibility aliases on OIGProxy
     assert proxy_module.OIGProxy._RESULT_ACK == "<Result>ACK</Result>"
     assert proxy_module.OIGProxy._RESULT_END == "<Result>END</Result>"
+    assert hasattr(proxy_module.OIGProxy, "_TIME_OFFSET")
+    assert hasattr(proxy_module.OIGProxy, "_POST_DRAIN_SA_KEY")
     assert proxy_module.OIGProxy._TIME_OFFSET == "+00:00"
     assert proxy_module.OIGProxy._POST_DRAIN_SA_KEY == "post_drain_sa_refresh"

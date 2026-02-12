@@ -66,7 +66,18 @@ from config import (
 )
 from control_api import ControlAPIServer
 from telemetry_client import TelemetryClient
-from oig_frame import build_frame
+from oig_frame import (
+    RESULT_ACK,
+    RESULT_END,
+    build_ack_only_frame,
+    build_end_time_frame,
+    build_frame,
+    build_getactual_frame,
+    build_offline_ack_frame,
+    extract_one_xml_frame,
+    infer_device_id,
+    infer_table_name,
+)
 from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from utils import (
@@ -105,9 +116,10 @@ class _TelemetryLogHandler(logging.Handler):
 class OIGProxy:
     """OIG Proxy s podporou ONLINE/HYBRID/OFFLINE režimů."""
 
-    # Frame string constants
-    _RESULT_ACK = "<Result>ACK</Result>"
-    _RESULT_END = "<Result>END</Result>"
+    # Frame string constants (aliases for backward compatibility;
+    # canonical values live in oig_frame module)
+    _RESULT_ACK = RESULT_ACK
+    _RESULT_END = RESULT_END
     _TIME_OFFSET = "+00:00"
     _POST_DRAIN_SA_KEY = "post_drain_sa_refresh"
     _CLOUD_ACK_MAX_BYTES = 4096
@@ -477,35 +489,14 @@ class OIGProxy:
         except Exception as e:
             logger.debug("Proxy status attrs publish failed: %s", e)
 
-    @staticmethod
-    def _build_getactual_frame() -> bytes:
-        inner = "<Result>ACK</Result><ToDo>GetActual</ToDo>"
-        return build_frame(inner).encode("utf-8", errors="strict")
+    # Frame building methods delegated to oig_frame module
+    _build_getactual_frame = staticmethod(build_getactual_frame)
+    _build_ack_only_frame = staticmethod(build_ack_only_frame)
+    _build_end_time_frame = staticmethod(build_end_time_frame)
 
     @staticmethod
-    def _build_ack_only_frame() -> bytes:
-        inner = OIGProxy._RESULT_ACK
-        return build_frame(inner).encode("utf-8", errors="strict")
-
-    def _build_offline_ack_frame(self, table_name: str | None) -> bytes:
-        if table_name == "END":
-            return self._build_end_time_frame()
-        if table_name == "IsNewSet":
-            return self._build_end_time_frame()
-        if table_name in ("IsNewWeather", "IsNewFW"):
-            return build_frame(OIGProxy._RESULT_END).encode("utf-8", errors="strict")
-        return self._build_ack_only_frame()
-
-    @staticmethod
-    def _build_end_time_frame() -> bytes:
-        now_local = datetime.now()
-        now_utc = datetime.now(timezone.utc)
-        inner = (
-            "<Result>END</Result>"
-            f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
-            f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
-        )
-        return build_frame(inner).encode("utf-8", errors="strict")
+    def _build_offline_ack_frame(table_name: str | None) -> bytes:
+        return build_offline_ack_frame(table_name)
 
     async def _send_getactual_to_box(
         self, writer: asyncio.StreamWriter, *, conn_id: int
@@ -1433,9 +1424,6 @@ class OIGProxy:
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
-    @staticmethod
-    def _looks_like_all_data_sent_end(frame: str) -> bool:
-        return "<Result>END</Result>" in frame and "<Reason>All data sent</Reason>" in frame
 
     async def _register_box_connection(
         self, writer: asyncio.StreamWriter, addr: Any
@@ -1944,27 +1932,7 @@ class OIGProxy:
 
         return await asyncio.wait_for(_read_until_frame(), timeout=ack_timeout_s)
 
-    @staticmethod
-    def _extract_one_xml_frame(buf: bytearray) -> bytes | None:
-        end_tag = b"</Frame>"
-        end_idx = buf.find(end_tag)
-        if end_idx < 0:
-            return None
-
-        frame_end = end_idx + len(end_tag)
-        if len(buf) > frame_end:
-            if buf[frame_end:frame_end + 2] == b"\r\n":
-                frame_end += 2
-            elif buf[frame_end:frame_end + 1] == b"\n":
-                frame_end += 1
-            elif buf[frame_end:frame_end + 1] == b"\r":
-                if len(buf) < frame_end + 2:
-                    return None
-                frame_end += 1
-
-        frame = bytes(buf[:frame_end])
-        del buf[:frame_end]
-        return frame
+    _extract_one_xml_frame = staticmethod(extract_one_xml_frame)
 
     async def _forward_ack_to_box(
         self,
@@ -2145,20 +2113,8 @@ class OIGProxy:
 
         return device_id, table_name
 
-    @staticmethod
-    def _infer_table_name(frame: str) -> str | None:
-        tbl = re.search(r"<TblName>([^<]+)</TblName>", frame)
-        if tbl:
-            return tbl.group(1)
-        res = re.search(r"<Result>([^<]+)</Result>", frame)
-        if res:
-            return res.group(1)
-        return None
-
-    @staticmethod
-    def _infer_device_id(frame: str) -> str | None:
-        m = re.search(r"<ID_Device>(\d+)</ID_Device>", frame)
-        return m.group(1) if m else None
+    _infer_table_name = staticmethod(infer_table_name)
+    _infer_device_id = staticmethod(infer_device_id)
 
     async def _get_current_mode(self) -> ProxyMode:
         if self._force_offline_enabled():

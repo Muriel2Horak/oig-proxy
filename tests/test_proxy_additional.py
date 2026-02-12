@@ -8,6 +8,7 @@ import time
 from collections import deque, defaultdict
 import pytest
 
+import oig_frame
 import proxy as proxy_module
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
@@ -196,8 +197,8 @@ def test_getactual_frames_and_send(tmp_path, monkeypatch):
 
     asyncio.run(proxy._send_getactual_to_box(writer, conn_id=1))
     assert writer.data
-    assert b"<Result>ACK</Result>" in proxy._build_getactual_frame()
-    assert b"<Result>END</Result>" in proxy._build_offline_ack_frame("END")
+    assert b"<Result>ACK</Result>" in oig_frame.build_getactual_frame()
+    assert b"<Result>END</Result>" in oig_frame.build_offline_ack_frame("END")
 
 
 def test_local_getactual_loop_exits_when_closed(tmp_path):

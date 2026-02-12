@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from oig_frame import compute_frame_checksum
+from oig_frame import compute_frame_checksum, build_getactual_frame, build_ack_only_frame, build_end_time_frame, infer_table_name, infer_device_id
 import proxy as proxy_module
 from config import MQTT_NAMESPACE
 
@@ -46,18 +46,18 @@ def test_format_control_tx_and_result():
 
 
 def test_build_frames_have_crc_and_crlf():
-    frame = proxy_module.OIGProxy._build_getactual_frame().decode("utf-8")
+    frame = build_getactual_frame().decode("utf-8")
     assert frame.endswith("\r\n")
     assert "<Result>ACK</Result>" in frame
     assert "<ToDo>GetActual</ToDo>" in frame
     _assert_crc(frame)
 
-    ack = proxy_module.OIGProxy._build_ack_only_frame().decode("utf-8")
+    ack = build_ack_only_frame().decode("utf-8")
     assert ack.endswith("\r\n")
     assert "<Result>ACK</Result>" in ack
     _assert_crc(ack)
 
-    end = proxy_module.OIGProxy._build_end_time_frame().decode("utf-8")
+    end = build_end_time_frame().decode("utf-8")
     assert "<Result>END</Result>" in end
     assert "<Time>" in end and "<UTCTime>" in end
     _assert_crc(end)
@@ -65,11 +65,11 @@ def test_build_frames_have_crc_and_crlf():
 
 def test_infer_table_and_device_id():
     frame = "<Frame><TblName>tbl_box</TblName><ID_Device>123</ID_Device></Frame>"
-    assert proxy_module.OIGProxy._infer_table_name(frame) == "tbl_box"
-    assert proxy_module.OIGProxy._infer_device_id(frame) == "123"
+    assert infer_table_name(frame) == "tbl_box"
+    assert infer_device_id(frame) == "123"
 
     result_frame = "<Frame><Result>END</Result></Frame>"
-    assert proxy_module.OIGProxy._infer_table_name(result_frame) == "END"
+    assert infer_table_name(result_frame) == "END"
 
 
 def test_mqtt_state_topic_parse():
