@@ -61,10 +61,9 @@ class MQTTQueue:
 
     def _init_db(self) -> sqlite3.Connection:
         """Inicializuje SQLite databázi."""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        from db_utils import init_sqlite_db
 
-        conn.execute("""
+        schema_sql = """
             CREATE TABLE IF NOT EXISTS queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp REAL NOT NULL,
@@ -72,12 +71,19 @@ class MQTTQueue:
                 payload TEXT NOT NULL,
                 retain INTEGER NOT NULL DEFAULT 0,
                 queued_at TEXT NOT NULL
-            )
-        """)
+            );
+        """
 
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_timestamp ON queue(timestamp)"
+        indexes_sql = """
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON queue(timestamp);
+        """
+
+        conn = init_sqlite_db(
+            self.db_path,
+            schema_sql,
+            indexes_sql
         )
+
         conn.commit()
         try:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(queue)")}

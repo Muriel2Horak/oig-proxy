@@ -56,21 +56,28 @@ class TelemetryBuffer:
 
     def _init_db(self) -> None:
         """Initialize SQLite database."""
+        from db_utils import init_sqlite_db
+
         try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(
-                str(self._db_path), check_same_thread=False)
-            self._conn.execute("""
+            schema_sql = """
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     timestamp REAL NOT NULL,
                     retries INTEGER DEFAULT 0
-                )
-            """)
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)")
+                );
+            """
+
+            indexes_sql = """
+                CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+            """
+
+            self._conn = init_sqlite_db(
+                str(self._db_path),
+                schema_sql,
+                indexes_sql
+            )
             self._conn.commit()
             self._cleanup()
             count = self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
