@@ -305,15 +305,16 @@ class TestTelemetryClientMqtt:
         client = telemetry_client.TelemetryClient("12345", "1.0.0")
         old = MagicMock()
         old.is_connected.return_value = False
+        # reconnect fails → _cleanup_client is called → _client becomes None → _create_client
+        old.reconnect.side_effect = Exception("reconnect failed")
         client._client = old
         client._connected = False
         client._create_client = MagicMock(return_value=True)
 
-        with patch('telemetry_client.time.sleep') as sleep_mock:
-            assert client._ensure_connected() is True
-        old.disconnect.assert_called_once()
+        assert client._ensure_connected() is True
+        # _cleanup_client calls loop_stop + disconnect on the old client
         old.loop_stop.assert_called_once()
-        sleep_mock.assert_not_called()
+        old.disconnect.assert_called_once()
         client._create_client.assert_called_once()
 
 

@@ -1,14 +1,6 @@
 """Tests for new helper methods in proxy.py."""
 
-import asyncio
-import time
-import pytest
-
-# pylint: disable=protected-access
 import proxy as proxy_module
-from tests.helpers import make_proxy
-
-import models.ProxyMode
 
 
 def test_get_current_timestamp_format(tmp_path):

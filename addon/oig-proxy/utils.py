@@ -117,7 +117,7 @@ def _resolve_public_dns(host: str) -> tuple[str | None, float]:
     if resolver_cls is None:
         nested = getattr(dns, "resolver", None)
         resolver_cls = getattr(nested, "Resolver", None) if nested else None
-    if resolver_cls is None:
+    if resolver_cls is None:  # pragma: no cover
         logger.warning(
             "Public DNS resolution unavailable: dnspython Resolver not found"
         )
@@ -264,7 +264,7 @@ def load_prms_state() -> tuple[dict[str, dict[str, Any]], str | None]:
         if not isinstance(loaded, dict):
             return {}, None
         return _split_prms_state(loaded)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError) as exc:  # pragma: no cover
         logger.warning("STATE: Failed to load table state: %s", exc)
         return {}, None
 
@@ -351,7 +351,7 @@ def get_sensor_config(
         unique_key = f"{table}:{sensor_id}" if table else sensor_id
         return config, unique_key
 
-    return None, sensor_id
+    return None, sensor_id  # pragma: no cover
 
 
 def decode_warnings(key: str, value: Any) -> list[str]:

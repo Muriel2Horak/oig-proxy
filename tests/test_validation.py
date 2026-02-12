@@ -3,9 +3,8 @@
 import pytest
 
 # pylint: disable=protected-access
-import proxy as proxy_module
-import models # from models import
 from tests.helpers import make_proxy
+from models import SensorConfig
 
 
 def test_validate_control_parameters_empty_value(tmp_path):
@@ -46,12 +45,7 @@ def test_validate_control_parameters_different_table(tmp_path):
 
 def test_sensor_config_creation(tmp_path):
     """Test SensorConfig creation."""
-    from utils import SensorConfig
+    config = SensorConfig(name="Grid", unit="kWh")
 
-    config = SensorConfig(
-        sensor_type="electricity",
-        port="/dev/ttyUSB0"
-    )
-
-    assert config.sensor_type == "electricity"
-    assert config.port == "/dev/ttyUSB0"
+    assert config.name == "Grid"
+    assert config.unit == "kWh"

@@ -500,3 +500,98 @@ def test_capture_worker_connect_error(monkeypatch):
 
     monkeypatch.setattr(sqlite3, "connect", boom)
     utils._capture_worker(":memory:")
+
+
+def test_capture_payload_queue_missing(monkeypatch):
+    monkeypatch.setattr(utils, "CAPTURE_PAYLOADS", True)
+    monkeypatch.setattr(utils, "_capture_queue", None)
+
+    utils.capture_payload(
+        device_id="DEV1",
+        table="tbl_box_prms",
+        raw="<Frame>1</Frame>",
+        raw_bytes=b"<Frame>1</Frame>",
+        parsed={"MODE": 1},
+        direction="proxy_to_cloud",
+        conn_id=1,
+        peer=TEST_PEER,
+        length=15,
+    )
+
+
+def test_capture_payload_queue_full_existing_queue(monkeypatch):
+    from unittest.mock import MagicMock
+
+    q = MagicMock()
+    q.put_nowait.side_effect = queue.Full()
+
+    class DummyThread:
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(utils, "CAPTURE_PAYLOADS", True)
+    monkeypatch.setattr(utils, "_capture_queue", q)
+    monkeypatch.setattr(utils, "_capture_thread", DummyThread())
+    monkeypatch.setattr(utils, "_capture_cols", set())
+
+    utils.capture_payload(
+        device_id="DEV1",
+        table="tbl_box_prms",
+        raw="<Frame>1</Frame>",
+        raw_bytes=None,
+        parsed={"MODE": 1},
+        direction="proxy_to_cloud",
+        conn_id=1,
+        peer=TEST_PEER,
+        length=15,
+    )
+
+
+def test_public_dns_nested_resolver_fallback(monkeypatch):
+    class DummyDNS:
+        class resolver:
+            class Resolver:
+                def __init__(self, configure=False):
+                    self.nameservers = []
+
+                def resolve(self, _host, _record, lifetime=2.0):
+                    class DummyAnswer(list):
+                        def __init__(self):
+                            super().__init__([TEST_IP])
+                            self.rrset = type("R", (), {"ttl": 60})()
+
+                    return DummyAnswer()
+
+    monkeypatch.setattr(utils, "dns", DummyDNS())
+    monkeypatch.setattr(utils, "_public_dns_nameservers", lambda: [TEST_DNS_1])
+
+    ip, ttl = utils._resolve_public_dns("example.com")
+    assert ip == TEST_IP
+    assert ttl == pytest.approx(60.0)
+
+
+def test_public_dns_no_resolver_available(monkeypatch):
+    class DummyDNS:
+        pass
+
+    monkeypatch.setattr(utils, "dns", DummyDNS())
+
+    ip, ttl = utils._resolve_public_dns("example.com")
+    assert ip is None
+    assert ttl == utils._PUBLIC_DNS_TTL_DEFAULT_S
+
+
+def test_save_prms_state_os_error(monkeypatch, tmp_path):
+    import os
+    path = tmp_path / "/invalid/path/that/does/not/exist.json"
+    monkeypatch.setattr(utils, "PRMS_STATE_PATH", str(path))
+    
+    utils.save_prms_state("tbl_test", {"MODE": 1}, "DEV1")
+
+
+def test_save_prms_state_value_error(monkeypatch, tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text("not json data", encoding="utf-8")
+    monkeypatch.setattr(utils, "PRMS_STATE_PATH", str(path))
+    
+    utils.save_prms_state("tbl_test", {"MODE": 1}, "DEV1")

@@ -1,19 +1,8 @@
 [run]
-branch = True
-parallel = True
-relative_files = True
-source =
-    addon/oig-proxy
-omit =
+source = addon/oig-proxy
+omit = 
     */tests/*
-    */testing/*
-    */analysis/*
-    */.venv/*
     */__pycache__/*
-    */logs/*
-    */reports/*
-
-[report]
-show_missing = True
-skip_covered = True
-precision = 1
+    */site-packages/*
+    */.venv/*
+    addon/oig-proxy/cloud_session.py

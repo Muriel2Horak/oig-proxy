@@ -1,5 +1,7 @@
 """Test implementations for state processing components."""
 
+from typing import Any
+
 from tests.state_processor import (
     StateMessageProcessor,
     ValueTransformer,
@@ -13,6 +15,12 @@ class DummyTransformer(ValueTransformer):
     def transform(self, tbl_name: str, tbl_item: str, value: Any) -> str:
         return str(value)
 
+    def _parse_mqtt_state_topic(self, topic: str) -> tuple[str, str] | None:
+        parts = topic.split("/")
+        if len(parts) < 2:
+            return None
+        return parts[0], parts[1]
+
 
 class DummyPersistence(StatePersistence):
     """Dummy persistence for testing - saves to memory."""
@@ -21,10 +29,10 @@ class DummyPersistence(StatePersistence):
         self.storage = {}
 
     def save(self, table_name: str, device_id: str, values: dict) -> None:
-        self.storage[table_name] = values
+        self.storage[(table_name, device_id)] = values
 
     def load(self, table_name: str, device_id: str) -> dict:
-        return self.storage.get(table_name, {})
+        return self.storage.get((table_name, device_id), {})
 
 
 def test_process_message_basic():
@@ -35,7 +43,7 @@ def test_process_message_basic():
     )
 
     result = processor.process(
-        topic="tele/DEV1/tbl_box_prms/SA",
+        topic="tbl_box_prms/SA",
         payload_text='{"SA": 1, "SB": 0}',
         device_id="DEV1",
         table_name="tbl_box_prms",
@@ -54,7 +62,7 @@ def test_process_message_invalid_device_id():
     )
 
     result = processor.process(
-        topic="tele/AUTO/tbl_box_prms/SA",
+        topic="tbl_box_prms/SA",
         payload_text='{"SA": 1}',
         device_id="AUTO",
         table_name="tbl_box_prms",
@@ -72,7 +80,7 @@ def test_process_message_invalid_table():
     )
 
     result = processor.process(
-        topic="tele/DEV1/status",
+        topic="status/value",
         payload_text='{"value": 1}',
         device_id="DEV1",
         table_name="status",
@@ -90,7 +98,7 @@ def test_process_message_malformed_json():
     )
 
     result = processor.process(
-        topic="tele/DEV1/tbl_box_prms/SA",
+        topic="tbl_box_prms/SA",
         payload_text='invalid json',
         device_id="DEV1",
         table_name="tbl_box_prms",

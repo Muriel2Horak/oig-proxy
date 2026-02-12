@@ -2,12 +2,18 @@
 
 import asyncio
 import time
+from enum import Enum
 import pytest
 
 from tests.helpers import make_proxy
-from tests.helpers import make_proxy
 
-import models.ProxyMode
+
+class ProxyMode(Enum):
+    OFFLINE = -1
+    ONLINE = 0
+    MITM = 1
+    REPLAY = 2
+    BOX_LOCAL = 3
 
 
 @pytest.mark.skip("requires full proxy initialization for telemetry")

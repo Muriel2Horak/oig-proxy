@@ -158,10 +158,11 @@ class CloudSessionManager:
             if self.is_connected():
                 return
 
+            backoff_delay = self.backoff.get_backoff_delay()
             now = time.monotonic()
             since_last = now - self._last_connect_attempt
-            if since_last < self._backoff_s:
-                await asyncio.sleep(self._backoff_s - since_last)
+            if since_last < backoff_delay:
+                await asyncio.sleep(backoff_delay - since_last)
 
             self._last_connect_attempt = time.monotonic()
             try:
@@ -171,7 +172,7 @@ class CloudSessionManager:
                     timeout=self.connect_timeout_s,
                 )
                 self.stats.connects += 1
-                self._backoff_s = self.min_reconnect_s
+                self.backoff.reset()
                 logger.debug(
                     "☁️ Connected to %s:%s "
                     "(connects=%s, timeouts=%s, errors=%s, disconnects=%s)",
@@ -186,27 +187,27 @@ class CloudSessionManager:
                 self.stats.timeouts += 1
                 self.stats.errors += 1
                 await self._close_locked()
-                self._backoff_s = min(
-                    self.max_reconnect_s, self._backoff_s * 2.0)
+                self.backoff.record_failure()
+                backoff_delay = self.backoff.get_backoff_delay()
                 now = time.monotonic()
                 if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning(
                         "☁️ Cloud connect timeout (backoff=%.1fs)",
-                        self._backoff_s,
+                        backoff_delay,
                     )
                     self._last_warn_ts = now
                 raise
             except (OSError, RuntimeError) as exc:
                 self.stats.errors += 1
                 await self._close_locked()
-                self._backoff_s = min(
-                    self.max_reconnect_s, self._backoff_s * 2.0)
+                self.backoff.record_failure()
+                backoff_delay = self.backoff.get_backoff_delay()
                 now = time.monotonic()
                 if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:
                     logger.warning(
                         "☁️ Cloud connect failed: %s (backoff=%.1fs)",
                         exc,
-                        self._backoff_s,
+                        backoff_delay,
                     )
                     self._last_warn_ts = now
                 raise
@@ -260,3 +261,53 @@ class CloudSessionManager:
                     self._last_warn_ts = now
                 await self.close()
                 raise
+
+    def _get_stats_sync(self) -> CloudStats:
+        return self.stats
+
+    def _is_connected_sync(self) -> bool:
+        writer = self._writer
+        return writer is not None and not writer.is_closing()
+
+    def _get_backoff_delay_sync(self) -> float:
+        return self.backoff.get_backoff_delay()
+
+    def _set_last_connect_attempt_sync(self, timestamp: float) -> None:
+        self._last_connect_attempt = timestamp
+
+    def _reset_backoff_sync(self) -> None:
+        self.backoff.reset()
+
+    def _record_failure_sync(self) -> None:
+        self.backoff.record_failure()
+
+    def _read_until_frame_sync(self, reader, buf, ack_max_bytes: int) -> tuple[bytes, bytearray]:
+        """Čte data a hledá XML frame (sync verze pro testování)."""
+        while True:
+            chunk = reader.read(4096)
+            if not chunk:
+                return b"", buf
+            buf.extend(chunk)
+            end_tag = b"</Frame>"
+            end_idx = buf.find(end_tag)
+            if end_idx < 0:
+                if len(buf) > ack_max_bytes:
+                    data = bytes(buf)
+                    buf.clear()
+                    return data, buf
+                continue
+            frame_end = end_idx + len(end_tag)
+            if len(buf) > frame_end:
+                if buf[frame_end:frame_end + 2] == b"\r\n":
+                    frame_end += 2
+                elif buf[frame_end:frame_end + 1] == b"\n":
+                    frame_end += 1
+                elif buf[frame_end:frame_end + 1] == b"\r":
+                    if len(buf) < frame_end + 2:
+                        buf.extend(reader.read(4096))
+                        if len(buf) < frame_end + 2:
+                            continue
+                    frame_end += 1
+            frame = bytes(buf[:frame_end])
+            del buf[:frame_end]
+            return frame, buf

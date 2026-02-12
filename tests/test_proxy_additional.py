@@ -11,7 +11,7 @@ import pytest
 import proxy as proxy_module
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
-from models import
+from models import ProxyMode
 
 
 class DummyMQTT(DummyMQTTMixin):
@@ -141,6 +141,7 @@ def make_proxy(tmp_path):
     proxy.cloud_session_connected = False
     proxy._cloud_connected_since_epoch = None
     proxy._cloud_peer = None
+    proxy._cloud_rx_buf = bytearray()
     proxy.box_connected = False
     proxy.box_connections = 0
     proxy._hb_interval_s = 0.0

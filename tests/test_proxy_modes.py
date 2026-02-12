@@ -5,8 +5,15 @@
 # pylint: disable=duplicate-code,unused-variable
 import asyncio
 from collections import deque
+from enum import Enum
 
-from models import
+class ProxyMode(Enum):
+    OFFLINE = -1
+    ONLINE = 0
+    MITM = 1
+    REPLAY = 2
+    BOX_LOCAL = 3
+
 import proxy as proxy_module
 
 

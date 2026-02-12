@@ -770,7 +770,8 @@ class OIGProxy:
 
         if mode_int != self._mode_value:
             self._mode_value = mode_int
-            save_mode_state(
+            await asyncio.to_thread(
+                save_mode_state,
                 mode_int,
                 device_id or self.device_id or self._mode_device_id)
             logger.info("MODE: %s → %s", source, mode_int)
@@ -2470,14 +2471,15 @@ class OIGProxy:
             )
         return raw_values
 
-    def _persist_mqtt_state_values(
+    async def _persist_mqtt_state_values(
         self,
         table_name: str,
         raw_values: dict[str, Any],
         device_id: str,
     ) -> None:
         try:
-            save_prms_state(table_name, raw_values, device_id)
+            await asyncio.to_thread(
+                save_prms_state, table_name, raw_values, device_id)
         except Exception as e:
             logger.debug(
                 "STATE: snapshot update failed (%s): %s",
@@ -2512,7 +2514,7 @@ class OIGProxy:
             return
         raw_values = self._transform_mqtt_state_values(payload, table_name)
         if raw_values and self._should_persist_table(table_name):
-            self._persist_mqtt_state_values(table_name, raw_values, device_id)
+            await self._persist_mqtt_state_values(table_name, raw_values, device_id)
 
     async def _control_publish_result(
         self,

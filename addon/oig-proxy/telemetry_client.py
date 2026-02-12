@@ -237,6 +237,22 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 pass
         return url, 1883
 
+    def _cleanup_client(self) -> None:
+        """Bezpečně uklidí MQTT klienta a zastaví jeho background thread."""
+        client = self._client
+        if client is None:
+            return
+        try:
+            client.loop_stop()
+        except Exception:  # nosec B110
+            pass
+        try:
+            client.disconnect()
+        except Exception:  # nosec B110
+            pass
+        self._client = None
+        self._connected = False
+
     def _create_client(self) -> bool:
         """Create MQTT client (synchronous, called from thread)."""
         if not MQTT_AVAILABLE or not mqtt:
@@ -281,9 +297,12 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 if self._connected:
                     return True
                 time.sleep(0.1)
+            # Nepodařilo se připojit — uklidíme klienta (zastavíme thread)
+            self._cleanup_client()
             self._connect_backoff.record_failure()
             return False
         except Exception:
+            self._cleanup_client()
             self._connect_backoff.record_failure()
             return False
 
@@ -301,18 +320,13 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         if self._client:
             try:
                 if self._client.is_connected():
+                    self._connected = True
                     return True
                 # Let paho reconnect in place if possible.
                 self._client.reconnect()
                 self._client.loop_start()
             except Exception:
-                try:
-                    self._client.loop_stop()
-                    self._client.disconnect()
-                except Exception:  # nosec B110 - cleanup, failure is acceptable
-                    pass
-                self._client = None
-                self._connected = False
+                self._cleanup_client()
 
         if not self._client:
             return self._create_client()
@@ -519,14 +533,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
 
     def disconnect(self) -> None:
         """Disconnect MQTT client and close buffer."""
-        if self._client:
-            try:
-                self._client.loop_stop()
-                self._client.disconnect()
-            except Exception:  # nosec B110 - cleanup, failure is acceptable
-                pass
-            self._client = None
-            self._connected = False
+        self._cleanup_client()
         if self._buffer:
             self._buffer.close()
 

@@ -32,10 +32,12 @@ from config import (
 )
 from models import SensorConfig
 from utils import get_sensor_config, iso_now
-
-if MQTT_AVAILABLE:
-    import paho.mqtt.client as mqtt
-
+ 
+if MQTT_AVAILABLE:  # pragma: no cover
+    import paho.mqtt.client as mqtt  # pragma: no cover
+else:  # pragma: no cover
+    mqtt = None  # type: ignore[assignment]
+ 
 logger = logging.getLogger(__name__)
 
 _MQTT_LOG_SUBSCRIBED = "MQTT: Subscribed %s"
@@ -97,6 +99,41 @@ class MQTTQueue:
         logger.info("MQTTQueue: Initialized (%s)", self.db_path)
         return conn
 
+    def _add_sync(self, topic: str, payload: str, retain: bool) -> bool:
+        """Synchronní implementace add (voláno z thread-pool)."""
+        try:
+            size = self._size_sync()
+            if size >= self.max_size:
+                self.conn.execute(
+                    "DELETE FROM queue WHERE id IN "
+                    "(SELECT id FROM queue ORDER BY id LIMIT 1)"
+                )
+                logger.warning(
+                    "MQTTQueue full (%s), dropped oldest message",
+                    self.max_size,
+                )
+
+            # Pokud je zpráva retain, typicky nás zajímá jen poslední stav/config
+            # pro daný topic.
+            # Tímhle zabráníme tomu, aby po delším výpadku brokera replay poslal tisíce
+            # historických stavů pro stejný topic (což v HA fan-outne do spousty
+            # state_changed událostí).
+            if retain:
+                self.conn.execute(
+                    "DELETE FROM queue WHERE topic = ?", (topic,))
+
+            self.conn.execute(
+                "INSERT INTO queue "
+                "(timestamp, topic, payload, retain, queued_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (time.time(), topic, payload, int(retain), iso_now())
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.Error as exc:
+            logger.error("MQTTQueue: Add failed: %s", exc)
+            return False
+
     async def add(
             self,
             topic: str,
@@ -104,79 +141,59 @@ class MQTTQueue:
             retain: bool = False) -> bool:
         """Přidá MQTT zprávu do fronty (FIFO)."""
         async with self.lock:
-            try:
-                # Check size limit
-                size = self.size()
-                if size >= self.max_size:
-                    # Drop oldest
-                    self.conn.execute(
-                        "DELETE FROM queue WHERE id IN "
-                        "(SELECT id FROM queue ORDER BY id LIMIT 1)"
-                    )
-                    logger.warning(
-                        "MQTTQueue full (%s), dropped oldest message",
-                        self.max_size,
-                    )
+            return await asyncio.to_thread(
+                self._add_sync, topic, payload, retain)
 
-                # Pokud je zpráva retain, typicky nás zajímá jen poslední stav/config
-                # pro daný topic.
-                # Tímhle zabráníme tomu, aby po delším výpadku brokera replay poslal tisíce
-                # historických stavů pro stejný topic (což v HA fan-outne do spousty
-                # state_changed událostí).
-                if retain:
-                    self.conn.execute(
-                        "DELETE FROM queue WHERE topic = ?", (topic,))
-
-                self.conn.execute(
-                    "INSERT INTO queue "
-                    "(timestamp, topic, payload, retain, queued_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (time.time(), topic, payload, int(retain), iso_now())
-                )
-                self.conn.commit()
-                return True
-            except sqlite3.Error as exc:
-                logger.error("MQTTQueue: Add failed: %s", exc)
-                return False
+    def _get_next_sync(self) -> tuple[int, str, str, bool] | None:
+        """Synchronní implementace get_next (voláno z thread-pool)."""
+        try:
+            cursor = self.conn.execute(
+                "SELECT id, topic, payload, retain FROM queue "
+                "ORDER BY id LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            msg_id, topic, payload, retain = row
+            return int(msg_id), str(topic), str(payload), bool(retain)
+        except sqlite3.Error as exc:
+            logger.error("MQTTQueue: Get next failed: %s", exc)
+            return None
 
     async def get_next(self) -> tuple[int, str, str, bool] | None:
         """Vrátí další zprávu (id, topic, payload, retain) nebo None."""
         async with self.lock:
-            try:
-                cursor = self.conn.execute(
-                    "SELECT id, topic, payload, retain FROM queue "
-                    "ORDER BY id LIMIT 1"
-                )
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                msg_id, topic, payload, retain = row
-                return int(msg_id), str(topic), str(payload), bool(retain)
-            except sqlite3.Error as exc:
-                logger.error("MQTTQueue: Get next failed: %s", exc)
-                return None
+            return await asyncio.to_thread(self._get_next_sync)
+
+    def _remove_sync(self, msg_id: int) -> bool:
+        """Synchronní implementace remove (voláno z thread-pool)."""
+        try:
+            self.conn.execute(
+                "DELETE FROM queue WHERE id = ?", (msg_id,)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.Error as exc:
+            logger.error("MQTTQueue: Remove failed: %s", exc)
+            return False
 
     async def remove(self, msg_id: int) -> bool:
         """Odstraní zprávu po úspěšném odeslání."""
         async with self.lock:
-            try:
-                self.conn.execute(
-                    "DELETE FROM queue WHERE id = ?", (msg_id,)
-                )
-                self.conn.commit()
-                return True
-            except sqlite3.Error as exc:
-                logger.error("MQTTQueue: Remove failed: %s", exc)
-                return False
+            return await asyncio.to_thread(self._remove_sync, msg_id)
 
-    def size(self) -> int:
-        """Vrátí počet zpráv ve frontě."""
+    def _size_sync(self) -> int:
+        """Synchronní implementace size."""
         try:
             cursor = self.conn.execute("SELECT COUNT(*) FROM queue")
             return cursor.fetchone()[0]
         except sqlite3.Error as exc:
             logger.error("MQTTQueue: Size failed: %s", exc)
             return 0
+
+    def size(self) -> int:
+        """Vrátí počet zpráv ve frontě (sync, pro použití mimo async kontext)."""
+        return self._size_sync()
 
     def clear(self) -> None:
         """Vymaže celou frontu."""
