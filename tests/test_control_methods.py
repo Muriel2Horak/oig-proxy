@@ -25,22 +25,22 @@ def make_proxy(tmp_path):
 def test_run_coroutine_threadsafe(tmp_path):
     """Test _run_coroutine_threadsafe method."""
     proxy = make_proxy(tmp_path)
-    
+
     # Mock event loop and send method
     called = []
-    
+
     async def fake_send(*_args, **_kwargs):
         called.append("sent")
         return {"ok": True}
-    
+
     proxy._loop = asyncio.new_event_loop()
     proxy._send_setting_to_box = fake_send
-    
+
     # Call method
     result = proxy._run_coroutine_threadsafe(
         "tbl_box_prms", "SA", "1", "New"
     )
-    
+
     assert result["ok"] is True
     assert "sent" in called
 
