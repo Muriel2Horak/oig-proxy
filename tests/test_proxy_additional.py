@@ -11,7 +11,7 @@ import pytest
 import proxy as proxy_module
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
-import models.ProxyMode
+from models import ProxyMode
 
 
 class DummyMQTT(DummyMQTTMixin):
