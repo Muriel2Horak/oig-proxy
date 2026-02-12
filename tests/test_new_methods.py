@@ -9,10 +9,8 @@ from models import ProxyMode
 
 def test_validate_event_loop_ready(tmp_path):
     """Test _validate_event_loop_ready method."""
-    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.device_id = "DEV1"
-    proxy.mode = ProxyMode.ONLINE
-    proxy._last_data_epoch = time.time()
+    proxy = proxy_module.OIGProxy("DEV1")
+    proxy._loop = None
 
     # Without loop
     assert proxy._validate_event_loop_ready() is False
@@ -24,9 +22,7 @@ def test_validate_event_loop_ready(tmp_path):
 
 def test_validate_control_parameters(tmp_path):
     """Test _validate_control_parameters method."""
-    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.device_id = "DEV1"
-    proxy.mode = ProxyMode.ONLINE
+    proxy = proxy_module.OIGProxy("DEV1")
     proxy._last_data_epoch = time.time()
     proxy.box_connected = True
 
@@ -50,9 +46,7 @@ def test_validate_control_parameters(tmp_path):
 
 def test_build_control_frame(tmp_path):
     """Test _build_control_frame method."""
-    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.device_id = "DEV1"
-    proxy.mode = ProxyMode.ONLINE
+    proxy = proxy_module.OIGProxy("DEV1")
 
     frame = proxy._build_control_frame("tbl_box_prms", "SA", "1", "New")
     assert isinstance(frame, bytes)
