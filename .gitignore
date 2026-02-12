@@ -44,6 +44,7 @@ deploy_to_ha.sh
 .sonar_cache/
 reports/
 test-results/
+coverage.xml
 tools/monitoring/playwright/node_modules/
 tools/monitoring/playwright/playwright-report/
 tools/monitoring/playwright/test-results/

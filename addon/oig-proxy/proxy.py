@@ -902,9 +902,10 @@ class OIGProxy:
 
     def _snapshot_logs(self) -> list[dict[str, Any]]:
         self._prune_log_buffer()
+        snapshot = list(self._telemetry_logs)
         return [
             {k: v for k, v in item.items() if k != "_epoch"}
-            for item in self._telemetry_logs
+            for item in snapshot
         ]
 
     def _flush_log_buffer(self) -> list[dict[str, Any]]:
@@ -3321,7 +3322,7 @@ class OIGProxy:
 
     def _validate_event_loop_ready(self) -> bool:
         """Ověří že event loop je připraven."""
-        return self._loop is not None
+        return self._loop is not None and self._loop.is_running()
 
     def _send_setting_via_event_loop(
             self,
@@ -3362,10 +3363,12 @@ class OIGProxy:
             tbl_item: str,
             new_value: str,
             confirm: str,
+            msg_id: int | None = None,
+            id_set: int | None = None,
     ) -> bytes:
         """Sestaví rámec pro nastavení."""
-        msg_id = secrets.randbelow(90_000_000) + 10_000_000
-        id_set = int(time.time())
+        msg_id = msg_id if msg_id is not None else secrets.randbelow(90_000_000) + 10_000_000
+        id_set = id_set if id_set is not None else int(time.time())
         now_local = datetime.now()
         now_utc = datetime.now(timezone.utc)
 
@@ -3395,6 +3398,9 @@ class OIGProxy:
             self, tbl_name: str, tbl_item: str, new_value: str, confirm: str
     ) -> dict[str, Any]:
         """Spustí coroutines threadsafe s timeoutem."""
+        loop = self._loop
+        if loop is None:
+            return {"ok": False, "error": "event_loop_not_ready"}
         fut = asyncio.run_coroutine_threadsafe(
             self._send_setting_to_box(
                 tbl_name=tbl_name,
@@ -3402,7 +3408,7 @@ class OIGProxy:
                 new_value=new_value,
                 confirm=confirm,
             ),
-            self._loop if self._loop else None,  # type: ignore[arg-type]
+            loop,
         )
         try:
             return fut.result(timeout=5.0)
@@ -3433,30 +3439,9 @@ class OIGProxy:
 
         msg_id = secrets.randbelow(90_000_000) + 10_000_000
         id_set = int(time.time())
-        now_local = datetime.now()
-        now_utc = datetime.now(timezone.utc)
-
-        inner = (
-            f"<ID>{msg_id}</ID>"
-            f"<ID_Device>{self.device_id}</ID_Device>"
-            f"<ID_Set>{id_set}</ID_Set>"
-            "<ID_SubD>0</ID_SubD>"
-            f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
-            f"<NewValue>{new_value}</NewValue>"
-            f"<Confirm>{confirm}</Confirm>"
-            f"<TblName>{tbl_name}</TblName>"
-            f"<TblItem>{tbl_item}</TblItem>"
-            "<ID_Server>5</ID_Server>"
-            "<mytimediff>0</mytimediff>"
-            "<Reason>Setting</Reason>"
-            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
-            "<ver>55734</ver>"
+        frame = self._build_control_frame(
+            tbl_name, tbl_item, new_value, confirm, msg_id=msg_id, id_set=id_set
         )
-        frame = build_frame(
-            inner,
-            add_crlf=True).encode(
-            "utf-8",
-            errors="strict")
 
         self._local_setting_pending = {
             "sent_at": time.monotonic(),

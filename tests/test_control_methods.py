@@ -2,8 +2,8 @@
 
 import asyncio
 import os
+import threading
 import time
-import pytest
 
 # pylint: disable=protected-access
 import proxy as proxy_module
@@ -21,7 +21,6 @@ def make_proxy(tmp_path):
     return proxy
 
 
-@pytest.mark.skip("async mocking complexity, not priority for SonarCloud")
 def test_run_coroutine_threadsafe(tmp_path):
     """Test _run_coroutine_threadsafe method."""
     proxy = make_proxy(tmp_path)
@@ -33,16 +32,25 @@ def test_run_coroutine_threadsafe(tmp_path):
         called.append("sent")
         return {"ok": True}
 
-    proxy._loop = asyncio.new_event_loop()
-    proxy._send_setting_to_box = fake_send
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever)
+    thread.start()
+    try:
+        proxy._loop = loop
+        proxy._send_setting_to_box = fake_send
 
-    # Call method
-    result = proxy._run_coroutine_threadsafe(
-        "tbl_box_prms", "SA", "1", "New"
-    )
+        # Call method
+        result = proxy._run_coroutine_threadsafe(
+            "tbl_box_prms", "SA", "1", "New"
+        )
 
-    assert result["ok"] is True
-    assert "sent" in called
+        assert result["ok"] is True
+        assert "sent" in called
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join()
+        loop.close()
+        proxy._loop = None
 
 
 def test_append_to_control_log(tmp_path):
@@ -77,28 +85,30 @@ def test_validate_control_parameters_box_not_sending(tmp_path):
     assert result["error"] == "box_not_sending_data"
 
 
-@pytest.mark.skip("async mocking complexity, not priority for SonarCloud")
 def test_send_setting_via_event_loop_timeout(tmp_path):
     """Test _send_setting_via_event_loop with timeout."""
     proxy = make_proxy(tmp_path)
 
-    # Mock _run_coroutine_threadsafe to timeout
-    async def fake_run(*_args, **_kwargs):
-        fut = asyncio.Future()
-        loop = asyncio.get_event_loop()
-        loop.call_later(10, fut.cancel)
-        return fut
+    proxy._run_coroutine_threadsafe = lambda *_args, **_kwargs: {  # noqa: E731
+        "ok": False,
+        "error": "timeout",
+    }
 
     proxy._loop = asyncio.new_event_loop()
-    proxy._run_coroutine_threadsafe = fake_run
-
-    # This should handle the timeout gracefully
-    result = proxy._send_setting_via_event_loop(
-        tbl_name="tbl_box_prms",
-        tbl_item="SA",
-        new_value="1",
-        confirm="New",
-    )
-
-    # Result should handle timeout (either error or success depending on implementation)
-    assert result is not None
+    loop = proxy._loop
+    thread = threading.Thread(target=loop.run_forever)
+    thread.start()
+    try:
+        # This should handle the timeout gracefully
+        result = proxy._send_setting_via_event_loop(
+            tbl_name="tbl_box_prms",
+            tbl_item="SA",
+            new_value="1",
+            confirm="New",
+        )
+        assert result["ok"] is False
+        assert result["error"] == "timeout"
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join()
+        loop.close()

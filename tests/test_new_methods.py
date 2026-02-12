@@ -1,8 +1,8 @@
 """Tests for new methods added in telemetry/sonar PR."""
 
 import asyncio
+import threading
 import time
-import pytest
 
 # pylint: disable=protected-access
 import proxy as proxy_module
@@ -16,6 +16,7 @@ def make_proxy(tmp_path):
     proxy.mode = ProxyMode.ONLINE
     proxy._last_data_epoch = time.time()
     proxy.box_connected = True
+    proxy._loop = None
     return proxy
 
 
@@ -27,14 +28,24 @@ def test_validate_event_loop_ready(tmp_path):
     # Without loop
     assert proxy._validate_event_loop_ready() is False
 
-    # With loop
-    proxy._loop = asyncio.new_event_loop()
-    assert proxy._validate_event_loop_ready() is True
+    # With running loop
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever)
+    thread.start()
+    try:
+        proxy._loop = loop
+        assert proxy._validate_event_loop_ready() is True
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join()
+        loop.close()
+        proxy._loop = None
 
 
 def test_validate_control_parameters(tmp_path):
     """Test _validate_control_parameters method."""
     proxy = make_proxy(tmp_path)
+    proxy._last_data_epoch = time.time()
 
     # Valid case
     result = proxy._validate_control_parameters("tbl_box_prms", "SA", "1")
@@ -49,6 +60,7 @@ def test_validate_control_parameters(tmp_path):
     # Device ID AUTO
     proxy.box_connected = True
     proxy.device_id = "AUTO"
+    proxy._last_data_epoch = time.time()
     result = proxy._validate_control_parameters("tbl_box_prms", "SA", "1")
     assert result["ok"] is False
     assert result["error"] == "device_id_unknown"
