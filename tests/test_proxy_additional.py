@@ -8,16 +8,9 @@ import time
 from collections import deque, defaultdict
 
 import proxy as proxy_module
+from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
 from models import ProxyMode
-
-
-class DummyQueue:
-    def __init__(self, size: int = 0) -> None:
-        self._size = size
-
-    def size(self) -> int:
-        return self._size
 
 
 class DummyMQTT(DummyMQTTMixin):
