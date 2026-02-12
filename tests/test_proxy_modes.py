@@ -6,7 +6,7 @@
 import asyncio
 from collections import deque
 
-from models import ProxyMode
+from models import
 import proxy as proxy_module
 
 
