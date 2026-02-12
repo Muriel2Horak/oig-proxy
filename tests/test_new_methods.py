@@ -12,6 +12,7 @@ def test_validate_event_loop_ready(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "DEV1"
     proxy.mode = ProxyMode.ONLINE
+    proxy._last_data_epoch = time.time()
 
     # Without loop
     assert proxy._validate_event_loop_ready() is False
@@ -27,6 +28,7 @@ def test_validate_control_parameters(tmp_path):
     proxy.device_id = "DEV1"
     proxy.mode = ProxyMode.ONLINE
     proxy._last_data_epoch = time.time()
+    proxy.box_connected = True
 
     # Valid case
     result = proxy._validate_control_parameters("tbl_box_prms", "SA", "1")
