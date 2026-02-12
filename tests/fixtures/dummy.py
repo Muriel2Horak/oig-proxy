@@ -13,6 +13,9 @@ class DummyWriter:
     def is_closing(self):
         return self._closing
 
+    def get_extra_info(self, name):
+        return None
+
     def write(self, data):
         self.data.append(data)
 
@@ -34,6 +37,13 @@ class DummyReader:
 
     async def read(self, _size):
         return self._payload
+
+    def get_extra_info(self, name):
+        if name == "peername":
+            return ("1.2.3.4", 1234)
+        if name == "socket":
+            return None
+        return None
 
 
 class DummyQueue:
