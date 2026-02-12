@@ -7,7 +7,7 @@ import asyncio
 
 import proxy as proxy_module
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
-from models import ProxyMode
+import models.ProxyMode
 
 
 class DummyWriter:

@@ -10,7 +10,7 @@ import time
 from collections import deque, defaultdict
 
 import proxy as proxy_module
-from models import ProxyMode, SensorConfig
+import models.ProxyMode, SensorConfig
 
 
 class DummyCloudHealth:
