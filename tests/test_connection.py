@@ -4,8 +4,6 @@ import asyncio
 
 # pylint: disable=protected-access
 import proxy as proxy_module
-from models import ProxyMode
-
 
 def make_proxy(tmp_path):
     """Create minimal proxy object for testing."""
