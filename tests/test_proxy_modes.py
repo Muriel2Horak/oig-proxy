@@ -4,25 +4,11 @@
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code,unused-variable
 import asyncio
-from collections import deque
 from unittest.mock import MagicMock, patch
 
 from models import ProxyMode
 from hybrid_mode import HybridModeManager
 import proxy as proxy_module
-
-
-class DummyCloudHealth:
-    def __init__(self, is_online: bool = True) -> None:
-        self.is_online = is_online
-
-
-class DummyCloudQueue:
-    def __init__(self, size: int) -> None:
-        self._size = size
-
-    def size(self) -> int:
-        return self._size
 
 
 def _make_proxy(
@@ -32,10 +18,6 @@ def _make_proxy(
         cloud_online: bool = True):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.stats = {"mode_changes": 0}
-    proxy._cloud_queue_enabled = True
-    proxy._cloud_queue_disabled_warned = False
-    proxy.cloud_queue = DummyCloudQueue(queue_size)
-    proxy.cloud_health = DummyCloudHealth(is_online=cloud_online)
     proxy._tc = MagicMock()
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None

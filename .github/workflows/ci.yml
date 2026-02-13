@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -30,11 +30,20 @@ jobs:
           PYTHONPATH: addon/oig-proxy
         run: |
           mkdir -p reports
-          pytest --junitxml=reports/junit.xml --cov=addon/oig-proxy --cov-report=xml:reports/coverage.xml
+          pytest --junitxml=reports/junit.xml --cov=addon/oig-proxy --cov-report=xml:reports/coverage.xml --cov-fail-under=80
+      - name: Type checking (mypy)
+        env:
+          MYPYPATH: addon/oig-proxy
+        run: |
+          mypy addon/oig-proxy/*.py --ignore-missing-imports
+      - name: Lint Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: addon/oig-proxy/Dockerfile
       - name: Security scan (bandit)
         run: |
           mkdir -p reports
-          bandit -r addon/oig-proxy -f json -o reports/bandit.json --exit-zero
+          bandit -r addon/oig-proxy -f json -o reports/bandit.json
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@e44258b109568baa0df60ed515909fc6c72cba92

@@ -427,9 +427,6 @@ def _builtin_sensors() -> dict[str, SensorConfig]:
         "proxy_status:box_connections_active": SensorConfig(
             "BOX aktivní spojení", "", None, "measurement", None, "proxy", "diagnostic"
         ),
-        "proxy_status:cloud_queue": SensorConfig(
-            "Cloud fronta", "", None, "measurement", None, "proxy", "diagnostic"
-        ),
         "proxy_status:mqtt_queue": SensorConfig(
             "MQTT fronta", "", None, "measurement", None, "proxy", "diagnostic"
         ),

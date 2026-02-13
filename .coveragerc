@@ -6,4 +6,3 @@ omit =
     */__pycache__/*
     */site-packages/*
     */.venv/*
-    addon/oig-proxy/cloud_session.py

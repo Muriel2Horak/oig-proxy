@@ -546,18 +546,3 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
     def is_buffering(self) -> bool:
         """Check if messages are being buffered (MQTT unavailable)."""
         return self._enabled and not self._connected and self._buffer is not None
-
-
-_TELEMETRY_CLIENT: Optional[TelemetryClient] = None
-
-
-def init_telemetry(device_id: str, version: str) -> TelemetryClient:
-    """Initialize global telemetry client."""
-    global _TELEMETRY_CLIENT  # pylint: disable=global-statement
-    _TELEMETRY_CLIENT = TelemetryClient(device_id, version)
-    return _TELEMETRY_CLIENT
-
-
-def get_telemetry_client() -> Optional[TelemetryClient]:
-    """Get global telemetry client instance."""
-    return _TELEMETRY_CLIENT

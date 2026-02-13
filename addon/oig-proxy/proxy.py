@@ -17,7 +17,6 @@ import logging
 import socket
 import time
 from contextlib import suppress
-from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
@@ -43,8 +42,6 @@ from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
 from hybrid_mode import HybridModeManager
 from oig_frame import (
-    RESULT_ACK,
-    RESULT_END,
     build_getactual_frame,
     build_offline_ack_frame,
     infer_device_id,
@@ -75,18 +72,6 @@ class _TelemetryLogHandler(logging.Handler):
 
 class OIGProxy:
     """OIG Proxy s podporou ONLINE/HYBRID/OFFLINE režimů."""
-
-    # Frame string constants (aliases for backward compatibility;
-    # canonical values live in oig_frame module)
-    _RESULT_ACK = RESULT_ACK
-    _RESULT_END = RESULT_END
-    _TIME_OFFSET = "+00:00"
-    _POST_DRAIN_SA_KEY = "post_drain_sa_refresh"
-
-    @staticmethod
-    def _get_current_timestamp() -> str:
-        """Get current timestamp in ISO format."""
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def __init__(self, device_id: str):
         self.device_id = device_id
@@ -413,15 +398,6 @@ class OIGProxy:
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
 
-    async def _handle_online_mode_connection(
-        self,
-        box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter,
-        conn_id: int
-    ) -> None:
-        """Zpětná kompatibilita: ONLINE režim je řešen per-frame v `_handle_box_connection()`."""
-        await self._handle_box_connection(box_reader, box_writer, conn_id)
-
     async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
         if writer is None:
             return
@@ -536,7 +512,6 @@ class OIGProxy:
                 self._isnew_last_poll_iso = self._last_data_iso
             if table_name == "tbl_events":
                 self._tc.record_tbl_event(parsed=parsed, device_id=device_id)
-            self._cache_last_values(parsed, table_name)
             await self._cs.handle_setting_event(parsed, table_name, device_id)
             await self._ctrl.observe_box_frame(parsed, table_name, frame)
             await self._mp.maybe_process_mode(parsed, table_name, device_id)
@@ -668,19 +643,3 @@ class OIGProxy:
             box_writer.write(ack_response)
             await box_writer.drain()
             self.stats["acks_local"] += 1
-
-    async def _handle_offline_mode_connection(
-        self,
-        box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter,
-        conn_id: int
-    ) -> None:
-        """Zpětná kompatibilita: OFFLINE režim je řešen per-frame.
-
-        Vše se odbavuje v `_handle_box_connection()`.
-        """
-        await self._handle_box_connection(box_reader, box_writer, conn_id)
-
-    def _cache_last_values(
-            self, _parsed: dict[str, Any], _table_name: str | None) -> None:
-        return

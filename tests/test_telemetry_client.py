@@ -646,30 +646,6 @@ class TestTelemetryClientBuffer:
                     assert client._buffer.count() == 0
 
 
-class TestGlobalFunctions:
-    """Test module-level functions."""
-
-    def test_init_telemetry(self):
-        with patch('telemetry_client.config') as mock_config:
-            mock_config.TELEMETRY_ENABLED = True
-            mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-            with patch('telemetry_client.MQTT_AVAILABLE', True):
-                client = telemetry_client.init_telemetry("12345", "1.0.0")
-                assert isinstance(client, telemetry_client.TelemetryClient)
-                assert client.device_id == "12345"
-                assert client.version == "1.0.0"
-
-    def test_get_telemetry_client(self):
-        with patch('telemetry_client.config') as mock_config:
-            mock_config.TELEMETRY_ENABLED = True
-            mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
-            with patch('telemetry_client.MQTT_AVAILABLE', True):
-                telemetry_client.init_telemetry("12345", "1.0.0")
-                client = telemetry_client.get_telemetry_client()
-                assert client is not None
-                assert client.device_id == "12345"
-
-
 class TestEdgeCases:
     """Test edge cases and error paths."""
 
