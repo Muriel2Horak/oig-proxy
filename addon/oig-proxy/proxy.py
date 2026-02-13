@@ -207,7 +207,7 @@ class OIGProxy:
 
     def _start_background_tasks(self) -> None:
         if self._status_task is None or self._status_task.done():
-            self._status_task = asyncio.create_task(self._proxy_status_loop())
+            self._status_task = asyncio.create_task(self._ps.status_loop())
         if self._full_refresh_task is None or self._full_refresh_task.done():
             self._full_refresh_task = asyncio.create_task(
                 self._full_refresh_loop())
@@ -254,18 +254,6 @@ class OIGProxy:
         self._start_background_tasks()
 
         await self._start_tcp_server()
-
-    # ------------------------------------------------------------------
-    # Delegation wrappers – proxy status (→ ProxyStatusReporter)
-    # ------------------------------------------------------------------
-
-    def _build_status_payload(self) -> dict[str, Any]:
-        """Delegate to ProxyStatusReporter."""
-        return self._ps.build_status_payload()
-
-    def _build_status_attrs_payload(self) -> dict[str, Any]:
-        """Delegate to ProxyStatusReporter."""
-        return self._ps.build_status_attrs_payload()
 
     async def publish_proxy_status(self) -> None:
         """Delegate to ProxyStatusReporter."""
@@ -328,47 +316,6 @@ class OIGProxy:
                 )
             except Exception as e:
                 logger.debug("Full refresh (SA) failed: %s", e)
-
-    # ------------------------------------------------------------------
-    # Delegation wrappers – mode & PRMS persistence (→ ModePersistence)
-    # ------------------------------------------------------------------
-
-    async def _publish_mode_if_ready(
-        self,
-        device_id: str | None = None,
-        *,
-        reason: str | None = None,
-    ) -> None:
-        """Delegate to ModePersistence."""
-        await self._mp.publish_mode_if_ready(device_id, reason=reason)
-
-    async def _publish_prms_if_ready(
-        self, *, reason: str | None = None,
-    ) -> None:
-        """Delegate to ModePersistence."""
-        await self._mp.publish_prms_if_ready(reason=reason)
-
-    async def _handle_mode_update(
-        self,
-        new_mode: Any,
-        device_id: str | None,
-        source: str,
-    ) -> None:
-        """Delegate to ModePersistence."""
-        await self._mp.handle_mode_update(new_mode, device_id, source)
-
-    def _note_mqtt_ready_transition(self, mqtt_ready: bool) -> None:
-        """Delegate to ProxyStatusReporter."""
-        self._ps.note_mqtt_ready_transition(mqtt_ready)
-
-    def _log_status_heartbeat(self) -> None:
-        """Delegate to ProxyStatusReporter."""
-        self._ps.log_heartbeat()
-
-    async def _proxy_status_loop(self) -> None:
-        """Delegate to ProxyStatusReporter."""
-        await self._ps.status_loop()
-
 
     async def _register_box_connection(
         self, writer: asyncio.StreamWriter, addr: Any
@@ -734,79 +681,6 @@ class OIGProxy:
         """
         await self._handle_box_connection(box_reader, box_writer, conn_id)
 
-    def get_stats(self) -> dict[str, Any]:
-        """Delegate to ProxyStatusReporter."""
-        return self._ps.get_stats()
-
-    @staticmethod
-    def _parse_setting_event(
-            content: str) -> tuple[str, str, str | None, str | None] | None:
-        return ControlSettings.parse_setting_event(content)
-
     def _cache_last_values(
             self, _parsed: dict[str, Any], _table_name: str | None) -> None:
         return
-
-    # ---------------------------------------------------------------------
-    # Control API (delegated to ControlSettings)
-    # ---------------------------------------------------------------------
-
-    def get_control_api_health(self) -> dict[str, Any]:
-        """Vrátí stavové info pro Control API health endpoint."""
-        return self._cs.get_health()
-
-    def control_api_send_setting(
-            self,
-            *,
-            tbl_name: str,
-            tbl_item: str,
-            new_value: str,
-            confirm: str = "New",
-    ) -> dict[str, Any]:
-        """Odešle Setting do BOXu přes event loop a vrátí výsledek."""
-        return self._cs.send_setting(
-            tbl_name=tbl_name,
-            tbl_item=tbl_item,
-            new_value=new_value,
-            confirm=confirm,
-        )
-
-    def _validate_event_loop_ready(self) -> bool:
-        return self._cs.validate_loop_ready()
-
-    def _send_setting_via_event_loop(
-            self,
-            *,
-            tbl_name: str,
-            tbl_item: str,
-            new_value: str,
-            confirm: str,
-    ) -> dict[str, Any]:
-        return self._cs.send_via_event_loop(
-            tbl_name=tbl_name,
-            tbl_item=tbl_item,
-            new_value=new_value,
-            confirm=confirm,
-        )
-
-    def _validate_control_parameters(
-            self,
-            tbl_name: str,
-            tbl_item: str,
-            new_value: str,
-    ) -> dict[str, Any]:
-        return self._cs.validate_parameters(tbl_name, tbl_item, new_value)
-
-    def _build_control_frame(
-            self,
-            tbl_name: str,
-            tbl_item: str,
-            new_value: str,
-            confirm: str,
-    ) -> bytes:
-        return self._cs.build_frame(tbl_name, tbl_item, new_value, confirm)
-
-    def _run_coroutine_threadsafe(
-            self, tbl_name: str, tbl_item: str, new_value: str, confirm: str
-    ) -> dict[str, Any]:
-        return self._cs.run_coroutine_threadsafe(tbl_name, tbl_item, new_value, confirm)

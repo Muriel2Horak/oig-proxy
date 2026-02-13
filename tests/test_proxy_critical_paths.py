@@ -36,7 +36,7 @@ def test_validate_control_parameters_device_id_auto(tmp_path):
     proxy = make_proxy(tmp_path)
 
     proxy.device_id = "AUTO"
-    result = proxy._validate_control_parameters("tbl_box_prms", "SA", "1")
+    result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
 
     assert result["ok"] is False
     assert result["error"] == "device_id_unknown"
@@ -46,7 +46,7 @@ def test_validate_control_parameters_valid(tmp_path):
     """Test _validate_control_parameters with valid parameters."""
     proxy = make_proxy(tmp_path)
 
-    result = proxy._validate_control_parameters("tbl_box_prms", "SA", "1")
+    result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
 
     assert result["ok"] is True
 
@@ -55,7 +55,7 @@ def test_build_control_frame_valid(tmp_path):
     """Test _build_control_frame generates valid frame."""
     proxy = make_proxy(tmp_path)
 
-    frame = proxy._build_control_frame("tbl_box_prms", "SA", "1", "New")
+    frame = proxy._cs.build_frame("tbl_box_prms", "SA", "1", "New")
 
     assert isinstance(frame, bytes)
     assert len(frame) > 0
@@ -71,7 +71,7 @@ def test_build_control_frame_different_values(tmp_path):
     """Test _build_control_frame with different parameter values."""
     proxy = make_proxy(tmp_path)
 
-    frame = proxy._build_control_frame("tbl_box_prms", "SB", "0", "Saved")
+    frame = proxy._cs.build_frame("tbl_box_prms", "SB", "0", "Saved")
 
     assert isinstance(frame, bytes)
     assert b"<TblItem>SB</TblItem>" in frame

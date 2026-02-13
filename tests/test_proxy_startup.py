@@ -72,7 +72,7 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
     async def fake_full_refresh():
         return None
 
-    proxy._proxy_status_loop = fake_status_loop
+    proxy._ps.status_loop = fake_status_loop
     proxy._full_refresh_loop = fake_full_refresh
 
     async def fake_start_server(*_args, **_kwargs):
@@ -140,7 +140,7 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     async def fake_full_refresh():
         return None
 
-    proxy._proxy_status_loop = fake_status_loop
+    proxy._ps.status_loop = fake_status_loop
     proxy._full_refresh_loop = fake_full_refresh
 
     async def fake_start_server(*_args, **_kwargs):

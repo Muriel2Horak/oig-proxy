@@ -26,7 +26,7 @@ def test_run_coroutine_threadsafe(tmp_path):
     proxy._cs.send_to_box = fake_send
 
     # Call method
-    result = proxy._run_coroutine_threadsafe(
+    result = proxy._cs.run_coroutine_threadsafe(
         "tbl_box_prms", "SA", "1", "New"
     )
 
@@ -63,7 +63,7 @@ def test_validate_control_parameters_box_not_sending(tmp_path):
     # Set last_data_epoch to old time (>30s ago)
     proxy._last_data_epoch = time.time() - 60
 
-    result = proxy._validate_control_parameters("tbl_box_prms", "SA", "1")
+    result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
 
     assert result["ok"] is False
     assert result["error"] == "box_not_sending_data"
@@ -82,10 +82,10 @@ def test_send_setting_via_event_loop_timeout(tmp_path):
         return fut
 
     proxy._loop = asyncio.new_event_loop()
-    proxy._run_coroutine_threadsafe = fake_run
+    proxy._cs.run_coroutine_threadsafe = fake_run
 
     # This should handle the timeout gracefully
-    result = proxy._send_setting_via_event_loop(
+    result = proxy._cs.send_via_event_loop(
         tbl_name="tbl_box_prms",
         tbl_item="SA",
         new_value="1",

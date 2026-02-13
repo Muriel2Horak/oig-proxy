@@ -103,9 +103,9 @@ def test_control_cancel_post_drain_sa_inflight_locked_noop():
 
 def test_parse_setting_event():
     content = "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
-    result = proxy_module.OIGProxy._parse_setting_event(content)
+    result = ControlSettings.parse_setting_event(content)
     assert result == ("tbl_invertor_prm1", "AAC_MAX_CHRG", "50.0", "120.0")
-    assert proxy_module.OIGProxy._parse_setting_event("invalid") is None
+    assert ControlSettings.parse_setting_event("invalid") is None
 
 
 @pytest.mark.asyncio

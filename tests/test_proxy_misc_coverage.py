@@ -38,6 +38,14 @@ def _make_proxy() -> proxy_module.OIGProxy:
     proxy._background_tasks = set()
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.publish_data = AsyncMock()
+    from proxy_status import ProxyStatusReporter
+    ps = ProxyStatusReporter.__new__(ProxyStatusReporter)
+    ps._proxy = proxy
+    ps.mqtt_was_ready = False
+    ps.last_hb_ts = 0.0
+    ps.hb_interval_s = 0.0
+    ps.status_attrs_topic = "oig/status/attrs"
+    proxy._ps = ps
     return proxy
 
 
@@ -68,7 +76,7 @@ def test_start_background_tasks_skips_telemetry(monkeypatch):
     async def _full_refresh():
         return None
 
-    proxy._proxy_status_loop = _status_loop
+    proxy._ps.status_loop = _status_loop
     proxy._full_refresh_loop = _full_refresh
 
     created = []
@@ -138,7 +146,7 @@ async def test_publish_mode_if_ready_defers_without_device_id():
     proxy.device_id = "AUTO"
     proxy._mp.mode_device_id = None
 
-    await proxy._publish_mode_if_ready(reason="test")
+    await proxy._mp.publish_mode_if_ready(reason="test")
     proxy.mqtt_publisher.publish_data.assert_not_called()
 
 
@@ -148,20 +156,20 @@ async def test_publish_mode_if_ready_logs_reason():
     proxy._mp.mode_value = 2
     proxy.device_id = "DEV1"
 
-    await proxy._publish_mode_if_ready(reason="startup")
+    await proxy._mp.publish_mode_if_ready(reason="startup")
     proxy.mqtt_publisher.publish_data.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_handle_mode_update_invalid_values(monkeypatch):
     proxy = _make_proxy()
-    proxy._publish_mode_if_ready = AsyncMock()
+    proxy._mp.publish_mode_if_ready = AsyncMock()
     import mode_persistence as mp_module
     monkeypatch.setattr(mp_module, "save_mode_state", MagicMock())
 
-    await proxy._handle_mode_update("bad", "DEV1", "source")
-    await proxy._handle_mode_update(9, "DEV1", "source")
-    proxy._publish_mode_if_ready.assert_not_called()
+    await proxy._mp.handle_mode_update("bad", "DEV1", "source")
+    await proxy._mp.handle_mode_update(9, "DEV1", "source")
+    proxy._mp.publish_mode_if_ready.assert_not_called()
 
 
 def test_telemetry_record_request_trims_queue():

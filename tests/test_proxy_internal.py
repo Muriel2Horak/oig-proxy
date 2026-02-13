@@ -257,14 +257,14 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     proxy._ctrl.queue = deque([{"request_key": "k2"}])
     proxy._ctrl.last_result = {"status": "ok"}
 
-    payload = proxy._build_status_payload()
+    payload = proxy._ps.build_status_payload()
     assert payload["status"] == ProxyMode.ONLINE.value
     assert payload["box_connected"] == 1
     assert payload["mqtt_queue"] == 0
     assert payload["control_queue_len"] == 1
     assert payload["control_inflight_key"] == "k1"
 
-    attrs = proxy._build_status_attrs_payload()
+    attrs = proxy._ps.build_status_attrs_payload()
     assert attrs["control_inflight_key"] == "k1"
     assert attrs["control_queue_keys"] == ["k2"]
 
@@ -316,7 +316,7 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     proxy._mp.mode_value = 2
 
     async def run():
-        await proxy._publish_mode_if_ready()
+        await proxy._mp.publish_mode_if_ready()
 
     asyncio.run(run())
     assert proxy.mqtt_publisher.published_data
@@ -402,7 +402,8 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
     async def fake_publish(*args, **kwargs):
         calls.append((args, kwargs))
 
-    monkeypatch.setattr(proxy, "_publish_mode_if_ready", fake_publish)
+    monkeypatch.setattr(proxy, "_mp", proxy._mp)
+    monkeypatch.setattr(proxy._mp, "publish_mode_if_ready", fake_publish)
     import mode_persistence as mp_module
     monkeypatch.setattr(
         mp_module,
@@ -414,9 +415,9 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
              dev)))
 
     async def run():
-        await proxy._handle_mode_update("bad", None, "src")
-        await proxy._handle_mode_update("6", None, "src")
-        await proxy._handle_mode_update("3", "DEV1", "src")
+        await proxy._mp.handle_mode_update("bad", None, "src")
+        await proxy._mp.handle_mode_update("6", None, "src")
+        await proxy._mp.handle_mode_update("3", "DEV1", "src")
         proxy.parser = DummyParser(mode_value=1)
         await proxy._mp.maybe_process_mode({"Content": "event"}, "tbl_events", "DEV1")
 
@@ -431,12 +432,12 @@ def test_prms_publish_flow(tmp_path):
 
     async def run():
         proxy.mqtt_publisher._ready = False
-        await proxy._publish_prms_if_ready(reason="startup")
+        await proxy._mp.publish_prms_if_ready(reason="startup")
         assert proxy._mp.prms_pending_publish is True
 
         proxy.mqtt_publisher._ready = True
         proxy.device_id = "AUTO"
-        await proxy._publish_prms_if_ready(reason="startup")
+        await proxy._mp.publish_prms_if_ready(reason="startup")
         assert proxy._mp.prms_pending_publish is True
 
         proxy.device_id = "DEV1"
@@ -444,13 +445,13 @@ def test_prms_publish_flow(tmp_path):
         async def fail_publish(_payload):
             raise RuntimeError("fail")
         proxy.mqtt_publisher.publish_data = fail_publish
-        await proxy._publish_prms_if_ready(reason="startup")
+        await proxy._mp.publish_prms_if_ready(reason="startup")
         assert proxy._mp.prms_pending_publish is True
 
         async def ok_publish(payload):
             proxy.mqtt_publisher.published_data.append(payload)
         proxy.mqtt_publisher.publish_data = ok_publish
-        await proxy._publish_prms_if_ready(reason="startup")
+        await proxy._mp.publish_prms_if_ready(reason="startup")
         assert proxy._mp.prms_pending_publish is False
 
     asyncio.run(run())

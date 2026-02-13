@@ -539,6 +539,6 @@ def test_setup_mqtt_handlers(tmp_path):
 
 def test_main_stats_and_get_stats(tmp_path):
     proxy = _make_proxy(tmp_path)
-    stats = proxy.get_stats()
+    stats = proxy._ps.get_stats()
     assert stats["mode"] == ProxyMode.ONLINE.value
     assert "mqtt_queue_size" in stats

@@ -264,7 +264,7 @@ def test_proxy_status_loop_disabled(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     import proxy_status as ps_module
     monkeypatch.setattr(ps_module, "PROXY_STATUS_INTERVAL", 0)
-    asyncio.run(proxy._proxy_status_loop())
+    asyncio.run(proxy._ps.status_loop())
 
 
 def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
@@ -291,7 +291,7 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     try:
-        asyncio.run(proxy._proxy_status_loop())
+        asyncio.run(proxy._ps.status_loop())
     except RuntimeError:
         # Expected: fake_sleep raises RuntimeError("stop") to break the loop.
         pass

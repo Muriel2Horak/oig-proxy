@@ -8,9 +8,9 @@ import re
 import pytest
 
 from oig_frame import compute_frame_checksum, build_getactual_frame, build_ack_only_frame, build_end_time_frame, infer_table_name, infer_device_id
-import proxy as proxy_module
 from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
+from control_settings import ControlSettings
 from mqtt_state_cache import MqttStateCache
 
 
@@ -98,7 +98,7 @@ def test_control_helpers_and_setting_event():
         "completed", "noop_already_set") is None
 
     event = "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
-    parsed = proxy_module.OIGProxy._parse_setting_event(event)
+    parsed = ControlSettings.parse_setting_event(event)
     assert parsed == ("tbl_invertor_prm1", "AAC_MAX_CHRG", "50.0", "120.0")
 
 
