@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import proxy as proxy_module
 from control_settings import ControlSettings
 from mode_persistence import ModePersistence
+from proxy_status import ProxyStatusReporter
 from models import ProxyMode
 
 
@@ -45,5 +46,13 @@ def make_proxy(tmp_path):
     cs.pending = None
     cs.set_commands_buffer = []
     proxy._cs = cs
+
+    ps = ProxyStatusReporter.__new__(ProxyStatusReporter)
+    ps._proxy = proxy
+    ps.mqtt_was_ready = False
+    ps.last_hb_ts = 0.0
+    ps.hb_interval_s = 0.0
+    ps.status_attrs_topic = "oig/status/attrs"
+    proxy._ps = ps
 
     return proxy

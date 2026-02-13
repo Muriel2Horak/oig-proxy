@@ -16,7 +16,6 @@ import asyncio
 import logging
 import socket
 import time
-import json
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +24,7 @@ from parser import OIGDataParser
 from cloud_forwarder import CloudForwarder
 from control_settings import ControlSettings
 from mode_persistence import ModePersistence
+from proxy_status import ProxyStatusReporter
 from config import (
     CONTROL_API_HOST,
     CONTROL_API_PORT,
@@ -33,7 +33,6 @@ from config import (
     FULL_REFRESH_INTERVAL_H,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
-    PROXY_STATUS_INTERVAL,
     PROXY_STATUS_ATTRS_TOPIC,
     TELEMETRY_ENABLED,
     TELEMETRY_INTERVAL_S,
@@ -100,7 +99,6 @@ class OIGProxy:
         self.parser = OIGDataParser()
         self._mp = ModePersistence(self)
         self._msc = MqttStateCache(self)
-        self._mqtt_was_ready: bool = False
 
         # Proxy mode – hybrid state machine
         self._hm = HybridModeManager(self)
@@ -118,6 +116,7 @@ class OIGProxy:
         # Control over MQTT (production)
         self._ctrl = ControlPipeline(self)
         self._proxy_status_attrs_topic: str = str(PROXY_STATUS_ATTRS_TOPIC)
+        self._ps = ProxyStatusReporter(self)
         self._local_getactual_enabled: bool = bool(LOCAL_GETACTUAL_ENABLED)
         self._local_getactual_interval_s: float = float(
             LOCAL_GETACTUAL_INTERVAL_S)
@@ -162,8 +161,6 @@ class OIGProxy:
         self._isnew_last_response: str | None = None
         self._isnew_last_rtt_ms: float | None = None
         self._isnew_last_poll_epoch: float | None = None
-        self._last_hb_ts: float = 0.0
-        self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
 
     def _initialize_control_api(self) -> None:
         if not (CONTROL_API_PORT and CONTROL_API_PORT > 0):
@@ -256,86 +253,26 @@ class OIGProxy:
 
         await self.publish_proxy_status()
         await self._ctrl.publish_restart_errors()
-        self._mqtt_was_ready = self.mqtt_publisher.is_ready()
+        self._ps.mqtt_was_ready = self.mqtt_publisher.is_ready()
         self._start_background_tasks()
 
         await self._start_tcp_server()
 
+    # ------------------------------------------------------------------
+    # Delegation wrappers – proxy status (→ ProxyStatusReporter)
+    # ------------------------------------------------------------------
+
     def _build_status_payload(self) -> dict[str, Any]:
-        """Vytvoří payload pro proxy_status MQTT sensor."""
-        inflight = self._ctrl.inflight
-        inflight_str = ControlPipeline.format_tx(inflight) if inflight else ""
-        last_result_str = ControlPipeline.format_result(
-            self._ctrl.last_result)
-        inflight_key = str(inflight.get("request_key")
-                           or "") if inflight else ""
-        queue_keys = [str(tx.get("request_key") or "")
-                      for tx in self._ctrl.queue]
-        payload = {
-            "status": self._hm.mode.value,
-            "mode": self._hm.mode.value,
-            "configured_mode": self._hm.configured_mode,
-            "control_session_id": self._ctrl.session_id,
-            "box_device_id": self.device_id if self.device_id != "AUTO" else None,
-            "cloud_online": int(not self._hm.in_offline),
-            "hybrid_fail_count": self._hm.fail_count,
-            "cloud_connects": self._cf.connects,
-            "cloud_disconnects": self._cf.disconnects,
-            "cloud_timeouts": self._cf.timeouts,
-            "cloud_errors": self._cf.errors,
-            "cloud_session_connected": int(self._cf.session_connected),
-            "cloud_session_active": int(self._cf.session_connected),
-            "mqtt_queue": self.mqtt_publisher.queue.size(),
-            "box_connected": int(self.box_connected),
-            "box_connections": self.box_connections,
-            "box_connections_active": int(self.box_connected),
-            "box_data_recent": int(
-                self._last_data_epoch is not None
-                and (time.time() - self._last_data_epoch) <= 90
-            ),
-            "last_data": self._last_data_iso,
-            "isnewset_polls": self._isnew_polls,
-            "isnewset_last_poll": self._isnew_last_poll_iso,
-            "isnewset_last_response": self._isnew_last_response,
-            "isnewset_last_rtt_ms": self._isnew_last_rtt_ms,
-            "control_queue_len": len(self._ctrl.queue),
-            "control_inflight": inflight_str,
-            "control_inflight_key": inflight_key,
-            "control_queue_keys": [k for k in queue_keys if k],
-            "control_last_result": last_result_str,
-        }
-        return payload
+        """Delegate to ProxyStatusReporter."""
+        return self._ps.build_status_payload()
 
     def _build_status_attrs_payload(self) -> dict[str, Any]:
-        if self._ctrl.inflight:
-            inflight_key = str(self._ctrl.inflight.get("request_key") or "")
-        else:
-            inflight_key = ""
-        queue_keys = [
-            str(tx.get("request_key") or "")
-            for tx in self._ctrl.queue
-        ]
-        return {
-            "control_inflight_key": inflight_key,
-            "control_queue_keys": [k for k in queue_keys if k],
-        }
+        """Delegate to ProxyStatusReporter."""
+        return self._ps.build_status_attrs_payload()
 
     async def publish_proxy_status(self) -> None:
-        """Publikuje stav proxy."""
-        payload = self._build_status_payload()
-        try:
-            await self.mqtt_publisher.publish_proxy_status(payload)
-        except Exception as e:
-            logger.debug("Proxy status publish failed: %s", e)
-        try:
-            await self.mqtt_publisher.publish_raw(
-                topic=self._proxy_status_attrs_topic,
-                payload=json.dumps(self._build_status_attrs_payload(), ensure_ascii=True),
-                qos=self._ctrl.qos,
-                retain=True,
-            )
-        except Exception as e:
-            logger.debug("Proxy status attrs publish failed: %s", e)
+        """Delegate to ProxyStatusReporter."""
+        await self._ps.publish()
 
     # Frame building methods delegated to oig_frame module
     _build_getactual_frame = staticmethod(build_getactual_frame)
@@ -451,61 +388,16 @@ class OIGProxy:
         await self._mp.maybe_process_mode(parsed, table_name, device_id)
 
     def _note_mqtt_ready_transition(self, mqtt_ready: bool) -> None:
-        """Uloží změnu MQTT readiness (bez re-publish ze snapshotu)."""
-        self._mqtt_was_ready = mqtt_ready
+        """Delegate to ProxyStatusReporter."""
+        self._ps.note_mqtt_ready_transition(mqtt_ready)
 
     def _log_status_heartbeat(self) -> None:
-        if self._hb_interval_s <= 0:
-            return
-        now = time.time()
-        if (now - self._last_hb_ts) < self._hb_interval_s:
-            return
-        self._last_hb_ts = now
-
-        last_data_age = "n/a"
-        if self._last_data_epoch is not None:
-            last_data_age = f"{int(now - self._last_data_epoch)}s"
-
-        box_uptime = "n/a"
-        if self._box_connected_since_epoch is not None:
-            box_uptime = f"{int(now - self._box_connected_since_epoch)}s"
-
-        logger.info(
-            "💓 HB: mode=%s box=%s cloud=%s cloud_sess=%s mqtt=%s q_mqtt=%s "
-            "frames_rx=%s tx=%s ack=%s/%s last_data_age=%s box_uptime=%s",
-            self._hm.mode.value,
-            "on" if self.box_connected else "off",
-            "off" if self._hm.in_offline else "on",
-            "on" if self._cf.session_connected else "off",
-            "on" if self.mqtt_publisher.is_ready() else "off",
-            self.mqtt_publisher.queue.size(),
-            self.stats["frames_received"],
-            self.stats["frames_forwarded"],
-            self.stats["acks_local"],
-            self.stats["acks_cloud"],
-            last_data_age,
-            box_uptime,
-        )
+        """Delegate to ProxyStatusReporter."""
+        self._ps.log_heartbeat()
 
     async def _proxy_status_loop(self) -> None:
-        """Periodicky publikuje proxy_status do MQTT (pro HA restart)."""
-        if PROXY_STATUS_INTERVAL <= 0:
-            logger.info("Proxy status loop disabled (interval <= 0)")
-            return
-
-        logger.info(
-            "Proxy status: periodic publish every %ss",
-            PROXY_STATUS_INTERVAL,
-        )
-        while True:
-            await asyncio.sleep(PROXY_STATUS_INTERVAL)
-            try:
-                mqtt_ready = self.mqtt_publisher.is_ready()
-                self._note_mqtt_ready_transition(mqtt_ready)
-                await self.publish_proxy_status()
-                self._log_status_heartbeat()
-            except Exception as e:
-                logger.debug("Proxy status loop publish failed: %s", e)
+        """Delegate to ProxyStatusReporter."""
+        await self._ps.status_loop()
 
 
     async def _register_box_connection(
@@ -873,16 +765,8 @@ class OIGProxy:
         await self._handle_box_connection(box_reader, box_writer, conn_id)
 
     def get_stats(self) -> dict[str, Any]:
-        """Vrátí statistiky proxy."""
-        return {
-            "mode": self._hm.mode.value,
-            "configured_mode": self._hm.configured_mode,
-            "cloud_online": not self._hm.in_offline,
-            "hybrid_fail_count": self._hm.fail_count,
-            "mqtt_queue_size": self.mqtt_publisher.queue.size(),
-            "mqtt_connected": self.mqtt_publisher.connected,
-            **self.stats
-        }
+        """Delegate to ProxyStatusReporter."""
+        return self._ps.get_stats()
 
     @staticmethod
     def _parse_setting_event(

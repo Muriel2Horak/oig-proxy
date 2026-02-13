@@ -155,7 +155,6 @@ def make_proxy(tmp_path):
     proxy._msc.table_cache = {}
     proxy._msc.last_values = {}
     proxy._msc.cache_device_id = None
-    proxy._mqtt_was_ready = False
     proxy._status_task = None
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None
@@ -171,8 +170,6 @@ def make_proxy(tmp_path):
     proxy._cf = cf
     proxy.box_connected = False
     proxy.box_connections = 0
-    proxy._hb_interval_s = 0.0
-    proxy._last_hb_ts = 0.0
     proxy._local_getactual_enabled = True
     proxy._local_getactual_interval_s = 0.0
     proxy._local_getactual_task = None
@@ -184,6 +181,14 @@ def make_proxy(tmp_path):
     cs.set_commands_buffer = []
     proxy._cs = cs
     proxy._tc = MagicMock()
+    from proxy_status import ProxyStatusReporter
+    ps = ProxyStatusReporter.__new__(ProxyStatusReporter)
+    ps._proxy = proxy
+    ps.mqtt_was_ready = False
+    ps.last_hb_ts = 0.0
+    ps.hb_interval_s = 0.0
+    ps.status_attrs_topic = "oig/status/attrs"
+    proxy._ps = ps
     return proxy
 
 
@@ -257,14 +262,15 @@ def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
 
 def test_proxy_status_loop_disabled(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
-    monkeypatch.setattr(proxy_module, "PROXY_STATUS_INTERVAL", 0)
+    import proxy_status as ps_module
+    monkeypatch.setattr(ps_module, "PROXY_STATUS_INTERVAL", 0)
     asyncio.run(proxy._proxy_status_loop())
 
 
 def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     proxy._hm.mode = ProxyMode.OFFLINE
-    proxy._hb_interval_s = 0.01
+    proxy._ps.hb_interval_s = 0.01
     proxy._last_data_epoch = time.time() - 5
     proxy._box_connected_since_epoch = time.time() - 10
 
@@ -279,8 +285,9 @@ def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     async def fake_status():
         calls["status"] += 1
 
-    proxy.publish_proxy_status = fake_status
-    monkeypatch.setattr(proxy_module, "PROXY_STATUS_INTERVAL", 1)
+    proxy._ps.publish = fake_status
+    import proxy_status as ps_module
+    monkeypatch.setattr(ps_module, "PROXY_STATUS_INTERVAL", 1)
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     try:

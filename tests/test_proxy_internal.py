@@ -185,7 +185,14 @@ def _make_proxy(tmp_path):
     mp.prms_pending_publish = False
     mp.prms_device_id = None
     proxy._mp = mp
-    proxy._mqtt_was_ready = False
+    from proxy_status import ProxyStatusReporter
+    ps = ProxyStatusReporter.__new__(ProxyStatusReporter)
+    ps._proxy = proxy
+    ps.mqtt_was_ready = False
+    ps.last_hb_ts = 0.0
+    ps.hb_interval_s = 0.0
+    ps.status_attrs_topic = "oig/status/attrs"
+    proxy._ps = ps
     proxy._status_task = None
     proxy._box_conn_lock = asyncio.Lock()
     proxy._active_box_writer = None
@@ -201,10 +208,7 @@ def _make_proxy(tmp_path):
     proxy._ctrl.box_ready_s = 0.0
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None
-    proxy._hb_interval_s = 0.0
-    proxy._last_hb_ts = 0.0
     proxy._force_offline_config = False
-    proxy._proxy_status_attrs_topic = "oig/status/attrs"
     proxy._start_time = time.time()
     cs = ControlSettings.__new__(ControlSettings)
     cs._proxy = proxy

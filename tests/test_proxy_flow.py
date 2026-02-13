@@ -182,8 +182,6 @@ def _make_proxy(tmp_path):
     proxy._active_box_writer = None
     proxy._conn_seq = 0
     proxy._loop = None
-    proxy._hb_interval_s = 0.0
-    proxy._last_hb_ts = 0.0
     proxy._hm.configured_mode = "online"
     proxy._hm.fail_count = 0
     proxy._hm.fail_threshold = 3
@@ -197,6 +195,14 @@ def _make_proxy(tmp_path):
     cs.pending = None
     cs.set_commands_buffer = []
     proxy._cs = cs
+    from proxy_status import ProxyStatusReporter
+    ps = ProxyStatusReporter.__new__(ProxyStatusReporter)
+    ps._proxy = proxy
+    ps.mqtt_was_ready = False
+    ps.last_hb_ts = 0.0
+    ps.hb_interval_s = 0.0
+    ps.status_attrs_topic = "oig/status/attrs"
+    proxy._ps = ps
     return proxy
 
 
