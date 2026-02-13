@@ -25,10 +25,10 @@ def test_load_version_from_config_fallback(tmp_path):
     proxy = make_proxy(tmp_path)
     proxy.device_id = "DEV2"
     proxy._last_data_epoch = time.time()
-    proxy._init_telemetry()
+    proxy._tc.init()
 
     # Should return default version when config not found
-    assert proxy._telemetry_client is not None
+    assert proxy._tc.client is not None
 
 
 def test_validate_control_parameters_device_id_auto(tmp_path):

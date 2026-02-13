@@ -6,6 +6,8 @@ _should_try_cloud).  Vlastní runtime atributy mode, mode_lock a všechny
 _hybrid_* stavy.
 """
 
+# pylint: disable=too-many-instance-attributes,protected-access
+
 from __future__ import annotations
 
 import asyncio
