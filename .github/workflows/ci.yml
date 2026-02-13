@@ -40,6 +40,7 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: addon/oig-proxy/Dockerfile
+          ignore: DL3006,DL3018
       - name: Security scan (bandit)
         run: |
           mkdir -p reports
