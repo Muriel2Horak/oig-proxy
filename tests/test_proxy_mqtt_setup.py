@@ -11,6 +11,7 @@ import pytest
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+import mqtt_state_cache as msc_module
 from mqtt_state_cache import MqttStateCache
 
 
@@ -61,7 +62,7 @@ def test_setup_mqtt_state_cache_skips_auto_device():
 
 
 def test_setup_mqtt_state_cache_registers_handler(monkeypatch):
-    monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
+    monkeypatch.setattr(msc_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
 
     proxy._msc.setup()
@@ -74,7 +75,7 @@ def test_setup_mqtt_state_cache_registers_handler(monkeypatch):
 
 
 def test_setup_mqtt_state_cache_handler_decodes(monkeypatch):
-    monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
+    monkeypatch.setattr(msc_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
 
     proxy._msc.setup()

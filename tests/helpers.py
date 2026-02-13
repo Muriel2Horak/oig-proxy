@@ -22,4 +22,5 @@ def make_proxy(tmp_path):
     proxy._tc = MagicMock()
     proxy._ctrl = MagicMock()
     proxy._msc = MagicMock()
+    proxy._cf = MagicMock()
     return proxy

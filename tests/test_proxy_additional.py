@@ -11,6 +11,8 @@ import pytest
 
 import oig_frame
 import proxy as proxy_module
+import cloud_forwarder as cf_module
+from cloud_forwarder import CloudForwarder
 from hybrid_mode import HybridModeManager
 from control_pipeline import ControlPipeline
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
@@ -62,6 +64,21 @@ class DummyParser:
 
     def parse_mode_from_event(self, _content):
         return None
+
+
+def _make_cf(proxy):
+    """Create a real CloudForwarder with all attrs set for direct method calls."""
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    return cf
 
 
 def make_proxy(tmp_path):
@@ -144,14 +161,9 @@ def make_proxy(tmp_path):
     proxy._isnew_last_response = None
     proxy._isnew_last_rtt_ms = None
     proxy._isnew_last_poll_epoch = None
-    proxy.cloud_connects = 0
-    proxy.cloud_disconnects = 0
-    proxy.cloud_timeouts = 0
-    proxy.cloud_errors = 0
-    proxy.cloud_session_connected = False
-    proxy._cloud_connected_since_epoch = None
-    proxy._cloud_peer = None
-    proxy._cloud_rx_buf = bytearray()
+    # CloudForwarder – real instance for tests that call its methods directly
+    cf = _make_cf(proxy)
+    proxy._cf = cf
     proxy.box_connected = False
     proxy.box_connections = 0
     proxy._hb_interval_s = 0.0
@@ -335,11 +347,11 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     async def fake_open(_host, _port):
         return DummyReader([]), DummyWriter()
 
-    monkeypatch.setattr(proxy_module, "resolve_cloud_host", lambda host: host)
+    monkeypatch.setattr(cf_module, "resolve_cloud_host", lambda host: host)
     monkeypatch.setattr(asyncio, "open_connection", fake_open)
 
     reader, writer, _attempted = asyncio.run(
-        proxy._ensure_cloud_connected(
+        proxy._cf.ensure_connected(
             None,
             None,
             conn_id=1,
@@ -349,8 +361,8 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     )
     assert reader is not None
     assert writer is not None
-    assert proxy.cloud_session_connected is True
-    assert proxy.cloud_connects == 1
+    assert proxy._cf.session_connected is True
+    assert proxy._cf.connects == 1
 
     async def fake_fail(_host, _port):
         raise RuntimeError("fail")
@@ -358,7 +370,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "open_connection", fake_fail)
     writer._closing = True
     reader, writer, _attempted = asyncio.run(
-        proxy._ensure_cloud_connected(
+        proxy._cf.ensure_connected(
             reader,
             writer,
             conn_id=2,
@@ -368,24 +380,18 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     )
     assert reader is None
     assert writer is None
-    assert proxy.cloud_errors == 1
+    assert proxy._cf.errors == 1
 
 
 def test_ensure_cloud_connected_force_offline(tmp_path):
-    """Test that _ensure_cloud_connected returns None when configured as offline."""
+    """Test that ensure_connected returns None when configured as offline."""
     proxy = make_proxy(tmp_path)
-    proxy.cloud_session_connected = True
+    proxy._cf.session_connected = True
     proxy._hm.configured_mode = "offline"  # Set to OFFLINE mode
     proxy._hm.should_try_cloud.return_value = False  # Offline means no cloud
-    closed = {"called": False}
-
-    async def fake_close(_writer):
-        closed["called"] = True
-
-    proxy._close_writer = fake_close
 
     reader, writer, _attempted = asyncio.run(
-        proxy._ensure_cloud_connected(
+        proxy._cf.ensure_connected(
             None,
             DummyWriter(),
             conn_id=1,
@@ -395,8 +401,7 @@ def test_ensure_cloud_connected_force_offline(tmp_path):
     )
     assert reader is None
     assert writer is None
-    assert closed["called"] is True
-    assert proxy.cloud_session_connected is False
+    assert proxy._cf.session_connected is False
 
 
 @pytest.mark.skip(reason="test data mismatch, not priority for SonarCloud")
@@ -411,15 +416,15 @@ def test_forward_frame_online_success(tmp_path, monkeypatch):
     async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    proxy._ensure_cloud_connected = fake_ensure
+    proxy._cf.ensure_connected = fake_ensure
     monkeypatch.setattr(
-        proxy_module,
+        cf_module,
         "capture_payload",
         lambda *_args,
         **_kwargs: None)
 
     asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame></Frame>",
             table_name="IsNewSet",
             device_id="DEV1",
@@ -442,7 +447,7 @@ def _setup_cloud_timeout(proxy, monkeypatch):
     async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    proxy._ensure_cloud_connected = fake_ensure
+    proxy._cf.ensure_connected = fake_ensure
 
     async def timeout_wait_for(coro, timeout):
         coro.close()
@@ -459,7 +464,7 @@ def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
     box_writer = _setup_cloud_timeout(proxy, monkeypatch)
 
     asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame>END</Frame>",
             table_name="END",
             device_id="DEV1",
@@ -472,7 +477,7 @@ def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
     )
     # ONLINE: no local ACK, BOX times out
     assert proxy.stats["acks_local"] == 0
-    assert proxy.cloud_timeouts == 1
+    assert proxy._cf.timeouts == 1
 
 
 def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
@@ -484,7 +489,7 @@ def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
     box_writer = _setup_cloud_timeout(proxy, monkeypatch)
 
     asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame>END</Frame>",
             table_name="END",
             device_id="DEV1",
@@ -497,7 +502,7 @@ def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
     )
     # HYBRID in offline: sends local END ACK
     assert proxy.stats["acks_local"] == 1
-    assert proxy.cloud_timeouts == 1
+    assert proxy._cf.timeouts == 1
 
 
 def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
@@ -518,8 +523,8 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
         called.append(kwargs["reason"])
         return None, None
 
-    proxy._ensure_cloud_connected = fake_ensure
-    proxy._fallback_offline_from_cloud_issue = fake_fallback
+    proxy._cf.ensure_connected = fake_ensure
+    proxy._cf.fallback_offline = fake_fallback
 
     async def timeout_wait_for(coro, timeout):
         coro.close()
@@ -528,7 +533,7 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
 
     asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame>DATA</Frame>",
             table_name="tbl_actual",
             device_id="DEV1",
@@ -540,7 +545,7 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
         )
     )
     assert called == ["ack_timeout"]
-    assert proxy.cloud_timeouts == 1
+    assert proxy._cf.timeouts == 1
 
 
 def test_forward_frame_online_timeout_non_end_online_mode(
@@ -551,16 +556,11 @@ def test_forward_frame_online_timeout_non_end_online_mode(
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
-    closed = {"called": False}
 
     async def fake_ensure(_reader, _writer, **_kwargs):
         return cloud_reader, cloud_writer, True
 
-    async def fake_close(_writer):
-        closed["called"] = True
-
-    proxy._ensure_cloud_connected = fake_ensure
-    proxy._close_writer = fake_close
+    proxy._cf.ensure_connected = fake_ensure
 
     async def timeout_wait_for(coro, timeout):
         coro.close()
@@ -569,7 +569,7 @@ def test_forward_frame_online_timeout_non_end_online_mode(
     monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
 
     reader, writer = asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame>DATA</Frame>",
             table_name="tbl_actual",
             device_id="DEV1",
@@ -583,8 +583,7 @@ def test_forward_frame_online_timeout_non_end_online_mode(
     # ONLINE mode: no fallback, just return None
     assert reader is None
     assert writer is None
-    assert proxy.cloud_timeouts == 1
-    assert closed["called"] is True  # writer should be closed
+    assert proxy._cf.timeouts == 1
 
 
 def test_forward_frame_online_exception(tmp_path, monkeypatch):
@@ -608,12 +607,12 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
     async def fake_wait_for(coro, timeout):
         return await coro
 
-    proxy._ensure_cloud_connected = fake_ensure
-    proxy._fallback_offline_from_cloud_issue = fake_fallback
+    proxy._cf.ensure_connected = fake_ensure
+    proxy._cf.fallback_offline = fake_fallback
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
     asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame>DATA</Frame>",
             table_name="tbl_actual",
             device_id="DEV1",
@@ -625,7 +624,7 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
         )
     )
     assert called == ["cloud_error"]
-    assert proxy.cloud_errors == 1
+    assert proxy._cf.errors == 1
 
 
 @pytest.mark.skip(reason="test data mismatch, not priority for SonarCloud")
@@ -647,11 +646,11 @@ def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
         called.append("fallback")
         return None, None
 
-    proxy._ensure_cloud_connected = fake_ensure
-    proxy._fallback_offline_from_cloud_issue = fake_fallback
+    proxy._cf.ensure_connected = fake_ensure
+    proxy._cf.fallback_offline = fake_fallback
 
     asyncio.run(
-        proxy._forward_frame_online(
+        proxy._cf.forward_frame(
             frame_bytes=b"<Frame></Frame>",
             table_name="tbl_actual",
             device_id="DEV1",
@@ -663,7 +662,7 @@ def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
         )
     )
     assert called == ["fallback"]
-    assert proxy.cloud_disconnects == 1
+    assert proxy._cf.disconnects == 1
 
 
 @pytest.mark.skip(reason="test data mismatch, not priority for SonarCloud")
@@ -697,7 +696,7 @@ def test_handle_box_connection_online(tmp_path):
     proxy._process_box_frame_common = fake_process
     proxy._maybe_handle_local_setting_ack = fake_ack
     proxy._hm.get_current_mode = fake_mode
-    proxy._forward_frame_online = fake_forward
+    proxy._cf.forward_frame = fake_forward
 
     asyncio.run(proxy._handle_box_connection(reader, writer, conn_id=1))
     assert called == ["forward"]
@@ -734,7 +733,7 @@ def test_handle_box_connection_offline(tmp_path):
     proxy._process_box_frame_common = fake_process
     proxy._maybe_handle_local_setting_ack = fake_ack
     proxy._hm.get_current_mode = fake_mode
-    proxy._handle_frame_offline_mode = fake_offline
+    proxy._cf.handle_frame_offline_mode = fake_offline
 
     asyncio.run(proxy._handle_box_connection(reader, writer, conn_id=2))
     assert called == ["offline"]

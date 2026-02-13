@@ -7,6 +7,8 @@ import asyncio
 from collections import deque
 from unittest.mock import MagicMock
 import proxy as proxy_module
+import cloud_forwarder as cf_module
+from cloud_forwarder import CloudForwarder
 from control_pipeline import ControlPipeline
 from models import ProxyMode
 from mqtt_state_cache import MqttStateCache
@@ -78,17 +80,6 @@ class DummyReader:
         return self._payload
 
 
-class DummyCloudQueue:
-    def __init__(self):
-        self.added = []
-
-    async def add(self, frame_bytes, table_name, device_id):
-        self.added.append((frame_bytes, table_name, device_id))
-
-    def size(self):
-        return len(self.added)
-
-
 class DummyMQTT(DummyMQTTMixin):
     def __init__(self):
         self.device_id = "AUTO"
@@ -135,8 +126,6 @@ def _make_proxy(tmp_path):
     proxy._hm.force_offline_enabled.return_value = False
     proxy._hm.should_try_cloud.return_value = True
     proxy._hm.is_hybrid_mode.return_value = False
-    proxy._cloud_queue_enabled = True
-    proxy._cloud_queue_disabled_warned = False
     proxy.stats = {
         "frames_received": 0,
         "frames_forwarded": 0,
@@ -145,15 +134,8 @@ def _make_proxy(tmp_path):
         "acks_cloud": 0,
         "mode_changes": 0,
     }
-    proxy.cloud_health = type("H",
-                              (),
-                              {"is_online": True,
-                               "fail_threshold": 1,
-                               "consecutive_successes": 0,
-                               "consecutive_failures": 0,
-                               "last_check_time": 0.0})()
-    proxy.cloud_queue = DummyCloudQueue()
     proxy.mqtt_publisher = DummyMQTT()
+    proxy._cf = MagicMock()
     proxy.parser = DummyParser({})
     proxy._active_box_peer = None
     proxy._ctrl = MagicMock()
@@ -189,11 +171,6 @@ def _make_proxy(tmp_path):
     proxy._isnew_last_poll_epoch = None
     proxy._isnew_last_rtt_ms = None
     proxy._isnew_polls = 0
-    proxy.cloud_connects = 0
-    proxy.cloud_disconnects = 0
-    proxy.cloud_timeouts = 0
-    proxy.cloud_errors = 0
-    proxy.cloud_session_connected = False
     proxy._box_conn_lock = asyncio.Lock()
     proxy._active_box_writer = None
     proxy._conn_seq = 0
@@ -208,7 +185,6 @@ def _make_proxy(tmp_path):
     proxy._hm.last_offline_time = 0.0
     proxy._hm.in_offline = False
     proxy._tc = MagicMock()
-    proxy._cloud_rx_buf = bytearray()
     return proxy
 
 
@@ -310,10 +286,22 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
         called.append("note")
 
     proxy._process_frame_offline = fake_process
-    proxy._note_cloud_failure = fake_note
+
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    cf.note_failure = fake_note
+    proxy._cf = cf
 
     async def run_fallback():
-        return await proxy._fallback_offline_from_cloud_issue(
+        return await proxy._cf.fallback_offline(
             reason="test",
             frame_bytes=b"<Frame></Frame>",
             table_name="tbl_actual",
@@ -328,15 +316,26 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
 
 def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    proxy._cf = cf
 
     async def fake_open(_host, _port):
         return DummyReader(b"ACK"), DummyWriter()
 
-    monkeypatch.setattr(proxy_module, "resolve_cloud_host", lambda host: host)
+    monkeypatch.setattr(cf_module, "resolve_cloud_host", lambda host: host)
     monkeypatch.setattr(asyncio, "open_connection", fake_open)
 
     async def run_success():
-        return await proxy._ensure_cloud_connected(
+        return await proxy._cf.ensure_connected(
             None,
             None,
             conn_id=1,
@@ -354,7 +353,7 @@ def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "open_connection", fake_fail)
 
     async def run_fail():
-        return await proxy._ensure_cloud_connected(
+        return await proxy._cf.ensure_connected(
             None,
             None,
             conn_id=2,
@@ -371,19 +370,30 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     writer = DummyWriter()
     cloud_writer = DummyWriter()
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    proxy._cf = cf
 
     async def fake_ensure(*_args, **_kwargs):
         return DummyReader(b"<ACK/>"), cloud_writer, True
 
-    proxy._ensure_cloud_connected = fake_ensure
+    cf.ensure_connected = fake_ensure
     monkeypatch.setattr(
-        proxy_module,
+        cf_module,
         "capture_payload",
         lambda *_args,
         **_kwargs: None)
 
     async def run_success():
-        return await proxy._forward_frame_online(
+        return await proxy._cf.forward_frame(
             frame_bytes=b"<Frame>1</Frame>",
             table_name="IsNewSet",
             device_id="DEV1",
@@ -405,17 +415,17 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     async def fake_ensure_eof(*_args, **_kwargs):
         return DummyReader(b""), cloud_writer, True
 
-    proxy._ensure_cloud_connected = fake_ensure_eof
+    cf.ensure_connected = fake_ensure_eof
     called = []
 
     async def fake_fallback(*_args, **_kwargs):
         called.append("fallback")
         return None, None
 
-    proxy._fallback_offline_from_cloud_issue = fake_fallback
+    cf.fallback_offline = fake_fallback
 
     async def run_eof():
-        return await proxy._forward_frame_online(
+        return await proxy._cf.forward_frame(
             frame_bytes=b"<Frame>2</Frame>",
             table_name="tbl_actual",
             device_id="DEV1",

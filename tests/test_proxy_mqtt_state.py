@@ -15,6 +15,7 @@ import pytest
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+import mqtt_state_cache as msc_module
 from mqtt_state_cache import MqttStateCache
 
 
@@ -98,7 +99,7 @@ def _attach_real_ctrl(proxy, pending_path=None):
 
 
 def test_parse_mqtt_state_topic_valid(monkeypatch):
-    monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
+    monkeypatch.setattr(msc_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
     assert proxy._msc.parse_topic("oig_local/DEV1/tbl_actual/state") == (
         "DEV1",
@@ -107,7 +108,7 @@ def test_parse_mqtt_state_topic_valid(monkeypatch):
 
 
 def test_parse_mqtt_state_topic_invalid(monkeypatch):
-    monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
+    monkeypatch.setattr(msc_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
     assert proxy._msc.parse_topic("oig_local/DEV1/tbl_actual") == (None, None)
     assert proxy._msc.parse_topic("wrong/DEV1/tbl_actual/state") == (None, None)
@@ -154,7 +155,7 @@ async def test_persist_mqtt_state_values(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_mqtt_state_message(monkeypatch):
-    monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
+    monkeypatch.setattr(msc_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
     proxy._msc.parse_payload = MagicMock(return_value={"MODE": "1"})
     proxy._msc.transform_values = MagicMock(return_value={"MODE": "1"})

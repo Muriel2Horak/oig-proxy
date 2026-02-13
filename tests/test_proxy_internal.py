@@ -11,48 +11,13 @@ from collections import deque
 from unittest.mock import MagicMock
 
 import proxy as proxy_module
+from cloud_forwarder import CloudForwarder
+from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
 from hybrid_mode import HybridModeManager
 from models import ProxyMode, SensorConfig
 from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
-
-
-class DummyCloudHealth:
-    def __init__(
-            self,
-            is_online: bool = True,
-            fail_threshold: int = 2) -> None:
-        self.is_online = is_online
-        self.fail_threshold = fail_threshold
-        self.consecutive_successes = 0
-        self.consecutive_failures = 0
-        self.last_check_time = 0.0
-
-
-class DummyCloudQueue:
-    def __init__(self, size: int = 0, next_item=None) -> None:
-        self._size = size
-        self._next_item = next_item
-        self.deferred = []
-        self.removed = []
-
-    def size(self) -> int:
-        return self._size
-
-    def get_next(self):
-        return self._next_item
-
-    def next_ready_in(self):
-        return None
-
-    def defer(self, frame_id: int, delay_s: float = 60.0) -> bool:
-        self.deferred.append((frame_id, delay_s))
-        return True
-
-    def remove(self, frame_id: int) -> bool:
-        self.removed.append(frame_id)
-        return True
 
 
 class DummyMQTTQueue:
@@ -88,7 +53,7 @@ class DummyMQTT:
         self.published_raw.append((topic, payload, qos, retain))
 
     def _state_topic(self, device_id: str, table: str) -> str:
-        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
+        return f"{MQTT_NAMESPACE}/{device_id}/{table}/state"
 
     def _map_data_for_publish(self, data, *, table, target_device_id):
         payload = {k: v for k, v in data.items() if not k.startswith("_")}
@@ -155,8 +120,6 @@ def _make_real_ctrl(proxy, tmp_path):
 def _make_proxy(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "DEV1"
-    proxy._cloud_queue_enabled = True
-    proxy._cloud_queue_disabled_warned = False
     proxy.stats = {
         "mode_changes": 0,
         "frames_received": 0,
@@ -165,15 +128,6 @@ def _make_proxy(tmp_path):
         "acks_local": 0,
         "acks_cloud": 0,
     }
-    proxy.cloud_health = DummyCloudHealth()
-    proxy.cloud_queue = DummyCloudQueue()
-    proxy.cloud_connects = 0
-    proxy.cloud_disconnects = 0
-    proxy.cloud_timeouts = 0
-    proxy.cloud_errors = 0
-    proxy.cloud_session_connected = False
-    proxy._cloud_connected_since_epoch = None
-    proxy._cloud_peer = None
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy.box_connected = False
@@ -260,6 +214,18 @@ def _make_proxy(tmp_path):
     proxy._hm.in_offline = False
     tc = TelemetryCollector(proxy, interval_s=300)
     proxy._tc = tc
+    # CloudForwarder
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    proxy._cf = cf
     return proxy
 
 
@@ -349,7 +315,7 @@ def test_cloud_online_success_wins_over_failure(tmp_path):
     tc = proxy._tc
     tc.cloud_ok_in_window = True
     tc.cloud_failed_in_window = True
-    proxy.cloud_session_connected = False
+    proxy._cf.session_connected = False
     metrics = tc.collect_metrics()
     assert metrics["cloud_online"] is True
 
@@ -357,7 +323,7 @@ def test_cloud_online_success_wins_over_failure(tmp_path):
 def test_cloud_online_eof_short_without_success_is_false(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     tc = proxy._tc
-    proxy._cloud_connected_since_epoch = 100.0
+    proxy._cf.connected_since_epoch = 100.0
     tc.cloud_ok_in_window = False
     monkeypatch.setattr(time, "time", lambda: 100.5)
     tc.record_cloud_session_end(reason="eof")
@@ -368,7 +334,7 @@ def test_cloud_online_eof_short_without_success_is_false(tmp_path, monkeypatch):
 def test_cloud_online_eof_short_after_success_is_true(tmp_path, monkeypatch):
     proxy = _make_proxy(tmp_path)
     tc = proxy._tc
-    proxy._cloud_connected_since_epoch = 200.0
+    proxy._cf.connected_since_epoch = 200.0
     tc.cloud_ok_in_window = True
     monkeypatch.setattr(time, "time", lambda: 200.2)
     tc.record_cloud_session_end(reason="eof")
@@ -508,14 +474,14 @@ def test_register_and_unregister_box_connection(tmp_path):
 
 
 def test_note_cloud_failure_records_hybrid_failure(tmp_path):
-    """Test that _note_cloud_failure records failure for HYBRID mode tracking."""
+    """Test that note_failure records failure for HYBRID mode tracking."""
     proxy = _make_proxy(tmp_path)
     proxy._hm.configured_mode = "hybrid"
     proxy._hm.fail_count = 0
     proxy._hm.fail_threshold = 3
 
     async def run():
-        await proxy._note_cloud_failure(reason="test", local_ack=False)
+        await proxy._cf.note_failure(reason="test", local_ack=False)
 
     asyncio.run(run())
     # In HYBRID mode, failure count should increase
@@ -556,7 +522,7 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
 
     async def run():
         await proxy._msc.handle_message(
-            topic=f"{proxy_module.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state",
+            topic=f"{MQTT_NAMESPACE}/DEV1/tbl_box_prms/state",
             payload_text=payload,
             retain=False,
         )

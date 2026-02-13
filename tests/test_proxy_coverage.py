@@ -38,7 +38,8 @@ def make_proxy(tmp_path):
     proxy._last_data_epoch = time.time()
     proxy.box_connected = True
     proxy._loop = None
-    proxy.cloud_session_connected = False
+    proxy._cf = MagicMock()
+    proxy._cf.session_connected = False
     proxy.mqtt_publisher = MockMQTTPublisher()
     msc = MqttStateCache.__new__(MqttStateCache)
     msc._proxy = proxy
@@ -181,7 +182,8 @@ def test_should_include_telemetry_logs(tmp_path):
 def test_get_cloud_online_window_status(tmp_path):
     """Test _get_cloud_online_window_status returns correct status."""
     mock_proxy = MagicMock()
-    mock_proxy.cloud_session_connected = False
+    mock_proxy._cf = MagicMock()
+    mock_proxy._cf.session_connected = False
     tc = TelemetryCollector(mock_proxy, interval_s=300)
 
     # Cloud OK in window
@@ -195,11 +197,11 @@ def test_get_cloud_online_window_status(tmp_path):
     assert tc.cloud_failed_in_window is False
 
     # Cloud connected but no OK or failure
-    mock_proxy.cloud_session_connected = True
+    mock_proxy._cf.session_connected = True
     assert tc._get_cloud_online_window_status() is True
 
     # Cloud not connected
-    mock_proxy.cloud_session_connected = False
+    mock_proxy._cf.session_connected = False
     assert tc._get_cloud_online_window_status() is False
 
 

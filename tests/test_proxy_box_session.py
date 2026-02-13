@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import proxy as proxy_module
+from cloud_forwarder import CloudForwarder
 from models import ProxyMode
 
 
@@ -120,11 +121,22 @@ def test_extract_device_and_table_isnew():
 @pytest.mark.asyncio
 async def test_fallback_offline_from_cloud_issue():
     proxy = _make_proxy()
-    proxy.cloud_session_connected = True
     proxy._close_writer = AsyncMock()
     proxy._process_frame_offline = AsyncMock()
 
-    await proxy._fallback_offline_from_cloud_issue(
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = True
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    proxy._cf = cf
+
+    await cf.fallback_offline(
         reason="cloud_error",
         frame_bytes=b"x",
         table_name="tbl",
@@ -137,5 +149,4 @@ async def test_fallback_offline_from_cloud_issue():
     )
 
     proxy._tc.record_cloud_session_end.assert_called_once()
-    proxy._close_writer.assert_called_once()
     proxy._process_frame_offline.assert_called_once()

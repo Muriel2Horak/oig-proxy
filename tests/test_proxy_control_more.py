@@ -13,6 +13,7 @@ import pytest
 
 import proxy as proxy_module
 import control_pipeline as ctrl_module
+from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
 from models import SensorConfig
 
@@ -41,8 +42,8 @@ class DummyMQTT:
 
     def _state_topic(self, device_id: str, table: str | None) -> str:
         if table:
-            return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
-        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/state"
+            return f"{MQTT_NAMESPACE}/{device_id}/{table}/state"
+        return f"{MQTT_NAMESPACE}/{device_id}/state"
 
     def _map_data_for_publish(self, data, *, table, target_device_id):
         payload = {k: v for k, v in data.items() if not k.startswith("_")}

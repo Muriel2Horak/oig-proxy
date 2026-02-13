@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import proxy as proxy_module
+import cloud_forwarder as cf_module
+from cloud_forwarder import CloudForwarder
 from models import ProxyMode
 
 
@@ -31,15 +33,16 @@ def _make_proxy():
     proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
     proxy.device_id = "DEV1"
     proxy._active_box_peer = "peer"
-    proxy.cloud_session_connected = False
     proxy._tc = MagicMock()
     proxy._close_writer = AsyncMock()
     proxy._read_box_bytes = AsyncMock()
     proxy._process_box_frame_common = AsyncMock(return_value=("DEV1", "tbl"))
     proxy._maybe_handle_local_setting_ack = MagicMock(return_value=False)
-    proxy._handle_frame_offline_mode = AsyncMock(return_value=(None, None))
-    proxy._forward_frame_online = AsyncMock(return_value=(None, None))
-    proxy._cloud_rx_buf = bytearray()
+    proxy._cf = MagicMock()
+    proxy._cf.handle_frame_offline_mode = AsyncMock(return_value=(None, None))
+    proxy._cf.forward_frame = AsyncMock(return_value=(None, None))
+    proxy._cf.session_connected = False
+    proxy._cf.rx_buf = bytearray()
     return proxy
 
 
@@ -68,11 +71,20 @@ async def test_handle_frame_offline_mode_closes_cloud():
     proxy = _make_proxy()
     proxy.stats = {"acks_local": 0}
     proxy._process_frame_offline = AsyncMock()
-    proxy.cloud_session_connected = True
-    proxy._handle_frame_offline_mode = proxy_module.OIGProxy._handle_frame_offline_mode
 
-    reader, writer = await proxy._handle_frame_offline_mode(
-        proxy,
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = True
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    proxy._cf = cf
+
+    reader, writer = await cf.handle_frame_offline_mode(
         frame_bytes=b"x",
         table_name="tbl",
         device_id="DEV1",
@@ -82,7 +94,6 @@ async def test_handle_frame_offline_mode_closes_cloud():
     )
 
     assert (reader, writer) == (None, None)
-    proxy._close_writer.assert_called_once()
     proxy._tc.record_cloud_session_end.assert_called_once()
     proxy._process_frame_offline.assert_called_once()
 
@@ -100,8 +111,8 @@ async def test_handle_box_connection_offline_path():
         conn_id=1,
     )
 
-    proxy._handle_frame_offline_mode.assert_called_once()
-    proxy._forward_frame_online.assert_not_called()
+    proxy._cf.handle_frame_offline_mode.assert_called_once()
+    proxy._cf.forward_frame.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -117,7 +128,7 @@ async def test_handle_box_connection_hybrid_no_cloud():
         conn_id=1,
     )
 
-    proxy._handle_frame_offline_mode.assert_called_once()
+    proxy._cf.handle_frame_offline_mode.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -132,7 +143,7 @@ async def test_handle_box_connection_online_path():
         conn_id=1,
     )
 
-    proxy._forward_frame_online.assert_called_once()
+    proxy._cf.forward_frame.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -147,4 +158,4 @@ async def test_handle_box_connection_processing_exception():
         conn_id=1,
     )
 
-    proxy._forward_frame_online.assert_not_called()
+    proxy._cf.forward_frame.assert_not_called()

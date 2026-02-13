@@ -18,19 +18,16 @@ import socket
 import time
 import secrets
 import json
-import uuid
-from collections import deque
 from contextlib import suppress
 import re
 from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
+from cloud_forwarder import CloudForwarder
 from config import (
-    CLOUD_ACK_TIMEOUT,
     CONTROL_API_HOST,
     CONTROL_API_PORT,
-    CONTROL_MQTT_ENABLED,
     LOCAL_GETACTUAL_ENABLED,
     LOCAL_GETACTUAL_INTERVAL_S,
     FULL_REFRESH_INTERVAL_H,
@@ -38,11 +35,6 @@ from config import (
     PROXY_LISTEN_PORT,
     PROXY_STATUS_INTERVAL,
     PROXY_STATUS_ATTRS_TOPIC,
-    MQTT_NAMESPACE,
-    MQTT_PUBLISH_QOS,
-    MQTT_STATE_RETAIN,
-    TARGET_PORT,
-    TARGET_SERVER,
     TELEMETRY_ENABLED,
     TELEMETRY_INTERVAL_S,
 )
@@ -59,7 +51,6 @@ from oig_frame import (
     build_frame,
     build_getactual_frame,
     build_offline_ack_frame,
-    extract_one_xml_frame,
     infer_device_id,
     infer_table_name,
 )
@@ -67,10 +58,8 @@ from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from utils import (
     capture_payload,
-    get_sensor_config,
     load_mode_state,
     load_prms_state,
-    resolve_cloud_host,
     save_mode_state,
     save_prms_state,
 )
@@ -101,7 +90,6 @@ class OIGProxy:
     _RESULT_END = RESULT_END
     _TIME_OFFSET = "+00:00"
     _POST_DRAIN_SA_KEY = "post_drain_sa_refresh"
-    _CLOUD_ACK_MAX_BYTES = 4096
 
     @staticmethod
     def _get_current_timestamp() -> str:
@@ -163,6 +151,9 @@ class OIGProxy:
         self._box_connected_since_epoch: float | None = None
         self._last_box_disconnect_reason: str | None = None
 
+        # Cloud forwarder
+        self._cf = CloudForwarder(self)
+
         # Statistiky
         self.stats = {
             "frames_received": 0,
@@ -181,15 +172,6 @@ class OIGProxy:
         self._isnew_last_response: str | None = None
         self._isnew_last_rtt_ms: float | None = None
         self._isnew_last_poll_epoch: float | None = None
-        # Cloud session telemetry
-        self.cloud_connects = 0
-        self.cloud_disconnects = 0
-        self.cloud_timeouts = 0
-        self.cloud_errors = 0
-        self.cloud_session_connected = False
-        self._cloud_connected_since_epoch: float | None = None
-        self._cloud_peer: str | None = None
-        self._cloud_rx_buf = bytearray()
         self._last_hb_ts: float = 0.0
         self._hb_interval_s: float = max(60.0, float(PROXY_STATUS_INTERVAL))
 
@@ -262,7 +244,6 @@ class OIGProxy:
 
         addr = server.sockets[0].getsockname()
         logger.info("🚀 OIG Proxy listening on %s:%s", addr[0], addr[1])
-        logger.info("📡 Cloud target: %s:%s", TARGET_SERVER, TARGET_PORT)
         logger.info("🔄 Mode: %s", self._hm.mode.value)
 
         async with server:
@@ -308,12 +289,12 @@ class OIGProxy:
             "box_device_id": self.device_id if self.device_id != "AUTO" else None,
             "cloud_online": int(not self._hm.in_offline),
             "hybrid_fail_count": self._hm.fail_count,
-            "cloud_connects": self.cloud_connects,
-            "cloud_disconnects": self.cloud_disconnects,
-            "cloud_timeouts": self.cloud_timeouts,
-            "cloud_errors": self.cloud_errors,
-            "cloud_session_connected": int(self.cloud_session_connected),
-            "cloud_session_active": int(self.cloud_session_connected),
+            "cloud_connects": self._cf.connects,
+            "cloud_disconnects": self._cf.disconnects,
+            "cloud_timeouts": self._cf.timeouts,
+            "cloud_errors": self._cf.errors,
+            "cloud_session_connected": int(self._cf.session_connected),
+            "cloud_session_active": int(self._cf.session_connected),
             "mqtt_queue": self.mqtt_publisher.queue.size(),
             "box_connected": int(self.box_connected),
             "box_connections": self.box_connections,
@@ -591,7 +572,7 @@ class OIGProxy:
             self._hm.mode.value,
             "on" if self.box_connected else "off",
             "off" if self._hm.in_offline else "on",
-            "on" if self.cloud_session_connected else "off",
+            "on" if self._cf.session_connected else "off",
             "on" if self.mqtt_publisher.is_ready() else "off",
             self.mqtt_publisher.queue.size(),
             self.stats["frames_received"],
@@ -728,15 +709,6 @@ class OIGProxy:
         """Zpětná kompatibilita: ONLINE režim je řešen per-frame v `_handle_box_connection()`."""
         await self._handle_box_connection(box_reader, box_writer, conn_id)
 
-    async def _note_cloud_failure(
-            self,
-            *,
-            reason: str,
-            local_ack: bool | None = None) -> None:
-        """Zaznamená cloud selhání. V HYBRID mode může přepnout do offline."""
-        logger.debug("☁️ Cloud failure noted: %s", reason)
-        self._hm.record_failure(reason=reason, local_ack=local_ack)
-
     async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
         if writer is None:
             return
@@ -813,448 +785,6 @@ class OIGProxy:
         logger.info("🔑 Device ID detected: %s", device_id)
         self._msc.setup()
 
-    async def _fallback_offline_from_cloud_issue(
-        self,
-        *,
-        reason: str,
-        frame_bytes: bytes,
-        table_name: str | None,
-        device_id: str | None,
-        box_writer: asyncio.StreamWriter,
-        cloud_writer: asyncio.StreamWriter | None,
-        note_cloud_failure: bool = True,
-        send_box_ack: bool = True,
-        conn_id: int | None = None,
-    ) -> tuple[None, None]:
-        if self.cloud_session_connected:
-            self._tc.record_cloud_session_end(reason=reason)
-        self.cloud_session_connected = False
-        await self._close_writer(cloud_writer)
-        await self._process_frame_offline(
-            frame_bytes,
-            table_name,
-            device_id,
-            box_writer,
-            send_ack=send_box_ack,
-            conn_id=conn_id,
-        )
-        if note_cloud_failure:
-            await self._note_cloud_failure(reason=reason, local_ack=send_box_ack)
-        return None, None
-
-    async def _ensure_cloud_connected(
-        self,
-        cloud_reader: asyncio.StreamReader | None,
-        cloud_writer: asyncio.StreamWriter | None,
-        *,
-        conn_id: int,
-        table_name: str | None,
-        connect_timeout_s: float,
-    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, bool]:
-        # Check if we should try to connect to cloud
-        if not self._hm.should_try_cloud():
-            await self._close_writer(cloud_writer)
-            if self.cloud_session_connected:
-                self._tc.record_cloud_session_end(reason="manual_offline")
-            self.cloud_session_connected = False
-            return None, None, False
-        if cloud_writer is not None and not cloud_writer.is_closing():
-            return cloud_reader, cloud_writer, False
-        try:
-            target_host = resolve_cloud_host(TARGET_SERVER)
-            cloud_reader, cloud_writer = await asyncio.wait_for(
-                asyncio.open_connection(target_host, TARGET_PORT),
-                timeout=connect_timeout_s,
-            )
-            self.cloud_connects += 1
-            was_connected = self.cloud_session_connected
-            self.cloud_session_connected = True
-            if not was_connected:
-                self._cloud_connected_since_epoch = time.time()
-                self._cloud_peer = f"{target_host}:{TARGET_PORT}"
-            if not was_connected:
-                logger.info(
-                    "☁️ Cloud session connected (%s:%s, conn=%s, table=%s)",
-                    TARGET_SERVER,
-                    TARGET_PORT,
-                    conn_id,
-                    table_name or "-",
-                )
-            return cloud_reader, cloud_writer, True
-        except Exception as e:
-            logger.warning(
-                "⚠️ Cloud unavailable: %s (conn=%s, table=%s)",
-                e,
-                conn_id,
-                table_name,
-            )
-            self.cloud_errors += 1
-            self.cloud_session_connected = False
-            await self._close_writer(cloud_writer)
-            return None, None, True
-
-    async def _handle_cloud_connection_failed(
-        self,
-        *,
-        conn_id: int,
-        table_name: str | None,
-        frame_bytes: bytes,
-        device_id: str | None,
-        box_writer: asyncio.StreamWriter,
-        cloud_writer: asyncio.StreamWriter | None,
-        cloud_attempted: bool,
-    ) -> tuple[None, None]:
-        self._tc.cloud_failed_in_window = True
-        if cloud_attempted:
-            self._tc.fire_event(
-                "error_cloud_connect",
-                cloud_host=TARGET_SERVER,
-                reason="connect_failed",
-            )
-        if self._hm.is_hybrid_mode():
-            self._hm.record_failure(
-                reason="connect_failed", local_ack=True)
-            return await self._fallback_offline_from_cloud_issue(
-                reason="connect_failed",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
-        if self._cloud_rx_buf:
-            self._cloud_rx_buf.clear()
-        self._tc.record_timeout(conn_id=conn_id)
-        return None, None
-
-    async def _handle_cloud_eof(
-        self,
-        *,
-        conn_id: int,
-        table_name: str | None,
-        frame_bytes: bytes,
-        device_id: str | None,
-        box_writer: asyncio.StreamWriter,
-        cloud_writer: asyncio.StreamWriter | None,
-    ) -> tuple[None, None]:
-        self._tc.cloud_failed_in_window = True
-        logger.warning(
-            "⚠️ Cloud closed connection (conn=%s, table=%s)",
-            conn_id,
-            table_name,
-        )
-        self.cloud_disconnects += 1
-        if self.cloud_session_connected:
-            self._tc.record_cloud_session_end(reason="eof")
-        self._tc.fire_event(
-            "error_cloud_disconnect", reason="eof")
-        self._hm.record_failure(
-            reason="cloud_eof",
-            local_ack=self._hm.is_hybrid_mode(),
-        )
-        await self._close_writer(cloud_writer)
-        self._cloud_rx_buf.clear()
-        if self._hm.is_hybrid_mode():
-            return await self._fallback_offline_from_cloud_issue(
-                reason="cloud_eof",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=None,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
-        self._tc.record_timeout(conn_id=conn_id)
-        return None, None
-
-    async def _handle_cloud_timeout(
-        self,
-        *,
-        conn_id: int,
-        table_name: str | None,
-        frame_bytes: bytes,
-        device_id: str | None,
-        box_writer: asyncio.StreamWriter,
-        cloud_reader: asyncio.StreamReader,
-        cloud_writer: asyncio.StreamWriter | None,
-    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
-        self._tc.cloud_failed_in_window = True
-        self.cloud_timeouts += 1
-        self._tc.fire_event(
-            "error_cloud_timeout",
-            cloud_host=TARGET_SERVER,
-            timeout_s=CLOUD_ACK_TIMEOUT,
-        )
-        self._hm.record_failure(
-            reason="ack_timeout",
-            local_ack=self._hm.is_hybrid_mode(),
-        )
-        logger.warning(
-            "⏱️ Cloud ACK timeout (%.1fs) (conn=%s, table=%s)",
-            CLOUD_ACK_TIMEOUT,
-            conn_id,
-            table_name,
-        )
-        if self._hm.is_hybrid_mode():
-            if table_name == "END":
-                logger.info(
-                    "📤 HYBRID: Sending local END (conn=%s)",
-                    conn_id,
-                )
-                end_frame = self._build_end_time_frame()
-                self._tc.record_response(
-                    end_frame.decode("utf-8", errors="replace"),
-                    source="local",
-                    conn_id=conn_id,
-                )
-                box_writer.write(end_frame)
-                await box_writer.drain()
-                self.stats["acks_local"] += 1
-                return cloud_reader, cloud_writer
-            return await self._fallback_offline_from_cloud_issue(
-                reason="ack_timeout",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
-        if self.cloud_session_connected:
-            self._tc.record_cloud_session_end(reason="timeout")
-        await self._close_writer(cloud_writer)
-        self._cloud_rx_buf.clear()
-        self._tc.record_timeout(conn_id=conn_id)
-        return None, None
-
-    async def _handle_cloud_error(
-        self,
-        *,
-        error: Exception,
-        conn_id: int,
-        table_name: str | None,
-        frame_bytes: bytes,
-        device_id: str | None,
-        box_writer: asyncio.StreamWriter,
-        cloud_writer: asyncio.StreamWriter | None,
-    ) -> tuple[None, None]:
-        self._tc.cloud_failed_in_window = True
-        logger.warning(
-            "⚠️ Cloud error: %s (conn=%s, table=%s)",
-            error,
-            conn_id,
-            table_name,
-        )
-        self.cloud_errors += 1
-        if self.cloud_session_connected:
-            self._tc.record_cloud_session_end(reason="cloud_error")
-        self._hm.record_failure(
-            reason="cloud_error",
-            local_ack=self._hm.is_hybrid_mode(),
-        )
-        await self._close_writer(cloud_writer)
-        self._cloud_rx_buf.clear()
-        if self._hm.is_hybrid_mode():
-            return await self._fallback_offline_from_cloud_issue(
-                reason="cloud_error",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=None,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
-        self._tc.record_timeout(conn_id=conn_id)
-        return None, None
-
-    async def _send_frame_to_cloud(
-        self,
-        *,
-        frame_bytes: bytes,
-        cloud_writer: asyncio.StreamWriter,
-        cloud_reader: asyncio.StreamReader,
-        table_name: str | None,
-        conn_id: int,
-    ) -> tuple[bytes | None, None]:
-        cloud_writer.write(frame_bytes)
-        await cloud_writer.drain()
-        self.stats["frames_forwarded"] += 1
-        self._tc.cloud_ok_in_window = True
-        ack_data = await self._read_cloud_ack(
-            cloud_reader=cloud_reader,
-            ack_timeout_s=CLOUD_ACK_TIMEOUT,
-            ack_max_bytes=self._CLOUD_ACK_MAX_BYTES,
-        )
-        if not ack_data:
-            raise EOFError("Cloud closed connection")
-        return ack_data, None
-
-    async def _read_cloud_ack(
-        self,
-        *,
-        cloud_reader: asyncio.StreamReader,
-        ack_timeout_s: float,
-        ack_max_bytes: int,
-    ) -> bytes:
-        existing = self._extract_one_xml_frame(self._cloud_rx_buf)
-        if existing is not None:
-            return existing
-
-        async def _read_until_frame() -> bytes:
-            while True:
-                chunk = await cloud_reader.read(4096)
-                if not chunk:
-                    return b""
-                self._cloud_rx_buf.extend(chunk)
-                frame = self._extract_one_xml_frame(self._cloud_rx_buf)
-                if frame is not None:
-                    return frame
-                if len(self._cloud_rx_buf) > ack_max_bytes:
-                    data = bytes(self._cloud_rx_buf)
-                    self._cloud_rx_buf.clear()
-                    return data
-
-        return await asyncio.wait_for(_read_until_frame(), timeout=ack_timeout_s)
-
-    _extract_one_xml_frame = staticmethod(extract_one_xml_frame)
-
-    async def _forward_ack_to_box(
-        self,
-        *,
-        ack_data: bytes,
-        table_name: str | None,
-        box_writer: asyncio.StreamWriter,
-        conn_id: int,
-    ) -> None:
-        self._hm.record_success()
-        ack_str = ack_data.decode("utf-8", errors="replace")
-        self._tc.cloud_ok_in_window = True
-        capture_payload(
-            None,
-            table_name,
-            ack_str,
-            ack_data,
-            {},
-            direction="cloud_to_proxy",
-            length=len(ack_data),
-            conn_id=conn_id,
-            peer=self._active_box_peer,
-        )
-        self._tc.record_response(
-            ack_str, source="cloud", conn_id=conn_id
-        )
-        if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
-            self._isnew_last_response = self._last_data_iso
-            if self._isnew_last_poll_epoch:
-                self._isnew_last_rtt_ms = round(
-                    (time.time() - self._isnew_last_poll_epoch) * 1000, 1
-                )
-        box_writer.write(ack_data)
-        await box_writer.drain()
-        self.stats["acks_cloud"] += 1
-
-    async def _forward_frame_online(
-        self,
-        *,
-        frame_bytes: bytes,
-        table_name: str | None,
-        device_id: str | None,
-        conn_id: int,
-        box_writer: asyncio.StreamWriter,
-        cloud_reader: asyncio.StreamReader | None,
-        cloud_writer: asyncio.StreamWriter | None,
-        connect_timeout_s: float,
-    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
-        if self._hm.force_offline_enabled():
-            return await self._handle_frame_offline_mode(
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                conn_id=conn_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-            )
-
-        cloud_reader, cloud_writer, cloud_attempted = await self._ensure_cloud_connected(
-            cloud_reader,
-            cloud_writer,
-            conn_id=conn_id,
-            table_name=table_name,
-            connect_timeout_s=connect_timeout_s,
-        )
-
-        if cloud_writer is None or cloud_reader is None:
-            return await self._handle_cloud_connection_failed(
-                conn_id=conn_id,
-                table_name=table_name,
-                frame_bytes=frame_bytes,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                cloud_attempted=cloud_attempted,
-            )
-
-        try:
-            ack_data, _ = await self._send_frame_to_cloud(
-                frame_bytes=frame_bytes,
-                cloud_writer=cloud_writer,
-                cloud_reader=cloud_reader,
-                table_name=table_name,
-                conn_id=conn_id,
-            )
-            if not ack_data:
-                return await self._handle_cloud_eof(
-                    conn_id=conn_id,
-                    table_name=table_name,
-                    frame_bytes=frame_bytes,
-                    device_id=device_id,
-                    box_writer=box_writer,
-                    cloud_writer=cloud_writer,
-                )
-
-            await self._forward_ack_to_box(
-                ack_data=ack_data,
-                table_name=table_name,
-                box_writer=box_writer,
-                conn_id=conn_id,
-            )
-            return cloud_reader, cloud_writer
-
-        except asyncio.TimeoutError:
-            return await self._handle_cloud_timeout(
-                conn_id=conn_id,
-                table_name=table_name,
-                frame_bytes=frame_bytes,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_reader=cloud_reader,
-                cloud_writer=cloud_writer,
-            )
-        except EOFError:
-            return await self._handle_cloud_eof(
-                conn_id=conn_id,
-                table_name=table_name,
-                frame_bytes=frame_bytes,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-            )
-        except Exception as e:
-            return await self._handle_cloud_error(
-                error=e,
-                conn_id=conn_id,
-                table_name=table_name,
-                frame_bytes=frame_bytes,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-            )
-
     async def _process_box_frame_common(
         self, *, frame_bytes: bytes, frame: str, conn_id: int
     ) -> tuple[str | None, str | None]:
@@ -1305,29 +835,6 @@ class OIGProxy:
     _infer_table_name = staticmethod(infer_table_name)
     _infer_device_id = staticmethod(infer_device_id)
 
-    async def _handle_frame_offline_mode(
-        self,
-        *,
-        frame_bytes: bytes,
-        table_name: str | None,
-        device_id: str | None,
-        conn_id: int,
-        box_writer: asyncio.StreamWriter,
-        cloud_writer: asyncio.StreamWriter | None,
-    ) -> tuple[None, None]:
-        await self._close_writer(cloud_writer)
-        if self.cloud_session_connected:
-            self._tc.record_cloud_session_end(reason="manual_offline")
-        self.cloud_session_connected = False
-        await self._process_frame_offline(
-            frame_bytes,
-            table_name,
-            device_id,
-            box_writer,
-            conn_id=conn_id,
-        )
-        return None, None
-
     async def _handle_box_connection(
         self,
         box_reader: asyncio.StreamReader,
@@ -1373,7 +880,7 @@ class OIGProxy:
                 current_mode = await self._hm.get_current_mode()
 
                 if current_mode == ProxyMode.OFFLINE:
-                    cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
+                    cloud_reader, cloud_writer = await self._cf.handle_frame_offline_mode(
                         frame_bytes=data,
                         table_name=table_name,
                         device_id=device_id,
@@ -1384,7 +891,7 @@ class OIGProxy:
                     continue
 
                 if current_mode == ProxyMode.HYBRID and not self._hm.should_try_cloud():
-                    cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
+                    cloud_reader, cloud_writer = await self._cf.handle_frame_offline_mode(
                         frame_bytes=data,
                         table_name=table_name,
                         device_id=device_id,
@@ -1394,7 +901,7 @@ class OIGProxy:
                     )
                     continue
 
-                cloud_reader, cloud_writer = await self._forward_frame_online(
+                cloud_reader, cloud_writer = await self._cf.forward_frame(
                     frame_bytes=data,
                     table_name=table_name,
                     device_id=device_id,
@@ -1421,10 +928,10 @@ class OIGProxy:
             )
         finally:
             await self._close_writer(cloud_writer)
-            if self.cloud_session_connected:
+            if self._cf.session_connected:
                 self._tc.record_cloud_session_end(reason="box_disconnect")
-            self.cloud_session_connected = False
-            self._cloud_rx_buf.clear()
+            self._cf.session_connected = False
+            self._cf.rx_buf.clear()
 
     async def _process_frame_offline(
         self,

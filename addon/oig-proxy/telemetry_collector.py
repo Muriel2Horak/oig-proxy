@@ -317,10 +317,10 @@ class TelemetryCollector:
 
     def record_cloud_session_end(self, *, reason: str) -> None:
         """Zaznamená konec TCP session s cloudem."""
-        if self._proxy._cloud_connected_since_epoch is None:  # pylint: disable=protected-access
+        if self._proxy._cf.connected_since_epoch is None:  # pylint: disable=protected-access
             return
         disconnected_at = time.time()
-        duration = disconnected_at - self._proxy._cloud_connected_since_epoch  # pylint: disable=protected-access
+        duration = disconnected_at - self._proxy._cf.connected_since_epoch  # pylint: disable=protected-access
         if (
             reason == "eof"
             and duration < 1.0
@@ -329,12 +329,12 @@ class TelemetryCollector:
             self.cloud_eof_short_in_window = True
         self.cloud_sessions.append({
             "timestamp": self._utc_iso(disconnected_at),
-            "connected_at": self._utc_iso(self._proxy._cloud_connected_since_epoch),  # pylint: disable=protected-access
+            "connected_at": self._utc_iso(self._proxy._cf.connected_since_epoch),  # pylint: disable=protected-access
             "disconnected_at": self._utc_iso(disconnected_at),
             "duration_s": int(duration),
             "reason": reason,
         })
-        self._proxy._cloud_connected_since_epoch = None  # pylint: disable=protected-access
+        self._proxy._cf.connected_since_epoch = None  # pylint: disable=protected-access
 
     def record_hybrid_state_end(
             self,
@@ -487,7 +487,7 @@ class TelemetryCollector:
             cloud_online_window = True
         elif self.cloud_failed_in_window or self.cloud_eof_short_in_window:
             cloud_online_window = False
-        elif self._proxy.cloud_session_connected:
+        elif self._proxy._cf.session_connected:  # pylint: disable=protected-access
             cloud_online_window = True
         else:
             cloud_online_window = False
@@ -620,10 +620,10 @@ class TelemetryCollector:
             "box_peer": proxy._active_box_peer,  # pylint: disable=protected-access
             "frames_received": proxy.stats.get("frames_received", 0),
             "frames_forwarded": proxy.stats.get("frames_forwarded", 0),
-            "cloud_connects": proxy.cloud_connects,
-            "cloud_disconnects": proxy.cloud_disconnects,
-            "cloud_timeouts": proxy.cloud_timeouts,
-            "cloud_errors": proxy.cloud_errors,
+            "cloud_connects": proxy._cf.connects,  # pylint: disable=protected-access
+            "cloud_disconnects": proxy._cf.disconnects,  # pylint: disable=protected-access
+            "cloud_timeouts": proxy._cf.timeouts,  # pylint: disable=protected-access
+            "cloud_errors": proxy._cf.errors,  # pylint: disable=protected-access
             "cloud_online": cloud_online_window,
             "mqtt_ok": proxy.mqtt_publisher.is_ready() if proxy.mqtt_publisher else False,
             "mqtt_queue": proxy.mqtt_publisher.queue.size() if proxy.mqtt_publisher else 0,

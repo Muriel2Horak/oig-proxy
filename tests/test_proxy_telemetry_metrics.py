@@ -23,11 +23,13 @@ def _make_proxy_and_tc():
         "frames_forwarded": 2,
     }
     mock_proxy._set_commands_buffer = []
-    mock_proxy.cloud_connects = 1
-    mock_proxy.cloud_disconnects = 0
-    mock_proxy.cloud_timeouts = 0
-    mock_proxy.cloud_errors = 0
-    mock_proxy.cloud_session_connected = False
+    mock_proxy._cf = MagicMock()
+    mock_proxy._cf.connects = 1
+    mock_proxy._cf.disconnects = 0
+    mock_proxy._cf.timeouts = 0
+    mock_proxy._cf.errors = 0
+    mock_proxy._cf.session_connected = False
+    mock_proxy._cf.connected_since_epoch = None
     mock_proxy.box_connected = False
     mock_proxy._active_box_peer = None
     mock_proxy.mqtt_publisher = MagicMock()
@@ -35,7 +37,6 @@ def _make_proxy_and_tc():
     mock_proxy.mqtt_publisher.queue = MagicMock()
     mock_proxy.mqtt_publisher.queue.size = MagicMock(return_value=2)
     mock_proxy._box_connected_since_epoch = None
-    mock_proxy._cloud_connected_since_epoch = None
     mock_proxy._hm.state = None
     mock_proxy._hm.state_since_epoch = None
     mock_proxy._hm.last_offline_reason = None
@@ -116,7 +117,7 @@ def test_collect_telemetry_metrics_basic():
 def test_record_box_and_cloud_session_end():
     mock_proxy, tc = _make_proxy_and_tc()
     mock_proxy._box_connected_since_epoch = time.time() - 5
-    mock_proxy._cloud_connected_since_epoch = time.time() - 2
+    mock_proxy._cf.connected_since_epoch = time.time() - 2
     tc.cloud_ok_in_window = False
 
     tc.record_box_session_end(reason="disconnect", peer="1.2.3.4")
@@ -125,7 +126,7 @@ def test_record_box_and_cloud_session_end():
 
     tc.record_cloud_session_end(reason="eof")
     assert len(tc.cloud_sessions) == 1
-    assert mock_proxy._cloud_connected_since_epoch is None
+    assert mock_proxy._cf.connected_since_epoch is None
 
 
 def test_record_offline_event_defaults():
