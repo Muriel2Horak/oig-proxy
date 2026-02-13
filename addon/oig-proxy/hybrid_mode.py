@@ -56,7 +56,7 @@ class HybridModeManager:
         self.last_offline_reason: str | None = None
 
         if self.configured_mode == "hybrid":
-            self.state = "offline" if self.in_offline else "online"
+            self.state = "online"
             self.state_since_epoch = time.time()
 
     # ------------------------------------------------------------------
