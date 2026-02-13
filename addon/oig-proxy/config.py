@@ -86,8 +86,8 @@ HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
 # ============================================================================
 TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
-# Fixed ACK timeout (no config override)
-CLOUD_ACK_TIMEOUT = 1800.0
+# ACK timeout — how long to wait for cloud ACK before treating cloud as down
+CLOUD_ACK_TIMEOUT = _get_float_env("CLOUD_ACK_TIMEOUT", 1800.0)
 
 # ============================================================================
 # Proxy Configuration
@@ -204,9 +204,6 @@ TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
 # MQTT Publisher Configuration
 # ============================================================================
 MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
-MQTT_CONNECT_TIMEOUT = int(os.getenv("MQTT_CONNECT_TIMEOUT", "10"))
-MQTT_HEALTH_CHECK_INTERVAL = int(os.getenv("MQTT_HEALTH_CHECK_INTERVAL", "30"))
-MQTT_PUBLISH_LOG_EVERY = int(os.getenv("MQTT_PUBLISH_LOG_EVERY", "100"))
 
 # ============================================================================
 # Device Names (for MQTT discovery)

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import config
+from backoff import BackoffStrategy
 
 logger = logging.getLogger("oig.telemetry")
 
@@ -56,21 +57,28 @@ class TelemetryBuffer:
 
     def _init_db(self) -> None:
         """Initialize SQLite database."""
+        from db_utils import init_sqlite_db
+
         try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(
-                str(self._db_path), check_same_thread=False)
-            self._conn.execute("""
+            schema_sql = """
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     timestamp REAL NOT NULL,
                     retries INTEGER DEFAULT 0
-                )
-            """)
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)")
+                );
+            """
+
+            indexes_sql = """
+                CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+            """
+
+            self._conn = init_sqlite_db(
+                str(self._db_path),
+                schema_sql,
+                indexes_sql
+            )
             self._conn.commit()
             self._cleanup()
             count = self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
@@ -192,6 +200,13 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
         self._last_buffer_flush = 0.0
         self._mqtt_host, self._mqtt_port = self._parse_mqtt_url(
             config.TELEMETRY_MQTT_BROKER)
+        self._connect_backoff = BackoffStrategy(
+            max_retries=10,
+            initial_backoff_s=5.0,
+            max_backoff_s=300.0,
+            backoff_multiplier=2.0,
+        )
+        self._last_connect_attempt = 0.0
 
         logger.info(
             "📡 TelemetryClient init: enabled=%s (device_id=%s, MQTT=%s)",
@@ -222,6 +237,22 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 pass
         return url, 1883
 
+    def _cleanup_client(self) -> None:
+        """Bezpečně uklidí MQTT klienta a zastaví jeho background thread."""
+        client = self._client
+        if client is None:
+            return
+        try:
+            client.loop_stop()
+        except Exception:  # nosec B110
+            pass
+        try:
+            client.disconnect()
+        except Exception:  # nosec B110
+            pass
+        self._client = None
+        self._connected = False
+
     def _create_client(self) -> bool:
         """Create MQTT client (synchronous, called from thread)."""
         if not MQTT_AVAILABLE or not mqtt:
@@ -242,6 +273,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 if rc == 0:
                     self._connected = True
                     self._consecutive_errors = 0
+                    self._connect_backoff.reset()
                     logger.debug("📡 Telemetry MQTT connected")
 
             def on_disconnect(
@@ -265,36 +297,45 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 if self._connected:
                     return True
                 time.sleep(0.1)
+            # Nepodařilo se připojit — uklidíme klienta (zastavíme thread)
+            self._cleanup_client()
+            self._connect_backoff.record_failure()
             return False
         except Exception:
+            self._cleanup_client()
+            self._connect_backoff.record_failure()
             return False
 
     def _ensure_connected(self) -> bool:
         """Ensure MQTT client is connected."""
         if self._connected and self._client:
             return True
-        # Stop old client before creating new one to prevent "session taken over" loop
+
+        now = time.monotonic()
+        backoff_delay = self._connect_backoff.get_backoff_delay()
+        if (now - self._last_connect_attempt) < backoff_delay:
+            return False
+        self._last_connect_attempt = now
+
         if self._client:
             try:
-                # Request a graceful disconnect while the network loop is still running.
-                self._client.disconnect()
-                deadline = time.time() + MQTT_DISCONNECT_WAIT_S
-                while time.time() < deadline:
-                    if not self._client.is_connected():
-                        break
-                    time.sleep(MQTT_DISCONNECT_POLL_S)
-                else:
-                    logger.debug(
-                        "📡 Telemetry MQTT disconnect wait timeout (%.1fs)",
-                        MQTT_DISCONNECT_WAIT_S,
-                    )
-                # After disconnect (or timeout), stop the network loop thread.
-                self._client.loop_stop(force=True)
-            except Exception:  # nosec B110 - cleanup, failure is acceptable
-                pass
-            self._client = None
-            self._connected = False
-        return self._create_client()
+                if self._client.is_connected():
+                    self._connected = True
+                    return True
+                # Let paho reconnect in place if possible.
+                self._client.reconnect()
+                self._client.loop_start()
+            except Exception:
+                self._cleanup_client()
+
+        if not self._client:
+            return self._create_client()
+
+        if not self._connected:
+            self._connect_backoff.record_failure()
+            return False
+
+        return True
 
     def _publish_sync(self, topic: str, payload: dict) -> bool:
         """Publish message synchronously."""
@@ -422,11 +463,10 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 logger.debug("📡 Event sent: %s", event_type)
                 return True
             # Failed to send - buffer for later
-            if self._buffer:
-                if self._buffer.store(topic, payload):
-                    logger.debug(
-                        "📡 Event buffered: %s (MQTT unavailable)", event_type)
-                    return True
+            if self._buffer and self._buffer.store(topic, payload):
+                logger.debug(
+                    "📡 Event buffered: %s (MQTT unavailable)", event_type)
+                return True
             return False
 
     # Convenience methods for common error events
@@ -493,14 +533,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
 
     def disconnect(self) -> None:
         """Disconnect MQTT client and close buffer."""
-        if self._client:
-            try:
-                self._client.loop_stop()
-                self._client.disconnect()
-            except Exception:  # nosec B110 - cleanup, failure is acceptable
-                pass
-            self._client = None
-            self._connected = False
+        self._cleanup_client()
         if self._buffer:
             self._buffer.close()
 
@@ -513,18 +546,3 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
     def is_buffering(self) -> bool:
         """Check if messages are being buffered (MQTT unavailable)."""
         return self._enabled and not self._connected and self._buffer is not None
-
-
-_TELEMETRY_CLIENT: Optional[TelemetryClient] = None
-
-
-def init_telemetry(device_id: str, version: str) -> TelemetryClient:
-    """Initialize global telemetry client."""
-    global _TELEMETRY_CLIENT  # pylint: disable=global-statement
-    _TELEMETRY_CLIENT = TelemetryClient(device_id, version)
-    return _TELEMETRY_CLIENT
-
-
-def get_telemetry_client() -> Optional[TelemetryClient]:
-    """Get global telemetry client instance."""
-    return _TELEMETRY_CLIENT

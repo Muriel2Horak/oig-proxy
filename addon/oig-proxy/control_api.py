@@ -38,7 +38,7 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
         """Zpracuje GET requesty Control API."""
         if self.path.rstrip("/") == "/api/health":
             proxy = self.server.proxy  # type: ignore[attr-defined]
-            payload = proxy.get_control_api_health()
+            payload = proxy._cs.get_health()  # pylint: disable=protected-access
             self._send_json(200, payload)
             return
 
@@ -87,7 +87,7 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
             return
 
         proxy = self.server.proxy  # type: ignore[attr-defined]
-        res = proxy.control_api_send_setting(
+        res = proxy._cs.send_setting(  # pylint: disable=protected-access
             tbl_name=str(tbl_name),
             tbl_item=str(tbl_item),
             new_value=str(new_value),

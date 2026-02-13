@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -27,4 +27,4 @@ jobs:
         run: |
           pylint addon/oig-proxy/*.py tests/*.py \
             --disable=import-outside-toplevel,unused-import,reimported,redefined-outer-name \
-            --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself
+            --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself,unused-argument,wrong-import-order

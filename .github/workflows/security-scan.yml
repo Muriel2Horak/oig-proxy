@@ -27,7 +27,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.11'
           cache: 'pip'
       
       - name: Install Python dependencies
@@ -65,8 +65,7 @@ jobs:
       
       - name: Run Bandit (Python SAST)
         run: |
-          python -m bandit -r addon/oig-proxy -f json -o reports/bandit.json --exit-zero
-        continue-on-error: true
+          python -m bandit -r addon/oig-proxy -f json -o reports/bandit.json
       
       - name: Run Safety (Dependency vulnerabilities)
         run: |

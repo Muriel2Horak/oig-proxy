@@ -35,16 +35,3 @@ class SensorConfig:  # pylint: disable=too-many-instance-attributes
     options: list[str] | None = None  # Pro enum device_class
     is_binary: bool = False  # True pro binary_sensor
     json_attributes_topic: str | None = None
-
-
-# ============================================================================
-# Warning Map Entry
-# ============================================================================
-
-@dataclass
-class WarningEntry:
-    """Položka v warning map pro bitové chyby."""
-    bit: int
-    remark: str | None = None
-    remark_cs: str | None = None
-    code: str | None = None

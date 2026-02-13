@@ -61,7 +61,12 @@ export HYBRID_FAIL_THRESHOLD=$HYBRID_FAIL_THRESHOLD_RAW
 
 bashio::log.info "🚀 Proxy mode: $PROXY_MODE (hybrid_fail_threshold=$HYBRID_FAIL_THRESHOLD, hybrid_retry_interval=$HYBRID_RETRY_INTERVAL)"
 
-# CLOUD_ACK_TIMEOUT is fixed in code (no config override)
+# CLOUD_ACK_TIMEOUT from config (default 1800s)
+CLOUD_ACK_TIMEOUT_RAW=$(bashio::config 'cloud_ack_timeout')
+if [ -z "$CLOUD_ACK_TIMEOUT_RAW" ] || [ "$CLOUD_ACK_TIMEOUT_RAW" = "null" ]; then
+  CLOUD_ACK_TIMEOUT_RAW=1800
+fi
+export CLOUD_ACK_TIMEOUT=$CLOUD_ACK_TIMEOUT_RAW
 
 export PROXY_PORT=$(bashio::config 'proxy_port')
 export MQTT_HOST=$(bashio::config 'mqtt_host')
@@ -87,18 +92,6 @@ if [ -z "$FORCE_OFFLINE_RAW" ] || [ "$FORCE_OFFLINE_RAW" = "null" ]; then
   FORCE_OFFLINE_RAW="false"
 fi
 export FORCE_OFFLINE=$FORCE_OFFLINE_RAW
-
-CLEAR_CLOUD_QUEUE_RAW=$(bashio::config 'clear_cloud_queue_on_start' 2>/dev/null)
-if [ -z "$CLEAR_CLOUD_QUEUE_RAW" ] || [ "$CLEAR_CLOUD_QUEUE_RAW" = "null" ]; then
-  CLEAR_CLOUD_QUEUE_RAW="false"
-fi
-export CLEAR_CLOUD_QUEUE_ON_START=$CLEAR_CLOUD_QUEUE_RAW
-
-CLOUD_QUEUE_ENABLED_RAW=$(bashio::config 'cloud_queue_enabled' 2>/dev/null)
-if [ -z "$CLOUD_QUEUE_ENABLED_RAW" ] || [ "$CLOUD_QUEUE_ENABLED_RAW" = "null" ]; then
-  CLOUD_QUEUE_ENABLED_RAW="false"
-fi
-export CLOUD_QUEUE_ENABLED=$CLOUD_QUEUE_ENABLED_RAW
 
 # NOVÉ: DEVICE_ID (volitelné, pokud není v config, použije se auto-detection)
 DEVICE_ID_RAW=$(bashio::config 'device_id' 2>/dev/null)
