@@ -418,7 +418,7 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
         await proxy._handle_mode_update("6", None, "src")
         await proxy._handle_mode_update("3", "DEV1", "src")
         proxy.parser = DummyParser(mode_value=1)
-        await proxy._maybe_process_mode({"Content": "event"}, "tbl_events", "DEV1")
+        await proxy._mp.maybe_process_mode({"Content": "event"}, "tbl_events", "DEV1")
 
     asyncio.run(run())
     assert proxy._mp.mode_value == 1

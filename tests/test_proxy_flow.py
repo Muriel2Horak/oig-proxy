@@ -224,9 +224,9 @@ def test_extract_and_autodetect_device_id(tmp_path, monkeypatch):
     async def fake_start(*_args, **_kwargs):
         called.append("start")
 
-    proxy._handle_setting_event = fake_handle
+    proxy._cs.handle_setting_event = fake_handle
     proxy._ctrl.observe_box_frame = fake_observe
-    proxy._maybe_process_mode = fake_mode
+    proxy._mp.maybe_process_mode = fake_mode
     proxy._ctrl.maybe_start_next = fake_start
     monkeypatch.setattr(
         proxy_module,

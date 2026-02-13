@@ -23,7 +23,7 @@ def test_run_coroutine_threadsafe(tmp_path):
         return {"ok": True}
 
     proxy._loop = asyncio.new_event_loop()
-    proxy._send_setting_to_box = fake_send
+    proxy._cs.send_to_box = fake_send
 
     # Call method
     result = proxy._run_coroutine_threadsafe(

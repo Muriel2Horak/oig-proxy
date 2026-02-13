@@ -37,7 +37,8 @@ def _make_proxy():
     proxy._close_writer = AsyncMock()
     proxy._read_box_bytes = AsyncMock()
     proxy._process_box_frame_common = AsyncMock(return_value=("DEV1", "tbl"))
-    proxy._maybe_handle_local_setting_ack = MagicMock(return_value=False)
+    proxy._cs = MagicMock()
+    proxy._cs.maybe_handle_ack = MagicMock(return_value=False)
     proxy._cf = MagicMock()
     proxy._cf.handle_frame_offline_mode = AsyncMock(return_value=(None, None))
     proxy._cf.forward_frame = AsyncMock(return_value=(None, None))
@@ -47,10 +48,10 @@ def _make_proxy():
 
 
 @pytest.mark.asyncio
-async def test_process_frame_offline_sends_ack():
+async def test_process_frame_offline_sends_ack(monkeypatch):
     proxy = _make_proxy()
     proxy.stats = {"acks_local": 0}
-    proxy._build_offline_ack_frame = MagicMock(return_value=b"ACK")
+    monkeypatch.setattr(proxy_module, "build_offline_ack_frame", lambda _tbl: b"ACK")
     writer = DummyWriter()
 
     await proxy._process_frame_offline(

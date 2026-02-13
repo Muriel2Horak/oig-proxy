@@ -45,9 +45,6 @@ from hybrid_mode import HybridModeManager
 from oig_frame import (
     RESULT_ACK,
     RESULT_END,
-    build_ack_only_frame,
-    build_end_time_frame,
-    build_frame,
     build_getactual_frame,
     build_offline_ack_frame,
     infer_device_id,
@@ -274,19 +271,10 @@ class OIGProxy:
         """Delegate to ProxyStatusReporter."""
         await self._ps.publish()
 
-    # Frame building methods delegated to oig_frame module
-    _build_getactual_frame = staticmethod(build_getactual_frame)
-    _build_ack_only_frame = staticmethod(build_ack_only_frame)
-    _build_end_time_frame = staticmethod(build_end_time_frame)
-
-    @staticmethod
-    def _build_offline_ack_frame(table_name: str | None) -> bytes:
-        return build_offline_ack_frame(table_name)
-
     async def _send_getactual_to_box(
         self, writer: asyncio.StreamWriter, *, conn_id: int
     ) -> None:
-        frame_bytes = self._build_getactual_frame()
+        frame_bytes = build_getactual_frame()
         writer.write(frame_bytes)
         await writer.drain()
         capture_payload(
@@ -332,7 +320,7 @@ class OIGProxy:
                 continue
             try:
                 logger.info("CONTROL: Full refresh (SA) requested")
-                await self._send_setting_to_box(
+                await self._cs.send_to_box(
                     tbl_name="tbl_box_prms",
                     tbl_item="SA",
                     new_value="1",
@@ -354,15 +342,6 @@ class OIGProxy:
         """Delegate to ModePersistence."""
         await self._mp.publish_mode_if_ready(device_id, reason=reason)
 
-    def _maybe_persist_table_state(
-        self,
-        parsed: dict[str, Any] | None,
-        table_name: str | None,
-        device_id: str | None,
-    ) -> None:
-        """Delegate to ModePersistence."""
-        self._mp.maybe_persist_table_state(parsed, table_name, device_id)
-
     async def _publish_prms_if_ready(
         self, *, reason: str | None = None,
     ) -> None:
@@ -377,15 +356,6 @@ class OIGProxy:
     ) -> None:
         """Delegate to ModePersistence."""
         await self._mp.handle_mode_update(new_mode, device_id, source)
-
-    async def _maybe_process_mode(
-        self,
-        parsed: dict[str, Any],
-        table_name: str | None,
-        device_id: str | None,
-    ) -> None:
-        """Delegate to ModePersistence."""
-        await self._mp.maybe_process_mode(parsed, table_name, device_id)
 
     def _note_mqtt_ready_transition(self, mqtt_ready: bool) -> None:
         """Delegate to ProxyStatusReporter."""
@@ -598,7 +568,7 @@ class OIGProxy:
         if device_id:
             await self._maybe_autodetect_device_id(device_id)
 
-        self._maybe_persist_table_state(parsed, table_name, device_id)
+        self._mp.maybe_persist_table_state(parsed, table_name, device_id)
         capture_payload(
             device_id,
             table_name,
@@ -620,9 +590,9 @@ class OIGProxy:
             if table_name == "tbl_events":
                 self._tc.record_tbl_event(parsed=parsed, device_id=device_id)
             self._cache_last_values(parsed, table_name)
-            await self._handle_setting_event(parsed, table_name, device_id)
+            await self._cs.handle_setting_event(parsed, table_name, device_id)
             await self._ctrl.observe_box_frame(parsed, table_name, frame)
-            await self._maybe_process_mode(parsed, table_name, device_id)
+            await self._mp.maybe_process_mode(parsed, table_name, device_id)
             await self._ctrl.maybe_start_next()
             await self.mqtt_publisher.publish_data(parsed)
 
@@ -668,7 +638,7 @@ class OIGProxy:
                     )
                     continue
 
-                if self._maybe_handle_local_setting_ack(
+                if self._cs.maybe_handle_ack(
                     frame, box_writer, conn_id=conn_id
                 ):
                     continue
@@ -741,7 +711,7 @@ class OIGProxy:
     ):
         """Zpracuj frame v offline režimu - lokální ACK pouze (žádné queueování)."""
         if send_ack:
-            ack_response = self._build_offline_ack_frame(table_name)
+            ack_response = build_offline_ack_frame(table_name)
             if conn_id is not None:
                 self._tc.record_response(
                     ack_response.decode("utf-8", errors="replace"),
@@ -772,14 +742,6 @@ class OIGProxy:
     def _parse_setting_event(
             content: str) -> tuple[str, str, str | None, str | None] | None:
         return ControlSettings.parse_setting_event(content)
-
-    async def _handle_setting_event(
-        self,
-        parsed: dict[str, Any],
-        table_name: str | None,
-        device_id: str | None,
-    ) -> None:
-        await self._cs.handle_setting_event(parsed, table_name, device_id)
 
     def _cache_last_values(
             self, _parsed: dict[str, Any], _table_name: str | None) -> None:
@@ -848,25 +810,3 @@ class OIGProxy:
             self, tbl_name: str, tbl_item: str, new_value: str, confirm: str
     ) -> dict[str, Any]:
         return self._cs.run_coroutine_threadsafe(tbl_name, tbl_item, new_value, confirm)
-
-    async def _send_setting_to_box(
-        self,
-        *,
-        tbl_name: str,
-        tbl_item: str,
-        new_value: str,
-        confirm: str,
-        tx_id: str | None = None,
-    ) -> dict[str, Any]:
-        return await self._cs.send_to_box(
-            tbl_name=tbl_name,
-            tbl_item=tbl_item,
-            new_value=new_value,
-            confirm=confirm,
-            tx_id=tx_id,
-        )
-
-    def _maybe_handle_local_setting_ack(
-        self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
-    ) -> bool:
-        return self._cs.maybe_handle_ack(frame, box_writer, conn_id=conn_id)

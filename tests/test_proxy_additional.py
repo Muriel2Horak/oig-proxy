@@ -249,7 +249,7 @@ def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
             return None
         raise RuntimeError("stop")
 
-    proxy._send_setting_to_box = fake_send
+    proxy._cs.send_to_box = fake_send
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     try:
@@ -709,7 +709,7 @@ def test_handle_box_connection_online(tmp_path):
 
     proxy._read_box_bytes = fake_read
     proxy._process_box_frame_common = fake_process
-    proxy._maybe_handle_local_setting_ack = fake_ack
+    proxy._cs.maybe_handle_ack = fake_ack
     proxy._hm.get_current_mode = fake_mode
     proxy._cf.forward_frame = fake_forward
 
@@ -746,7 +746,7 @@ def test_handle_box_connection_offline(tmp_path):
 
     proxy._read_box_bytes = fake_read
     proxy._process_box_frame_common = fake_process
-    proxy._maybe_handle_local_setting_ack = fake_ack
+    proxy._cs.maybe_handle_ack = fake_ack
     proxy._hm.get_current_mode = fake_mode
     proxy._cf.handle_frame_offline_mode = fake_offline
 
@@ -870,7 +870,7 @@ def test_handle_setting_event_publishes(tmp_path):
         "Type": "Setting",
         "Content": "Remotely : tbl_box_prms / MODE: [0]->[1]"}
 
-    asyncio.run(proxy._handle_setting_event(parsed, "tbl_events", "DEV1"))
+    asyncio.run(proxy._cs.handle_setting_event(parsed, "tbl_events", "DEV1"))
     assert called
 
 
@@ -905,14 +905,14 @@ def test_process_box_frame_common_isnew_updates(tmp_path, monkeypatch):
     proxy.device_id = "AUTO"
     proxy.mqtt_publisher.device_id = "AUTO"
     proxy._msc.setup = lambda: None
-    proxy._maybe_persist_table_state = lambda *_args, **_kwargs: None
+    proxy._mp.maybe_persist_table_state = lambda *_args, **_kwargs: None
 
     async def async_noop(*_args, **_kwargs):
         return None
 
-    proxy._handle_setting_event = async_noop
+    proxy._cs.handle_setting_event = async_noop
     proxy._ctrl.observe_box_frame = async_noop
-    proxy._maybe_process_mode = async_noop
+    proxy._mp.maybe_process_mode = async_noop
     proxy._ctrl.maybe_start_next = async_noop
     monkeypatch.setattr(
         proxy_module,

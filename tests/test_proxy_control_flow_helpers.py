@@ -127,7 +127,7 @@ async def test_handle_setting_event_records_and_publishes():
     proxy._cs.set_commands_buffer = []
     proxy._ctrl.publish_setting_event_state = AsyncMock()
 
-    await proxy._handle_setting_event(
+    await proxy._cs.handle_setting_event(
         parsed={"Type": "Setting", "Content": "Remotely : tbl_box_prms / SA: [0]->[1]"},
         table_name="tbl_events",
         device_id="DEV1",

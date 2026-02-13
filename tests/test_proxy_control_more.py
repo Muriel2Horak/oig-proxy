@@ -471,14 +471,14 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
     proxy._ctrl.on_box_setting_ack = fake_ack
 
     async def run():
-        res = await proxy._send_setting_to_box(
+        res = await proxy._cs.send_to_box(
             tbl_name="tbl_box_prms",
             tbl_item="MODE",
             new_value="1",
             confirm="New",
             tx_id="tx1",
         )
-        ok = proxy._maybe_handle_local_setting_ack(
+        ok = proxy._cs.maybe_handle_ack(
             "<Reason>Setting</Reason><Result>ACK</Result>",
             writer,
             conn_id=1,
