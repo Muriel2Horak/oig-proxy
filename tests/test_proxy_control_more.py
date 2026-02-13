@@ -15,6 +15,7 @@ import proxy as proxy_module
 import control_pipeline as ctrl_module
 from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
+from control_settings import ControlSettings
 from models import SensorConfig
 
 
@@ -123,7 +124,6 @@ def make_proxy(tmp_path):
     proxy._ctrl.box_ready_s = 0.0
     proxy._ctrl.mqtt_enabled = False
     proxy._telemetry_client = None
-    proxy._set_commands_buffer = []
     proxy._prms_tables = {}
     proxy._prms_device_id = None
     proxy._msc = MagicMock()
@@ -131,7 +131,11 @@ def make_proxy(tmp_path):
     proxy._msc.last_values = {}
     proxy._msc.cache_device_id = None
     proxy.mqtt_publisher = DummyMQTT()
-    proxy._local_setting_pending = None
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
     return proxy
 
 

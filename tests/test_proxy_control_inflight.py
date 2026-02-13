@@ -39,7 +39,8 @@ def _make_proxy():
     ctrl.maybe_queue_post_drain_refresh = AsyncMock()
     proxy._ctrl = ctrl
 
-    proxy._send_setting_to_box = AsyncMock()
+    proxy._cs = MagicMock()
+    proxy._cs.send_to_box = AsyncMock()
     return proxy
 
 
@@ -76,7 +77,7 @@ async def test_control_start_inflight_defer_on_box_not_connected():
         "tbl_item": "SA",
         "new_value": "1",
     }
-    proxy._send_setting_to_box = AsyncMock(return_value={"ok": False, "error": "box_not_connected"})
+    proxy._cs.send_to_box = AsyncMock(return_value={"ok": False, "error": "box_not_connected"})
 
     await proxy._ctrl.start_inflight()
     proxy._ctrl.defer_inflight.assert_called_once()
@@ -92,7 +93,7 @@ async def test_control_start_inflight_error_send_failed():
         "tbl_item": "SA",
         "new_value": "1",
     }
-    proxy._send_setting_to_box = AsyncMock(return_value={"ok": False, "error": "send_failed"})
+    proxy._cs.send_to_box = AsyncMock(return_value={"ok": False, "error": "send_failed"})
 
     await proxy._ctrl.start_inflight()
     proxy._ctrl.publish_result.assert_called_once()
@@ -109,7 +110,7 @@ async def test_control_start_inflight_success_sets_ack_task(monkeypatch):
         "tbl_item": "SA",
         "new_value": "1",
     }
-    proxy._send_setting_to_box = AsyncMock(return_value={"ok": True, "id": "A", "id_set": "B"})
+    proxy._cs.send_to_box = AsyncMock(return_value={"ok": True, "id": "A", "id_set": "B"})
 
     dummy_task = MagicMock()
 

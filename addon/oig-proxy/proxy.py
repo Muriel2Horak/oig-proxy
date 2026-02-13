@@ -16,15 +16,14 @@ import asyncio
 import logging
 import socket
 import time
-import secrets
 import json
 from contextlib import suppress
-import re
 from datetime import datetime, timezone
 from typing import Any
 
 from parser import OIGDataParser
 from cloud_forwarder import CloudForwarder
+from control_settings import ControlSettings
 from config import (
     CONTROL_API_HOST,
     CONTROL_API_PORT,
@@ -122,8 +121,7 @@ class OIGProxy:
         self._conn_seq: int = 0
         self._loop: asyncio.AbstractEventLoop | None = None
         self._control_api: ControlAPIServer | None = None
-        self._local_setting_pending: dict[str, Any] | None = None
-        self._set_commands_buffer: list[dict[str, str]] = []  # For telemetry
+        self._cs = ControlSettings(self)
 
         # Control over MQTT (production)
         self._ctrl = ControlPipeline(self)
@@ -983,16 +981,7 @@ class OIGProxy:
     @staticmethod
     def _parse_setting_event(
             content: str) -> tuple[str, str, str | None, str | None] | None:
-        # Example:
-        #   "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
-        m = re.search(
-            r"tbl_([a-z0-9_]+)\s*/\s*([A-Z0-9_]+):\s*\[([^\]]*)\]\s*->\s*\[([^\]]*)\]",
-            content,
-        )
-        if not m:
-            return None
-        tbl_name = f"tbl_{m.group(1)}"
-        return tbl_name, m.group(2), m.group(3), m.group(4)
+        return ControlSettings.parse_setting_event(content)
 
     async def _handle_setting_event(
         self,
@@ -1000,55 +989,19 @@ class OIGProxy:
         table_name: str | None,
         device_id: str | None,
     ) -> None:
-        if table_name != "tbl_events":
-            return
-        if not parsed or parsed.get("Type") != "Setting":
-            return
-        content = parsed.get("Content")
-        if not content:
-            return
-        ev = self._parse_setting_event(str(content))
-        if not ev:
-            return
-        tbl_name, tbl_item, _old_value, new_value = ev
-        if new_value is None:
-            return
-        # Record for telemetry (cloud or local applied setting)
-        self._set_commands_buffer.append({
-            "key": f"{tbl_name}:{tbl_item}",
-            "value": str(new_value),
-            "result": "applied",
-            "source": "tbl_events",
-        })
-        await self._ctrl.publish_setting_event_state(
-            tbl_name=tbl_name,
-            tbl_item=tbl_item,
-            new_value=new_value,
-            device_id=device_id,
-            source="tbl_events",
-        )
+        await self._cs.handle_setting_event(parsed, table_name, device_id)
 
     def _cache_last_values(
             self, _parsed: dict[str, Any], _table_name: str | None) -> None:
         return
 
     # ---------------------------------------------------------------------
-    # Control API (prototype)
+    # Control API (delegated to ControlSettings)
     # ---------------------------------------------------------------------
 
     def get_control_api_health(self) -> dict[str, Any]:
         """Vrátí stavové info pro Control API health endpoint."""
-        now = time.time()
-        last_age_s: float | None = None
-        if self._last_data_epoch is not None:
-            last_age_s = max(0.0, now - self._last_data_epoch)
-        return {
-            "ok": True,
-            "device_id": None if self.device_id == "AUTO" else self.device_id,
-            "box_connected": bool(self.box_connected),
-            "box_peer": self._active_box_peer,
-            "box_data_age_s": last_age_s,
-        }
+        return self._cs.get_health()
 
     def control_api_send_setting(
             self,
@@ -1059,10 +1012,7 @@ class OIGProxy:
             confirm: str = "New",
     ) -> dict[str, Any]:
         """Odešle Setting do BOXu přes event loop a vrátí výsledek."""
-        if not self._validate_event_loop_ready():
-            return {"ok": False, "error": "event_loop_not_ready"}
-
-        return self._send_setting_via_event_loop(
+        return self._cs.send_setting(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
             new_value=new_value,
@@ -1070,8 +1020,7 @@ class OIGProxy:
         )
 
     def _validate_event_loop_ready(self) -> bool:
-        """Ověří že event loop je připraven."""
-        return self._loop is not None
+        return self._cs.validate_loop_ready()
 
     def _send_setting_via_event_loop(
             self,
@@ -1081,30 +1030,20 @@ class OIGProxy:
             new_value: str,
             confirm: str,
     ) -> dict[str, Any]:
-        """Pošle setting přes event loop s timeoutem."""
-        validation = self._validate_control_parameters(
-            tbl_name, tbl_item, new_value
+        return self._cs.send_via_event_loop(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=new_value,
+            confirm=confirm,
         )
-        if not validation["ok"]:
-            return validation
-
-        return self._run_coroutine_threadsafe(tbl_name, tbl_item, new_value, confirm)
 
     def _validate_control_parameters(
             self,
-            tbl_name: str,  # noqa: ARG001 - parameter reserved for future use
-            tbl_item: str,  # noqa: ARG001 - parameter reserved for future use
-            new_value: str,  # noqa: ARG001 - parameter reserved for future use
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
     ) -> dict[str, Any]:
-        """Validace parametrů pro control."""
-        if not self.box_connected:
-            return {"ok": False, "error": "box_not_connected"}
-        if self._last_data_epoch is None or (
-                time.time() - self._last_data_epoch) > 30:
-            return {"ok": False, "error": "box_not_sending_data"}
-        if self.device_id == "AUTO":
-            return {"ok": False, "error": "device_id_unknown"}
-        return {"ok": True}
+        return self._cs.validate_parameters(tbl_name, tbl_item, new_value)
 
     def _build_control_frame(
             self,
@@ -1113,51 +1052,12 @@ class OIGProxy:
             new_value: str,
             confirm: str,
     ) -> bytes:
-        """Sestaví rámec pro nastavení."""
-        msg_id = secrets.randbelow(90_000_000) + 10_000_000
-        id_set = int(time.time())
-        now_local = datetime.now()
-        now_utc = datetime.now(timezone.utc)
-
-        inner = (
-            f"<ID>{msg_id}</ID>"
-            f"<ID_Device>{self.device_id}</ID_Device>"
-            f"<ID_Set>{id_set}</ID_Set>"
-            "<ID_SubD>0</ID_SubD>"
-            f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
-            f"<NewValue>{new_value}</NewValue>"
-            f"<Confirm>{confirm}</Confirm>"
-            f"<TblName>{tbl_name}</TblName>"
-            f"<TblItem>{tbl_item}</TblItem>"
-            "<ID_Server>5</ID_Server>"
-            "<mytimediff>0</mytimediff>"
-            "<Reason>Setting</Reason>"
-            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
-            "<ver>55734</ver>"
-        )
-        return build_frame(
-            inner,
-            add_crlf=True).encode(
-            "utf-8",
-            errors="strict")
+        return self._cs.build_frame(tbl_name, tbl_item, new_value, confirm)
 
     def _run_coroutine_threadsafe(
             self, tbl_name: str, tbl_item: str, new_value: str, confirm: str
     ) -> dict[str, Any]:
-        """Spustí coroutines threadsafe s timeoutem."""
-        fut = asyncio.run_coroutine_threadsafe(
-            self._send_setting_to_box(
-                tbl_name=tbl_name,
-                tbl_item=tbl_item,
-                new_value=new_value,
-                confirm=confirm,
-            ),
-            self._loop if self._loop else None,  # type: ignore[arg-type]
-        )
-        try:
-            return fut.result(timeout=5.0)
-        except Exception as e:
-            return {"ok": False, "error": f"send_failed:{type(e).__name__}"}
+        return self._cs.run_coroutine_threadsafe(tbl_name, tbl_item, new_value, confirm)
 
     async def _send_setting_to_box(
         self,
@@ -1168,140 +1068,15 @@ class OIGProxy:
         confirm: str,
         tx_id: str | None = None,
     ) -> dict[str, Any]:
-        if not self.box_connected:
-            return {"ok": False, "error": "box_not_connected"}
-        if self._last_data_epoch is None or (
-                time.time() - self._last_data_epoch) > 30:
-            return {"ok": False, "error": "box_not_sending_data"}
-        if self.device_id == "AUTO":
-            return {"ok": False, "error": "device_id_unknown"}
-
-        async with self._box_conn_lock:
-            writer = self._active_box_writer
-        if writer is None:
-            return {"ok": False, "error": "no_active_box_writer"}
-
-        msg_id = secrets.randbelow(90_000_000) + 10_000_000
-        id_set = int(time.time())
-        now_local = datetime.now()
-        now_utc = datetime.now(timezone.utc)
-
-        inner = (
-            f"<ID>{msg_id}</ID>"
-            f"<ID_Device>{self.device_id}</ID_Device>"
-            f"<ID_Set>{id_set}</ID_Set>"
-            "<ID_SubD>0</ID_SubD>"
-            f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
-            f"<NewValue>{new_value}</NewValue>"
-            f"<Confirm>{confirm}</Confirm>"
-            f"<TblName>{tbl_name}</TblName>"
-            f"<TblItem>{tbl_item}</TblItem>"
-            "<ID_Server>5</ID_Server>"
-            "<mytimediff>0</mytimediff>"
-            "<Reason>Setting</Reason>"
-            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
-            "<ver>55734</ver>"
+        return await self._cs.send_to_box(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=new_value,
+            confirm=confirm,
+            tx_id=tx_id,
         )
-        frame = build_frame(
-            inner,
-            add_crlf=True).encode(
-            "utf-8",
-            errors="strict")
-
-        self._local_setting_pending = {
-            "sent_at": time.monotonic(),
-            "tbl_name": tbl_name,
-            "tbl_item": tbl_item,
-            "new_value": new_value,
-            "id": msg_id,
-            "id_set": id_set,
-            "tx_id": tx_id,
-        }
-
-        writer.write(frame)
-        await writer.drain()
-
-        logger.info(
-            "CONTROL: Sent Setting %s/%s=%s (id=%s id_set=%s)",
-            tbl_name,
-            tbl_item,
-            new_value,
-            msg_id,
-            id_set,
-        )
-
-        return {
-            "ok": True,
-            "sent": True,
-            "device_id": self.device_id,
-            "id": msg_id,
-            "id_set": id_set,
-        }
 
     def _maybe_handle_local_setting_ack(
         self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
     ) -> bool:
-        _ = conn_id
-        pending = self._local_setting_pending
-        if not pending:
-            return False
-        if (
-            time.monotonic() - float(pending.get("sent_at", 0.0))
-        ) > self._ctrl.ack_timeout_s:
-            return False
-        if "<Reason>Setting</Reason>" not in frame:
-            return False
-        if "<Result>ACK</Result>" not in frame and "<Result>NACK</Result>" not in frame:
-            return False
-
-        ack_ok = "<Result>ACK</Result>" in frame
-        tx_id = pending.get("tx_id")
-
-        now_local = datetime.now()
-        now_utc = datetime.now(timezone.utc)
-        end_inner = (
-            "<Result>END</Result>"
-            f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
-            f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
-        )
-        end_frame = build_frame(
-            end_inner,
-            add_crlf=True).encode(
-            "utf-8",
-            errors="strict")
-
-        box_writer.write(end_frame)
-        try:
-            task = asyncio.create_task(box_writer.drain())
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-        except Exception as exc:
-            logger.debug("CONTROL: Failed to schedule END drain: %s", exc)
-
-        try:
-            task = asyncio.create_task(
-                self._ctrl.on_box_setting_ack(
-                    tx_id=str(tx_id) if tx_id else None,
-                    ack=ack_ok,
-                )
-            )
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-        except Exception as exc:
-            logger.debug("CONTROL: Failed to schedule ACK handling: %s", exc)
-
-        logger.info(
-            "CONTROL: BOX responded to local Setting (sent END), last=%s/%s=%s",
-            pending.get("tbl_name"),
-            pending.get("tbl_item"),
-            pending.get("new_value"),
-        )
-        # Record for telemetry (local control command)
-        self._set_commands_buffer.append({
-            "key": f"{pending.get('tbl_name')}:{pending.get('tbl_item')}",
-            "value": str(pending.get("new_value", "")),
-            "result": "ack" if ack_ok else "nack",
-            "source": "local",
-        })
-        self._local_setting_pending = None
-        return True
+        return self._cs.maybe_handle_ack(frame, box_writer, conn_id=conn_id)

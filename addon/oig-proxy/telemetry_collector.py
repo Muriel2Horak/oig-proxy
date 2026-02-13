@@ -601,8 +601,8 @@ class TelemetryCollector:
         """Sestaví kompletní telemetrický payload."""
         proxy = self._proxy
         uptime_s = int(time.time() - proxy._start_time)  # pylint: disable=protected-access
-        set_commands = proxy._set_commands_buffer[:]  # pylint: disable=protected-access
-        proxy._set_commands_buffer.clear()  # pylint: disable=protected-access
+        set_commands = proxy._cs.set_commands_buffer[:]  # pylint: disable=protected-access
+        proxy._cs.set_commands_buffer.clear()  # pylint: disable=protected-access
         debug_active = self.debug_windows_remaining > 0
         box_connected_window = self._get_box_connected_window_status()
         include_logs = self._should_include_logs(debug_active, box_connected_window)

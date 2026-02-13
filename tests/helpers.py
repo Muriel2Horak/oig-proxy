@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 # pylint: disable=protected-access
 import proxy as proxy_module
+from control_settings import ControlSettings
 from models import ProxyMode
 
 
@@ -23,4 +24,15 @@ def make_proxy(tmp_path):
     proxy._ctrl = MagicMock()
     proxy._msc = MagicMock()
     proxy._cf = MagicMock()
+    proxy._loop = None
+    proxy._active_box_writer = None
+    proxy._active_box_peer = None
+    proxy._background_tasks = set()
+
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
+
     return proxy

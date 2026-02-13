@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import MagicMock
 import oig_frame
 import proxy as proxy_module
+from control_settings import ControlSettings
 from models import ProxyMode
 from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
@@ -50,6 +51,11 @@ def make_proxy(tmp_path):
     proxy._ctrl = MagicMock()
     proxy._ctrl.key_state = {}
     proxy._tc = MagicMock()
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
     return proxy
 
 

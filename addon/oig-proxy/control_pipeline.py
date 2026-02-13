@@ -728,7 +728,7 @@ class ControlPipeline:
             await self.finish_inflight()
             return
 
-        result = await self._proxy._send_setting_to_box(
+        result = await self._proxy._cs.send_to_box(
             tbl_name=str(tx["tbl_name"]),
             tbl_item=str(tx["tbl_item"]),
             new_value=str(tx["new_value"]),
@@ -1028,7 +1028,7 @@ class ControlPipeline:
         tx: dict[str, Any],
         content: str,
     ) -> None:
-        ev = self._proxy._parse_setting_event(content)
+        ev = self._proxy._cs.parse_setting_event(content)
         if not ev:
             return
         ev_tbl, ev_item, old_v, new_v = ev

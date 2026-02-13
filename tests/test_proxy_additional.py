@@ -17,6 +17,7 @@ from hybrid_mode import HybridModeManager
 from control_pipeline import ControlPipeline
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
+from control_settings import ControlSettings
 from models import ProxyMode
 
 
@@ -173,8 +174,11 @@ def make_proxy(tmp_path):
     proxy._local_getactual_task = None
     proxy._full_refresh_interval_h = 1
     proxy._full_refresh_task = None
-    proxy._local_setting_pending = None
-    proxy._set_commands_buffer = []
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
     proxy._tc = MagicMock()
     return proxy
 

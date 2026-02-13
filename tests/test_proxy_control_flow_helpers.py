@@ -13,6 +13,7 @@ import pytest
 
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
+from control_settings import ControlSettings
 from models import ProxyMode
 
 
@@ -57,6 +58,11 @@ def _make_proxy():
     ctrl.last_result = None
     ctrl.key_state = {}
     proxy._ctrl = ctrl
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
     return proxy
 
 
@@ -118,7 +124,7 @@ async def test_control_publish_restart_errors():
 @pytest.mark.asyncio
 async def test_handle_setting_event_records_and_publishes():
     proxy = _make_proxy()
-    proxy._set_commands_buffer = []
+    proxy._cs.set_commands_buffer = []
     proxy._ctrl.publish_setting_event_state = AsyncMock()
 
     await proxy._handle_setting_event(
@@ -127,5 +133,5 @@ async def test_handle_setting_event_records_and_publishes():
         device_id="DEV1",
     )
 
-    assert proxy._set_commands_buffer
+    assert proxy._cs.set_commands_buffer
     proxy._ctrl.publish_setting_event_state.assert_called_once()

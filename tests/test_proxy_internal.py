@@ -14,6 +14,7 @@ import proxy as proxy_module
 from cloud_forwarder import CloudForwarder
 from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
+from control_settings import ControlSettings
 from hybrid_mode import HybridModeManager
 from models import ProxyMode, SensorConfig
 from mqtt_state_cache import MqttStateCache
@@ -201,7 +202,11 @@ def _make_proxy(tmp_path):
     proxy._force_offline_config = False
     proxy._proxy_status_attrs_topic = "oig/status/attrs"
     proxy._start_time = time.time()
-    proxy._set_commands_buffer = []
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
     proxy._hm = HybridModeManager(proxy)
     proxy._hm.configured_mode = "online"
     proxy._hm.mode = ProxyMode.ONLINE
@@ -632,13 +637,13 @@ def test_control_start_inflight_paths(tmp_path):
         async def fake_send(**_):
             return {"ok": False, "error": "box_not_connected"}
 
-        proxy._send_setting_to_box = fake_send
+        proxy._cs.send_to_box = fake_send
         await ctrl.start_inflight()
 
         async def ok_send(**_):
             return {"ok": True, "id": 1, "id_set": 2}
 
-        proxy._send_setting_to_box = ok_send
+        proxy._cs.send_to_box = ok_send
         ctrl.inflight = {
             "_attempts": 0,
             "tbl_name": "tbl_box_prms",

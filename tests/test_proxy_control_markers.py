@@ -56,6 +56,7 @@ def _make_proxy():
     ctrl.finish_inflight = AsyncMock()
 
     proxy._ctrl = ctrl
+    proxy._cs = MagicMock()
     return proxy
 
 
@@ -94,7 +95,7 @@ async def test_handle_setting_event_control_applied(monkeypatch):
         "new_value": "1",
     }
 
-    proxy._parse_setting_event = MagicMock(return_value=("tbl_box_prms", "SA", "0", "1"))
+    proxy._cs.parse_setting_event = MagicMock(return_value=("tbl_box_prms", "SA", "0", "1"))
 
     await proxy._ctrl.handle_setting_event_control(proxy._ctrl.inflight, "event")
     proxy._ctrl.publish_result.assert_called()
@@ -110,21 +111,21 @@ async def test_handle_setting_event_control_guard_paths():
         "tbl_item": "SA",
         "new_value": "1",
     }
-    proxy._parse_setting_event = MagicMock(return_value=None)
+    proxy._cs.parse_setting_event = MagicMock(return_value=None)
 
     await proxy._ctrl.handle_setting_event_control(proxy._ctrl.inflight, "event")
     proxy._ctrl.publish_result.assert_not_called()
 
-    proxy._parse_setting_event = MagicMock(return_value=("tbl_other", "SA", "0", "1"))
+    proxy._cs.parse_setting_event = MagicMock(return_value=("tbl_other", "SA", "0", "1"))
     await proxy._ctrl.handle_setting_event_control(proxy._ctrl.inflight, "event")
     proxy._ctrl.publish_result.assert_not_called()
 
-    proxy._parse_setting_event = MagicMock(return_value=("tbl_box_prms", "SA", "0", "2"))
+    proxy._cs.parse_setting_event = MagicMock(return_value=("tbl_box_prms", "SA", "0", "2"))
     await proxy._ctrl.handle_setting_event_control(proxy._ctrl.inflight, "event")
     proxy._ctrl.publish_result.assert_not_called()
 
     proxy._ctrl.inflight = {"tbl_name": "tbl_box_prms", "tbl_item": "SA", "new_value": "1"}
-    proxy._parse_setting_event = MagicMock(return_value=("tbl_box_prms", "SA", "0", "1"))
+    proxy._cs.parse_setting_event = MagicMock(return_value=("tbl_box_prms", "SA", "0", "1"))
     await proxy._ctrl.handle_setting_event_control(proxy._ctrl.inflight, "event")
     proxy._ctrl.publish_result.assert_not_called()
 
@@ -139,7 +140,7 @@ async def test_handle_setting_event_control_mode_sets_quiet(monkeypatch):
         "new_value": "1",
     }
 
-    proxy._parse_setting_event = MagicMock(return_value=("tbl_box_prms", "MODE", "0", "1"))
+    proxy._cs.parse_setting_event = MagicMock(return_value=("tbl_box_prms", "MODE", "0", "1"))
     dummy_task = MagicMock()
 
     def fake_create_task(coro):

@@ -10,6 +10,7 @@ import proxy as proxy_module
 import cloud_forwarder as cf_module
 from cloud_forwarder import CloudForwarder
 from control_pipeline import ControlPipeline
+from control_settings import ControlSettings
 from models import ProxyMode
 from mqtt_state_cache import MqttStateCache
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
@@ -185,6 +186,11 @@ def _make_proxy(tmp_path):
     proxy._hm.last_offline_time = 0.0
     proxy._hm.in_offline = False
     proxy._tc = MagicMock()
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
     return proxy
 
 
