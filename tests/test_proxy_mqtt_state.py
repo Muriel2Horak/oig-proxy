@@ -24,8 +24,16 @@ def _make_proxy():
     proxy._hm = MagicMock()
     proxy._hm.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
-    proxy._prms_tables = {}
-    proxy._prms_device_id = None
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
     proxy._ctrl = MagicMock()
     proxy._ctrl.queue = deque()
     proxy._ctrl.inflight = None
@@ -49,8 +57,6 @@ def _make_proxy():
     proxy.mqtt_publisher.device_id = "DEV1"
     proxy.mqtt_publisher.publish_raw = AsyncMock(return_value=True)
     proxy.mqtt_publisher.set_cached_payload = MagicMock(return_value=None)
-    proxy._mode_value = None
-    proxy._mode_device_id = None
     msc = MqttStateCache.__new__(MqttStateCache)
     msc._proxy = proxy
     msc.last_values = {}
@@ -149,8 +155,8 @@ async def test_persist_mqtt_state_values(monkeypatch):
     with patch("mqtt_state_cache.save_prms_state") as save_state:
         await proxy._msc.persist_values("tbl_box_prms", {"MODE": "1"}, "DEV1")
     save_state.assert_called_once()
-    assert proxy._prms_tables["tbl_box_prms"]["MODE"] == "1"
-    assert proxy._prms_device_id == "DEV1"
+    assert proxy._mp.prms_tables["tbl_box_prms"]["MODE"] == "1"
+    assert proxy._mp.prms_device_id == "DEV1"
 
 
 @pytest.mark.asyncio

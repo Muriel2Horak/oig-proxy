@@ -24,6 +24,16 @@ def _make_proxy():
     proxy.box_connected = True
     proxy._box_connected_since_epoch = time.time() - 60
     proxy._last_data_epoch = time.time()
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
 
     ctrl = ControlPipeline.__new__(ControlPipeline)
     ctrl._proxy = proxy
@@ -101,9 +111,9 @@ def test_update_cached_value_updates_mode(monkeypatch):
     msc.table_cache = {}
     msc.cache_device_id = None
     proxy._msc = msc
-    proxy._mode_value = None
-    proxy._mode_device_id = None
-    proxy._prms_device_id = None
+    proxy._mp.mode_value = None
+    proxy._mp.mode_device_id = None
+    proxy._mp.prms_device_id = None
     proxy.device_id = "DEV1"
 
     with pytest.MonkeyPatch.context() as m:
@@ -115,8 +125,8 @@ def test_update_cached_value_updates_mode(monkeypatch):
             raw_value="2",
             update_mode=True,
         )
-        assert proxy._mode_value == 2
-        assert proxy._mode_device_id == "DEV1"
+        assert proxy._mp.mode_value == 2
+        assert proxy._mp.mode_device_id == "DEV1"
         msc_module.save_mode_state.assert_called_once()
 
 
@@ -128,7 +138,7 @@ def test_update_cached_value_skips_invalid_mode(monkeypatch):
     msc.table_cache = {}
     msc.cache_device_id = None
     proxy._msc = msc
-    proxy._mode_value = None
+    proxy._mp.mode_value = None
 
     with pytest.MonkeyPatch.context() as m:
         import mqtt_state_cache as msc_module
@@ -139,5 +149,5 @@ def test_update_cached_value_skips_invalid_mode(monkeypatch):
             raw_value="9",
             update_mode=True,
         )
-        assert proxy._mode_value is None
+        assert proxy._mp.mode_value is None
         msc_module.save_mode_state.assert_not_called()

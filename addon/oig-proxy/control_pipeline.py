@@ -843,7 +843,7 @@ class ControlPipeline:
         if not payload:
             table_values = self._proxy._msc.table_cache.get(tbl_name)
             if not table_values:
-                table_values = self._proxy._prms_tables.get(tbl_name)
+                table_values = self._proxy._mp.prms_tables.get(tbl_name)
             if isinstance(table_values, dict) and table_values:
                 raw_payload = dict(table_values)
                 raw_payload[tbl_item] = raw_value

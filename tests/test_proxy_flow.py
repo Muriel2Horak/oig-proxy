@@ -156,14 +156,20 @@ def _make_proxy(tmp_path):
     proxy._ctrl.pending_keys = set()
     proxy._ctrl.pending_path = str(tmp_path / "pending.json")
     proxy._ctrl.post_drain_refresh_pending = False
-    proxy._prms_tables = {}
-    proxy._prms_device_id = None
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
     proxy._msc = MagicMock()
     proxy._msc.table_cache = {}
     proxy._msc.last_values = {}
     proxy._msc.cache_device_id = None
-    proxy._mode_value = None
-    proxy._mode_device_id = None
     proxy._force_offline_config = False
     proxy._proxy_status_attrs_topic = "oig/status/attrs"
     proxy._last_data_iso = None

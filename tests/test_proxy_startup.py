@@ -103,7 +103,7 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
 
     proxy = proxy_module.OIGProxy("AUTO")
-    proxy._mode_device_id = "DEVX"
+    proxy._mp.mode_device_id = "DEVX"
 
     proxy.mqtt_publisher.connect = lambda: False
 

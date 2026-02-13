@@ -24,6 +24,7 @@ from typing import Any
 from parser import OIGDataParser
 from cloud_forwarder import CloudForwarder
 from control_settings import ControlSettings
+from mode_persistence import ModePersistence
 from config import (
     CONTROL_API_HOST,
     CONTROL_API_PORT,
@@ -57,10 +58,6 @@ from models import ProxyMode
 from mqtt_publisher import MQTTPublisher
 from utils import (
     capture_payload,
-    load_mode_state,
-    load_prms_state,
-    save_mode_state,
-    save_prms_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,12 +98,7 @@ class OIGProxy:
         # Komponenty
         self.mqtt_publisher = MQTTPublisher(device_id)
         self.parser = OIGDataParser()
-        loaded_mode, loaded_dev = load_mode_state()
-        self._mode_value: int | None = loaded_mode
-        self._mode_device_id: str | None = loaded_dev
-        self._mode_pending_publish: bool = self._mode_value is not None
-        self._prms_tables, self._prms_device_id = load_prms_state()
-        self._prms_pending_publish: bool = bool(self._prms_tables)
+        self._mp = ModePersistence(self)
         self._msc = MqttStateCache(self)
         self._mqtt_was_ready: bool = False
 
@@ -207,7 +199,7 @@ class OIGProxy:
     def _restore_device_id(self) -> None:
         if self.device_id != "AUTO":
             return
-        restored_device_id = self._mode_device_id or self._prms_device_id
+        restored_device_id = self._mp.mode_device_id or self._mp.prms_device_id
         if not restored_device_id:
             return
         self.device_id = restored_device_id
@@ -412,137 +404,51 @@ class OIGProxy:
             except Exception as e:
                 logger.debug("Full refresh (SA) failed: %s", e)
 
+    # ------------------------------------------------------------------
+    # Delegation wrappers – mode & PRMS persistence (→ ModePersistence)
+    # ------------------------------------------------------------------
+
     async def _publish_mode_if_ready(
         self,
         device_id: str | None = None,
         *,
-        reason: str | None = None
+        reason: str | None = None,
     ) -> None:
-        """Publikuje známý MODE do MQTT."""
-        if self._mode_value is None:
-            return
-        target_device_id = device_id
-        if not target_device_id:
-            if self.device_id and self.device_id != "AUTO":
-                target_device_id = self.device_id
-            elif self._mode_device_id:
-                target_device_id = self._mode_device_id
-        if not target_device_id:
-            logger.debug("MODE: No device_id, publish deferred")
-            return
-
-        payload: dict[str, Any] = {
-            "_table": "tbl_box_prms",
-            "MODE": int(self._mode_value),
-        }
-        payload["_device_id"] = target_device_id
-
-        try:
-            await self.mqtt_publisher.publish_data(payload)
-            if reason:
-                logger.info(
-                    "MODE: Published state %s (%s)",
-                    self._mode_value,
-                    reason,
-                )
-        except Exception as e:
-            logger.debug("MODE publish failed: %s", e)
+        """Delegate to ModePersistence."""
+        await self._mp.publish_mode_if_ready(device_id, reason=reason)
 
     def _maybe_persist_table_state(
         self,
-        _parsed: dict[str, Any] | None,
-        _table_name: str | None,
-        _device_id: str | None,
+        parsed: dict[str, Any] | None,
+        table_name: str | None,
+        device_id: str | None,
     ) -> None:
-        """Uloží poslední známé hodnoty pro vybrané tabulky (pro obnovu po restartu)."""
+        """Delegate to ModePersistence."""
+        self._mp.maybe_persist_table_state(parsed, table_name, device_id)
 
     async def _publish_prms_if_ready(
-            self, *, reason: str | None = None) -> None:
-        """Publikuje uložené *_prms hodnoty do MQTT (obnova po restartu/reconnectu)."""
-        if not self._prms_tables:
-            return
-
-        if not self.mqtt_publisher.is_ready():
-            self._prms_pending_publish = True
-            return
-
-        if self.device_id == "AUTO":
-            self._prms_pending_publish = True
-            return
-
-        # Publish jen když je potřeba (startup nebo po MQTT reconnectu)
-        if not self._prms_pending_publish and reason not in (
-                "startup", "device_autodetect"):
-            return
-
-        for table_name, values in self._prms_tables.items():
-            if not isinstance(values, dict) or not values:
-                continue
-            payload: dict[str, Any] = {"_table": table_name, **values}
-            try:
-                await self.mqtt_publisher.publish_data(payload)
-            except Exception as e:
-                logger.debug("STATE publish failed (%s): %s", table_name, e)
-                self._prms_pending_publish = True
-                return
-
-        self._prms_pending_publish = False
-        if reason:
-            logger.info("STATE: Published snapshot (%s)", reason)
+        self, *, reason: str | None = None,
+    ) -> None:
+        """Delegate to ModePersistence."""
+        await self._mp.publish_prms_if_ready(reason=reason)
 
     async def _handle_mode_update(
         self,
         new_mode: Any,
         device_id: str | None,
-        source: str
+        source: str,
     ) -> None:
-        """Uloží a publikuje MODE pokud máme nové info."""
-        if new_mode is None:
-            return
-        try:
-            mode_int = int(new_mode)
-        except Exception:
-            return
-        if mode_int < 0 or mode_int > 5:
-            logger.debug(
-                "MODE: Value %s out of range 0-5, source %s, ignoring",
-                mode_int,
-                source,
-            )
-            return
-
-        if mode_int != self._mode_value:
-            self._mode_value = mode_int
-            await asyncio.to_thread(
-                save_mode_state,
-                mode_int,
-                device_id or self.device_id or self._mode_device_id)
-            logger.info("MODE: %s → %s", source, mode_int)
-        if device_id:
-            self._mode_device_id = device_id
-
-        await self._publish_mode_if_ready(device_id, reason=source)
+        """Delegate to ModePersistence."""
+        await self._mp.handle_mode_update(new_mode, device_id, source)
 
     async def _maybe_process_mode(
         self,
         parsed: dict[str, Any],
         table_name: str | None,
-        device_id: str | None
+        device_id: str | None,
     ) -> None:
-        """Detekuje MODE ze známých zdrojů a zajistí publish + persist."""
-        if not parsed:
-            return
-
-        if table_name == "tbl_box_prms" and "MODE" in parsed:
-            await self._handle_mode_update(parsed.get("MODE"), device_id, "tbl_box_prms")
-            return
-
-        if table_name == "tbl_events":
-            content = parsed.get("Content")
-            if content:
-                new_mode = self.parser.parse_mode_from_event(str(content))
-                if new_mode is not None:
-                    await self._handle_mode_update(new_mode, device_id, "tbl_events")
+        """Delegate to ModePersistence."""
+        await self._mp.maybe_process_mode(parsed, table_name, device_id)
 
     def _note_mqtt_ready_transition(self, mqtt_ready: bool) -> None:
         """Uloží změnu MQTT readiness (bez re-publish ze snapshotu)."""

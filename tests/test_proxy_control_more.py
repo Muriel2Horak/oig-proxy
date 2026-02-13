@@ -124,8 +124,16 @@ def make_proxy(tmp_path):
     proxy._ctrl.box_ready_s = 0.0
     proxy._ctrl.mqtt_enabled = False
     proxy._telemetry_client = None
-    proxy._prms_tables = {}
-    proxy._prms_device_id = None
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
     proxy._msc = MagicMock()
     proxy._msc.table_cache = {}
     proxy._msc.last_values = {}

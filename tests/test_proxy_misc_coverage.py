@@ -20,8 +20,16 @@ def _make_proxy() -> proxy_module.OIGProxy:
     proxy.device_id = "AUTO"
     proxy._hm = MagicMock()
     proxy._hm.mode = ProxyMode.ONLINE
-    proxy._mode_value = None
-    proxy._mode_device_id = None
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
     proxy._status_task = None
     proxy._full_refresh_task = None
     proxy._telemetry_task = None
@@ -126,9 +134,9 @@ def test_should_try_cloud_hybrid_retry(monkeypatch):
 @pytest.mark.asyncio
 async def test_publish_mode_if_ready_defers_without_device_id():
     proxy = _make_proxy()
-    proxy._mode_value = 1
+    proxy._mp.mode_value = 1
     proxy.device_id = "AUTO"
-    proxy._mode_device_id = None
+    proxy._mp.mode_device_id = None
 
     await proxy._publish_mode_if_ready(reason="test")
     proxy.mqtt_publisher.publish_data.assert_not_called()
@@ -137,7 +145,7 @@ async def test_publish_mode_if_ready_defers_without_device_id():
 @pytest.mark.asyncio
 async def test_publish_mode_if_ready_logs_reason():
     proxy = _make_proxy()
-    proxy._mode_value = 2
+    proxy._mp.mode_value = 2
     proxy.device_id = "DEV1"
 
     await proxy._publish_mode_if_ready(reason="startup")
@@ -148,7 +156,8 @@ async def test_publish_mode_if_ready_logs_reason():
 async def test_handle_mode_update_invalid_values(monkeypatch):
     proxy = _make_proxy()
     proxy._publish_mode_if_ready = AsyncMock()
-    monkeypatch.setattr(proxy_module, "save_mode_state", MagicMock())
+    import mode_persistence as mp_module
+    monkeypatch.setattr(mp_module, "save_mode_state", MagicMock())
 
     await proxy._handle_mode_update("bad", "DEV1", "source")
     await proxy._handle_mode_update(9, "DEV1", "source")
@@ -174,7 +183,7 @@ def test_telemetry_record_response_mode_variants():
     assert ("unmatched", "cloud", "hybrid") in tc.stats
 
     mock_proxy.mode = None
-    mock_proxy._mode_value = 3
+    mock_proxy._mp.mode_value = 3
     tc.record_response("<Result>ACK</Result>", source="cloud", conn_id=2)
     assert ("unmatched", "cloud", "offline") in tc.stats
 

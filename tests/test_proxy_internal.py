@@ -175,12 +175,16 @@ def _make_proxy(tmp_path):
     msc.table_cache = {}
     msc.cache_device_id = None
     proxy._msc = msc
-    proxy._prms_tables = {}
-    proxy._prms_device_id = None
-    proxy._mode_value = None
-    proxy._mode_device_id = None
-    proxy._mode_pending_publish = False
-    proxy._prms_pending_publish = False
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
     proxy._mqtt_was_ready = False
     proxy._status_task = None
     proxy._box_conn_lock = asyncio.Lock()
@@ -260,8 +264,8 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     assert attrs["control_inflight_key"] == "k1"
     assert attrs["control_queue_keys"] == ["k2"]
 
-    proxy._mode_value = 2
-    proxy._mode_device_id = "DEV2"
+    proxy._mp.mode_value = 2
+    proxy._mp.mode_device_id = "DEV2"
 
 
 def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
@@ -305,7 +309,7 @@ def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     assert not tc.error_context
     assert not tc.logs
 
-    proxy._mode_value = 2
+    proxy._mp.mode_value = 2
 
     async def run():
         await proxy._publish_mode_if_ready()
@@ -395,8 +399,9 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
         calls.append((args, kwargs))
 
     monkeypatch.setattr(proxy, "_publish_mode_if_ready", fake_publish)
+    import mode_persistence as mp_module
     monkeypatch.setattr(
-        proxy_module,
+        mp_module,
         "save_mode_state",
         lambda mode,
         dev: calls.append(
@@ -412,23 +417,23 @@ def test_mode_update_and_processing(tmp_path, monkeypatch):
         await proxy._maybe_process_mode({"Content": "event"}, "tbl_events", "DEV1")
 
     asyncio.run(run())
-    assert proxy._mode_value == 1
+    assert proxy._mp.mode_value == 1
     assert ("save", 3, "DEV1") in calls
 
 
 def test_prms_publish_flow(tmp_path):
     proxy = _make_proxy(tmp_path)
-    proxy._prms_tables = {"tbl_box_prms": {"MODE": 1}}
+    proxy._mp.prms_tables = {"tbl_box_prms": {"MODE": 1}}
 
     async def run():
         proxy.mqtt_publisher._ready = False
         await proxy._publish_prms_if_ready(reason="startup")
-        assert proxy._prms_pending_publish is True
+        assert proxy._mp.prms_pending_publish is True
 
         proxy.mqtt_publisher._ready = True
         proxy.device_id = "AUTO"
         await proxy._publish_prms_if_ready(reason="startup")
-        assert proxy._prms_pending_publish is True
+        assert proxy._mp.prms_pending_publish is True
 
         proxy.device_id = "DEV1"
 
@@ -436,13 +441,13 @@ def test_prms_publish_flow(tmp_path):
             raise RuntimeError("fail")
         proxy.mqtt_publisher.publish_data = fail_publish
         await proxy._publish_prms_if_ready(reason="startup")
-        assert proxy._prms_pending_publish is True
+        assert proxy._mp.prms_pending_publish is True
 
         async def ok_publish(payload):
             proxy.mqtt_publisher.published_data.append(payload)
         proxy.mqtt_publisher.publish_data = ok_publish
         await proxy._publish_prms_if_ready(reason="startup")
-        assert proxy._prms_pending_publish is False
+        assert proxy._mp.prms_pending_publish is False
 
     asyncio.run(run())
 
@@ -534,7 +539,7 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
 
     asyncio.run(run())
     assert updated[0][2] == 1
-    assert "tbl_box_prms" in proxy._prms_tables
+    assert "tbl_box_prms" in proxy._mp.prms_tables
 
 
 def test_control_message_validation_and_accept(tmp_path):

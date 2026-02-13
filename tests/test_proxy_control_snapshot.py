@@ -2,7 +2,7 @@
 
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
-# pylint: disable=no-member,use-implicit-booleaness-not-comparison,wrong-import-position
+# pylint: disable=no-member,use-implicit-booleaness-not-comparison,wrong-import-position,too-many-statements
 
 import asyncio
 from collections import deque
@@ -18,8 +18,16 @@ def _make_proxy():
     proxy._hm = MagicMock()
     proxy._hm.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
-    proxy._prms_device_id = None
-    proxy._prms_tables = {}
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
     proxy._msc = MagicMock()
     proxy._msc.table_cache = {}
     proxy._msc.last_values = {}
@@ -74,7 +82,7 @@ async def test_publish_setting_event_state(monkeypatch):
     proxy = _make_proxy()
     proxy._ctrl.coerce_value = MagicMock(return_value="1")
     proxy._ctrl.map_optimistic_value = MagicMock(return_value="ON")
-    proxy._prms_tables["tbl_box_prms"] = {"MODE": "0"}
+    proxy._mp.prms_tables["tbl_box_prms"] = {"MODE": "0"}
     proxy.mqtt_publisher.get_cached_payload = MagicMock(return_value=None)
     proxy.mqtt_publisher.map_data_for_publish = MagicMock(return_value=({"MODE": "ON"}, 1))
 

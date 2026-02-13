@@ -207,18 +207,18 @@ class MqttStateCache:
             return
         if mode_int < 0 or mode_int > 5:
             return
-        if mode_int == self._proxy._mode_value:
+        if mode_int == self._proxy._mp.mode_value:
             return
 
-        self._proxy._mode_value = mode_int
+        self._proxy._mp.mode_value = mode_int
         resolved_device_id = (
             (self._proxy.device_id
              if self._proxy.device_id != "AUTO" else None)
-            or self._proxy._mode_device_id
-            or self._proxy._prms_device_id
+            or self._proxy._mp.mode_device_id
+            or self._proxy._mp.prms_device_id
         )
         if resolved_device_id:
-            self._proxy._mode_device_id = resolved_device_id
+            self._proxy._mp.mode_device_id = resolved_device_id
         save_mode_state(mode_int, resolved_device_id)
 
     async def persist_values(
@@ -235,13 +235,13 @@ class MqttStateCache:
                 "STATE: snapshot update failed (%s): %s",
                 table_name,
                 e)
-        existing = self._proxy._prms_tables.get(table_name, {})
+        existing = self._proxy._mp.prms_tables.get(table_name, {})
         merged: dict[str, Any] = {}
         if isinstance(existing, dict):
             merged.update(existing)
         merged.update(raw_values)
-        self._proxy._prms_tables[table_name] = merged
-        self._proxy._prms_device_id = device_id
+        self._proxy._mp.prms_tables[table_name] = merged
+        self._proxy._mp.prms_device_id = device_id
 
     # -----------------------------------------------------------------
     # Main message handler

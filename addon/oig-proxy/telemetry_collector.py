@@ -202,7 +202,8 @@ class TelemetryCollector:
             self.req_pending.pop(conn_id, None)
         mode_value = getattr(self._proxy, "mode", None)
         if mode_value is None:
-            mode_value = getattr(self._proxy, "_mode_value", ProxyMode.OFFLINE.value)
+            mp = getattr(self._proxy, "_mp", None)
+            mode_value = getattr(mp, "mode_value", ProxyMode.OFFLINE.value) if mp else ProxyMode.OFFLINE.value
         if isinstance(mode_value, ProxyMode):
             mode_value_str = mode_value.value
         elif isinstance(mode_value, str):
