@@ -14,11 +14,12 @@ from telemetry_collector import TelemetryCollector
 
 def _make_proxy_and_tc():
     mock_proxy = MagicMock()
-    mock_proxy.mode = ProxyMode.ONLINE
-    mock_proxy._configured_mode = "hybrid"
-    mock_proxy._hybrid_state = "offline"
-    mock_proxy._hybrid_state_since_epoch = time.time() - 120
-    mock_proxy._hybrid_last_offline_reason = "cloud_failure"
+    mock_proxy._hm = MagicMock()
+    mock_proxy._hm.mode = ProxyMode.ONLINE
+    mock_proxy._hm.configured_mode = "hybrid"
+    mock_proxy._hm.state = "offline"
+    mock_proxy._hm.state_since_epoch = time.time() - 120
+    mock_proxy._hm.last_offline_reason = "cloud_failure"
     tc = TelemetryCollector(mock_proxy, interval_s=300)
     return mock_proxy, tc
 

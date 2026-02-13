@@ -90,8 +90,12 @@ class DummyParser:
 def _make_proxy(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "AUTO"
-    proxy.mode = ProxyMode.ONLINE
-    proxy.mode_lock = asyncio.Lock()
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
+    proxy._hm.mode_lock = asyncio.Lock()
+    proxy._hm.force_offline_enabled.return_value = False
+    proxy._hm.should_try_cloud.return_value = True
+    proxy._hm.is_hybrid_mode.return_value = False
     proxy._cloud_queue_enabled = True
     proxy._cloud_queue_disabled_warned = False
     proxy.stats = {
@@ -155,13 +159,13 @@ def _make_proxy(tmp_path):
     proxy._loop = None
     proxy._hb_interval_s = 0.0
     proxy._last_hb_ts = 0.0
-    proxy._configured_mode = "online"
-    proxy._hybrid_fail_count = 0
-    proxy._hybrid_fail_threshold = 3
-    proxy._hybrid_retry_interval = 300.0
-    proxy._hybrid_connect_timeout = 5.0
-    proxy._hybrid_last_offline_time = 0.0
-    proxy._hybrid_in_offline = False
+    proxy._hm.configured_mode = "online"
+    proxy._hm.fail_count = 0
+    proxy._hm.fail_threshold = 3
+    proxy._hm.retry_interval = 300.0
+    proxy._hm.connect_timeout = 5.0
+    proxy._hm.last_offline_time = 0.0
+    proxy._hm.in_offline = False
     proxy._tc = MagicMock()
     proxy._cloud_rx_buf = bytearray()
     return proxy
@@ -353,8 +357,9 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
     assert proxy.stats["acks_cloud"] == 1
 
     # Test EOF scenario - fallback only happens in HYBRID mode after threshold
-    proxy._configured_mode = "hybrid"
-    proxy._hybrid_in_offline = True  # Already reached threshold
+    proxy._hm.configured_mode = "hybrid"
+    proxy._hm.is_hybrid_mode.return_value = True
+    proxy._hm.in_offline = True  # Already reached threshold
 
     async def fake_ensure_eof(*_args, **_kwargs):
         return DummyReader(b""), cloud_writer, True

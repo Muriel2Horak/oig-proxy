@@ -13,8 +13,9 @@ from telemetry_collector import TelemetryCollector
 
 def _make_proxy_and_tc():
     mock_proxy = MagicMock()
-    mock_proxy.mode = ProxyMode.ONLINE
-    mock_proxy._configured_mode = "online"
+    mock_proxy._hm = MagicMock()
+    mock_proxy._hm.mode = ProxyMode.ONLINE
+    mock_proxy._hm.configured_mode = "online"
     mock_proxy.device_id = "DEV1"
     mock_proxy._start_time = time.time() - 120
     mock_proxy.stats = {
@@ -35,9 +36,9 @@ def _make_proxy_and_tc():
     mock_proxy.mqtt_publisher.queue.size = MagicMock(return_value=2)
     mock_proxy._box_connected_since_epoch = None
     mock_proxy._cloud_connected_since_epoch = None
-    mock_proxy._hybrid_state = None
-    mock_proxy._hybrid_state_since_epoch = None
-    mock_proxy._hybrid_last_offline_reason = None
+    mock_proxy._hm.state = None
+    mock_proxy._hm.state_since_epoch = None
+    mock_proxy._hm.last_offline_reason = None
     tc = TelemetryCollector(mock_proxy, interval_s=300)
     return mock_proxy, tc
 

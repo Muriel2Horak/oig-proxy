@@ -10,6 +10,7 @@ import time
 from collections import deque
 
 import proxy as proxy_module
+from hybrid_mode import HybridModeManager
 from models import ProxyMode, SensorConfig
 from telemetry_collector import TelemetryCollector
 
@@ -115,8 +116,6 @@ class DummyParser:
 def _make_proxy(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "DEV1"
-    proxy.mode = ProxyMode.ONLINE
-    proxy.mode_lock = asyncio.Lock()
     proxy._cloud_queue_enabled = True
     proxy._cloud_queue_disabled_warned = False
     proxy.stats = {
@@ -136,10 +135,6 @@ def _make_proxy(tmp_path):
     proxy.cloud_session_connected = False
     proxy._cloud_connected_since_epoch = None
     proxy._cloud_peer = None
-    proxy._configured_mode = "online"
-    proxy._hybrid_state = None
-    proxy._hybrid_state_since_epoch = None
-    proxy._hybrid_last_offline_reason = None
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser()
     proxy.box_connected = False
@@ -208,15 +203,18 @@ def _make_proxy(tmp_path):
     proxy._last_hb_ts = 0.0
     proxy._force_offline_config = False
     proxy._proxy_status_attrs_topic = "oig/status/attrs"
-    proxy._configured_mode = "online"
-    proxy._hybrid_fail_count = 0
-    proxy._hybrid_fail_threshold = 3
-    proxy._hybrid_retry_interval = 300.0
-    proxy._hybrid_connect_timeout = 5.0
-    proxy._hybrid_last_offline_time = 0.0
-    proxy._hybrid_in_offline = False
     proxy._start_time = time.time()
     proxy._set_commands_buffer = []
+    proxy._hm = HybridModeManager(proxy)
+    proxy._hm.configured_mode = "online"
+    proxy._hm.mode = ProxyMode.ONLINE
+    proxy._hm.mode_lock = asyncio.Lock()
+    proxy._hm.fail_count = 0
+    proxy._hm.fail_threshold = 3
+    proxy._hm.retry_interval = 300.0
+    proxy._hm.connect_timeout = 5.0
+    proxy._hm.last_offline_time = 0.0
+    proxy._hm.in_offline = False
     tc = TelemetryCollector(proxy, interval_s=300)
     proxy._tc = tc
     return proxy
@@ -339,7 +337,7 @@ def test_telemetry_stats_pairing_and_flush(tmp_path):
     proxy = _make_proxy(tmp_path)
     tc = proxy._tc
     proxy._start_time = time.time() - 1
-    proxy.mode = ProxyMode.OFFLINE
+    proxy._hm.mode = ProxyMode.OFFLINE
     conn_id = 7
     tc.record_request("IsNewSet", conn_id)
     tc.record_response(
@@ -469,23 +467,23 @@ def test_register_and_unregister_box_connection(tmp_path):
 def test_note_cloud_failure_records_hybrid_failure(tmp_path):
     """Test that _note_cloud_failure records failure for HYBRID mode tracking."""
     proxy = _make_proxy(tmp_path)
-    proxy._configured_mode = "hybrid"
-    proxy._hybrid_fail_count = 0
-    proxy._hybrid_fail_threshold = 3
+    proxy._hm.configured_mode = "hybrid"
+    proxy._hm.fail_count = 0
+    proxy._hm.fail_threshold = 3
 
     async def run():
         await proxy._note_cloud_failure(reason="test", local_ack=False)
 
     asyncio.run(run())
     # In HYBRID mode, failure count should increase
-    assert proxy._hybrid_fail_count == 1
+    assert proxy._hm.fail_count == 1
     # Should not be in offline yet (threshold is 3)
-    assert proxy._hybrid_in_offline is False
+    assert proxy._hm.in_offline is False
 
     # After reaching threshold, should switch to offline
-    proxy._hybrid_fail_count = 2
+    proxy._hm.fail_count = 2
     asyncio.run(run())
-    assert proxy._hybrid_in_offline is True
+    assert proxy._hm.in_offline is True
 
 
 def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):

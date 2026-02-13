@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import proxy as proxy_module
+from hybrid_mode import HybridModeManager
 from models import ProxyMode
 from telemetry_collector import TelemetryCollector
 
@@ -17,7 +18,8 @@ from telemetry_collector import TelemetryCollector
 def _make_proxy() -> proxy_module.OIGProxy:
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "AUTO"
-    proxy.mode = ProxyMode.ONLINE
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
     proxy._mode_value = None
     proxy._mode_device_id = None
     proxy._status_task = None
@@ -108,16 +110,17 @@ async def test_local_getactual_loop_waits_until_close():
 
 def test_should_try_cloud_hybrid_retry(monkeypatch):
     proxy = _make_proxy()
-    proxy._configured_mode = "hybrid"
-    proxy._hybrid_in_offline = True
-    proxy._hybrid_retry_interval = 10.0
-    proxy._hybrid_last_offline_time = 100.0
+    proxy._hm = HybridModeManager(proxy)
+    proxy._hm.configured_mode = "hybrid"
+    proxy._hm.in_offline = True
+    proxy._hm.retry_interval = 10.0
+    proxy._hm.last_offline_time = 100.0
 
     monkeypatch.setattr(time, "time", lambda: 105.0)
-    assert proxy._should_try_cloud() is False
+    assert proxy._hm.should_try_cloud() is False
 
     monkeypatch.setattr(time, "time", lambda: 111.0)
-    assert proxy._should_try_cloud() is True
+    assert proxy._hm.should_try_cloud() is True
 
 
 @pytest.mark.asyncio
@@ -154,7 +157,8 @@ async def test_handle_mode_update_invalid_values(monkeypatch):
 
 def test_telemetry_record_request_trims_queue():
     mock_proxy = MagicMock()
-    mock_proxy.mode = ProxyMode.ONLINE
+    mock_proxy._hm = MagicMock()
+    mock_proxy._hm.mode = ProxyMode.ONLINE
     tc = TelemetryCollector(mock_proxy, interval_s=300)
     tc.record_request(None, 1)
     for _ in range(1001):

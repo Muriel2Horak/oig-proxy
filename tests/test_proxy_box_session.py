@@ -40,9 +40,10 @@ class DummyWriter:
 
 def _make_proxy():
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.mode = ProxyMode.ONLINE
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
-    proxy._configured_mode = "online"
+    proxy._hm.configured_mode = "online"
     proxy.stats = {"frames_received": 0, "frames_forwarded": 0, "acks_local": 0}
     proxy._active_box_peer = "peer"
     proxy._last_box_disconnect_reason = None

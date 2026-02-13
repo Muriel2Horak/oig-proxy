@@ -12,7 +12,8 @@ from models import ProxyMode
 
 def _make_proxy():
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.mode = ProxyMode.ONLINE
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
     proxy._prms_device_id = None
     proxy._prms_tables = {}

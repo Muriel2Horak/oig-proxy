@@ -41,7 +41,6 @@ class DummyReader:
 
 def _make_proxy():
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
     proxy.cloud_connects = 0
     proxy.cloud_errors = 0
@@ -53,10 +52,13 @@ def _make_proxy():
     proxy._tc = MagicMock()
     proxy._active_box_peer = "peer"
     proxy._close_writer = AsyncMock()
-    proxy._hybrid_record_failure = MagicMock()
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=False)
+    proxy._hm.should_try_cloud = MagicMock(return_value=True)
+    proxy._hm.record_failure = MagicMock()
+    proxy._hm.record_success = MagicMock()
     proxy._fallback_offline_from_cloud_issue = AsyncMock(return_value=(None, None))
-    proxy._hybrid_record_success = MagicMock()
-    proxy._is_hybrid_mode = MagicMock(return_value=False)
     proxy._build_end_time_frame = MagicMock(return_value=b"<Result>END</Result>")
     proxy._cloud_rx_buf = bytearray()
     proxy.stats = {"frames_forwarded": 0, "acks_local": 0, "acks_cloud": 0}
@@ -66,7 +68,7 @@ def _make_proxy():
 @pytest.mark.asyncio
 async def test_ensure_cloud_connected_skip_when_offline(monkeypatch):
     proxy = _make_proxy()
-    proxy._should_try_cloud = MagicMock(return_value=False)
+    proxy._hm.should_try_cloud = MagicMock(return_value=False)
     proxy.cloud_session_connected = True
 
     reader, writer, attempted = await proxy._ensure_cloud_connected(
@@ -80,7 +82,7 @@ async def test_ensure_cloud_connected_skip_when_offline(monkeypatch):
 @pytest.mark.asyncio
 async def test_ensure_cloud_connected_reuse_writer(monkeypatch):
     proxy = _make_proxy()
-    proxy._should_try_cloud = MagicMock(return_value=True)
+    proxy._hm.should_try_cloud = MagicMock(return_value=True)
     writer = DummyWriter()
     reader = DummyReader()
 
@@ -96,7 +98,7 @@ async def test_ensure_cloud_connected_reuse_writer(monkeypatch):
 @pytest.mark.asyncio
 async def test_ensure_cloud_connected_success(monkeypatch):
     proxy = _make_proxy()
-    proxy._should_try_cloud = MagicMock(return_value=True)
+    proxy._hm.should_try_cloud = MagicMock(return_value=True)
 
     dummy_reader = DummyReader()
     dummy_writer = DummyWriter()
@@ -125,7 +127,7 @@ async def test_ensure_cloud_connected_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_ensure_cloud_connected_failure(monkeypatch):
     proxy = _make_proxy()
-    proxy._should_try_cloud = MagicMock(return_value=True)
+    proxy._hm.should_try_cloud = MagicMock(return_value=True)
 
     async def fake_open_connection(_host, _port):
         raise RuntimeError("fail")
@@ -149,7 +151,7 @@ async def test_ensure_cloud_connected_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_cloud_connection_failed_hybrid(monkeypatch):
     proxy = _make_proxy()
-    proxy._is_hybrid_mode = MagicMock(return_value=True)
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
 
     await proxy._handle_cloud_connection_failed(
         conn_id=1,
@@ -167,7 +169,7 @@ async def test_handle_cloud_connection_failed_hybrid(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_cloud_connection_failed_non_hybrid():
     proxy = _make_proxy()
-    proxy._is_hybrid_mode = MagicMock(return_value=False)
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=False)
 
     result = await proxy._handle_cloud_connection_failed(
         conn_id=1,
@@ -186,7 +188,7 @@ async def test_handle_cloud_connection_failed_non_hybrid():
 @pytest.mark.asyncio
 async def test_handle_cloud_eof_hybrid():
     proxy = _make_proxy()
-    proxy._is_hybrid_mode = MagicMock(return_value=True)
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
 
     await proxy._handle_cloud_eof(
         conn_id=1,
@@ -204,7 +206,7 @@ async def test_handle_cloud_eof_hybrid():
 @pytest.mark.asyncio
 async def test_handle_cloud_timeout_hybrid_end(monkeypatch):
     proxy = _make_proxy()
-    proxy._is_hybrid_mode = MagicMock(return_value=True)
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
     box_writer = DummyWriter()
 
     reader, writer = await proxy._handle_cloud_timeout(
@@ -225,7 +227,7 @@ async def test_handle_cloud_timeout_hybrid_end(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_cloud_timeout_non_hybrid(monkeypatch):
     proxy = _make_proxy()
-    proxy._is_hybrid_mode = MagicMock(return_value=False)
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=False)
     proxy.cloud_session_connected = True
 
     result = await proxy._handle_cloud_timeout(

@@ -342,20 +342,20 @@ class TelemetryCollector:
             ended_at: float,
             reason: str | None = None) -> None:
         """Zaznamená konec hybrid mode stavu (online/offline)."""
-        proxy = self._proxy
-        if proxy._hybrid_state_since_epoch is None or proxy._hybrid_state is None:  # pylint: disable=protected-access
+        hm = self._proxy._hm  # pylint: disable=protected-access
+        if hm.state_since_epoch is None or hm.state is None:
             return
         self.hybrid_sessions.append({
             "timestamp": self._utc_iso(ended_at),
-            "state": proxy._hybrid_state,  # pylint: disable=protected-access
-            "started_at": self._utc_iso(proxy._hybrid_state_since_epoch),  # pylint: disable=protected-access
+            "state": hm.state,
+            "started_at": self._utc_iso(hm.state_since_epoch),
             "ended_at": self._utc_iso(ended_at),
-            "duration_s": int(ended_at - proxy._hybrid_state_since_epoch),  # pylint: disable=protected-access
+            "duration_s": int(ended_at - hm.state_since_epoch),
             "reason": reason,
-            "mode": proxy.mode.value,
+            "mode": hm.mode.value,
         })
-        proxy._hybrid_state_since_epoch = None  # pylint: disable=protected-access
-        proxy._hybrid_state = None  # pylint: disable=protected-access
+        hm.state_since_epoch = None
+        hm.state = None
 
     def record_offline_event(
             self,
@@ -367,12 +367,13 @@ class TelemetryCollector:
             "timestamp": self._utc_iso(),
             "reason": reason or "unknown",
             "local_ack": bool(local_ack),
-            "mode": self._proxy.mode.value,
+            "mode": self._proxy._hm.mode.value,  # pylint: disable=protected-access
         })
 
     # ------------------------------------------------------------------
     # Telemetry client lifecycle
     # ------------------------------------------------------------------
+
     def init(self) -> None:
         """Inicializuje telemetry klienta (fail-safe)."""
         try:
@@ -497,22 +498,22 @@ class TelemetryCollector:
 
     def _collect_hybrid_sessions(self) -> list[dict[str, Any]]:
         result = list(self.hybrid_sessions)
-        proxy = self._proxy
-        if (getattr(proxy, "_configured_mode", None) == "hybrid"
-                and proxy._hybrid_state_since_epoch is not None):  # pylint: disable=protected-access
+        hm = self._proxy._hm  # pylint: disable=protected-access
+        if (hm.configured_mode == "hybrid"
+                and hm.state_since_epoch is not None):
             now = time.time()
             result.append({
                 "timestamp": self._utc_iso(now),
-                "state": proxy._hybrid_state,  # pylint: disable=protected-access
-                "started_at": self._utc_iso(proxy._hybrid_state_since_epoch),  # pylint: disable=protected-access
+                "state": hm.state,
+                "started_at": self._utc_iso(hm.state_since_epoch),
                 "ended_at": None,
-                "duration_s": int(now - proxy._hybrid_state_since_epoch),  # pylint: disable=protected-access
+                "duration_s": int(now - hm.state_since_epoch),
                 "reason": (
-                    proxy._hybrid_last_offline_reason  # pylint: disable=protected-access
-                    if proxy._hybrid_state == "offline"  # pylint: disable=protected-access
+                    hm.last_offline_reason
+                    if hm.state == "offline"
                     else None
                 ),
-                "mode": proxy.mode.value,
+                "mode": hm.mode.value,
             })
         return result
 
@@ -613,8 +614,8 @@ class TelemetryCollector:
             "timestamp": self._utc_iso(),
             "interval_s": int(self.interval_s),
             "uptime_s": uptime_s,
-            "mode": proxy.mode.value,
-            "configured_mode": proxy._configured_mode,  # pylint: disable=protected-access
+            "mode": proxy._hm.mode.value,  # pylint: disable=protected-access
+            "configured_mode": proxy._hm.configured_mode,  # pylint: disable=protected-access
             "box_connected": box_connected_window,
             "box_peer": proxy._active_box_peer,  # pylint: disable=protected-access
             "frames_received": proxy.stats.get("frames_received", 0),

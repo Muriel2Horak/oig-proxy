@@ -50,12 +50,8 @@ from config import (
     FULL_REFRESH_INTERVAL_H,
     PROXY_LISTEN_HOST,
     PROXY_LISTEN_PORT,
-    PROXY_MODE,
     PROXY_STATUS_INTERVAL,
     PROXY_STATUS_ATTRS_TOPIC,
-    HYBRID_CONNECT_TIMEOUT,
-    HYBRID_FAIL_THRESHOLD,
-    HYBRID_RETRY_INTERVAL,
     MQTT_NAMESPACE,
     MQTT_PUBLISH_QOS,
     MQTT_STATE_RETAIN,
@@ -66,6 +62,7 @@ from config import (
 )
 from control_api import ControlAPIServer
 from telemetry_collector import TelemetryCollector
+from hybrid_mode import HybridModeManager
 from oig_frame import (
     RESULT_ACK,
     RESULT_END,
@@ -139,19 +136,8 @@ class OIGProxy:
         self._mqtt_cache_device_id: str | None = None
         self._mqtt_was_ready: bool = False
 
-        # Proxy mode from config (online/hybrid/offline)
-        self._configured_mode: str = PROXY_MODE
-        # Current runtime mode (for HYBRID: can flip between online/offline)
-        self.mode = self._get_initial_mode()
-        self.mode_lock = asyncio.Lock()
-
-        # HYBRID mode state
-        self._hybrid_fail_count: int = 0
-        self._hybrid_fail_threshold: int = HYBRID_FAIL_THRESHOLD
-        self._hybrid_retry_interval: float = float(HYBRID_RETRY_INTERVAL)
-        self._hybrid_connect_timeout: float = float(HYBRID_CONNECT_TIMEOUT)
-        self._hybrid_last_offline_time: float = 0.0
-        self._hybrid_in_offline: bool = False
+        # Proxy mode – hybrid state machine
+        self._hm = HybridModeManager(self)
 
         # Background tasky
         self._status_task: asyncio.Task[Any] | None = None
@@ -201,9 +187,6 @@ class OIGProxy:
         self._start_time: float = time.time()
         # prevent task GC
         self._background_tasks: set[asyncio.Task[Any]] = set()
-        self._hybrid_state: str | None = None
-        self._hybrid_state_since_epoch: float | None = None
-        self._hybrid_last_offline_reason: str | None = None
         self._tc = TelemetryCollector(self, interval_s=TELEMETRY_INTERVAL_S)
         # Create copy for safe iteration during modification
         for handler in list(logger.handlers):  # noqa: C417
@@ -226,10 +209,6 @@ class OIGProxy:
         self._box_connected_since_epoch: float | None = None
         self._last_box_disconnect_reason: str | None = None
         self._last_values: dict[tuple[str, str], Any] = {}
-
-        if self._configured_mode == "hybrid":
-            self._hybrid_state = "offline" if self._hybrid_in_offline else "online"
-            self._hybrid_state_since_epoch = time.time()
 
         # Statistiky
         self.stats = {
@@ -331,7 +310,7 @@ class OIGProxy:
         addr = server.sockets[0].getsockname()
         logger.info("🚀 OIG Proxy listening on %s:%s", addr[0], addr[1])
         logger.info("📡 Cloud target: %s:%s", TARGET_SERVER, TARGET_PORT)
-        logger.info("🔄 Mode: %s", self.mode.value)
+        logger.info("🔄 Mode: %s", self._hm.mode.value)
 
         async with server:
             await server.serve_forever()
@@ -347,8 +326,8 @@ class OIGProxy:
 
         logger.info(
             "🚀 Proxy mode: %s (configured: %s)",
-            self.mode.value,
-            self._configured_mode,
+            self._hm.mode.value,
+            self._hm.configured_mode,
         )
 
         await self.publish_proxy_status()
@@ -369,13 +348,13 @@ class OIGProxy:
         queue_keys = [str(tx.get("request_key") or "")
                       for tx in self._control_queue]
         payload = {
-            "status": self.mode.value,
-            "mode": self.mode.value,
-            "configured_mode": self._configured_mode,
+            "status": self._hm.mode.value,
+            "mode": self._hm.mode.value,
+            "configured_mode": self._hm.configured_mode,
             "control_session_id": self._control_session_id,
             "box_device_id": self.device_id if self.device_id != "AUTO" else None,
-            "cloud_online": int(not self._hybrid_in_offline),
-            "hybrid_fail_count": self._hybrid_fail_count,
+            "cloud_online": int(not self._hm.in_offline),
+            "hybrid_fail_count": self._hm.fail_count,
             "cloud_connects": self.cloud_connects,
             "cloud_disconnects": self.cloud_disconnects,
             "cloud_timeouts": self.cloud_timeouts,
@@ -506,106 +485,15 @@ class OIGProxy:
                 logger.debug("GetActual poll failed (conn=%s): %s", conn_id, e)
             await asyncio.sleep(self._local_getactual_interval_s)
 
-    def _force_offline_enabled(self) -> bool:
-        """Returns True if configured mode is OFFLINE."""
-        return self._configured_mode == "offline"
-
-    def _get_initial_mode(self) -> ProxyMode:
-        """Determine initial ProxyMode from config."""
-        if self._configured_mode == "offline":
-            return ProxyMode.OFFLINE
-        if self._configured_mode == "hybrid":
-            return ProxyMode.HYBRID
-        return ProxyMode.ONLINE
-
-    def _is_hybrid_mode(self) -> bool:
-        """Returns True if configured mode is HYBRID."""
-        return self._configured_mode == "hybrid"
-
-    def _should_try_cloud(self) -> bool:
-        """Determine if we should try to connect to cloud.
-
-        ONLINE mode: always try
-        HYBRID mode: try if not in offline state, or if retry interval passed
-        OFFLINE mode: never try
-        """
-        if self._configured_mode == "offline":
-            return False
-        if self._configured_mode == "online":
-            return True
-        # HYBRID mode
-        if not self._hybrid_in_offline:
-            return True
-        # Check if retry interval passed
-        elapsed = time.time() - self._hybrid_last_offline_time
-        if elapsed >= self._hybrid_retry_interval:
-            logger.info(
-                "☁️ HYBRID: retry interval (%.0fs) passed, trying cloud...",
-                self._hybrid_retry_interval,
-            )
-            return True
-        return False
-
-    def _hybrid_record_failure(
-        self,
-        *,
-        reason: str | None = None,
-        local_ack: bool | None = None,
-    ) -> None:
-        """Record a cloud failure for HYBRID mode."""
-        if not self._is_hybrid_mode():
-            return
-        self._hybrid_fail_count += 1
-        if self._hybrid_in_offline:
-            # Restart offline window after each failed probe so we only
-            # attempt once per retry interval.
-            self._hybrid_last_offline_time = time.time()
-            self._hybrid_last_offline_reason = reason or self._hybrid_last_offline_reason
-        if self._hybrid_fail_count >= self._hybrid_fail_threshold:
-            if not self._hybrid_in_offline:
-                transition_time = time.time()
-                self._tc.record_hybrid_state_end(
-                    ended_at=transition_time,
-                    reason=reason or "cloud_failure",
-                )
-                self._hybrid_in_offline = True
-                self._hybrid_last_offline_time = time.time()
-                self._hybrid_state = "offline"
-                self._hybrid_state_since_epoch = transition_time
-                self._hybrid_last_offline_reason = reason or "unknown"
-                self._tc.record_offline_event(reason=reason, local_ack=local_ack)
-                logger.warning(
-                    "☁️ HYBRID: %d failures → switching to offline mode",
-                    self._hybrid_fail_count,
-                )
-
-    def _hybrid_record_success(self) -> None:
-        """Record a cloud success for HYBRID mode."""
-        if not self._is_hybrid_mode():
-            return
-        if self._hybrid_in_offline:
-            logger.info(
-                "☁️ HYBRID: cloud recovered → switching to online mode")
-            transition_time = time.time()
-            self._tc.record_hybrid_state_end(
-                ended_at=transition_time,
-                reason=self._hybrid_last_offline_reason or "cloud_recovered",
-            )
-            self._hybrid_state = "online"
-            self._hybrid_state_since_epoch = transition_time
-            self._hybrid_last_offline_reason = None
-        self._hybrid_fail_count = 0
-        self._hybrid_in_offline = False
-
     async def _full_refresh_loop(self) -> None:
         interval_s = max(1, int(self._full_refresh_interval_h)) * 3600
         while True:
             await asyncio.sleep(interval_s)
-            if self._force_offline_enabled():
+            if self._hm.force_offline_enabled():
                 continue
             if not self.box_connected:
                 continue
-            if await self._get_current_mode() != ProxyMode.ONLINE:
+            if await self._hm.get_current_mode() != ProxyMode.ONLINE:
                 continue
             if self._control_inflight or self._control_queue:
                 continue
@@ -769,15 +657,6 @@ class OIGProxy:
         """Uloží změnu MQTT readiness (bez re-publish ze snapshotu)."""
         self._mqtt_was_ready = mqtt_ready
 
-    async def _switch_mode(self, new_mode: ProxyMode) -> ProxyMode:
-        """Atomicky přepne režim a vrátí předchozí hodnotu."""
-        async with self.mode_lock:
-            old_mode = self.mode
-            if old_mode != new_mode:
-                self.mode = new_mode
-                self.stats["mode_changes"] += 1
-            return old_mode
-
     def _log_status_heartbeat(self) -> None:
         if self._hb_interval_s <= 0:
             return
@@ -797,9 +676,9 @@ class OIGProxy:
         logger.info(
             "💓 HB: mode=%s box=%s cloud=%s cloud_sess=%s mqtt=%s q_mqtt=%s "
             "frames_rx=%s tx=%s ack=%s/%s last_data_age=%s box_uptime=%s",
-            self.mode.value,
+            self._hm.mode.value,
             "on" if self.box_connected else "off",
-            "off" if self._hybrid_in_offline else "on",
+            "off" if self._hm.in_offline else "on",
             "on" if self.cloud_session_connected else "off",
             "on" if self.mqtt_publisher.is_ready() else "off",
             self.mqtt_publisher.queue.size(),
@@ -953,7 +832,7 @@ class OIGProxy:
             local_ack: bool | None = None) -> None:
         """Zaznamená cloud selhání. V HYBRID mode může přepnout do offline."""
         logger.debug("☁️ Cloud failure noted: %s", reason)
-        self._hybrid_record_failure(reason=reason, local_ack=local_ack)
+        self._hm.record_failure(reason=reason, local_ack=local_ack)
 
     async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
         if writer is None:
@@ -1070,7 +949,7 @@ class OIGProxy:
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, bool]:
         # Check if we should try to connect to cloud
-        if not self._should_try_cloud():
+        if not self._hm.should_try_cloud():
             await self._close_writer(cloud_writer)
             if self.cloud_session_connected:
                 self._tc.record_cloud_session_end(reason="manual_offline")
@@ -1129,8 +1008,8 @@ class OIGProxy:
                 cloud_host=TARGET_SERVER,
                 reason="connect_failed",
             )
-        if self._is_hybrid_mode():
-            self._hybrid_record_failure(
+        if self._hm.is_hybrid_mode():
+            self._hm.record_failure(
                 reason="connect_failed", local_ack=True)
             return await self._fallback_offline_from_cloud_issue(
                 reason="connect_failed",
@@ -1168,13 +1047,13 @@ class OIGProxy:
             self._tc.record_cloud_session_end(reason="eof")
         self._tc.fire_event(
             "error_cloud_disconnect", reason="eof")
-        self._hybrid_record_failure(
+        self._hm.record_failure(
             reason="cloud_eof",
-            local_ack=self._is_hybrid_mode(),
+            local_ack=self._hm.is_hybrid_mode(),
         )
         await self._close_writer(cloud_writer)
         self._cloud_rx_buf.clear()
-        if self._is_hybrid_mode():
+        if self._hm.is_hybrid_mode():
             return await self._fallback_offline_from_cloud_issue(
                 reason="cloud_eof",
                 frame_bytes=frame_bytes,
@@ -1206,9 +1085,9 @@ class OIGProxy:
             cloud_host=TARGET_SERVER,
             timeout_s=CLOUD_ACK_TIMEOUT,
         )
-        self._hybrid_record_failure(
+        self._hm.record_failure(
             reason="ack_timeout",
-            local_ack=self._is_hybrid_mode(),
+            local_ack=self._hm.is_hybrid_mode(),
         )
         logger.warning(
             "⏱️ Cloud ACK timeout (%.1fs) (conn=%s, table=%s)",
@@ -1216,7 +1095,7 @@ class OIGProxy:
             conn_id,
             table_name,
         )
-        if self._is_hybrid_mode():
+        if self._hm.is_hybrid_mode():
             if table_name == "END":
                 logger.info(
                     "📤 HYBRID: Sending local END (conn=%s)",
@@ -1270,13 +1149,13 @@ class OIGProxy:
         self.cloud_errors += 1
         if self.cloud_session_connected:
             self._tc.record_cloud_session_end(reason="cloud_error")
-        self._hybrid_record_failure(
+        self._hm.record_failure(
             reason="cloud_error",
-            local_ack=self._is_hybrid_mode(),
+            local_ack=self._hm.is_hybrid_mode(),
         )
         await self._close_writer(cloud_writer)
         self._cloud_rx_buf.clear()
-        if self._is_hybrid_mode():
+        if self._hm.is_hybrid_mode():
             return await self._fallback_offline_from_cloud_issue(
                 reason="cloud_error",
                 frame_bytes=frame_bytes,
@@ -1349,7 +1228,7 @@ class OIGProxy:
         box_writer: asyncio.StreamWriter,
         conn_id: int,
     ) -> None:
-        self._hybrid_record_success()
+        self._hm.record_success()
         ack_str = ack_data.decode("utf-8", errors="replace")
         self._tc.cloud_ok_in_window = True
         capture_payload(
@@ -1388,7 +1267,7 @@ class OIGProxy:
         cloud_writer: asyncio.StreamWriter | None,
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
-        if self._force_offline_enabled():
+        if self._hm.force_offline_enabled():
             return await self._handle_frame_offline_mode(
                 frame_bytes=frame_bytes,
                 table_name=table_name,
@@ -1523,12 +1402,6 @@ class OIGProxy:
     _infer_table_name = staticmethod(infer_table_name)
     _infer_device_id = staticmethod(infer_device_id)
 
-    async def _get_current_mode(self) -> ProxyMode:
-        if self._force_offline_enabled():
-            return ProxyMode.OFFLINE
-        async with self.mode_lock:
-            return self.mode
-
     async def _handle_frame_offline_mode(
         self,
         *,
@@ -1594,7 +1467,7 @@ class OIGProxy:
                 ):
                     continue
                 self._tc.force_logs_this_window = False
-                current_mode = await self._get_current_mode()
+                current_mode = await self._hm.get_current_mode()
 
                 if current_mode == ProxyMode.OFFLINE:
                     cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
@@ -1607,7 +1480,7 @@ class OIGProxy:
                     )
                     continue
 
-                if current_mode == ProxyMode.HYBRID and not self._should_try_cloud():
+                if current_mode == ProxyMode.HYBRID and not self._hm.should_try_cloud():
                     cloud_reader, cloud_writer = await self._handle_frame_offline_mode(
                         frame_bytes=data,
                         table_name=table_name,
@@ -1688,10 +1561,10 @@ class OIGProxy:
     def get_stats(self) -> dict[str, Any]:
         """Vrátí statistiky proxy."""
         return {
-            "mode": self.mode.value,
-            "configured_mode": self._configured_mode,
-            "cloud_online": not self._hybrid_in_offline,
-            "hybrid_fail_count": self._hybrid_fail_count,
+            "mode": self._hm.mode.value,
+            "configured_mode": self._hm.configured_mode,
+            "cloud_online": not self._hm.in_offline,
+            "hybrid_fail_count": self._hm.fail_count,
             "mqtt_queue_size": self.mqtt_publisher.queue.size(),
             "mqtt_connected": self.mqtt_publisher.connected,
             **self.stats

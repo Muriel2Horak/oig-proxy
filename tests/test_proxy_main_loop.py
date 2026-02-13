@@ -26,7 +26,9 @@ class DummyWriter:
 
 def _make_proxy():
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
-    proxy.mode = ProxyMode.ONLINE
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
+    proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
     proxy.device_id = "DEV1"
     proxy._active_box_peer = "peer"
     proxy.cloud_session_connected = False
@@ -35,7 +37,6 @@ def _make_proxy():
     proxy._read_box_bytes = AsyncMock()
     proxy._process_box_frame_common = AsyncMock(return_value=("DEV1", "tbl"))
     proxy._maybe_handle_local_setting_ack = MagicMock(return_value=False)
-    proxy._get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
     proxy._handle_frame_offline_mode = AsyncMock(return_value=(None, None))
     proxy._forward_frame_online = AsyncMock(return_value=(None, None))
     proxy._cloud_rx_buf = bytearray()
@@ -91,7 +92,7 @@ async def test_handle_box_connection_offline_path():
     proxy = _make_proxy()
 
     proxy._read_box_bytes = AsyncMock(side_effect=[b"frame", None])
-    proxy._get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
+    proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
 
     await proxy._handle_box_connection(
         box_reader=MagicMock(),
@@ -106,8 +107,8 @@ async def test_handle_box_connection_offline_path():
 @pytest.mark.asyncio
 async def test_handle_box_connection_hybrid_no_cloud():
     proxy = _make_proxy()
-    proxy._get_current_mode = AsyncMock(return_value=ProxyMode.HYBRID)
-    proxy._should_try_cloud = MagicMock(return_value=False)
+    proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.HYBRID)
+    proxy._hm.should_try_cloud = MagicMock(return_value=False)
     proxy._read_box_bytes = AsyncMock(side_effect=[b"frame", None])
 
     await proxy._handle_box_connection(
@@ -122,7 +123,7 @@ async def test_handle_box_connection_hybrid_no_cloud():
 @pytest.mark.asyncio
 async def test_handle_box_connection_online_path():
     proxy = _make_proxy()
-    proxy._get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
+    proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
     proxy._read_box_bytes = AsyncMock(side_effect=[b"frame", None])
 
     await proxy._handle_box_connection(

@@ -11,6 +11,7 @@ import pytest
 
 import oig_frame
 import proxy as proxy_module
+from hybrid_mode import HybridModeManager
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
 from models import ProxyMode
@@ -65,15 +66,19 @@ class DummyParser:
 def make_proxy(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "DEV1"
-    proxy.mode = ProxyMode.ONLINE
-    proxy.mode_lock = asyncio.Lock()
-    proxy._configured_mode = "online"
-    proxy._hybrid_fail_count = 0
-    proxy._hybrid_fail_threshold = 3
-    proxy._hybrid_retry_interval = 300.0
-    proxy._hybrid_connect_timeout = 5.0
-    proxy._hybrid_last_offline_time = 0.0
-    proxy._hybrid_in_offline = False
+    proxy._hm = MagicMock()
+    proxy._hm.mode = ProxyMode.ONLINE
+    proxy._hm.mode_lock = asyncio.Lock()
+    proxy._hm.configured_mode = "online"
+    proxy._hm.force_offline_enabled.return_value = False
+    proxy._hm.should_try_cloud.return_value = True
+    proxy._hm.is_hybrid_mode.return_value = False
+    proxy._hm.fail_count = 0
+    proxy._hm.fail_threshold = 3
+    proxy._hm.retry_interval = 300.0
+    proxy._hm.connect_timeout = 5.0
+    proxy._hm.last_offline_time = 0.0
+    proxy._hm.in_offline = False
     proxy.stats = {
         "frames_received": 0,
         "frames_forwarded": 0,
@@ -203,7 +208,7 @@ def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
     async def fake_mode():
         return ProxyMode.ONLINE
 
-    proxy._get_current_mode = fake_mode
+    proxy._hm.get_current_mode = fake_mode
     calls = {"send": 0, "sleep": 0}
 
     async def fake_send(**_):
@@ -235,7 +240,7 @@ def test_proxy_status_loop_disabled(tmp_path, monkeypatch):
 
 def test_proxy_status_loop_runs_once(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
-    proxy.mode = ProxyMode.OFFLINE
+    proxy._hm.mode = ProxyMode.OFFLINE
     proxy._hb_interval_s = 0.01
     proxy._last_data_epoch = time.time() - 5
     proxy._box_connected_since_epoch = time.time() - 10
@@ -367,7 +372,8 @@ def test_ensure_cloud_connected_force_offline(tmp_path):
     """Test that _ensure_cloud_connected returns None when configured as offline."""
     proxy = make_proxy(tmp_path)
     proxy.cloud_session_connected = True
-    proxy._configured_mode = "offline"  # Set to OFFLINE mode
+    proxy._hm.configured_mode = "offline"  # Set to OFFLINE mode
+    proxy._hm.should_try_cloud.return_value = False  # Offline means no cloud
     closed = {"called": False}
 
     async def fake_close(_writer):
@@ -446,7 +452,7 @@ def _setup_cloud_timeout(proxy, monkeypatch):
 def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
     """In ONLINE mode, END timeout does NOT send local ACK - fully transparent."""
     proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "online"  # ONLINE mode: transparent
+    proxy._hm.configured_mode = "online"  # ONLINE mode: transparent
     box_writer = _setup_cloud_timeout(proxy, monkeypatch)
 
     asyncio.run(
@@ -469,8 +475,9 @@ def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
 def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
     """In HYBRID mode (after threshold), END timeout sends local END ACK."""
     proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "hybrid"  # HYBRID mode
-    proxy._hybrid_in_offline = True  # Already reached threshold
+    proxy._hm.configured_mode = "hybrid"  # HYBRID mode
+    proxy._hm.is_hybrid_mode.return_value = True
+    proxy._hm.in_offline = True  # Already reached threshold
     box_writer = _setup_cloud_timeout(proxy, monkeypatch)
 
     asyncio.run(
@@ -493,8 +500,9 @@ def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
 def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
     """In HYBRID mode (after threshold), timeout on non-END frame triggers fallback to local ACK."""
     proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "hybrid"  # HYBRID mode does fallback
-    proxy._hybrid_in_offline = True  # Already reached threshold
+    proxy._hm.configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hm.is_hybrid_mode.return_value = True
+    proxy._hm.in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
@@ -536,7 +544,7 @@ def test_forward_frame_online_timeout_non_end_online_mode(
         tmp_path, monkeypatch):
     """In ONLINE mode, timeout on non-END frame does NOT trigger fallback - BOX times out."""
     proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "online"  # ONLINE mode: no fallback
+    proxy._hm.configured_mode = "online"  # ONLINE mode: no fallback
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b"<Frame>ACK</Frame>"])
     cloud_writer = DummyWriter()
@@ -579,8 +587,9 @@ def test_forward_frame_online_timeout_non_end_online_mode(
 def test_forward_frame_online_exception(tmp_path, monkeypatch):
     """In HYBRID mode (after threshold), cloud exception triggers fallback to local ACK."""
     proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "hybrid"  # HYBRID mode does fallback
-    proxy._hybrid_in_offline = True  # Already reached threshold
+    proxy._hm.configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hm.is_hybrid_mode.return_value = True
+    proxy._hm.in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
     cloud_reader = DummyReader([RuntimeError("boom")])
     cloud_writer = DummyWriter()
@@ -620,8 +629,9 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
 def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
     """In HYBRID mode (after threshold), cloud EOF triggers fallback to local ACK."""
     proxy = make_proxy(tmp_path)
-    proxy._configured_mode = "hybrid"  # HYBRID mode does fallback
-    proxy._hybrid_in_offline = True  # Already reached threshold
+    proxy._hm.configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hm.is_hybrid_mode.return_value = True
+    proxy._hm.in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b""])
     cloud_writer = DummyWriter()
@@ -683,7 +693,7 @@ def test_handle_box_connection_online(tmp_path):
     proxy._read_box_bytes = fake_read
     proxy._process_box_frame_common = fake_process
     proxy._maybe_handle_local_setting_ack = fake_ack
-    proxy._get_current_mode = fake_mode
+    proxy._hm.get_current_mode = fake_mode
     proxy._forward_frame_online = fake_forward
 
     asyncio.run(proxy._handle_box_connection(reader, writer, conn_id=1))
@@ -720,7 +730,7 @@ def test_handle_box_connection_offline(tmp_path):
     proxy._read_box_bytes = fake_read
     proxy._process_box_frame_common = fake_process
     proxy._maybe_handle_local_setting_ack = fake_ack
-    proxy._get_current_mode = fake_mode
+    proxy._hm.get_current_mode = fake_mode
     proxy._handle_frame_offline_mode = fake_offline
 
     asyncio.run(proxy._handle_box_connection(reader, writer, conn_id=2))
@@ -813,17 +823,20 @@ def test_force_offline_enabled_property(tmp_path):
     """Test _force_offline_enabled property logic for OFFLINE mode detection."""
     proxy = make_proxy(tmp_path)
 
+    # Replace mock _hm with real HybridModeManager to test actual logic
+    proxy._hm = HybridModeManager(proxy)
+
     # configured_mode = "offline" means force_offline enabled
-    proxy._configured_mode = "offline"
-    assert proxy._force_offline_enabled() is True
+    proxy._hm.configured_mode = "offline"
+    assert proxy._hm.force_offline_enabled() is True
 
     # configured_mode = "hybrid" - not force_offline
-    proxy._configured_mode = "hybrid"
-    assert proxy._force_offline_enabled() is False
+    proxy._hm.configured_mode = "hybrid"
+    assert proxy._hm.force_offline_enabled() is False
 
     # configured_mode = "online" - not force_offline
-    proxy._configured_mode = "online"
-    assert proxy._force_offline_enabled() is False
+    proxy._hm.configured_mode = "online"
+    assert proxy._hm.force_offline_enabled() is False
 
 
 def test_handle_setting_event_publishes(tmp_path):

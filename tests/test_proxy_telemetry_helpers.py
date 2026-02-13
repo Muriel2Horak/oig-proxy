@@ -13,7 +13,8 @@ from telemetry_collector import TelemetryCollector
 
 def _make_proxy_and_tc():
     mock_proxy = MagicMock()
-    mock_proxy.mode = ProxyMode.ONLINE
+    mock_proxy._hm = MagicMock()
+    mock_proxy._hm.mode = ProxyMode.ONLINE
     tc = TelemetryCollector(mock_proxy, interval_s=300)
     return mock_proxy, tc
 
