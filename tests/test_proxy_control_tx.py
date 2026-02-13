@@ -12,6 +12,7 @@ import pytest
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+from mqtt_state_cache import MqttStateCache
 
 
 def _make_proxy():
@@ -19,7 +20,12 @@ def _make_proxy():
     proxy._hm = MagicMock()
     proxy._hm.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
-    proxy._last_values = {}
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
 
     ctrl = ControlPipeline.__new__(ControlPipeline)
     ctrl._proxy = proxy
@@ -124,7 +130,7 @@ async def test_handle_duplicate_or_noop_active_state():
 async def test_handle_duplicate_or_noop_noop_value():
     proxy = _make_proxy()
     tx = {"tbl_name": "tbl_box_prms", "tbl_item": "SA", "_canon": "1"}
-    proxy._last_values[("tbl_box_prms", "SA")] = "1"
+    proxy._msc.last_values[("tbl_box_prms", "SA")] = "1"
     handled = await proxy._ctrl.handle_duplicate_or_noop(tx, "key")
     assert handled is True
     proxy._ctrl.publish_result.assert_called_once()
@@ -134,6 +140,6 @@ async def test_handle_duplicate_or_noop_noop_value():
 async def test_handle_duplicate_or_noop_false():
     proxy = _make_proxy()
     tx = {"tbl_name": "tbl_box_prms", "tbl_item": "SA", "_canon": "2"}
-    proxy._last_values[("tbl_box_prms", "SA")] = "1"
+    proxy._msc.last_values[("tbl_box_prms", "SA")] = "1"
     handled = await proxy._ctrl.handle_duplicate_or_noop(tx, "key")
     assert handled is False

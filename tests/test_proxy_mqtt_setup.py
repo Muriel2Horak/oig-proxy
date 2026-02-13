@@ -11,6 +11,7 @@ import pytest
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+from mqtt_state_cache import MqttStateCache
 
 
 class DummyLoop:
@@ -27,7 +28,6 @@ def _make_proxy():
     proxy._hm.mode = ProxyMode.ONLINE
     proxy.device_id = "DEV1"
     proxy._loop = DummyLoop()
-    proxy._mqtt_cache_device_id = None
     proxy._ctrl = MagicMock()
     proxy._ctrl.set_topic = "oig/control/set"
     proxy._ctrl.result_topic = "oig/control/result"
@@ -36,7 +36,12 @@ def _make_proxy():
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.device_id = "DEV1"
     proxy.mqtt_publisher.add_message_handler = MagicMock()
-    proxy._handle_mqtt_state_message = MagicMock()
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
     proxy._ctrl.on_mqtt_message = MagicMock()
     return proxy
 
@@ -44,14 +49,14 @@ def _make_proxy():
 def test_setup_mqtt_state_cache_skips_without_loop():
     proxy = _make_proxy()
     proxy._loop = None
-    proxy._setup_mqtt_state_cache()
+    proxy._msc.setup()
     proxy.mqtt_publisher.add_message_handler.assert_not_called()
 
 
 def test_setup_mqtt_state_cache_skips_auto_device():
     proxy = _make_proxy()
     proxy.mqtt_publisher.device_id = "AUTO"
-    proxy._setup_mqtt_state_cache()
+    proxy._msc.setup()
     proxy.mqtt_publisher.add_message_handler.assert_not_called()
 
 
@@ -59,20 +64,20 @@ def test_setup_mqtt_state_cache_registers_handler(monkeypatch):
     monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
 
-    proxy._setup_mqtt_state_cache()
+    proxy._msc.setup()
 
     proxy.mqtt_publisher.add_message_handler.assert_called_once()
     args, kwargs = proxy.mqtt_publisher.add_message_handler.call_args
     assert kwargs["topic"] == "oig_local/DEV1/+/state"
     assert kwargs["qos"] == 1
-    assert proxy._mqtt_cache_device_id == "DEV1"
+    assert proxy._msc.cache_device_id == "DEV1"
 
 
 def test_setup_mqtt_state_cache_handler_decodes(monkeypatch):
     monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
 
-    proxy._setup_mqtt_state_cache()
+    proxy._msc.setup()
     _, kwargs = proxy.mqtt_publisher.add_message_handler.call_args
     handler = kwargs["handler"]
 

@@ -132,7 +132,7 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
 
     proxy._ctrl.mqtt_enabled = True
     proxy._ctrl.setup_mqtt = fake_setup_control
-    proxy._setup_mqtt_state_cache = fake_setup_cache
+    proxy._msc.setup = fake_setup_cache
 
     async def fake_status_loop():
         return None

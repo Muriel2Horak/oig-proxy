@@ -129,9 +129,10 @@ def make_proxy(tmp_path):
     proxy._mode_device_id = None
     proxy._mode_pending_publish = False
     proxy._prms_pending_publish = False
-    proxy._table_cache = {}
-    proxy._last_values = {}
-    proxy._mqtt_cache_device_id = None
+    proxy._msc = MagicMock()
+    proxy._msc.table_cache = {}
+    proxy._msc.last_values = {}
+    proxy._msc.cache_device_id = None
     proxy._mqtt_was_ready = False
     proxy._status_task = None
     proxy._box_connected_since_epoch = None
@@ -889,7 +890,7 @@ def test_process_box_frame_common_isnew_updates(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     proxy.device_id = "AUTO"
     proxy.mqtt_publisher.device_id = "AUTO"
-    proxy._setup_mqtt_state_cache = lambda: None
+    proxy._msc.setup = lambda: None
     proxy._maybe_persist_table_state = lambda *_args, **_kwargs: None
 
     async def async_noop(*_args, **_kwargs):

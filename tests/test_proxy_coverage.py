@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import oig_frame
 import proxy as proxy_module
 from models import ProxyMode
+from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
 
 
@@ -39,10 +40,14 @@ def make_proxy(tmp_path):
     proxy._loop = None
     proxy.cloud_session_connected = False
     proxy.mqtt_publisher = MockMQTTPublisher()
-    proxy._last_values = {}
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
     proxy._ctrl = MagicMock()
     proxy._ctrl.key_state = {}
-    proxy._update_cached_value = lambda **kwargs: None
     proxy._tc = MagicMock()
     return proxy
 
@@ -204,21 +209,21 @@ def test_validate_mqtt_state_device(tmp_path, monkeypatch):
 
     # Matching device ID
     proxy.mqtt_publisher.device_id = "DEV1"
-    assert proxy._validate_mqtt_state_device("DEV1") is True
+    assert proxy._msc.validate_device("DEV1") is True
 
     # Mismatched device ID
-    assert proxy._validate_mqtt_state_device("DEV2") is False
+    assert proxy._msc.validate_device("DEV2") is False
 
     # AUTO device ID
     proxy.mqtt_publisher.device_id = "AUTO"
-    assert proxy._validate_mqtt_state_device("DEV1") is False
+    assert proxy._msc.validate_device("DEV1") is False
 
 
 def test_parse_mqtt_state_payload_valid(tmp_path):
     """Test _parse_mqtt_state_payload with valid JSON."""
     proxy = make_proxy(tmp_path)
 
-    payload = proxy._parse_mqtt_state_payload('{"key": "value"}')
+    payload = proxy._msc.parse_payload('{"key": "value"}')
     assert payload is not None
     assert payload["key"] == "value"
 
@@ -227,10 +232,10 @@ def test_parse_mqtt_state_payload_invalid(tmp_path):
     """Test _parse_mqtt_state_payload with invalid JSON."""
     proxy = make_proxy(tmp_path)
 
-    payload = proxy._parse_mqtt_state_payload('not valid json')
+    payload = proxy._msc.parse_payload('not valid json')
     assert payload is None
 
-    payload = proxy._parse_mqtt_state_payload('["array", "not", "dict"]')
+    payload = proxy._msc.parse_payload('["array", "not", "dict"]')
     assert payload is None
 
 

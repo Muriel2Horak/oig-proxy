@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+from mqtt_state_cache import MqttStateCache
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
 
 
@@ -174,9 +175,10 @@ def _make_proxy(tmp_path):
     proxy._ctrl.post_drain_refresh_pending = False
     proxy._prms_tables = {}
     proxy._prms_device_id = None
-    proxy._table_cache = {}
-    proxy._last_values = {}
-    proxy._mqtt_cache_device_id = None
+    proxy._msc = MagicMock()
+    proxy._msc.table_cache = {}
+    proxy._msc.last_values = {}
+    proxy._msc.cache_device_id = None
     proxy._mode_value = None
     proxy._mode_device_id = None
     proxy._force_offline_config = False
@@ -489,12 +491,18 @@ def test_setup_mqtt_handlers(tmp_path):
     proxy = _make_proxy(tmp_path)
     ctrl = _make_real_ctrl(proxy, tmp_path)
     proxy._ctrl = ctrl
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
 
     async def run():
         proxy._loop = asyncio.get_running_loop()
         proxy.device_id = "DEV1"
         proxy.mqtt_publisher.device_id = "DEV1"
-        proxy._setup_mqtt_state_cache()
+        proxy._msc.setup()
         ctrl.setup_mqtt()
 
     asyncio.run(run())

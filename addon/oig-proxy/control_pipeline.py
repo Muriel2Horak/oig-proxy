@@ -509,7 +509,7 @@ class ControlPipeline:
                 )
                 return True
 
-            current = self._proxy._last_values.get((tbl_name, tbl_item))
+            current = self._proxy._msc.last_values.get((tbl_name, tbl_item))
             if current is not None:
                 current_norm, _ = self.normalize_value(
                     tbl_name=tbl_name, tbl_item=tbl_item, new_value=current
@@ -841,7 +841,7 @@ class ControlPipeline:
             payload = {}
 
         if not payload:
-            table_values = self._proxy._table_cache.get(tbl_name)
+            table_values = self._proxy._msc.table_cache.get(tbl_name)
             if not table_values:
                 table_values = self._proxy._prms_tables.get(tbl_name)
             if isinstance(table_values, dict) and table_values:

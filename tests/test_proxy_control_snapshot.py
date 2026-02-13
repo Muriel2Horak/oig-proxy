@@ -20,8 +20,10 @@ def _make_proxy():
     proxy.device_id = "DEV1"
     proxy._prms_device_id = None
     proxy._prms_tables = {}
-    proxy._table_cache = {}
-    proxy._should_persist_table = MagicMock(return_value=True)
+    proxy._msc = MagicMock()
+    proxy._msc.table_cache = {}
+    proxy._msc.last_values = {}
+    proxy._msc.cache_device_id = None
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.device_id = "DEV1"
     proxy.mqtt_publisher.state_topic = MagicMock(return_value="oig/state")

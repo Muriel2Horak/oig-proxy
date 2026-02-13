@@ -7,6 +7,7 @@ import asyncio
 import json
 import time
 from collections import deque
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -124,8 +125,10 @@ def make_proxy(tmp_path):
     proxy._set_commands_buffer = []
     proxy._prms_tables = {}
     proxy._prms_device_id = None
-    proxy._table_cache = {}
-    proxy._last_values = {}
+    proxy._msc = MagicMock()
+    proxy._msc.table_cache = {}
+    proxy._msc.last_values = {}
+    proxy._msc.cache_device_id = None
     proxy.mqtt_publisher = DummyMQTT()
     proxy._local_setting_pending = None
     return proxy
@@ -426,7 +429,7 @@ def test_control_observe_box_frame_setting(tmp_path):
 
 def test_publish_setting_event_state(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._table_cache = {"tbl_box_prms": {"MODE": 1}}
+    proxy._msc.table_cache = {"tbl_box_prms": {"MODE": 1}}
     proxy.mqtt_publisher.device_id = "DEV1"
 
     async def run():

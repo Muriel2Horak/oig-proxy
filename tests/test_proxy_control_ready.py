@@ -13,6 +13,7 @@ import pytest
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+from mqtt_state_cache import MqttStateCache
 
 
 def _make_proxy():
@@ -94,16 +95,21 @@ async def test_validate_control_request_ok():
 
 def test_update_cached_value_updates_mode(monkeypatch):
     proxy = _make_proxy()
-    proxy._last_values = {}
-    proxy._table_cache = {}
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
     proxy._mode_value = None
     proxy._mode_device_id = None
     proxy._prms_device_id = None
     proxy.device_id = "DEV1"
 
     with pytest.MonkeyPatch.context() as m:
-        m.setattr(proxy_module, "save_mode_state", MagicMock())
-        proxy._update_cached_value(
+        import mqtt_state_cache as msc_module
+        m.setattr(msc_module, "save_mode_state", MagicMock())
+        proxy._msc.update_cached_value(
             tbl_name="tbl_box_prms",
             tbl_item="MODE",
             raw_value="2",
@@ -111,22 +117,27 @@ def test_update_cached_value_updates_mode(monkeypatch):
         )
         assert proxy._mode_value == 2
         assert proxy._mode_device_id == "DEV1"
-        proxy_module.save_mode_state.assert_called_once()
+        msc_module.save_mode_state.assert_called_once()
 
 
 def test_update_cached_value_skips_invalid_mode(monkeypatch):
     proxy = _make_proxy()
-    proxy._last_values = {}
-    proxy._table_cache = {}
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
     proxy._mode_value = None
 
     with pytest.MonkeyPatch.context() as m:
-        m.setattr(proxy_module, "save_mode_state", MagicMock())
-        proxy._update_cached_value(
+        import mqtt_state_cache as msc_module
+        m.setattr(msc_module, "save_mode_state", MagicMock())
+        proxy._msc.update_cached_value(
             tbl_name="tbl_box_prms",
             tbl_item="MODE",
             raw_value="9",
             update_mode=True,
         )
         assert proxy._mode_value is None
-        proxy_module.save_mode_state.assert_not_called()
+        msc_module.save_mode_state.assert_not_called()

@@ -15,6 +15,7 @@ import pytest
 import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from models import ProxyMode
+from mqtt_state_cache import MqttStateCache
 
 
 def _make_proxy():
@@ -47,8 +48,14 @@ def _make_proxy():
     proxy.mqtt_publisher.device_id = "DEV1"
     proxy.mqtt_publisher.publish_raw = AsyncMock(return_value=True)
     proxy.mqtt_publisher.set_cached_payload = MagicMock(return_value=None)
-    proxy._update_cached_value = MagicMock()
-    proxy._should_persist_table = MagicMock(return_value=True)
+    proxy._mode_value = None
+    proxy._mode_device_id = None
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
     proxy.publish_proxy_status = AsyncMock()
     return proxy
 
@@ -93,7 +100,7 @@ def _attach_real_ctrl(proxy, pending_path=None):
 def test_parse_mqtt_state_topic_valid(monkeypatch):
     monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
-    assert proxy._parse_mqtt_state_topic("oig_local/DEV1/tbl_actual/state") == (
+    assert proxy._msc.parse_topic("oig_local/DEV1/tbl_actual/state") == (
         "DEV1",
         "tbl_actual",
     )
@@ -102,44 +109,44 @@ def test_parse_mqtt_state_topic_valid(monkeypatch):
 def test_parse_mqtt_state_topic_invalid(monkeypatch):
     monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
-    assert proxy._parse_mqtt_state_topic("oig_local/DEV1/tbl_actual") == (None, None)
-    assert proxy._parse_mqtt_state_topic("wrong/DEV1/tbl_actual/state") == (None, None)
-    assert proxy._parse_mqtt_state_topic("oig_local/DEV1/tbl_actual/wrong") == (None, None)
+    assert proxy._msc.parse_topic("oig_local/DEV1/tbl_actual") == (None, None)
+    assert proxy._msc.parse_topic("wrong/DEV1/tbl_actual/state") == (None, None)
+    assert proxy._msc.parse_topic("oig_local/DEV1/tbl_actual/wrong") == (None, None)
 
 
 def test_validate_mqtt_state_device(monkeypatch):
     proxy = _make_proxy()
     proxy.mqtt_publisher.device_id = "DEV1"
-    assert proxy._validate_mqtt_state_device("DEV1") is True
-    assert proxy._validate_mqtt_state_device("DEV2") is False
+    assert proxy._msc.validate_device("DEV1") is True
+    assert proxy._msc.validate_device("DEV2") is False
     proxy.mqtt_publisher.device_id = None
-    assert proxy._validate_mqtt_state_device("DEV1") is True
+    assert proxy._msc.validate_device("DEV1") is True
     proxy.device_id = "AUTO"
-    assert proxy._validate_mqtt_state_device("DEV1") is False
+    assert proxy._msc.validate_device("DEV1") is False
 
 
 def test_parse_mqtt_state_payload():
     proxy = _make_proxy()
-    assert proxy._parse_mqtt_state_payload("not json") is None
-    assert proxy._parse_mqtt_state_payload("[1,2]") is None
-    payload = proxy._parse_mqtt_state_payload('{"MODE": "1"}')
+    assert proxy._msc.parse_payload("not json") is None
+    assert proxy._msc.parse_payload("[1,2]") is None
+    payload = proxy._msc.parse_payload('{"MODE": "1"}')
     assert payload == {"MODE": "1"}
 
 
 def test_transform_mqtt_state_values(monkeypatch):
     proxy = _make_proxy()
-    proxy._mqtt_state_to_raw_value = MagicMock(side_effect=lambda **kwargs: kwargs["value"])
+    proxy._msc.to_raw_value = MagicMock(side_effect=lambda **kwargs: kwargs["value"])
     payload = {"MODE": "1", "_ignore": "x"}
-    values = proxy._transform_mqtt_state_values(payload, "tbl_box_prms")
+    values = proxy._msc.transform_values(payload, "tbl_box_prms")
     assert values == {"MODE": "1"}
-    proxy._update_cached_value.assert_called_once()
+    assert proxy._msc.last_values.get(("tbl_box_prms", "MODE")) == "1"
 
 
 @pytest.mark.asyncio
 async def test_persist_mqtt_state_values(monkeypatch):
     proxy = _make_proxy()
-    with patch("proxy.save_prms_state") as save_state:
-        await proxy._persist_mqtt_state_values("tbl_box_prms", {"MODE": "1"}, "DEV1")
+    with patch("mqtt_state_cache.save_prms_state") as save_state:
+        await proxy._msc.persist_values("tbl_box_prms", {"MODE": "1"}, "DEV1")
     save_state.assert_called_once()
     assert proxy._prms_tables["tbl_box_prms"]["MODE"] == "1"
     assert proxy._prms_device_id == "DEV1"
@@ -149,18 +156,18 @@ async def test_persist_mqtt_state_values(monkeypatch):
 async def test_handle_mqtt_state_message(monkeypatch):
     monkeypatch.setattr(proxy_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
-    proxy._parse_mqtt_state_payload = MagicMock(return_value={"MODE": "1"})
-    proxy._transform_mqtt_state_values = MagicMock(return_value={"MODE": "1"})
-    proxy._persist_mqtt_state_values = AsyncMock()
+    proxy._msc.parse_payload = MagicMock(return_value={"MODE": "1"})
+    proxy._msc.transform_values = MagicMock(return_value={"MODE": "1"})
+    proxy._msc.persist_values = AsyncMock()
 
-    await proxy._handle_mqtt_state_message(
+    await proxy._msc.handle_message(
         topic="oig_local/DEV1/tbl_box_prms/state",
         payload_text='{"MODE": "1"}',
         retain=False,
     )
 
     assert proxy.mqtt_publisher.set_cached_payload.called
-    assert proxy._persist_mqtt_state_values.called
+    assert proxy._msc.persist_values.called
 
 
 @pytest.mark.asyncio

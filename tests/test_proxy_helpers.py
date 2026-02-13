@@ -11,6 +11,7 @@ from oig_frame import compute_frame_checksum, build_getactual_frame, build_ack_o
 import proxy as proxy_module
 from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
+from mqtt_state_cache import MqttStateCache
 
 
 def _assert_crc(frame: str) -> None:
@@ -74,13 +75,12 @@ def test_infer_table_and_device_id():
 
 
 def test_mqtt_state_topic_parse():
-    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     ok_topic = f"{MQTT_NAMESPACE}/DEV1/tbl_actual/state"
-    device_id, table_name = proxy._parse_mqtt_state_topic(ok_topic)
+    device_id, table_name = MqttStateCache.parse_topic(ok_topic)
     assert device_id == "DEV1"
     assert table_name == "tbl_actual"
 
-    bad = proxy._parse_mqtt_state_topic("invalid/topic")
+    bad = MqttStateCache.parse_topic("invalid/topic")
     assert bad == (None, None)
 
 
@@ -103,10 +103,10 @@ def test_control_helpers_and_setting_event():
 
 
 def test_should_persist_table():
-    assert proxy_module.OIGProxy._should_persist_table(None) is False
-    assert proxy_module.OIGProxy._should_persist_table("tbl_actual") is False
-    assert proxy_module.OIGProxy._should_persist_table("tbl_box_prms") is True
-    assert proxy_module.OIGProxy._should_persist_table("other") is False
+    assert MqttStateCache.should_persist_table(None) is False
+    assert MqttStateCache.should_persist_table("tbl_actual") is False
+    assert MqttStateCache.should_persist_table("tbl_box_prms") is True
+    assert MqttStateCache.should_persist_table("other") is False
 
 
 def test_control_normalize_value():

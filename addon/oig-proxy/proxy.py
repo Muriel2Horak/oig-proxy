@@ -48,6 +48,7 @@ from config import (
 )
 from control_api import ControlAPIServer
 from control_pipeline import ControlPipeline
+from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
 from hybrid_mode import HybridModeManager
 from oig_frame import (
@@ -119,8 +120,7 @@ class OIGProxy:
         self._mode_pending_publish: bool = self._mode_value is not None
         self._prms_tables, self._prms_device_id = load_prms_state()
         self._prms_pending_publish: bool = bool(self._prms_tables)
-        self._table_cache: dict[str, dict[str, Any]] = {}
-        self._mqtt_cache_device_id: str | None = None
+        self._msc = MqttStateCache(self)
         self._mqtt_was_ready: bool = False
 
         # Proxy mode – hybrid state machine
@@ -162,7 +162,6 @@ class OIGProxy:
 
         self._box_connected_since_epoch: float | None = None
         self._last_box_disconnect_reason: str | None = None
-        self._last_values: dict[tuple[str, str], Any] = {}
 
         # Statistiky
         self.stats = {
@@ -223,7 +222,7 @@ class OIGProxy:
 
         if self._ctrl.mqtt_enabled:
             self._ctrl.setup_mqtt()
-        self._setup_mqtt_state_cache()
+        self._msc.setup()
 
     def _restore_device_id(self) -> None:
         if self.device_id != "AUTO":
@@ -238,7 +237,7 @@ class OIGProxy:
             self.device_id,
         )
         self.mqtt_publisher.publish_availability()
-        self._setup_mqtt_state_cache()
+        self._msc.setup()
 
     def _start_background_tasks(self) -> None:
         if self._status_task is None or self._status_task.done():
@@ -469,19 +468,6 @@ class OIGProxy:
                 )
         except Exception as e:
             logger.debug("MODE publish failed: %s", e)
-
-    @staticmethod
-    def _should_persist_table(table_name: str | None) -> bool:
-        """Vrací True pro tabulky, které chceme perzistovat pro obnovu po restartu."""
-        if not table_name or not table_name.startswith("tbl_"):
-            return False
-
-        # tbl_actual chodí typicky každých pár sekund → neperzistujeme
-        # (zbytečné zápisy)
-        if table_name == "tbl_actual":
-            return False
-
-        return True
 
     def _maybe_persist_table_state(
         self,
@@ -825,7 +811,7 @@ class OIGProxy:
         self.mqtt_publisher.discovery_sent.clear()
         self.mqtt_publisher.publish_availability()
         logger.info("🔑 Device ID detected: %s", device_id)
-        self._setup_mqtt_state_cache()
+        self._msc.setup()
 
     async def _fallback_offline_from_cloud_issue(
         self,
@@ -1487,163 +1473,6 @@ class OIGProxy:
             **self.stats
         }
 
-    # ---------------------------------------------------------------------
-    # Control over MQTT (production)
-    # ---------------------------------------------------------------------
-
-    def _setup_mqtt_state_cache(self) -> None:
-        if self._loop is None:
-            return
-        device_id = self.mqtt_publisher.device_id or self.device_id
-        if not device_id or device_id == "AUTO":
-            return
-        if self._mqtt_cache_device_id == device_id:
-            return
-        topic = f"{MQTT_NAMESPACE}/{device_id}/+/state"
-
-        def _handler(
-                msg_topic: str,
-                payload: bytes,
-                _qos: int,
-                retain: bool) -> None:
-            if self._loop is None:
-                return
-            try:
-                payload_text = payload.decode("utf-8", errors="strict")
-            except Exception:
-                payload_text = payload.decode("utf-8", errors="replace")
-            self._loop.call_soon_threadsafe(
-                asyncio.create_task,
-                self._handle_mqtt_state_message(
-                    topic=msg_topic,
-                    payload_text=payload_text,
-                    retain=retain,
-                ),
-            )
-
-        self.mqtt_publisher.add_message_handler(
-            topic=topic,
-            handler=_handler,
-            qos=1,
-        )
-        self._mqtt_cache_device_id = device_id
-        logger.info("MQTT: Cache subscription enabled (%s)", topic)
-
-    def _parse_mqtt_state_topic(
-            self, topic: str) -> tuple[str | None, str | None]:
-        parts = topic.split("/")
-        if len(parts) != 4:
-            return None, None
-        namespace, device_id, table_name, suffix = parts
-        if namespace != MQTT_NAMESPACE or suffix != "state":
-            return None, None
-        return device_id, table_name
-
-    def _mqtt_state_to_raw_value(
-        self, *, tbl_name: str, tbl_item: str, value: Any
-    ) -> Any:
-        if isinstance(value, (dict, list)):
-            return value
-        cfg, _ = get_sensor_config(tbl_item, tbl_name)
-        if cfg and cfg.options:
-            if isinstance(value, str):
-                text = value.strip()
-                for idx, opt in enumerate(cfg.options):
-                    if text == opt or text.lower() == opt.lower():
-                        return idx
-                try:
-                    return int(float(text))
-                except Exception:
-                    return text
-            if isinstance(value, (int, float)):
-                idx = int(value)
-                if 0 <= idx < len(cfg.options):
-                    return idx
-        return ControlPipeline.coerce_value(value)
-
-    def _validate_mqtt_state_device(self, device_id: str) -> bool:
-        target_device_id = self.mqtt_publisher.device_id or self.device_id
-        if not target_device_id or target_device_id == "AUTO":
-            return False
-        return device_id == target_device_id
-
-    def _parse_mqtt_state_payload(self, payload_text: str) -> dict[str, Any] | None:
-        try:
-            payload = json.loads(payload_text)
-        except Exception:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        return payload
-
-    def _transform_mqtt_state_values(
-        self,
-        payload: dict[str, Any],
-        table_name: str,
-    ) -> dict[str, Any]:
-        raw_values: dict[str, Any] = {}
-        for key, value in payload.items():
-            if key.startswith("_"):
-                continue
-            raw_value = self._mqtt_state_to_raw_value(
-                tbl_name=table_name,
-                tbl_item=key,
-                value=value,
-            )
-            raw_values[key] = raw_value
-            self._update_cached_value(
-                tbl_name=table_name,
-                tbl_item=key,
-                raw_value=raw_value,
-                update_mode=True,
-            )
-        return raw_values
-
-    async def _persist_mqtt_state_values(
-        self,
-        table_name: str,
-        raw_values: dict[str, Any],
-        device_id: str,
-    ) -> None:
-        try:
-            await asyncio.to_thread(
-                save_prms_state, table_name, raw_values, device_id)
-        except Exception as e:
-            logger.debug(
-                "STATE: snapshot update failed (%s): %s",
-                table_name,
-                e)
-        existing = self._prms_tables.get(table_name, {})
-        merged: dict[str, Any] = {}
-        if isinstance(existing, dict):
-            merged.update(existing)
-        merged.update(raw_values)
-        self._prms_tables[table_name] = merged
-        self._prms_device_id = device_id
-
-    async def _handle_mqtt_state_message(
-        self,
-        *,
-        topic: str,
-        payload_text: str,
-        retain: bool,
-    ) -> None:
-        _ = retain
-        device_id, table_name = self._parse_mqtt_state_topic(topic)
-        if not device_id or not table_name:
-            return
-        if not self._validate_mqtt_state_device(device_id):
-            return
-        self.mqtt_publisher.set_cached_payload(topic, payload_text)
-        if not table_name.startswith("tbl_"):
-            return
-        payload = self._parse_mqtt_state_payload(payload_text)
-        if payload is None:
-            return
-        raw_values = self._transform_mqtt_state_values(payload, table_name)
-        if raw_values and self._should_persist_table(table_name):
-            await self._persist_mqtt_state_values(table_name, raw_values, device_id)
-
     @staticmethod
     def _parse_setting_event(
             content: str) -> tuple[str, str, str | None, str | None] | None:
@@ -1695,44 +1524,6 @@ class OIGProxy:
     def _cache_last_values(
             self, _parsed: dict[str, Any], _table_name: str | None) -> None:
         return
-
-    def _update_cached_value(
-        self,
-        *,
-        tbl_name: str,
-        tbl_item: str,
-        raw_value: Any,
-        update_mode: bool,
-    ) -> None:
-        if not tbl_name or not tbl_item:
-            return
-        self._last_values[(tbl_name, tbl_item)] = raw_value
-        table_cache = self._table_cache.setdefault(tbl_name, {})
-        table_cache[tbl_item] = raw_value
-
-        if not update_mode:
-            return
-
-        if (tbl_name, tbl_item) != ("tbl_box_prms", "MODE"):
-            return
-        try:
-            mode_int = int(raw_value)
-        except Exception:
-            return
-        if mode_int < 0 or mode_int > 5:
-            return
-        if mode_int == self._mode_value:
-            return
-
-        self._mode_value = mode_int
-        resolved_device_id = (
-            (self.device_id if self.device_id != "AUTO" else None)
-            or self._mode_device_id
-            or self._prms_device_id
-        )
-        if resolved_device_id:
-            self._mode_device_id = resolved_device_id
-        save_mode_state(mode_int, resolved_device_id)
 
     # ---------------------------------------------------------------------
     # Control API (prototype)

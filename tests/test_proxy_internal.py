@@ -14,6 +14,7 @@ import proxy as proxy_module
 from control_pipeline import ControlPipeline
 from hybrid_mode import HybridModeManager
 from models import ProxyMode, SensorConfig
+from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
 
 
@@ -213,15 +214,18 @@ def _make_proxy(tmp_path):
     proxy._ctrl.quiet_task = None
     proxy._ctrl.post_drain_refresh_pending = False
     proxy._ctrl.mqtt_enabled = False
-    proxy._last_values = {}
+    msc = MqttStateCache.__new__(MqttStateCache)
+    msc._proxy = proxy
+    msc.last_values = {}
+    msc.table_cache = {}
+    msc.cache_device_id = None
+    proxy._msc = msc
     proxy._prms_tables = {}
     proxy._prms_device_id = None
     proxy._mode_value = None
     proxy._mode_device_id = None
     proxy._mode_pending_publish = False
     proxy._prms_pending_publish = False
-    proxy._table_cache = {}
-    proxy._mqtt_cache_device_id = None
     proxy._mqtt_was_ready = False
     proxy._status_task = None
     proxy._box_conn_lock = asyncio.Lock()
@@ -531,8 +535,9 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
     proxy.device_id = "DEV1"
 
     cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
+    import mqtt_state_cache as msc_module
     monkeypatch.setattr(
-        proxy_module,
+        msc_module,
         "get_sensor_config",
         lambda key,
         table=None: (
@@ -544,13 +549,13 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
     def fake_update(*, tbl_name, tbl_item, raw_value, update_mode):
         updated.append((tbl_name, tbl_item, raw_value, update_mode))
 
-    proxy._update_cached_value = fake_update
-    monkeypatch.setattr(proxy_module, "save_prms_state", lambda *_: None)
+    proxy._msc.update_cached_value = fake_update
+    monkeypatch.setattr(msc_module, "save_prms_state", lambda *_: None)
 
     payload = json.dumps({"MODE": "B"})
 
     async def run():
-        await proxy._handle_mqtt_state_message(
+        await proxy._msc.handle_message(
             topic=f"{proxy_module.MQTT_NAMESPACE}/DEV1/tbl_box_prms/state",
             payload_text=payload,
             retain=False,
