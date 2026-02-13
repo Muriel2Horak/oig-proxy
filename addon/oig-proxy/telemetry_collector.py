@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
@@ -50,8 +51,9 @@ class TelemetryCollector:
         self.tbl_events: deque[dict[str, Any]] = deque()
         self.error_context: deque[dict[str, Any]] = deque()
 
-        # Log buffer
+        # Log buffer (protected by _logs_lock for thread safety)
         self.logs: deque[dict[str, Any]] = deque()
+        self._logs_lock: threading.Lock = threading.Lock()
         self.log_window_s: int = 60
         self.log_max: int = 1000
         self.log_error: bool = False
@@ -133,8 +135,9 @@ class TelemetryCollector:
                 "message": record.getMessage(),
                 "source": record.name,
             }
-            self.logs.append(entry)
-            self._prune_log_buffer()
+            with self._logs_lock:
+                self.logs.append(entry)
+                self._prune_log_buffer()
         except Exception:
             self.log_error = True
             try:
@@ -146,15 +149,17 @@ class TelemetryCollector:
                 self.log_error = False
 
     def _snapshot_logs(self) -> list[dict[str, Any]]:
-        self._prune_log_buffer()
-        return [
-            {k: v for k, v in item.items() if k != "_epoch"}
-            for item in self.logs
-        ]
+        with self._logs_lock:
+            self._prune_log_buffer()
+            return [
+                {k: v for k, v in item.items() if k != "_epoch"}
+                for item in self.logs
+            ]
 
     def _flush_log_buffer(self) -> list[dict[str, Any]]:
-        logs = self._snapshot_logs()
-        self.logs.clear()
+        with self._logs_lock:
+            logs = self._snapshot_logs()
+            self.logs.clear()
         return logs
 
     # ------------------------------------------------------------------
@@ -414,8 +419,8 @@ class TelemetryCollector:
         except Exception as exc:
             logger.debug("Failed to load version from package metadata: %s", exc)
 
-        logger.warning("Could not determine version, using default 1.6.2")
-        return "1.6.2"
+        logger.warning("Could not determine version, reporting version as 'unknown'")
+        return "unknown"
 
     async def loop(self) -> None:
         """Periodicky odesílá telemetrii na diagnostický server."""
@@ -478,7 +483,8 @@ class TelemetryCollector:
     ) -> list[dict[str, Any]]:
         logs = self._flush_log_buffer() if include_logs else []
         if not include_logs:
-            self.logs.clear()
+            with self._logs_lock:
+                self.logs.clear()
         if debug_active:
             self.debug_windows_remaining -= 1
         return logs
