@@ -4,10 +4,48 @@
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
 import asyncio
+from collections import deque
 from unittest.mock import MagicMock
 import proxy as proxy_module
+from control_pipeline import ControlPipeline
 from models import ProxyMode
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
+
+
+def _make_real_ctrl(proxy, tmp_path):
+    """Create a real ControlPipeline (bypassing __init__) for tests that call its async methods."""
+    ctrl = ControlPipeline.__new__(ControlPipeline)
+    ctrl._proxy = proxy
+    ctrl.mqtt_enabled = False
+    ctrl.set_topic = "oig/control/set"
+    ctrl.result_topic = "oig/control/result"
+    ctrl.status_prefix = "oig/control/status"
+    ctrl.qos = 1
+    ctrl.retain = False
+    ctrl.status_retain = False
+    ctrl.log_enabled = False
+    ctrl.log_path = str(tmp_path / "control.log")
+    ctrl.box_ready_s = 0.0
+    ctrl.ack_timeout_s = 0.01
+    ctrl.applied_timeout_s = 0.01
+    ctrl.mode_quiet_s = 0.01
+    ctrl.whitelist = {"tbl_box_prms": {"MODE", "SA"}}
+    ctrl.max_attempts = 2
+    ctrl.retry_delay_s = 0.01
+    ctrl.session_id = "test-session"
+    ctrl.pending_path = str(tmp_path / "pending.json")
+    ctrl.pending_keys = set()
+    ctrl.queue = deque()
+    ctrl.inflight = None
+    ctrl.lock = asyncio.Lock()
+    ctrl.ack_task = None
+    ctrl.applied_task = None
+    ctrl.quiet_task = None
+    ctrl.retry_task = None
+    ctrl.last_result = None
+    ctrl.key_state = {}
+    ctrl.post_drain_refresh_pending = False
+    return ctrl
 
 
 class DummyWriter:
@@ -117,22 +155,23 @@ def _make_proxy(tmp_path):
     proxy.mqtt_publisher = DummyMQTT()
     proxy.parser = DummyParser({})
     proxy._active_box_peer = None
-    proxy._control_inflight = None
-    proxy._control_queue = []
-    proxy._control_last_result = None
-    proxy._control_lock = asyncio.Lock()
-    proxy._control_quiet_task = None
-    proxy._control_ack_task = None
-    proxy._control_applied_task = None
-    proxy._control_status_prefix = "oig/control/status"
-    proxy._control_qos = 1
-    proxy._control_status_retain = False
-    proxy._control_retain = False
-    proxy._control_result_topic = "oig/control/result"
-    proxy._control_set_topic = "oig/control/set"
-    proxy._control_pending_keys = set()
-    proxy._control_pending_path = str(tmp_path / "pending.json")
-    proxy._control_post_drain_refresh_pending = False
+    proxy._ctrl = MagicMock()
+    proxy._ctrl.inflight = None
+    proxy._ctrl.queue = []
+    proxy._ctrl.last_result = None
+    proxy._ctrl.lock = asyncio.Lock()
+    proxy._ctrl.quiet_task = None
+    proxy._ctrl.ack_task = None
+    proxy._ctrl.applied_task = None
+    proxy._ctrl.status_prefix = "oig/control/status"
+    proxy._ctrl.qos = 1
+    proxy._ctrl.status_retain = False
+    proxy._ctrl.retain = False
+    proxy._ctrl.result_topic = "oig/control/result"
+    proxy._ctrl.set_topic = "oig/control/set"
+    proxy._ctrl.pending_keys = set()
+    proxy._ctrl.pending_path = str(tmp_path / "pending.json")
+    proxy._ctrl.post_drain_refresh_pending = False
     proxy._prms_tables = {}
     proxy._prms_device_id = None
     proxy._table_cache = {}
@@ -190,9 +229,9 @@ def test_extract_and_autodetect_device_id(tmp_path, monkeypatch):
         called.append("start")
 
     proxy._handle_setting_event = fake_handle
-    proxy._control_observe_box_frame = fake_observe
+    proxy._ctrl.observe_box_frame = fake_observe
     proxy._maybe_process_mode = fake_mode
-    proxy._control_maybe_start_next = fake_start
+    proxy._ctrl.maybe_start_next = fake_start
     monkeypatch.setattr(
         proxy_module,
         "capture_payload",
@@ -391,6 +430,8 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
 
 def test_control_observe_box_frame_setting(tmp_path):
     proxy = _make_proxy(tmp_path)
+    ctrl = _make_real_ctrl(proxy, tmp_path)
+    proxy._ctrl = ctrl
     results = []
 
     async def fake_publish_result(
@@ -405,10 +446,10 @@ def test_control_observe_box_frame_setting(tmp_path):
     async def fake_finish():
         results.append(("finish", None))
 
-    proxy._control_publish_result = fake_publish_result
-    proxy._control_finish_inflight = fake_finish
+    ctrl.publish_result = fake_publish_result
+    ctrl.finish_inflight = fake_finish
 
-    proxy._control_inflight = {
+    ctrl.inflight = {
         "tx_id": "t1",
         "tbl_name": "tbl_box_prms",
         "tbl_item": "SA",
@@ -417,7 +458,7 @@ def test_control_observe_box_frame_setting(tmp_path):
     }
 
     async def run_marker():
-        await proxy._control_observe_box_frame(
+        await ctrl.observe_box_frame(
             {"Result": "END"},
             "END",
             "<Frame></Frame>",
@@ -426,7 +467,7 @@ def test_control_observe_box_frame_setting(tmp_path):
     asyncio.run(run_marker())
     assert ("completed", "box_marker:END") in results
 
-    proxy._control_inflight = {
+    ctrl.inflight = {
         "tx_id": "t2",
         "tbl_name": "tbl_box_prms",
         "tbl_item": "SA",
@@ -438,7 +479,7 @@ def test_control_observe_box_frame_setting(tmp_path):
     }
 
     async def run_setting():
-        await proxy._control_observe_box_frame(parsed, "tbl_events", "frame")
+        await ctrl.observe_box_frame(parsed, "tbl_events", "frame")
 
     asyncio.run(run_setting())
     assert ("applied", None) in results
@@ -446,13 +487,15 @@ def test_control_observe_box_frame_setting(tmp_path):
 
 def test_setup_mqtt_handlers(tmp_path):
     proxy = _make_proxy(tmp_path)
+    ctrl = _make_real_ctrl(proxy, tmp_path)
+    proxy._ctrl = ctrl
 
     async def run():
         proxy._loop = asyncio.get_running_loop()
         proxy.device_id = "DEV1"
         proxy.mqtt_publisher.device_id = "DEV1"
         proxy._setup_mqtt_state_cache()
-        proxy._setup_control_mqtt()
+        ctrl.setup_mqtt()
 
     asyncio.run(run())
     assert proxy.mqtt_publisher.handlers

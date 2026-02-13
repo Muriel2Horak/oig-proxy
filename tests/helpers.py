@@ -20,4 +20,5 @@ def make_proxy(tmp_path):
     proxy.box_connected = True
     proxy._box_conn_lock = asyncio.Lock()
     proxy._tc = MagicMock()
+    proxy._ctrl = MagicMock()
     return proxy

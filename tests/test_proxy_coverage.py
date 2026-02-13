@@ -40,7 +40,8 @@ def make_proxy(tmp_path):
     proxy.cloud_session_connected = False
     proxy.mqtt_publisher = MockMQTTPublisher()
     proxy._last_values = {}
-    proxy._control_key_state = {}
+    proxy._ctrl = MagicMock()
+    proxy._ctrl.key_state = {}
     proxy._update_cached_value = lambda **kwargs: None
     proxy._tc = MagicMock()
     return proxy

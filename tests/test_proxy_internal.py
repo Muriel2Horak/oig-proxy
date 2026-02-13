@@ -8,8 +8,10 @@ import json
 import logging
 import time
 from collections import deque
+from unittest.mock import MagicMock
 
 import proxy as proxy_module
+from control_pipeline import ControlPipeline
 from hybrid_mode import HybridModeManager
 from models import ProxyMode, SensorConfig
 from telemetry_collector import TelemetryCollector
@@ -113,6 +115,42 @@ class DummyParser:
         return self._mode_value
 
 
+def _make_real_ctrl(proxy, tmp_path):
+    """Create a real ControlPipeline (bypassing __init__) for tests that call its async methods."""
+    ctrl = ControlPipeline.__new__(ControlPipeline)
+    ctrl._proxy = proxy
+    ctrl.mqtt_enabled = False
+    ctrl.set_topic = "oig/control/set"
+    ctrl.result_topic = "oig/control/result"
+    ctrl.status_prefix = "oig/control/status"
+    ctrl.qos = 1
+    ctrl.retain = False
+    ctrl.status_retain = False
+    ctrl.log_enabled = False
+    ctrl.log_path = str(tmp_path / "control.log")
+    ctrl.box_ready_s = 0.0
+    ctrl.ack_timeout_s = 0.01
+    ctrl.applied_timeout_s = 0.01
+    ctrl.mode_quiet_s = 0.01
+    ctrl.whitelist = {"tbl_box_prms": {"MODE", "SA"}}
+    ctrl.max_attempts = 2
+    ctrl.retry_delay_s = 0.01
+    ctrl.session_id = "test-session"
+    ctrl.pending_path = str(tmp_path / "pending.json")
+    ctrl.pending_keys = set()
+    ctrl.queue = deque()
+    ctrl.inflight = None
+    ctrl.lock = asyncio.Lock()
+    ctrl.ack_task = None
+    ctrl.applied_task = None
+    ctrl.quiet_task = None
+    ctrl.retry_task = None
+    ctrl.last_result = None
+    ctrl.key_state = {}
+    ctrl.post_drain_refresh_pending = False
+    return ctrl
+
+
 def _make_proxy(tmp_path):
     proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
     proxy.device_id = "DEV1"
@@ -147,33 +185,34 @@ def _make_proxy(tmp_path):
     proxy._isnew_last_poll_iso = None
     proxy._isnew_last_response = None
     proxy._isnew_last_rtt_ms = None
-    proxy._control_session_id = "sess"
-    proxy._control_inflight = None
-    proxy._control_queue = deque()
-    proxy._control_last_result = None
-    proxy._control_qos = 1
-    proxy._control_retain = False
-    proxy._control_status_retain = False
-    proxy._control_result_topic = "oig/control/result"
-    proxy._control_status_prefix = "oig/control/status"
-    proxy._control_log_enabled = False
-    proxy._control_log_path = str(tmp_path / "control.log")
-    proxy._control_whitelist = {"tbl_box_prms": {"MODE"}}
-    proxy._control_key_state = {}
-    proxy._control_lock = asyncio.Lock()
-    proxy._control_pending_path = str(tmp_path / "pending.json")
-    proxy._control_pending_keys = set()
-    proxy._control_max_attempts = 2
-    proxy._control_retry_delay_s = 0.01
-    proxy._control_ack_timeout_s = 0.01
-    proxy._control_applied_timeout_s = 0.01
-    proxy._control_mode_quiet_s = 0.01
-    proxy._control_retry_task = None
-    proxy._control_ack_task = None
-    proxy._control_applied_task = None
-    proxy._control_quiet_task = None
-    proxy._control_post_drain_refresh_pending = False
-    proxy._control_mqtt_enabled = False
+    proxy._ctrl = MagicMock()
+    proxy._ctrl.session_id = "sess"
+    proxy._ctrl.inflight = None
+    proxy._ctrl.queue = deque()
+    proxy._ctrl.last_result = None
+    proxy._ctrl.qos = 1
+    proxy._ctrl.retain = False
+    proxy._ctrl.status_retain = False
+    proxy._ctrl.result_topic = "oig/control/result"
+    proxy._ctrl.status_prefix = "oig/control/status"
+    proxy._ctrl.log_enabled = False
+    proxy._ctrl.log_path = str(tmp_path / "control.log")
+    proxy._ctrl.whitelist = {"tbl_box_prms": {"MODE"}}
+    proxy._ctrl.key_state = {}
+    proxy._ctrl.lock = asyncio.Lock()
+    proxy._ctrl.pending_path = str(tmp_path / "pending.json")
+    proxy._ctrl.pending_keys = set()
+    proxy._ctrl.max_attempts = 2
+    proxy._ctrl.retry_delay_s = 0.01
+    proxy._ctrl.ack_timeout_s = 0.01
+    proxy._ctrl.applied_timeout_s = 0.01
+    proxy._ctrl.mode_quiet_s = 0.01
+    proxy._ctrl.retry_task = None
+    proxy._ctrl.ack_task = None
+    proxy._ctrl.applied_task = None
+    proxy._ctrl.quiet_task = None
+    proxy._ctrl.post_drain_refresh_pending = False
+    proxy._ctrl.mqtt_enabled = False
     proxy._last_values = {}
     proxy._prms_tables = {}
     proxy._prms_device_id = None
@@ -189,14 +228,14 @@ def _make_proxy(tmp_path):
     proxy._active_box_writer = None
     proxy._active_box_peer = None
     proxy._conn_seq = 0
-    proxy._control_set_topic = "oig/control/set"
-    proxy._control_result_topic = "oig/control/result"
-    proxy._control_status_prefix = "oig/control/status"
-    proxy._control_status_retain = False
-    proxy._control_retain = False
-    proxy._control_log_enabled = False
-    proxy._control_log_path = str(tmp_path / "control.log")
-    proxy._control_box_ready_s = 0.0
+    proxy._ctrl.set_topic = "oig/control/set"
+    proxy._ctrl.result_topic = "oig/control/result"
+    proxy._ctrl.status_prefix = "oig/control/status"
+    proxy._ctrl.status_retain = False
+    proxy._ctrl.retain = False
+    proxy._ctrl.log_enabled = False
+    proxy._ctrl.log_path = str(tmp_path / "control.log")
+    proxy._ctrl.box_ready_s = 0.0
     proxy._box_connected_since_epoch = None
     proxy._last_box_disconnect_reason = None
     proxy._hb_interval_s = 0.0
@@ -228,12 +267,12 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
     proxy._last_data_iso = "2025-01-01T00:00:00Z"
     proxy._isnew_polls = 1
     proxy._isnew_last_poll_iso = "2025-01-01T00:00:01Z"
-    proxy._control_inflight = {
+    proxy._ctrl.inflight = {
         "request_key": "k1",
         "tbl_name": "tbl",
         "tbl_item": "MODE"}
-    proxy._control_queue = deque([{"request_key": "k2"}])
-    proxy._control_last_result = {"status": "ok"}
+    proxy._ctrl.queue = deque([{"request_key": "k2"}])
+    proxy._ctrl.last_result = {"status": "ok"}
 
     payload = proxy._build_status_payload()
     assert payload["status"] == ProxyMode.ONLINE.value
@@ -524,6 +563,8 @@ def test_mqtt_state_message_updates_cache(tmp_path, monkeypatch):
 
 def test_control_message_validation_and_accept(tmp_path):
     proxy = _make_proxy(tmp_path)
+    ctrl = _make_real_ctrl(proxy, tmp_path)
+    proxy._ctrl = ctrl
     results = []
 
     async def fake_publish_result(
@@ -538,21 +579,21 @@ def test_control_message_validation_and_accept(tmp_path):
     async def fake_maybe_start():
         results.append(("start", None, None))
 
-    proxy._control_publish_result = fake_publish_result
-    proxy._control_maybe_start_next = fake_maybe_start
+    ctrl.publish_result = fake_publish_result
+    ctrl.maybe_start_next = fake_maybe_start
 
     async def run():
-        await proxy._control_on_mqtt_message(
+        await ctrl.on_mqtt_message(
             topic="t",
             payload=b"{invalid",
             retain=False,
         )
-        await proxy._control_on_mqtt_message(
+        await ctrl.on_mqtt_message(
             topic="t",
             payload=json.dumps({"tx_id": "1"}).encode("utf-8"),
             retain=False,
         )
-        await proxy._control_on_mqtt_message(
+        await ctrl.on_mqtt_message(
             topic="t",
             payload=json.dumps({
                 "tx_id": "1",
@@ -562,7 +603,7 @@ def test_control_message_validation_and_accept(tmp_path):
             }).encode("utf-8"),
             retain=False,
         )
-        await proxy._control_on_mqtt_message(
+        await ctrl.on_mqtt_message(
             topic="t",
             payload=json.dumps({
                 "tx_id": "1",
@@ -580,6 +621,8 @@ def test_control_message_validation_and_accept(tmp_path):
 
 def test_control_start_inflight_paths(tmp_path):
     proxy = _make_proxy(tmp_path)
+    ctrl = _make_real_ctrl(proxy, tmp_path)
+    proxy._ctrl = ctrl
     results = []
     finished = []
     deferred = []
@@ -599,15 +642,15 @@ def test_control_start_inflight_paths(tmp_path):
     async def fake_defer(*, reason):
         deferred.append(reason)
 
-    proxy._control_publish_result = fake_publish_result
-    proxy._control_finish_inflight = fake_finish
-    proxy._control_defer_inflight = fake_defer
+    ctrl.publish_result = fake_publish_result
+    ctrl.finish_inflight = fake_finish
+    ctrl.defer_inflight = fake_defer
 
     async def run():
-        proxy._control_inflight = {"_attempts": 2}
-        await proxy._control_start_inflight()
+        ctrl.inflight = {"_attempts": 2}
+        await ctrl.start_inflight()
 
-        proxy._control_inflight = {
+        ctrl.inflight = {
             "_attempts": 0,
             "tbl_name": "tbl_box_prms",
             "tbl_item": "MODE",
@@ -619,13 +662,13 @@ def test_control_start_inflight_paths(tmp_path):
             return {"ok": False, "error": "box_not_connected"}
 
         proxy._send_setting_to_box = fake_send
-        await proxy._control_start_inflight()
+        await ctrl.start_inflight()
 
         async def ok_send(**_):
             return {"ok": True, "id": 1, "id_set": 2}
 
         proxy._send_setting_to_box = ok_send
-        proxy._control_inflight = {
+        ctrl.inflight = {
             "_attempts": 0,
             "tbl_name": "tbl_box_prms",
             "tbl_item": "MODE",
@@ -636,8 +679,8 @@ def test_control_start_inflight_paths(tmp_path):
         async def fake_ack_timeout():
             return None
 
-        proxy._control_ack_timeout = fake_ack_timeout
-        await proxy._control_start_inflight()
+        ctrl.ack_timeout = fake_ack_timeout
+        await ctrl.start_inflight()
 
     asyncio.run(run())
     assert "error" in results
@@ -646,6 +689,8 @@ def test_control_start_inflight_paths(tmp_path):
 
 def test_control_on_box_setting_ack(tmp_path):
     proxy = _make_proxy(tmp_path)
+    ctrl = _make_real_ctrl(proxy, tmp_path)
+    proxy._ctrl = ctrl
     results = []
 
     async def fake_publish_result(
@@ -660,20 +705,20 @@ def test_control_on_box_setting_ack(tmp_path):
     async def fake_finish():
         results.append(("finish", None))
 
-    proxy._control_publish_result = fake_publish_result
-    proxy._control_finish_inflight = fake_finish
+    ctrl.publish_result = fake_publish_result
+    ctrl.finish_inflight = fake_finish
 
     async def run():
-        proxy._control_inflight = {"tx_id": "t1"}
-        await proxy._control_on_box_setting_ack(tx_id="t1", ack=False)
+        ctrl.inflight = {"tx_id": "t1"}
+        await ctrl.on_box_setting_ack(tx_id="t1", ack=False)
 
-        proxy._control_inflight = {"tx_id": "t2"}
+        ctrl.inflight = {"tx_id": "t2"}
 
         async def fake_applied():
             return None
 
-        proxy._control_applied_timeout = fake_applied
-        await proxy._control_on_box_setting_ack(tx_id="t2", ack=True)
+        ctrl.applied_timeout = fake_applied
+        await ctrl.on_box_setting_ack(tx_id="t2", ack=True)
 
     asyncio.run(run())
     assert ("error", "box_nack") in results

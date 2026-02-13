@@ -6,6 +6,7 @@ import os
 import time
 import pytest
 
+from control_pipeline import ControlPipeline
 from tests.helpers import make_proxy
 
 
@@ -35,14 +36,17 @@ def test_run_coroutine_threadsafe(tmp_path):
 
 def test_append_to_control_log(tmp_path):
     """Test _append_to_control_log method."""
-    proxy = make_proxy(tmp_path)
+    _ = make_proxy(tmp_path)
+
+    # Create a real ControlPipeline to test the actual method
+    ctrl = ControlPipeline.__new__(ControlPipeline)
 
     # Setup log path
     log_path = str(tmp_path / "control.log")
-    proxy._control_log_path = log_path
+    ctrl.log_path = log_path
 
     # Write entry
-    proxy._append_to_control_log('{"test": "value"}\n')
+    ctrl.append_to_log('{"test": "value"}\n')
 
     # Verify file was created and contains entry
     assert os.path.exists(log_path)

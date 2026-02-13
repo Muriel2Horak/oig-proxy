@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import proxy as proxy_module
+from control_pipeline import ControlPipeline
 from models import ProxyMode
 
 
@@ -27,15 +28,16 @@ def _make_proxy():
     proxy.device_id = "DEV1"
     proxy._loop = DummyLoop()
     proxy._mqtt_cache_device_id = None
-    proxy._control_set_topic = "oig/control/set"
-    proxy._control_result_topic = "oig/control/result"
-    proxy._control_qos = 1
-    proxy._control_mqtt_enabled = True
+    proxy._ctrl = MagicMock()
+    proxy._ctrl.set_topic = "oig/control/set"
+    proxy._ctrl.result_topic = "oig/control/result"
+    proxy._ctrl.qos = 1
+    proxy._ctrl.mqtt_enabled = True
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.device_id = "DEV1"
     proxy.mqtt_publisher.add_message_handler = MagicMock()
     proxy._handle_mqtt_state_message = MagicMock()
-    proxy._control_on_mqtt_message = MagicMock()
+    proxy._ctrl.on_mqtt_message = MagicMock()
     return proxy
 
 
@@ -87,13 +89,22 @@ def test_setup_mqtt_state_cache_handler_decodes(monkeypatch):
 def test_setup_control_mqtt_registers_handler(monkeypatch):
     proxy = _make_proxy()
 
+    # Replace MagicMock _ctrl with a real ControlPipeline for setup_mqtt() call
+    ctrl = ControlPipeline.__new__(ControlPipeline)
+    ctrl._proxy = proxy
+    ctrl.set_topic = "oig/control/set"
+    ctrl.result_topic = "oig/control/result"
+    ctrl.qos = 1
+    ctrl.mqtt_enabled = True
+    proxy._ctrl = ctrl
+
     def fake_run_coroutine_threadsafe(coro, loop):
         coro.close()
         return None
 
     monkeypatch.setattr(proxy_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe)
 
-    proxy._setup_control_mqtt()
+    proxy._ctrl.setup_mqtt()
 
     proxy.mqtt_publisher.add_message_handler.assert_called_once()
     args, kwargs = proxy.mqtt_publisher.add_message_handler.call_args

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import proxy as proxy_module
+from control_pipeline import ControlPipeline
 from models import ProxyMode
 
 
@@ -21,11 +22,16 @@ def _make_proxy():
     proxy.device_id = "DEV1"
     proxy.box_connected = True
     proxy._box_connected_since_epoch = time.time() - 60
-    proxy._control_box_ready_s = 5
     proxy._last_data_epoch = time.time()
-    proxy._control_qos = 1
-    proxy._control_retain = False
-    proxy._control_result_topic = "oig/control/result"
+
+    ctrl = ControlPipeline.__new__(ControlPipeline)
+    ctrl._proxy = proxy
+    ctrl.box_ready_s = 5
+    ctrl.qos = 1
+    ctrl.retain = False
+    ctrl.result_topic = "oig/control/result"
+    proxy._ctrl = ctrl
+
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.publish_raw = AsyncMock(return_value=True)
     return proxy
@@ -33,7 +39,7 @@ def _make_proxy():
 
 def test_control_is_box_ready_ok():
     proxy = _make_proxy()
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is True
     assert reason is None
 
@@ -41,7 +47,7 @@ def test_control_is_box_ready_ok():
 def test_control_is_box_ready_not_connected():
     proxy = _make_proxy()
     proxy.box_connected = False
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "box_not_connected"
 
@@ -49,7 +55,7 @@ def test_control_is_box_ready_not_connected():
 def test_control_is_box_ready_device_unknown():
     proxy = _make_proxy()
     proxy.device_id = "AUTO"
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "device_id_unknown"
 
@@ -57,7 +63,7 @@ def test_control_is_box_ready_device_unknown():
 def test_control_is_box_ready_not_ready_time():
     proxy = _make_proxy()
     proxy._box_connected_since_epoch = time.time()
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "box_not_ready"
 
@@ -65,7 +71,7 @@ def test_control_is_box_ready_not_ready_time():
 def test_control_is_box_ready_not_sending():
     proxy = _make_proxy()
     proxy._last_data_epoch = time.time() - 120
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "box_not_sending_data"
 
@@ -73,7 +79,7 @@ def test_control_is_box_ready_not_sending():
 @pytest.mark.asyncio
 async def test_validate_control_request_bad_json():
     proxy = _make_proxy()
-    result = await proxy._validate_control_request(b"{bad json}")
+    result = await proxy._ctrl.validate_request(b"{bad json}")
     assert result is None
     proxy.mqtt_publisher.publish_raw.assert_called_once()
 
@@ -82,7 +88,7 @@ async def test_validate_control_request_bad_json():
 async def test_validate_control_request_ok():
     proxy = _make_proxy()
     payload = json.dumps({"tx_id": "1"}).encode("utf-8")
-    result = await proxy._validate_control_request(payload)
+    result = await proxy._ctrl.validate_request(payload)
     assert result == {"tx_id": "1"}
 
 

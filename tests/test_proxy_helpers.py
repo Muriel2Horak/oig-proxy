@@ -10,6 +10,7 @@ import pytest
 from oig_frame import compute_frame_checksum, build_getactual_frame, build_ack_only_frame, build_end_time_frame, infer_table_name, infer_device_id
 import proxy as proxy_module
 from config import MQTT_NAMESPACE
+from control_pipeline import ControlPipeline
 
 
 def _assert_crc(frame: str) -> None:
@@ -28,7 +29,7 @@ def test_format_control_tx_and_result():
         "_attempts": 2,
         "tx_id": "abc",
     }
-    assert proxy_module.OIGProxy._format_control_tx(tx) == (
+    assert ControlPipeline.format_tx(tx) == (
         "tbl_box_prms/MODE=3 (sent 2) tx=abc"
     )
 
@@ -40,7 +41,7 @@ def test_format_control_tx_and_result():
         "error": "fail",
         "tx_id": "abc",
     }
-    assert proxy_module.OIGProxy._format_control_result(result) == (
+    assert ControlPipeline.format_result(result) == (
         "error tbl_box_prms/MODE=3 err=fail tx=abc"
     )
 
@@ -84,16 +85,16 @@ def test_mqtt_state_topic_parse():
 
 
 def test_control_helpers_and_setting_event():
-    request_key = proxy_module.OIGProxy._control_build_request_key(
+    request_key = ControlPipeline.build_request_key(
         tbl_name="tbl_box_prms",
         tbl_item="MODE",
         canon_value="3",
     )
     assert request_key == "tbl_box_prms/MODE/3"
 
-    assert proxy_module.OIGProxy._control_result_key_state(
+    assert ControlPipeline.result_key_state(
         "accepted", None) == "queued"
-    assert proxy_module.OIGProxy._control_result_key_state(
+    assert ControlPipeline.result_key_state(
         "completed", "noop_already_set") is None
 
     event = "Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[120.0]"
@@ -109,23 +110,23 @@ def test_should_persist_table():
 
 
 def test_control_normalize_value():
-    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    ctrl = ControlPipeline.__new__(ControlPipeline)
 
-    ok = proxy._control_normalize_value(
+    ok = ctrl.normalize_value(
         tbl_name="tbl_box_prms",
         tbl_item="MODE",
         new_value="3",
     )
     assert ok == ("3", "3")
 
-    bad = proxy._control_normalize_value(
+    bad = ctrl.normalize_value(
         tbl_name="tbl_box_prms",
         tbl_item="MODE",
         new_value="9",
     )
     assert bad == (None, "bad_value")
 
-    charge = proxy._control_normalize_value(
+    charge = ctrl.normalize_value(
         tbl_name="tbl_invertor_prm1",
         tbl_item="AAC_MAX_CHRG",
         new_value="50",
@@ -134,7 +135,7 @@ def test_control_normalize_value():
 
 
 def test_control_coerce_value():
-    coerce = proxy_module.OIGProxy._control_coerce_value
+    coerce = ControlPipeline.coerce_value
     assert coerce("true") is True
     assert coerce("false") is False
     assert coerce("12") == 12

@@ -12,6 +12,7 @@ import pytest
 import oig_frame
 import proxy as proxy_module
 from hybrid_mode import HybridModeManager
+from control_pipeline import ControlPipeline
 from tests.fixtures.dummy import DummyQueue, DummyWriter, DummyReader
 from tests.mqtt_dummy_helpers import DummyMQTTMixin
 from models import ProxyMode
@@ -92,34 +93,35 @@ def make_proxy(tmp_path):
     proxy._box_conn_lock = asyncio.Lock()
     proxy._active_box_writer = None
     proxy._conn_seq = 0
-    proxy._control_lock = asyncio.Lock()
-    proxy._control_queue = deque()
-    proxy._control_inflight = None
-    proxy._control_last_result = None
-    proxy._control_session_id = "sess"
-    proxy._control_qos = 1
-    proxy._control_retain = False
-    proxy._control_status_retain = False
-    proxy._control_result_topic = "oig/control/result"
-    proxy._control_status_prefix = "oig/control/status"
-    proxy._control_set_topic = "oig/control/set"
-    proxy._control_log_enabled = False
-    proxy._control_log_path = str(tmp_path / "control.log")
-    proxy._control_pending_path = str(tmp_path / "pending.json")
-    proxy._control_pending_keys = set()
-    proxy._control_max_attempts = 2
-    proxy._control_retry_delay_s = 0.01
-    proxy._control_ack_timeout_s = 0.01
-    proxy._control_applied_timeout_s = 0.01
-    proxy._control_mode_quiet_s = 0.01
-    proxy._control_retry_task = None
-    proxy._control_ack_task = None
-    proxy._control_applied_task = None
-    proxy._control_quiet_task = None
-    proxy._control_post_drain_refresh_pending = False
+    proxy._ctrl = MagicMock()
+    proxy._ctrl.lock = asyncio.Lock()
+    proxy._ctrl.queue = deque()
+    proxy._ctrl.inflight = None
+    proxy._ctrl.last_result = None
+    proxy._ctrl.session_id = "sess"
+    proxy._ctrl.qos = 1
+    proxy._ctrl.retain = False
+    proxy._ctrl.status_retain = False
+    proxy._ctrl.result_topic = "oig/control/result"
+    proxy._ctrl.status_prefix = "oig/control/status"
+    proxy._ctrl.set_topic = "oig/control/set"
+    proxy._ctrl.log_enabled = False
+    proxy._ctrl.log_path = str(tmp_path / "control.log")
+    proxy._ctrl.pending_path = str(tmp_path / "pending.json")
+    proxy._ctrl.pending_keys = set()
+    proxy._ctrl.max_attempts = 2
+    proxy._ctrl.retry_delay_s = 0.01
+    proxy._ctrl.ack_timeout_s = 0.01
+    proxy._ctrl.applied_timeout_s = 0.01
+    proxy._ctrl.mode_quiet_s = 0.01
+    proxy._ctrl.retry_task = None
+    proxy._ctrl.ack_task = None
+    proxy._ctrl.applied_task = None
+    proxy._ctrl.quiet_task = None
+    proxy._ctrl.post_drain_refresh_pending = False
     proxy._control_whitelist = {"tbl_box_prms": {"MODE", "SA"}}
-    proxy._control_box_ready_s = 0.0
-    proxy._control_mqtt_enabled = False
+    proxy._ctrl.box_ready_s = 0.0
+    proxy._ctrl.mqtt_enabled = False
     proxy._proxy_status_attrs_topic = "oig/status/attrs"
     proxy._prms_tables = {}
     proxy._prms_device_id = None
@@ -202,8 +204,8 @@ def test_local_getactual_loop_exits_when_closed(tmp_path):
 def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     proxy.box_connected = True
-    proxy._control_inflight = None
-    proxy._control_queue = []
+    proxy._ctrl.inflight = None
+    proxy._ctrl.queue = []
 
     async def fake_mode():
         return ProxyMode.ONLINE
@@ -792,10 +794,12 @@ def test_tune_socket_sets_options():
 
 
 def test_control_note_box_disconnect_marks_tx(tmp_path):
-    proxy = make_proxy(tmp_path)
-    proxy._control_inflight = {"stage": "sent_to_box"}
-    asyncio.run(proxy._control_note_box_disconnect())
-    assert proxy._control_inflight["disconnected"] is True
+    _ = make_proxy(tmp_path)
+    ctrl = ControlPipeline.__new__(ControlPipeline)
+    ctrl.lock = asyncio.Lock()
+    ctrl.inflight = {"stage": "sent_to_box"}
+    asyncio.run(ctrl.note_box_disconnect())
+    assert ctrl.inflight["disconnected"] is True
 
 
 def test_local_getactual_loop_sends_and_logs(tmp_path, monkeypatch):
@@ -846,7 +850,7 @@ def test_handle_setting_event_publishes(tmp_path):
     async def fake_publish(**kwargs):
         called.append(kwargs)
 
-    proxy._publish_setting_event_state = fake_publish
+    proxy._ctrl.publish_setting_event_state = fake_publish
     parsed = {
         "Type": "Setting",
         "Content": "Remotely : tbl_box_prms / MODE: [0]->[1]"}
@@ -892,9 +896,9 @@ def test_process_box_frame_common_isnew_updates(tmp_path, monkeypatch):
         return None
 
     proxy._handle_setting_event = async_noop
-    proxy._control_observe_box_frame = async_noop
+    proxy._ctrl.observe_box_frame = async_noop
     proxy._maybe_process_mode = async_noop
-    proxy._control_maybe_start_next = async_noop
+    proxy._ctrl.maybe_start_next = async_noop
     monkeypatch.setattr(
         proxy_module,
         "capture_payload",
