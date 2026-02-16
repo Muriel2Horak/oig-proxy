@@ -22,20 +22,16 @@ def test_validate_event_loop_ready(tmp_path):
 
 
 def test_validate_control_parameters(tmp_path):
-    """Test _validate_control_parameters method."""
+    """Test validate_parameters — only device_id matters for validation."""
     proxy = make_proxy(tmp_path)
 
-    # Valid case
     result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
     assert result["ok"] is True
 
-    # Not connected
     proxy.box_connected = False
     result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
-    assert result["ok"] is False
-    assert result["error"] == "box_not_connected"
+    assert result["ok"] is True
 
-    # Device ID AUTO
     proxy.box_connected = True
     proxy.device_id = "AUTO"
     result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")

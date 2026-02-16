@@ -57,16 +57,16 @@ def test_append_to_control_log(tmp_path):
 
 
 def test_validate_control_parameters_box_not_sending(tmp_path):
-    """Test _validate_control_parameters with box not sending data."""
+    """Test validate_parameters allows stale data (OFFLINE mode support)."""
     proxy = make_proxy(tmp_path)
 
-    # Set last_data_epoch to old time (>30s ago)
+    # Set last_data_epoch to old time (>30s ago) — should still pass
+    # because OFFLINE mode BOX doesn't send data continuously
     proxy._last_data_epoch = time.time() - 60
 
     result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
 
-    assert result["ok"] is False
-    assert result["error"] == "box_not_sending_data"
+    assert result["ok"] is True
 
 
 @pytest.mark.skip("async mocking complexity, not priority for SonarCloud")

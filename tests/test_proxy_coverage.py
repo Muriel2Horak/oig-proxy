@@ -53,6 +53,7 @@ def make_proxy(tmp_path):
     cs = ControlSettings.__new__(ControlSettings)
     cs._proxy = proxy
     cs.pending = None
+    cs.pending_frame = None
     cs.set_commands_buffer = []
     proxy._cs = cs
     return proxy
@@ -96,14 +97,17 @@ def test_validate_control_parameters_valid(tmp_path):
 
 
 def test_validate_control_parameters_box_not_connected(tmp_path):
-    """Test _validate_control_parameters when box not connected."""
+    """Test _validate_control_parameters when box not connected.
+
+    After the OFFLINE mode fix, box_connected is no longer checked
+    because commands are queued and delivered on next IsNewSet poll.
+    """
     proxy = make_proxy(tmp_path)
     proxy.box_connected = False
 
     result = proxy._cs.validate_parameters("tbl_box_prms", "SA", "1")
 
-    assert result["ok"] is False
-    assert result["error"] == "box_not_connected"
+    assert result["ok"] is True
 
 
 def test_validate_event_loop_ready(tmp_path):

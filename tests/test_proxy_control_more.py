@@ -7,7 +7,7 @@ import asyncio
 import json
 import time
 from collections import deque
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,7 +16,7 @@ import control_pipeline as ctrl_module
 from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
 from control_settings import ControlSettings
-from models import SensorConfig
+from models import ProxyMode, SensorConfig
 
 
 class DummyQueue:
@@ -142,8 +142,12 @@ def make_proxy(tmp_path):
     cs = ControlSettings.__new__(ControlSettings)
     cs._proxy = proxy
     cs.pending = None
+    cs.pending_frame = None
     cs.set_commands_buffer = []
     proxy._cs = cs
+    hm = MagicMock()
+    hm.get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
+    proxy._hm = hm
     return proxy
 
 
