@@ -482,6 +482,9 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
             confirm="New",
             tx_id="tx1",
         )
+        assert proxy._cs.pending_frame is not None
+        proxy._cs.pending["sent_at"] = time.monotonic()
+        proxy._cs.pending_frame = None
         ok = proxy._cs.maybe_handle_ack(
             "<Reason>Setting</Reason><Result>ACK</Result>",
             writer,

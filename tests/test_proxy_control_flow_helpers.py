@@ -61,6 +61,7 @@ def _make_proxy():
     cs = ControlSettings.__new__(ControlSettings)
     cs._proxy = proxy
     cs.pending = None
+    cs.pending_frame = None
     cs.set_commands_buffer = []
     proxy._cs = cs
     return proxy

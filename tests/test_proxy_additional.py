@@ -643,6 +643,73 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
     assert proxy._cf.errors == 1
 
 
+def test_forward_frame_intercepts_isnewset_with_pending_setting(
+    tmp_path, monkeypatch
+):
+    proxy = make_proxy(tmp_path)
+    box_writer = DummyWriter()
+    setting_frame = b"<Frame><Reason>Setting</Reason></Frame>"
+    proxy._cs.pending_frame = setting_frame
+    proxy._cs.pending = {
+        "tbl_name": "tbl_box_prms",
+        "tbl_item": "MODE",
+        "new_value": "1",
+        "id": 123,
+        "id_set": 456,
+    }
+    monkeypatch.setattr(
+        cf_module,
+        "capture_payload",
+        lambda *_args, **_kwargs: None,
+    )
+    cloud_reader_sentinel = object()
+    cloud_writer_sentinel = object()
+
+    cr, cw = asyncio.run(
+        proxy._cf.forward_frame(
+            frame_bytes=b"<Frame>IsNewSet</Frame>",
+            table_name="IsNewSet",
+            device_id="DEV1",
+            conn_id=1,
+            box_writer=box_writer,
+            cloud_reader=cloud_reader_sentinel,
+            cloud_writer=cloud_writer_sentinel,
+            connect_timeout_s=0.1,
+        )
+    )
+    assert box_writer.data == [setting_frame]
+    assert proxy._cs.pending_frame is None
+    assert proxy._cs.pending["sent_at"] is not None
+    assert proxy.stats["acks_local"] == 1
+    assert cr is cloud_reader_sentinel
+    assert cw is cloud_writer_sentinel
+
+
+def test_forward_frame_no_intercept_without_pending(tmp_path, monkeypatch):
+    proxy = make_proxy(tmp_path)
+    proxy._cs.pending_frame = None
+    proxy._hm.force_offline_enabled.return_value = False
+    proxy._hm.should_try_cloud.return_value = False
+    proxy._hm.is_hybrid_mode.return_value = False
+    box_writer = DummyWriter()
+
+    cr, cw = asyncio.run(
+        proxy._cf.forward_frame(
+            frame_bytes=b"<Frame>IsNewSet</Frame>",
+            table_name="IsNewSet",
+            device_id="DEV1",
+            conn_id=1,
+            box_writer=box_writer,
+            cloud_reader=None,
+            cloud_writer=None,
+            connect_timeout_s=0.1,
+        )
+    )
+    assert proxy.stats["acks_local"] == 0
+    assert cr is None
+    assert cw is None
+
+
 @pytest.mark.skip(reason="test data mismatch, not priority for SonarCloud")
 def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
     """In HYBRID mode (after threshold), cloud EOF triggers fallback to local ACK."""
