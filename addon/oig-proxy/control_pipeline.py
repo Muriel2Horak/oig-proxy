@@ -411,10 +411,6 @@ class ControlPipeline:
             return False, "box_not_connected"
         if self._proxy.device_id == "AUTO":
             return False, "device_id_unknown"
-        if self._proxy._box_connected_since_epoch is None:
-            return False, "box_not_ready"
-        if (time.time() - self._proxy._box_connected_since_epoch) < self.box_ready_s:
-            return False, "box_not_ready"
         if self._proxy._last_data_epoch is None:
             return False, "box_not_sending_data"
         if (time.time() - self._proxy._last_data_epoch) > 30:

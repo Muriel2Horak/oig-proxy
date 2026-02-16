@@ -262,18 +262,6 @@ def test_control_is_box_ready_conditions(tmp_path):
     assert reason == "device_id_unknown"
 
     proxy.device_id = "DEV1"
-    proxy._box_connected_since_epoch = None
-    ok, reason = proxy._ctrl.is_box_ready()
-    assert ok is False
-    assert reason == "box_not_ready"
-
-    proxy._box_connected_since_epoch = time.time() - 1
-    proxy._ctrl.box_ready_s = 10
-    ok, reason = proxy._ctrl.is_box_ready()
-    assert ok is False
-    assert reason == "box_not_ready"
-
-    proxy._ctrl.box_ready_s = 0
     proxy._last_data_epoch = None
     ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False

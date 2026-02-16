@@ -118,6 +118,17 @@ def test_extract_device_and_table_isnew():
     assert parsed["_table"] == "IsNewSet"
 
 
+def test_extract_device_and_table_isnew_overrides_tbl_actual():
+    """Real BOX frames have _table=tbl_actual AND Result=IsNewSet;
+    the Result must always win so downstream interception matches."""
+    proxy = _make_proxy()
+    parsed = {"_table": "tbl_actual", "Result": "IsNewSet"}
+    device_id, table_name = proxy._extract_device_and_table(parsed)
+    assert device_id is None
+    assert table_name == "IsNewSet"
+    assert parsed["_table"] == "IsNewSet"
+
+
 @pytest.mark.asyncio
 async def test_fallback_offline_from_cloud_issue():
     proxy = _make_proxy()

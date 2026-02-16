@@ -456,10 +456,11 @@ class OIGProxy:
             return None, None
         device_id = parsed.get("_device_id") if parsed else None
         table_name = parsed.get("_table") if parsed else None
-        if (
-            not table_name
-            and parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW")
-        ):
+        # IsNewSet/IsNewWeather/IsNewFW polls carry <TblName>tbl_actual</TblName>
+        # but the *logical* table is the Result value.  Always override so that
+        # downstream interception (forward_frame / _process_frame_offline) can
+        # match on "IsNewSet" instead of "tbl_actual".
+        if parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             table_name = str(parsed["Result"])
             parsed["_table"] = table_name
         return device_id, table_name

@@ -138,6 +138,15 @@ if [ "$CONTROL_MQTT_RETAIN_RAW" = "true" ] || [ "$CONTROL_MQTT_RETAIN_RAW" = "1"
   bashio::log.info "🧲 Control MQTT retain: ENABLED"
 fi
 
+# CONTROL_MQTT_BOX_READY_SECONDS - optional (override via file)
+if [ -f /data/control_mqtt_box_ready_seconds ]; then
+  CONTROL_MQTT_BOX_READY_SECONDS_RAW=$(cat /data/control_mqtt_box_ready_seconds 2>/dev/null | tr -d '\r\n' | xargs)
+  if [ -n "$CONTROL_MQTT_BOX_READY_SECONDS_RAW" ]; then
+    export CONTROL_MQTT_BOX_READY_SECONDS="$CONTROL_MQTT_BOX_READY_SECONDS_RAW"
+    bashio::log.info "⏱️ Control box ready seconds: $CONTROL_MQTT_BOX_READY_SECONDS"
+  fi
+fi
+
 # CONTROL_MQTT_LOG_ENABLED - optional (persist results to /data)
 CONTROL_MQTT_LOG_ENABLED_RAW=$(bashio::config 'control_mqtt_log_enabled' 2>/dev/null)
 if [ -z "$CONTROL_MQTT_LOG_ENABLED_RAW" ] || [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "null" ]; then

@@ -71,12 +71,12 @@ def test_control_is_box_ready_device_unknown():
     assert reason == "device_id_unknown"
 
 
-def test_control_is_box_ready_not_ready_time():
+def test_control_is_box_ready_recent_connection():
     proxy = _make_proxy()
     proxy._box_connected_since_epoch = time.time()
     ok, reason = proxy._ctrl.is_box_ready()
-    assert ok is False
-    assert reason == "box_not_ready"
+    assert ok is True
+    assert reason is None
 
 
 def test_control_is_box_ready_not_sending():
