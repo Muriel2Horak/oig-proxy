@@ -457,6 +457,40 @@ class CloudForwarder:
         cloud_writer: asyncio.StreamWriter | None,
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+        if table_name == "IsNewSet" and self._proxy._cs.pending_frame is not None:
+            setting_frame = self._proxy._cs.pending_frame
+            self._proxy._cs.pending_frame = None
+            if self._proxy._cs.pending is not None:
+                self._proxy._cs.pending["sent_at"] = time.monotonic()
+            self._proxy._tc.record_response(
+                setting_frame.decode("utf-8", errors="replace"),
+                source="local",
+                conn_id=conn_id,
+            )
+            capture_payload(
+                None,
+                "IsNewSet",
+                setting_frame.decode("utf-8", errors="replace"),
+                setting_frame,
+                {},
+                direction="proxy_to_box",
+                length=len(setting_frame),
+                conn_id=conn_id,
+                peer=self._proxy._active_box_peer,
+            )
+            box_writer.write(setting_frame)
+            await box_writer.drain()
+            self._proxy.stats["acks_local"] += 1
+            logger.info(
+                "CONTROL: Delivered pending Setting as IsNewSet response "
+                "(online/hybrid, %s/%s=%s, conn=%s)",
+                self._proxy._cs.pending.get("tbl_name") if self._proxy._cs.pending else "?",
+                self._proxy._cs.pending.get("tbl_item") if self._proxy._cs.pending else "?",
+                self._proxy._cs.pending.get("new_value") if self._proxy._cs.pending else "?",
+                conn_id,
+            )
+            return cloud_reader, cloud_writer
+
         if self._proxy._hm.force_offline_enabled():
             return await self.handle_frame_offline_mode(
                 frame_bytes=frame_bytes,
