@@ -6,6 +6,7 @@
 
 ### Fixed
 - **Control Settings**: Fixed OFFLINE mode command handling - removed incorrect validation that blocked commands when BOX wasn't sending data continuously. Commands now work in OFFLINE mode as long as TCP connection is active (regression introduced in v1.3.9, commit db9e943)
+- **OFFLINE Mode Setting Delivery**: Fixed protocol-level issue where Setting frames were sent as standalone writes instead of as responses to BOX IsNewSet polls. BOX firmware ignores Setting frames that arrive outside the IsNewSet poll-response context. Setting frames are now queued and delivered when the BOX sends its next IsNewSet poll, matching the cloud protocol flow that BOX firmware expects.
 
 ## [1.6.0] - 2026-02-11
 
