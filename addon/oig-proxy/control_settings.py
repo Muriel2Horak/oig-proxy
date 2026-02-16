@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from models import ProxyMode
 from oig_frame import build_frame
 
 if TYPE_CHECKING:
@@ -33,6 +34,7 @@ class ControlSettings:
     def __init__(self, proxy: OIGProxy) -> None:
         self._proxy = proxy
         self.pending: dict[str, Any] | None = None
+        self.pending_frame: bytes | None = None
         self.set_commands_buffer: list[dict[str, str]] = []
 
     # -----------------------------------------------------------------
@@ -276,6 +278,33 @@ class ControlSettings:
             add_crlf=True).encode(
             "utf-8",
             errors="strict")
+
+        # In OFFLINE mode, BOX only accepts Settings as responses to IsNewSet
+        # polls. Queue the frame for delivery on the next IsNewSet instead of
+        # writing directly to the socket (which the BOX silently ignores).
+        current_mode = await proxy._hm.get_current_mode()
+        if current_mode == ProxyMode.OFFLINE:
+            self.pending = {
+                "tbl_name": tbl_name,
+                "tbl_item": tbl_item,
+                "new_value": new_value,
+                "id": msg_id,
+                "id_set": id_set,
+                "tx_id": tx_id,
+            }
+            self.pending_frame = frame
+            logger.info(
+                "CONTROL: Queued Setting %s/%s=%s for next IsNewSet poll "
+                "(id=%s id_set=%s, offline mode)",
+                tbl_name, tbl_item, new_value, msg_id, id_set,
+            )
+            return {
+                "ok": True,
+                "sent": True,
+                "device_id": proxy.device_id,
+                "id": msg_id,
+                "id_set": id_set,
+            }
 
         self.pending = {
             "sent_at": time.monotonic(),

@@ -632,14 +632,40 @@ class OIGProxy:
         conn_id: int | None = None,
     ):
         """Zpracuj frame v offline režimu - lokální ACK pouze (žádné queueování)."""
-        if send_ack:
-            ack_response = build_offline_ack_frame(table_name)
+        if not send_ack:
+            return
+
+        # Deliver pending Setting as the IsNewSet response (protocol requirement)
+        if table_name == "IsNewSet" and self._cs.pending_frame is not None:
+            setting_frame = self._cs.pending_frame
+            self._cs.pending_frame = None
+            if self._cs.pending is not None:
+                self._cs.pending["sent_at"] = time.monotonic()
             if conn_id is not None:
                 self._tc.record_response(
-                    ack_response.decode("utf-8", errors="replace"),
+                    setting_frame.decode("utf-8", errors="replace"),
                     source="local",
                     conn_id=conn_id,
                 )
-            box_writer.write(ack_response)
+            box_writer.write(setting_frame)
             await box_writer.drain()
             self.stats["acks_local"] += 1
+            logger.info(
+                "CONTROL: Delivered pending Setting as IsNewSet response "
+                "(%s/%s=%s)",
+                self._cs.pending.get("tbl_name") if self._cs.pending else "?",
+                self._cs.pending.get("tbl_item") if self._cs.pending else "?",
+                self._cs.pending.get("new_value") if self._cs.pending else "?",
+            )
+            return
+
+        ack_response = build_offline_ack_frame(table_name)
+        if conn_id is not None:
+            self._tc.record_response(
+                ack_response.decode("utf-8", errors="replace"),
+                source="local",
+                conn_id=conn_id,
+            )
+        box_writer.write(ack_response)
+        await box_writer.drain()
+        self.stats["acks_local"] += 1
