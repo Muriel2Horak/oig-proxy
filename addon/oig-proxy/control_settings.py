@@ -158,11 +158,7 @@ class ControlSettings:
     ) -> dict[str, Any]:
         """Validace parametrů pro control."""
         proxy = self._proxy
-        if not proxy.box_connected:
-            return {"ok": False, "error": "box_not_connected"}
-        if proxy._last_data_epoch is None or (
-                time.time() - proxy._last_data_epoch) > 30:
-            return {"ok": False, "error": "box_not_sending_data"}
+        # In OFFLINE mode, BOX doesn't send data continuously but can still receive commands
         if proxy.device_id == "AUTO":
             return {"ok": False, "error": "device_id_unknown"}
         return {"ok": True}
@@ -244,14 +240,11 @@ class ControlSettings:
         tx_id: str | None = None,
     ) -> dict[str, Any]:
         proxy = self._proxy
-        if not proxy.box_connected:
-            return {"ok": False, "error": "box_not_connected"}
-        if proxy._last_data_epoch is None or (
-                time.time() - proxy._last_data_epoch) > 30:
-            return {"ok": False, "error": "box_not_sending_data"}
+        
         if proxy.device_id == "AUTO":
             return {"ok": False, "error": "device_id_unknown"}
 
+        # Check TCP connection (box_connected flag doesn't work in OFFLINE mode)
         async with proxy._box_conn_lock:
             writer = proxy._active_box_writer
         if writer is None:

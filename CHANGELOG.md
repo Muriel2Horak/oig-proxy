@@ -2,6 +2,11 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [Unreleased]
+
+### Fixed
+- **Control Settings**: Fixed OFFLINE mode command handling - removed incorrect validation that blocked commands when BOX wasn't sending data continuously. Commands now work in OFFLINE mode as long as TCP connection is active (regression introduced in v1.3.9, commit db9e943)
+
 ## [1.6.0] - 2026-02-11
 
 ### Security
