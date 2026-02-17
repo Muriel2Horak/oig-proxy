@@ -13,7 +13,6 @@ CONTAINER_NAME="addon_${ADDON_SLUG}"
 LOCAL_SOURCE="./addon/oig-proxy"
 # Cesta na HOST filesystemu (pristupna pres docker -v /:/host)
 HOST_ADDON_DIR="/mnt/data/supervisor/addons/git/d7b5d5b1/addon/oig-proxy"
-TMP_DIR="/tmp/oig-proxy-deploy-$$"
 
 # Python soubory + konfigurace k deployi (vše z addon/oig-proxy)
 DEPLOY_FILES=(
@@ -54,12 +53,7 @@ host_run() {
   ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c '$1'"
 }
 
-# Přenos souboru na HA server přes SSH stdin (SCP/SFTP není dostupné v SSH addonu)
-ssh_upload() {
-  local local_file="$1"
-  local remote_path="$2"
-  cat "$local_file" | ssh "$HA_HOST" "cat > $remote_path"
-}
+
 
 # Spustí ha CLI příkaz (potřebuje SUPERVISOR_TOKEN z profilu)
 ha_cli() {
@@ -114,36 +108,47 @@ host_run "mkdir -p /host/tmp/oig-proxy-backup && \
 echo "   Backup v /tmp/oig-proxy-backup/ na HA serveru"
 echo ""
 
-# Krok 2: Upload souborů na HA server (PŘED zastavením addonu!)
-# SSH addon nemá SFTP, používáme ssh stdin redirect (cat | ssh cat >)
-echo "[2/7] Kopíruji soubory na HA server..."
-ssh "$HA_HOST" "mkdir -p $TMP_DIR"
+# Krok 2: Upload souborů přímo do addon adresáře na hostu
+# SSH addon nemá SFTP a /tmp je izolovaný od hostu.
+# Řešení: pipeovat soubory přímo přes "docker run -i -v /:/host" na cílovou cestu.
+echo "[2/6] Kopíruji soubory přímo do addon adresáře na hostu..."
 UPLOAD_COUNT=0
+UPLOAD_FAILED=0
 for f in "${DEPLOY_FILES[@]}"; do
   if [ -f "$LOCAL_SOURCE/$f" ]; then
-    ssh_upload "$LOCAL_SOURCE/$f" "$TMP_DIR/$f"
-    echo "   + $f"
-    UPLOAD_COUNT=$((UPLOAD_COUNT + 1))
+    if cat "$LOCAL_SOURCE/$f" | ssh "$HA_HOST" "sudo docker run --rm -i -v /:/host alpine sh -c 'cat > /host${HOST_ADDON_DIR}/$f'"; then
+      echo "   + $f"
+      UPLOAD_COUNT=$((UPLOAD_COUNT + 1))
+    else
+      echo "   ! $f (upload selhal)"
+      UPLOAD_FAILED=$((UPLOAD_FAILED + 1))
+    fi
   else
     echo "   - $f (neexistuje, preskakuji)"
   fi
 done
 echo "   Nahrano $UPLOAD_COUNT souboru"
+if [ $UPLOAD_FAILED -gt 0 ]; then
+  echo "   CHYBA: $UPLOAD_FAILED souboru se nepodarilo nahrat!"
+  exit 1
+fi
+
+# Ověření uploadu
+echo "   Ověřuji nahrané soubory..."
+VERIFY=$(ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c 'ls /host${HOST_ADDON_DIR}/cloud_forwarder.py /host${HOST_ADDON_DIR}/proxy.py /host${HOST_ADDON_DIR}/main.py 2>&1'")
+if echo "$VERIFY" | grep -q "No such file"; then
+  echo "   CHYBA: Některé soubory nebyly správně nahrány!"
+  echo "   $VERIFY"
+  exit 1
+fi
+echo "   Soubory ověřeny ✓"
 echo ""
 
 # Krok 3: Zastavení addonu
-echo "[3/7] Zastavuji addon..."
+echo "[3/6] Zastavuji addon..."
 ssh "$HA_HOST" "sudo docker stop $CONTAINER_NAME" 2>/dev/null && echo "   Addon zastaven" \
   || echo "   Addon byl jiz zastaveny"
 echo ""
-
-# Krok 4: Instalace souborů do addon adresáře na hostu
-echo "[4/7] Instaluji soubory do addon adresare..."
-ssh "$HA_HOST" "sudo docker run --rm \
-  -v /:/host \
-  -v $TMP_DIR:/source:ro \
-  alpine sh -c 'cp /source/* /host${HOST_ADDON_DIR}/ 2>/dev/null || true'"
-echo "   Soubory nainstalovany"
 
 # Patch verze v config.json na serveru (pokud se liší)
 if [ "$INSTALLED_VER" != "$LOCAL_VER" ]; then
@@ -151,13 +156,10 @@ if [ "$INSTALLED_VER" != "$LOCAL_VER" ]; then
   echo "   ** Patch verze v config.json na serveru **"
   patch_version_on_server "$INSTALLED_VER"
 fi
-
-# Úklid tmp
-ssh "$HA_HOST" "rm -rf $TMP_DIR" 2>/dev/null || true
 echo ""
 
-# Krok 5: Rebuild addon
-echo "[5/7] Rebuild addonu..."
+# Krok 4: Rebuild addon
+echo "[4/6] Rebuild addonu..."
 ha_cli rebuild $ADDON_SLUG 2>&1 && echo "   Addon rebuildovan" \
   || {
     echo "   Rebuild selhal."
@@ -167,8 +169,8 @@ ha_cli rebuild $ADDON_SLUG 2>&1 && echo "   Addon rebuildovan" \
 
 echo ""
 
-# Krok 6: Start addonu
-echo "[6/7] Startuji addon..."
+# Krok 5: Start addonu
+echo "[5/6] Startuji addon..."
 ha_cli start $ADDON_SLUG 2>&1 && echo "   Addon nastartovan" \
   || echo "   Start pres ha CLI selhal (addon mozna jiz bezi po rebuild)"
 
@@ -176,8 +178,8 @@ echo ""
 echo "   Cekam 5 sekund na inicializaci..."
 sleep 5
 
-# Krok 7: Kontrola
-echo "[7/7] Kontrola stavu..."
+# Krok 6: Kontrola
+echo "[6/6] Kontrola stavu..."
 STATUS=$(ssh "$HA_HOST" "sudo docker inspect $CONTAINER_NAME --format '{{.State.Status}}'" 2>/dev/null || echo "unknown")
 echo "   Stav kontejneru: $STATUS"
 echo ""
