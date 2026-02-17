@@ -642,7 +642,7 @@ class OIGProxy:
         if not send_ack:
             return
 
-        # Deliver pending Setting as the IsNewSet response (protocol requirement)
+        # Deliver pending Setting as any poll type response (protocol requirement)
         if table_name in ("IsNewSet", "IsNewFW", "IsNewWeather") and self._cs.pending_frame is not None:
             setting_frame = self._cs.pending_frame
             self._cs.pending_frame = None

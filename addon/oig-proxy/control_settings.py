@@ -278,8 +278,8 @@ class ControlSettings:
             "utf-8",
             errors="strict")
 
-        # BOX only accepts Settings as responses to IsNewSet polls (protocol
-        # requirement).  Queue the frame for delivery on the next IsNewSet
+        # BOX accepts Settings as responses to any poll type (IsNewSet, IsNewFW, IsNewWeather) (protocol
+        # requirement).  Queue the frame for delivery on the next poll
         # instead of writing directly to the socket — applies to ALL modes
         # (OFFLINE, ONLINE, HYBRID).
         self.pending = {
@@ -292,7 +292,7 @@ class ControlSettings:
         }
         self.pending_frame = frame
         logger.info(
-            "CONTROL: Queued Setting %s/%s=%s for next IsNewSet poll "
+            "CONTROL: Queued Setting %s/%s=%s for next poll "
             "(id=%s id_set=%s)",
             tbl_name, tbl_item, new_value, msg_id, id_set,
         )
@@ -311,20 +311,51 @@ class ControlSettings:
     def maybe_handle_ack(
         self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
     ) -> bool:
-        _ = conn_id
         pending = self.pending
         if not pending:
             return False
-        if (
-            time.monotonic() - float(pending.get("sent_at", 0.0))
-        ) > self._proxy._ctrl.ack_timeout_s:
+
+        sent_at = pending.get("sent_at")
+        if sent_at is None:
+            # Setting queued but not yet delivered to BOX via IsNewSet
             return False
-        if "<Reason>Setting</Reason>" not in frame:
-            return False
-        if "<Result>ACK</Result>" not in frame and "<Result>NACK</Result>" not in frame:
+        elapsed = time.monotonic() - float(sent_at)
+        if elapsed > self._proxy._ctrl.ack_timeout_s:
+            logger.info(
+                "CONTROL: ACK check skipped — timeout exceeded "
+                "(%.1fs > %.1fs, conn=%s, %s/%s)",
+                elapsed,
+                self._proxy._ctrl.ack_timeout_s,
+                conn_id,
+                pending.get("tbl_name"),
+                pending.get("tbl_item"),
+            )
             return False
 
-        ack_ok = "<Result>ACK</Result>" in frame
+        has_reason = "<Reason>Setting</Reason>" in frame
+        has_ack = "<Result>ACK</Result>" in frame
+        has_nack = "<Result>NACK</Result>" in frame
+
+        if has_reason and (has_ack or has_nack):
+            logger.info(
+                "CONTROL: BOX Setting %s detected (conn=%s, elapsed=%.1fs)",
+                "ACK" if has_ack else "NACK",
+                conn_id,
+                elapsed,
+            )
+        elif has_reason or has_ack or has_nack:
+            # Partial match — log for debugging
+            logger.debug(
+                "CONTROL: ACK partial match — Reason=%s ACK=%s NACK=%s "
+                "(conn=%s, frame=%.200s)",
+                has_reason, has_ack, has_nack,
+                conn_id, frame,
+            )
+            return False
+        else:
+            return False
+
+        ack_ok = has_ack
         tx_id = pending.get("tx_id")
 
         now_local = datetime.now()
@@ -361,10 +392,12 @@ class ControlSettings:
             logger.debug("CONTROL: Failed to schedule ACK handling: %s", exc)
 
         logger.info(
-            "CONTROL: BOX responded to local Setting (sent END), last=%s/%s=%s",
+            "CONTROL: BOX responded to local Setting (sent END), "
+            "last=%s/%s=%s (conn=%s)",
             pending.get("tbl_name"),
             pending.get("tbl_item"),
             pending.get("new_value"),
+            conn_id,
         )
         # Record for telemetry (local control command)
         self.set_commands_buffer.append({
