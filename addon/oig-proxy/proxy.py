@@ -561,6 +561,12 @@ class OIGProxy:
                     )
                     continue
 
+                if self._cs.pending and self._cs.pending.get("sent_at"):
+                    logger.debug(
+                        "CONTROL: post-Setting BOX frame (conn=%s, "
+                        "table=%s, frame=%.300s)",
+                        conn_id, table_name, frame,
+                    )
                 if self._cs.maybe_handle_ack(
                     frame, box_writer, conn_id=conn_id
                 ):
@@ -637,7 +643,7 @@ class OIGProxy:
             return
 
         # Deliver pending Setting as the IsNewSet response (protocol requirement)
-        if table_name == "IsNewSet" and self._cs.pending_frame is not None:
+        if table_name in ("IsNewSet", "IsNewFW", "IsNewWeather") and self._cs.pending_frame is not None:
             setting_frame = self._cs.pending_frame
             self._cs.pending_frame = None
             if self._cs.pending is not None:
@@ -652,7 +658,7 @@ class OIGProxy:
             await box_writer.drain()
             self.stats["acks_local"] += 1
             logger.info(
-                "CONTROL: Delivered pending Setting as IsNewSet response "
+                "CONTROL: Delivered pending Setting as any poll type response "
                 "(%s/%s=%s)",
                 self._cs.pending.get("tbl_name") if self._cs.pending else "?",
                 self._cs.pending.get("tbl_item") if self._cs.pending else "?",

@@ -457,7 +457,7 @@ class CloudForwarder:
         cloud_writer: asyncio.StreamWriter | None,
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
-        if table_name == "IsNewSet" and self._proxy._cs.pending_frame is not None:
+        if table_name in ("IsNewSet", "IsNewFW", "IsNewWeather") and self._proxy._cs.pending_frame is not None:
             setting_frame = self._proxy._cs.pending_frame
             self._proxy._cs.pending_frame = None
             if self._proxy._cs.pending is not None:
@@ -482,7 +482,7 @@ class CloudForwarder:
             await box_writer.drain()
             self._proxy.stats["acks_local"] += 1
             logger.info(
-                "CONTROL: Delivered pending Setting as IsNewSet response "
+                "CONTROL: Delivered pending Setting as any poll type response "
                 "(online/hybrid, %s/%s=%s, conn=%s)",
                 self._proxy._cs.pending.get("tbl_name") if self._proxy._cs.pending else "?",
                 self._proxy._cs.pending.get("tbl_item") if self._proxy._cs.pending else "?",
