@@ -1,0 +1,43 @@
+{
+  "generated": "2026-02-17T18:03:00.868275",
+  "source_database": "analysis/ha_snapshot/payloads_ha_full.db",
+  "data_range": {
+    "start": "2025-12-18T19:00:00Z",
+    "end": "2026-02-01T14:32:27Z"
+  },
+  "findings": {
+    "cloud_origin_settings_found": 0,
+    "reason": "Historical database does not contain cloud-origin Setting frames"
+  },
+  "database_statistics": {
+    "total_box_frames": 315206,
+    "total_isnew_frames": 53482,
+    "cloud_settings_count": 0
+  },
+  "sample_sequences": {
+    "isnew_isnew_echo": 3
+  },
+  "isnew_examples": [
+    {
+      "box_isnew_id": 871948,
+      "box_isnew_ts": "2026-01-23T10:11:39.713644+00:00",
+      "cloud_isnew_id": "IsNewSet",
+      "cloud_isnew_ts": "2206237016",
+      "device_id": 871949
+    },
+    {
+      "box_isnew_id": 871875,
+      "box_isnew_ts": "2026-01-23T10:06:50.162524+00:00",
+      "cloud_isnew_id": "IsNewSet",
+      "cloud_isnew_ts": "2206237016",
+      "device_id": 871876
+    },
+    {
+      "box_isnew_id": 871800,
+      "box_isnew_ts": "2026-01-23T10:02:11.043428+00:00",
+      "cloud_isnew_id": "IsNewSet",
+      "cloud_isnew_ts": "2206237016",
+      "device_id": 871801
+    }
+  ]
+}

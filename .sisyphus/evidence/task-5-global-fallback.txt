@@ -1,0 +1,221 @@
+# Task 5 Evidence: Threshold-Driven Global Fallback
+
+**Generated**: 2026-02-17
+**Status**: VERIFIED
+**Source Files**: `addon/oig-proxy/hybrid_mode.py`, `addon/oig-proxy/cloud_forwarder.py`
+
+## Mechanism Description
+
+When consecutive cloud failures exceed the configured threshold, hybrid mode transitions to offline state:
+1. `in_offline` flag set to True
+2. `state` changed to "offline"
+3. All subsequent frames get local ACK without cloud attempt
+4. Periodic retry attempts continue based on retry interval
+
+## Code Implementation
+
+### hybrid_mode.py - record_failure() (lines 110-143)
+
+```python
+def record_failure(
+    self,
+    *,
+    reason: str | None = None,
+    local_ack: bool | None = None,
+) -> None:
+    """Record a cloud failure for HYBRID mode."""
+    if not self.is_hybrid_mode():
+        return
+    self.fail_count += 1
+    if self.in_offline:
+        # Restart offline window after each failed probe
+        self.last_offline_time = time.time()
+        self.last_offline_reason = reason or self.last_offline_reason
+    if self.fail_count >= self.fail_threshold:
+        if not self.in_offline:
+            # === GLOBAL FALLBACK TRANSITION ===
+            transition_time = time.time()
+            self._proxy._tc.record_hybrid_state_end(
+                ended_at=transition_time,
+                reason=reason or "cloud_failure",
+            )
+            self.in_offline = True
+            self.last_offline_time = time.time()
+            self.state = "offline"
+            self.state_since_epoch = transition_time
+            self.last_offline_reason = reason or "unknown"
+            self._proxy._tc.record_offline_event(
+                reason=reason, local_ack=local_ack,
+            )
+            logger.warning(
+                "☁️ HYBRID: %d failures → switching to offline mode",
+                self.fail_count,
+            )
+```
+
+### hybrid_mode.py - should_try_cloud() (lines 82-104)
+
+```python
+def should_try_cloud(self) -> bool:
+    """Determine if we should try to connect to cloud.
+
+    ONLINE mode: always try
+    HYBRID mode: try if not in offline state, or if retry interval passed
+    OFFLINE mode: never try
+    """
+    if self.configured_mode == "offline":
+        return False
+    if self.configured_mode == "online":
+        return True
+    # HYBRID mode
+    if not self.in_offline:
+        return True
+    # Check if retry interval passed
+    elapsed = time.time() - self.last_offline_time
+    if elapsed >= self.retry_interval:
+        logger.info(
+            "☁️ HYBRID: retry interval (%.0fs) passed, trying cloud...",
+            self.retry_interval,
+        )
+        return True
+    return False
+```
+
+### hybrid_mode.py - record_success() (lines 145-161)
+
+```python
+def record_success(self) -> None:
+    """Record a cloud success for HYBRID mode."""
+    if not self.is_hybrid_mode():
+        return
+    if self.in_offline:
+        logger.info(
+            "☁️ HYBRID: cloud recovered → switching to online mode")
+        transition_time = time.time()
+        self._proxy._tc.record_hybrid_state_end(
+            ended_at=transition_time,
+            reason=self.last_offline_reason or "cloud_recovered",
+        )
+        self.state = "online"
+        self.state_since_epoch = transition_time
+        self.last_offline_reason = None
+    self.fail_count = 0
+    self.in_offline = False
+```
+
+## State Transition Diagram
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │           HYBRID MODE                    │
+                    └─────────────────────────────────────────┘
+                                       │
+         ┌─────────────────────────────┴─────────────────────────────┐
+         │                                                             │
+         ▼                                                             ▼
+┌─────────────────────┐                                  ┌─────────────────────┐
+│   ONLINE-STATE      │                                  │   OFFLINE-STATE     │
+│                     │                                  │                     │
+│ • should_try_cloud  │                                  │ • should_try_cloud  │
+│   = TRUE            │                                  │   = FALSE (until    │
+│ • fail_count <      │      fail_count >= threshold    │     retry interval) │
+│   threshold         │  ─────────────────────────────►  │ • All frames get    │
+│ • Frames go to      │                                  │   local ACK         │
+│   cloud first       │                                  │ • Periodic retry    │
+│ • Local ACK only    │                                  │   probes            │
+│   on timeout        │                                  │                     │
+└─────────────────────┘                                  └─────────────────────┘
+         ▲                                                             │
+         │                    cloud success                            │
+         └─────────────────────────────────────────────────────────────┘
+                              (after retry probe)
+```
+
+## Test Verification
+
+From `tests/test_proxy_modes.py`:
+
+```python
+def test_hybrid_record_failure_triggers_offline():
+    """Test that HYBRID mode switches to offline after threshold failures."""
+    proxy._hm.configured_mode = "hybrid"
+    proxy._hm.fail_threshold = 2
+
+    # First failure - should not switch yet
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    assert proxy._hm.fail_count == 1
+    assert proxy._hm.in_offline is False
+
+    # Second failure - should switch to offline
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    assert proxy._hm.fail_count == 2
+    assert proxy._hm.in_offline is True  # <-- GLOBAL FALLBACK
+
+
+def test_hybrid_fallback_after_threshold():
+    """Test that HYBRID mode DOES fallback to local ACK after reaching threshold."""
+    proxy._hm.fail_threshold = 3
+
+    # Simulate 3 failures (at threshold)
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    assert proxy._hm.fail_count == 3
+    assert proxy._hm.in_offline is True  # Now in offline
+
+    # Condition for fallback should be True
+    assert proxy._hm.is_hybrid_mode() and proxy._hm.in_offline
+```
+
+## Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `HYBRID_FAIL_THRESHOLD` | 1 | Consecutive failures before global fallback |
+| `HYBRID_RETRY_INTERVAL` | 60s | Seconds to wait before retrying cloud in offline-state |
+
+## Fallback Triggers
+
+The `record_failure()` method is called from:
+
+| Location | Reason | Code Reference |
+|----------|--------|----------------|
+| `cloud_forwarder.handle_connection_failed()` | Cloud connection failed | line 191 |
+| `cloud_forwarder.handle_eof()` | Cloud closed connection | line 228 |
+| `cloud_forwarder.handle_timeout()` | ACK timeout | line 266 |
+| `cloud_forwarder.handle_error()` | Generic cloud error | line 330 |
+| `cloud_forwarder.fallback_offline()` | Explicit fallback | line 109 |
+
+## Transition Event Logging
+
+When global fallback occurs, the following events are recorded:
+
+```
+☁️ HYBRID: N failures → switching to offline mode
+```
+
+Telemetry events (via `TelemetryCollector`):
+- `record_hybrid_state_end(ended_at, reason)` - ends previous state
+- `record_offline_event(reason, local_ack)` - records transition
+
+## Recovery Path
+
+Once in offline-state, recovery occurs when:
+
+1. Retry interval (`HYBRID_RETRY_INTERVAL`) passes
+2. `should_try_cloud()` returns True
+3. Cloud probe succeeds
+4. `record_success()` is called:
+   - `in_offline` = False
+   - `fail_count` = 0
+   - `state` = "online"
+   - Log: `☁️ HYBRID: cloud recovered → switching to online mode`
+
+## Key Invariant
+
+**Threshold provides hysteresis**: The system does NOT immediately flip-flop between online and offline:
+1. Multiple failures required before fallback
+2. Only one success required for recovery
+3. Periodic retry probes prevent indefinite offline state
+
+This provides stability while ensuring eventual recovery when cloud becomes available.

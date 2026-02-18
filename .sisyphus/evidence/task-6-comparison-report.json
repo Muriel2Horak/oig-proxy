@@ -1,0 +1,427 @@
+{
+  "generated": "2026-02-17T17:58:05.186884Z",
+  "task": "task-6-comparison",
+  "session": {
+    "source": "ha:/data/payloads.db",
+    "conn_id": 2315,
+    "frame_count": 24,
+    "exported_at": "2026-02-17T13:17:57.631294Z"
+  },
+  "contract_source": ".sisyphus/evidence/task-2-contract-matrix.json",
+  "summary": {
+    "total_sequences": 12,
+    "passed": 12,
+    "failed": 0,
+    "pass_rate": 100.0,
+    "online_pass": 12,
+    "mock_pass": 12,
+    "offline_pass": 12
+  },
+  "per_sequence": [
+    {
+      "sequence_id": 1,
+      "frame_id": 13794,
+      "table_name": "IsNewSet",
+      "frame_type": "IsNewSet",
+      "request_preview": "<Frame><Result>IsNewSet</Result><ID_Device>2206237016</ID_Device><Lat>636</Lat><TblName>tbl_actual</...",
+      "contract": {
+        "expected_response": "IsNewSet",
+        "pattern": "echo_or_end",
+        "tolerance_ms": 50
+      },
+      "online": {
+        "result": "END",
+        "todo": null,
+        "class": "END",
+        "match": true
+      },
+      "mock": {
+        "result": "END",
+        "todo": null,
+        "class": "END",
+        "match": true
+      },
+      "offline": {
+        "result": "END",
+        "todo": null,
+        "class": "END",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 2,
+      "frame_id": 13796,
+      "table_name": "tbl_dc_in",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Tab...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 3,
+      "frame_id": 13798,
+      "table_name": "tbl_ac_in",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Tab...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 4,
+      "frame_id": 13800,
+      "table_name": "tbl_ac_out",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Ta...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 5,
+      "frame_id": 13802,
+      "table_name": "tbl_batt",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_batt</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Tabl...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 6,
+      "frame_id": 13804,
+      "table_name": "tbl_box",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_box</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 7,
+      "frame_id": 13806,
+      "table_name": "tbl_ac_in_b",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_ac_in_b</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>T...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 8,
+      "frame_id": 13808,
+      "table_name": "tbl_actual",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_actual</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Ta...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 9,
+      "frame_id": 13810,
+      "table_name": "tbl_invertor",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_invertor</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 10,
+      "frame_id": 13812,
+      "table_name": "tbl_ac_in2",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_ac_in2</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Ta...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 11,
+      "frame_id": 13814,
+      "table_name": "tbl_actual",
+      "frame_type": "tbl_* (data)",
+      "request_preview": "<Frame><TblName>tbl_actual</TblName><ID_Set>842519149</ID_Set><DT>2026-02-17 09:05:49</DT><Reason>Ta...",
+      "contract": {
+        "expected_response": "ACK",
+        "pattern": "implicit",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": null,
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": "GetActual",
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    },
+    {
+      "sequence_id": 12,
+      "frame_id": 13816,
+      "table_name": "END",
+      "frame_type": "END",
+      "request_preview": "<Frame><Result>END</Result><Rdt>2026-02-17 09:05:56</Rdt><Reason>All data sent</Reason><CRC>42651</C...",
+      "contract": {
+        "expected_response": null,
+        "pattern": "no_response",
+        "tolerance_ms": null
+      },
+      "online": {
+        "result": "ACK",
+        "todo": null,
+        "class": "ACK",
+        "match": true
+      },
+      "mock": {
+        "result": "ACK",
+        "todo": null,
+        "class": "ACK",
+        "match": true
+      },
+      "offline": {
+        "result": "ACK",
+        "todo": null,
+        "class": "ACK",
+        "match": true
+      },
+      "status": "PASS"
+    }
+  ],
+  "timing_tolerances": {
+    "ACK": {
+      "avg_ms": 9.7,
+      "tolerance_ms": 50
+    },
+    "IsNewFW": {
+      "avg_ms": 9.9,
+      "tolerance_ms": 50
+    },
+    "IsNewSet": {
+      "avg_ms": 16.9,
+      "tolerance_ms": 50
+    },
+    "IsNewWeather": {
+      "avg_ms": 19.6,
+      "tolerance_ms": 50
+    },
+    "tbl_*_prms (Settings)": {
+      "avg_ms": 27.4,
+      "tolerance_ms": 200
+    },
+    "tbl_events": {
+      "avg_ms": 32.5,
+      "tolerance_ms": 300
+    }
+  },
+  "forbidden_transitions": {
+    "rules_checked": 4,
+    "violations": [],
+    "status": "PASS"
+  },
+  "contradictions": [],
+  "overall_status": "PASS"
+}

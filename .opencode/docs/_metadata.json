@@ -1,0 +1,152 @@
+{
+  "documents": {
+    "tldp_org_HOWTO_html_single_TCP-Keepalive-HOWTO_.md": {
+      "url": "https://tldp.org/HOWTO/html_single/TCP-Keepalive-HOWTO/",
+      "title": "Untitled",
+      "fetchedAt": "2026-02-17T19:16:05.724Z",
+      "expiresAt": "2026-02-18T19:16:05.724Z",
+      "size": 15144
+    },
+    "aws_amazon_com_builders-library_making-retries-safe-with-idempote.md": {
+      "url": "https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/",
+      "title": "references-details-empty",
+      "fetchedAt": "2026-02-17T19:16:05.749Z",
+      "expiresAt": "2026-02-18T19:16:05.749Z",
+      "size": 15186
+    },
+    "zguide_zeromq_org_docs_chapter4_.md": {
+      "url": "https://zguide.zeromq.org/docs/chapter4/",
+      "title": "4. Reliable Request-Reply Patterns | ØMQ - The Guide",
+      "fetchedAt": "2026-02-17T19:16:06.716Z",
+      "expiresAt": "2026-02-18T19:16:06.716Z",
+      "size": 15173
+    },
+    "docs_python_org_3_library_asynciohtml.md": {
+      "url": "https://docs.python.org/3/library/asyncio.html",
+      "title": "asyncio — Asynchronous I/O &#8212; Python 3.14.3 documentation",
+      "fetchedAt": "2026-02-17T19:30:30.316Z",
+      "expiresAt": "2026-02-18T19:30:30.316Z",
+      "size": 7094
+    },
+    "docs_pytest_org_en_stable_how-to_fixtureshtml.md": {
+      "url": "https://docs.pytest.org/en/stable/how-to/fixtures.html",
+      "title": "How to use fixtures - pytest documentation",
+      "fetchedAt": "2026-02-17T19:30:30.330Z",
+      "expiresAt": "2026-02-18T19:30:30.330Z",
+      "size": 15177
+    },
+    "datatracker_ietf_org_doc_html_rfc6298.md": {
+      "url": "https://datatracker.ietf.org/doc/html/rfc6298",
+      "title": "Untitled",
+      "fetchedAt": "2026-02-17T19:30:30.622Z",
+      "expiresAt": "2026-02-18T19:30:30.622Z",
+      "size": 15134
+    },
+    "sqlite_org_walhtml.md": {
+      "url": "https://sqlite.org/wal.html",
+      "title": "Write-Ahead Logging",
+      "fetchedAt": "2026-02-17T19:30:31.024Z",
+      "expiresAt": "2026-02-18T19:30:31.024Z",
+      "size": 15127
+    },
+    "oneuptime_com_blog_post_2026-01-30-event-replay-strategies_view.md": {
+      "url": "https://oneuptime.com/blog/post/2026-01-30-event-replay-strategies/view",
+      "title": "Untitled",
+      "fetchedAt": "2026-02-17T19:30:39.585Z",
+      "expiresAt": "2026-02-18T19:30:39.585Z",
+      "size": 15160
+    },
+    "medium_com_Modexa_7-pytest-fixture-param-tricks-that-kill-fla.md": {
+      "url": "https://medium.com/@Modexa/7-pytest-fixture-param-tricks-that-kill-flaky-tests-b985d527064a",
+      "title": "7 pytest Fixture &amp; Param Tricks That Kill Flaky Tests | by Modexa | Medium",
+      "fetchedAt": "2026-02-17T19:30:39.819Z",
+      "expiresAt": "2026-02-18T19:30:39.819Z",
+      "size": 2327
+    },
+    "scrapfly_io_blog_posts_advanced-proxy-connection-optimization-.md": {
+      "url": "https://scrapfly.io/blog/posts/advanced-proxy-connection-optimization-techniques",
+      "title": "Advanced Proxy Connection Optimization Techniques",
+      "fetchedAt": "2026-02-17T19:30:40.203Z",
+      "expiresAt": "2026-02-18T19:30:40.203Z",
+      "size": 15210
+    },
+    "www_usenix_org_system_files_nsdi25-gupdf.md": {
+      "url": "https://www.usenix.org/system/files/nsdi25-gu.pdf",
+      "title": "Untitled",
+      "fetchedAt": "2026-02-17T19:33:19.070Z",
+      "expiresAt": "2026-02-18T19:33:19.070Z",
+      "size": 15138
+    },
+    "speedscale_com_blog_how-to-build-a-traffic-replay-system_.md": {
+      "url": "https://speedscale.com/blog/how-to-build-a-traffic-replay-system/",
+      "title": "Part 3: Building a Production-Grade Traffic Capture and Replay System | Speedscale",
+      "fetchedAt": "2026-02-17T19:33:51.699Z",
+      "expiresAt": "2026-02-18T19:33:51.699Z",
+      "size": 15228
+    },
+    "oneuptime_com_blog_post_2026-01-25-network-timeout-strategies_vi.md": {
+      "url": "https://oneuptime.com/blog/post/2026-01-25-network-timeout-strategies/view",
+      "title": "Untitled",
+      "fetchedAt": "2026-02-17T19:33:58.394Z",
+      "expiresAt": "2026-02-18T19:33:58.394Z",
+      "size": 11402
+    },
+    "docs_python_org_3_library_sockethtml.md": {
+      "url": "https://docs.python.org/3/library/socket.html#socket.socket.settimeout",
+      "title": "socket — Low-level networking interface &#8212; Python 3.14.3 documentation",
+      "fetchedAt": "2026-02-18T03:56:44.786Z",
+      "expiresAt": "2026-02-19T03:56:44.786Z",
+      "size": 15226
+    },
+    "www_rfc-editor_org_rfc_rfc6298.md": {
+      "url": "https://www.rfc-editor.org/rfc/rfc6298",
+      "title": "RFC 6298: Computing TCP's Retransmission Timer",
+      "fetchedAt": "2026-02-18T03:56:44.788Z",
+      "expiresAt": "2026-02-19T03:56:44.788Z",
+      "size": 15165
+    },
+    "www_rfc-editor_org_rfc_rfc9293.md": {
+      "url": "https://www.rfc-editor.org/rfc/rfc9293",
+      "title": "RFC 9293: Transmission Control Protocol (TCP)",
+      "fetchedAt": "2026-02-18T03:56:44.888Z",
+      "expiresAt": "2026-02-19T03:56:44.888Z",
+      "size": 15164
+    },
+    "aws_amazon_com_builders-library_timeouts-retries-and-backoff-with.md": {
+      "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/",
+      "title": "Timeouts, retries and backoff with jitter",
+      "fetchedAt": "2026-02-18T03:56:50.016Z",
+      "expiresAt": "2026-02-19T03:56:50.016Z",
+      "size": 15203
+    },
+    "docs_pytest_org_en_stable_explanation_flakyhtml.md": {
+      "url": "https://docs.pytest.org/en/stable/explanation/flaky.html",
+      "title": "Flaky tests - pytest documentation",
+      "fetchedAt": "2026-02-18T03:56:50.221Z",
+      "expiresAt": "2026-02-19T03:56:50.221Z",
+      "size": 10823
+    },
+    "github_com_Shopify_toxiproxy.md": {
+      "url": "https://github.com/Shopify/toxiproxy",
+      "title": "GitHub - Shopify/toxiproxy: :alarm_clock: A TCP proxy to simulate network and system conditions for chaos and resiliency testing",
+      "fetchedAt": "2026-02-18T03:56:50.711Z",
+      "expiresAt": "2026-02-19T03:56:50.711Z",
+      "size": 15245
+    },
+    "testcontainers-python_readthedocs_io_en_latest_.md": {
+      "url": "https://testcontainers-python.readthedocs.io/en/latest/",
+      "title": "testcontainers-python &#8212; testcontainers 2.0.0 documentation",
+      "fetchedAt": "2026-02-18T03:56:56.068Z",
+      "expiresAt": "2026-02-19T03:56:56.068Z",
+      "size": 8153
+    },
+    "testcontainers-python_readthedocs_io_en_latest_core_READMEhtml.md": {
+      "url": "https://testcontainers-python.readthedocs.io/en/latest/core/README.html",
+      "title": "Testcontainers Core &#8212; testcontainers 2.0.0 documentation",
+      "fetchedAt": "2026-02-18T03:57:00.148Z",
+      "expiresAt": "2026-02-19T03:57:00.148Z",
+      "size": 4002
+    }
+  },
+  "lastUpdated": "2026-02-18T03:57:00.149Z"
+}
