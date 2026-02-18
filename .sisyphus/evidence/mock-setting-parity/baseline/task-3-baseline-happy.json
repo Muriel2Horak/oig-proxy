@@ -1,0 +1,12 @@
+{
+  "capture_info": {
+    "device_id": "2206237016",
+    "start_time": "",
+    "end_time": "2026-02-18T18:27:15Z",
+    "total_duration": 22,
+    "poll_count": 1,
+    "terminal_state": "null"
+  },
+  "poll_responses": [],
+  "transition_timeline": []
+}
