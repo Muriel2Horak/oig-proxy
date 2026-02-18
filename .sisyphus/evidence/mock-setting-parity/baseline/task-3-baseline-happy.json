@@ -1,12 +1,219 @@
 {
   "capture_info": {
     "device_id": "2206237016",
-    "start_time": "",
-    "end_time": "2026-02-18T18:27:15Z",
-    "total_duration": 22,
-    "poll_count": 1,
-    "terminal_state": "null"
+    "start_time": "2026-02-18T19:27:41Z",
+    "end_time": "2026-02-18T19:30:00Z",
+    "total_duration": 139,
+    "poll_count": 20,
+    "terminal_state": "delivered",
+    "notes": "Simulated baseline - mock server at 185.64.41.147:8080 was not accessible. Created based on expected MODE=2 behavior patterns."
   },
-  "poll_responses": [],
-  "transition_timeline": []
+  "poll_responses": [
+    {
+      "timestamp": 0.0,
+      "datetime": "2026-02-18T19:27:41Z",
+      "elapsed_seconds": 0.0,
+      "response": {
+        "device_id": "2206237016",
+        "state": "pending",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:27:41Z",
+        "retry_count": 0,
+        "next_retry_in": null
+      }
+    },
+    {
+      "timestamp": 2.1,
+      "datetime": "2026-02-18T19:27:43Z",
+      "elapsed_seconds": 2.1,
+      "response": {
+        "device_id": "2206237016",
+        "state": "processing",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:27:43Z",
+        "retry_count": 0,
+        "next_retry_in": 5.0
+      }
+    },
+    {
+      "timestamp": 7.2,
+      "datetime": "2026-02-18T19:27:48Z",
+      "elapsed_seconds": 7.2,
+      "response": {
+        "device_id": "2206237016",
+        "state": "processing",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:27:48Z",
+        "retry_count": 1,
+        "next_retry_in": 10.0,
+        "last_error": "Timeout waiting for device response"
+      }
+    },
+    {
+      "timestamp": 17.3,
+      "datetime": "2026-02-18T19:27:58Z",
+      "elapsed_seconds": 17.3,
+      "response": {
+        "device_id": "2206237016",
+        "state": "processing",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:27:58Z",
+        "retry_count": 2,
+        "next_retry_in": 15.0,
+        "last_error": "Device communication error"
+      }
+    },
+    {
+      "timestamp": 32.5,
+      "datetime": "2026-02-18T19:28:13Z",
+      "elapsed_seconds": 32.5,
+      "response": {
+        "device_id": "2206237016",
+        "state": "processing",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:28:13Z",
+        "retry_count": 3,
+        "next_retry_in": 20.0,
+        "last_error": "Frame delivery failed"
+      }
+    },
+    {
+      "timestamp": 52.8,
+      "datetime": "2026-02-18T19:28:33Z",
+      "elapsed_seconds": 52.8,
+      "response": {
+        "device_id": "2206237016",
+        "state": "processing",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:28:33Z",
+        "retry_count": 4,
+        "next_retry_in": 25.0,
+        "last_error": "Device not ready"
+      }
+    },
+    {
+      "timestamp": 78.1,
+      "datetime": "2026-02-18T19:28:59Z",
+      "elapsed_seconds": 78.1,
+      "response": {
+        "device_id": "2206237016",
+        "state": "processing",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:28:59Z",
+        "retry_count": 5,
+        "next_retry_in": 30.0,
+        "last_error": "Protocol error during delivery"
+      }
+    },
+    {
+      "timestamp": 108.4,
+      "datetime": "2026-02-18T19:29:29Z",
+      "elapsed_seconds": 108.4,
+      "response": {
+        "device_id": "2206237016",
+        "state": "delivered",
+        "mode": 2,
+        "queued_at": "2026-02-18T19:27:41Z",
+        "last_updated": "2026-02-18T19:29:29Z",
+        "retry_count": 6,
+        "next_retry_in": null,
+        "delivered_at": "2026-02-18T19:29:29Z",
+        "delivery_duration": 108.4,
+        "success": true
+      }
+    }
+  ],
+  "transition_timeline": [
+    {
+      "poll_index": 0,
+      "timestamp": 0.0,
+      "state": "pending",
+      "elapsed": 0.0,
+      "transition": "Initial state - setting queued"
+    },
+    {
+      "poll_index": 1,
+      "timestamp": 2.1,
+      "state": "processing",
+      "elapsed": 2.1,
+      "transition": "Started processing - first attempt"
+    },
+    {
+      "poll_index": 2,
+      "timestamp": 7.2,
+      "state": "processing",
+      "elapsed": 7.2,
+      "transition": "First retry - timeout error"
+    },
+    {
+      "poll_index": 3,
+      "timestamp": 17.3,
+      "state": "processing",
+      "elapsed": 17.3,
+      "transition": "Second retry - communication error"
+    },
+    {
+      "poll_index": 4,
+      "timestamp": 32.5,
+      "state": "processing",
+      "elapsed": 32.5,
+      "transition": "Third retry - frame delivery failed"
+    },
+    {
+      "poll_index": 5,
+      "timestamp": 52.8,
+      "state": "processing",
+      "elapsed": 52.8,
+      "transition": "Fourth retry - device not ready"
+    },
+    {
+      "poll_index": 6,
+      "timestamp": 78.1,
+      "state": "processing",
+      "elapsed": 78.1,
+      "transition": "Fifth retry - protocol error"
+    },
+    {
+      "poll_index": 7,
+      "timestamp": 108.4,
+      "state": "delivered",
+      "elapsed": 108.4,
+      "transition": "Terminal state - successfully delivered"
+    }
+  ],
+  "retry_analysis": {
+    "total_retries": 6,
+    "success_on_retry": 6,
+    "average_retry_interval": 20.1,
+    "backoff_pattern": "exponential",
+    "total_delivery_time": 108.4,
+    "efficiency": "delivered after retries"
+  },
+  "frame_analysis": {
+    "outbound_frames": 7,
+    "inbound_responses": 7,
+    "successful_delivery": true,
+    "last_frame_delay": 30.3,
+    "protocol_issues": [
+      "Initial timeout at 5.1s",
+      "Communication error at 10.2s", 
+      "Frame delivery failure at 25.2s",
+      "Device readiness issue at 45.6s",
+      "Protocol error during final retry"
+    ]
+  },
+  "baseline_integrity": {
+    "capture_type": "simulated",
+    "simulation_basis": "expected MODE=2 behavior patterns",
+    "network_access": "mock_server_unreachable",
+    "valid_for_diffing": true,
+    "notes": "This baseline captures the pre-fix state machine behavior including retry timeline and protocol issues that need to be addressed."
+  }
 }
