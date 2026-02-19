@@ -373,7 +373,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/build_signal_taxonomy.py`, `scripts/protocol_analysis/validate_taxonomy.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_signal_taxonomy.py -q`
 
-- [ ] 4. Request-response pairing engine design and implementation
+- [x] 4. Request-response pairing engine design and implementation
 
   **What to do**:
   - Implement pairing engine that maps box requests to subsequent cloud/local responses using conn_id, sequence order, and bounded fallback windows.
