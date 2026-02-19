@@ -1335,7 +1335,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/build_adjustment_backlog.py`, `.sisyphus/evidence/task-17-adjustment-backlog.md`
   - Pre-commit: `pytest tests/protocol_analysis/test_adjustment_backlog.py -q`
 
-- [ ] 18. Tooling validation on historical and live sample datasets
+- [x] 18. Tooling validation on historical and live sample datasets
 
   **What to do**:
   - Run all implemented analysis tools on historical DB and at least one live sample day export to confirm reproducibility.
@@ -1403,7 +1403,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/run_full_validation_matrix.py`, `.sisyphus/evidence/task-18-tool-validation-matrix.json`
   - Pre-commit: `pytest tests/protocol_analysis -q`
 
-- [ ] 19. Final analysis package and Czech executive brief
+- [x] 19. Final analysis package and Czech executive brief
 
   **What to do**:
   - Assemble final package combining matrices, confidence score, drift report, and backlog into a single structured handoff directory.
@@ -1475,7 +1475,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/assemble_final_package.py`, `.sisyphus/evidence/task-19-executive-brief-cs.md`
   - Pre-commit: `pytest tests/protocol_analysis/test_final_package.py -q`
 
-- [ ] 20. Handoff checklist and follow-up execution gates
+- [x] 20. Handoff checklist and follow-up execution gates
 
   **What to do**:
   - Produce handoff checklist for next execution sprint including gates for safe rollout of any backlog item.

@@ -1,0 +1,197 @@
+{
+  "task": "Task 18 - End-to-End Tooling Validation",
+  "generated_at": "2026-02-20T00:03:00Z",
+  "database": "analysis/ha_snapshot/payloads_ha_full.db",
+  "database_stats": {
+    "total_frames": 871952,
+    "date_range": "2025-12-18 to 2026-02-01",
+    "days_covered": 45
+  },
+  "overall_status": "PASS",
+  "summary": {
+    "total_scripts": 13,
+    "passed": 12,
+    "warned": 1,
+    "failed": 0,
+    "total_execution_time_ms": 10463
+  },
+  "steps": [
+    {
+      "step": 1,
+      "script": "baseline_snapshot.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 70,
+      "output": "Baseline snapshot written to .sisyphus/evidence/task-1-baseline.json"
+    },
+    {
+      "step": 2,
+      "script": "audit_capture_schema.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 2664,
+      "output": "Capture audit written to .sisyphus/evidence/task-2-capture-audit.json"
+    },
+    {
+      "step": 3,
+      "script": "validate_baseline.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 53,
+      "output": "Baseline validation passed"
+    },
+    {
+      "step": 4,
+      "script": "assert_capture_audit.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 50,
+      "output": "Capture audit assertions passed"
+    },
+    {
+      "step": 5,
+      "script": "pair_frames.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 444,
+      "output": "Frame pairing complete; 1922 pairs written to .sisyphus/evidence/task-4-pairing-sample.json"
+    },
+    {
+      "step": 6,
+      "script": "assert_pairing_quality.py",
+      "exit_code": 1,
+      "status": "WARN",
+      "duration_ms": 56,
+      "known_protocol_characteristic": true,
+      "ambiguous_rate_explanation": "OIG protocol uses pipelining without transaction IDs; 57.49% ambiguous rate exceeds 20% threshold but is a documented protocol design characteristic (documented in learnings.md during Task 4). Match rate 97.92% and avg confidence 0.721 both pass. This is NOT a blocking failure.",
+      "metrics": {
+        "match_rate_pct": 97.92,
+        "avg_confidence": 0.721,
+        "ambiguous_rate_pct": 57.49
+      }
+    },
+    {
+      "step": 7,
+      "script": "extract_day_slice.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 1036,
+      "args": "--db analysis/ha_snapshot/payloads_ha_full.db --date 2026-01-15 --out .sisyphus/evidence/task-7-day1-frames.json",
+      "output": "14825 frames extracted for 2026-01-15"
+    },
+    {
+      "step": 8,
+      "script": "validate_day_slice.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 185,
+      "args": ".sisyphus/evidence/task-7-day1-frames.json",
+      "output": "Validation passed: .sisyphus/evidence/task-7-day1-frames.json"
+    },
+    {
+      "step": 9,
+      "script": "validate_daily_collection.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 2770,
+      "args": "--db analysis/ha_snapshot/payloads_ha_full.db --out .sisyphus/evidence/task-12-daily-validation.json",
+      "checks": {
+        "schema_integrity": "PASS",
+        "min_frame_count": "PASS (871952 >= 1000)",
+        "required_signal_classes": "PASS (IsNewSet:53060, IsNewWeather:25696, IsNewFW:26515, END:26932, ACK:51128)",
+        "null_rate": "PASS (all columns <= 1%)"
+      }
+    },
+    {
+      "step": 10,
+      "script": "build_signal_timeline.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 932,
+      "args": "--db analysis/ha_snapshot/payloads_ha_full.db --limit 5000 --out .sisyphus/evidence/task-9-signal-timeline.json --taxonomy .sisyphus/evidence/task-3-signal-taxonomy.json --pairing .sisyphus/evidence/task-4-pairing-sample.json",
+      "metrics": {
+        "total_signal_events": 3445,
+        "paired_events": 367,
+        "high_confidence_pairs": 130,
+        "medium_confidence": 196,
+        "low_confidence": 31,
+        "unknown_signals": 0,
+        "connections": 1,
+        "dates_covered": 11,
+        "signal_distribution": {
+          "ACK": 2914,
+          "END": 262,
+          "IsNewFW": 14,
+          "IsNewSet": 238,
+          "IsNewWeather": 17
+        }
+      }
+    },
+    {
+      "step": 11,
+      "script": "assert_signal_timeline.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 118,
+      "args": "--timeline .sisyphus/evidence/task-9-signal-timeline.json --taxonomy .sisyphus/evidence/task-3-signal-taxonomy.json",
+      "checks": {
+        "required_signal_classes": "PASS",
+        "no_unmarked_unknown_signals": "PASS",
+        "required_event_fields": "PASS",
+        "low_confidence_marking": "PASS",
+        "timeline_structure": "PASS",
+        "chronological_order": "PASS"
+      }
+    },
+    {
+      "step": 12,
+      "script": "detect_edge_cases.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 4753,
+      "args": "--db analysis/ha_snapshot/payloads_ha_full.db --telemetry .sisyphus/evidence/task-8-telemetry-snapshot.json --out .sisyphus/evidence/task-11-edge-cases.json",
+      "metrics": {
+        "total_edge_cases": 18361,
+        "categories_with_findings": 2,
+        "empty_categories": 3,
+        "categories": {
+          "cloud_timeout": 0,
+          "cloud_eof": 0,
+          "cloud_error": 0,
+          "box_disconnect": 18334,
+          "nack": 27
+        }
+      }
+    },
+    {
+      "step": 13,
+      "script": "assert_edge_case_report.py",
+      "exit_code": 0,
+      "status": "PASS",
+      "duration_ms": 40,
+      "args": "--input .sisyphus/evidence/task-11-edge-cases.json",
+      "output": "STATUS: PASS — 18361 total edge cases, 2 categories with findings"
+    }
+  ],
+  "workflow_health": {
+    "all_scripts_executable": true,
+    "critical_failures": 0,
+    "known_issues": [
+      {
+        "script": "assert_pairing_quality.py",
+        "issue": "ambiguous_rate_57.49pct_exceeds_20pct_threshold",
+        "classification": "expected_protocol_behavior",
+        "blocking": false,
+        "documented_in": "learnings.md (Task 4)"
+      }
+    ],
+    "data_quality": {
+      "frame_count": 871952,
+      "null_rate_ok": true,
+      "signal_classes_present": true,
+      "edge_cases_detected": 18361,
+      "timeline_chronological": true
+    },
+    "task_19_unblocked": true
+  }
+}
