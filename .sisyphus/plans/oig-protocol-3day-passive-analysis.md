@@ -990,7 +990,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/validate_daily_collection.py`, `tests/protocol_analysis/test_daily_validation.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_daily_validation.py -q`
 
-- [ ] 13. Standard request cloud response matrix (tbl_* families)
+- [x] 13. Standard request cloud response matrix (tbl_* families)
 
   **What to do**:
   - Build matrix for standard table requests (`tbl_actual`, `tbl_*`, `tbl_*_prms`) showing observed cloud response classes and rates.
@@ -1058,7 +1058,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/build_standard_matrix.py`, `scripts/protocol_analysis/assert_matrix_schema.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_standard_matrix.py -q`
 
-- [ ] 14. Signal reaction matrix by mode and condition
+- [x] 14. Signal reaction matrix by mode and condition
 
   **What to do**:
   - Build matrix that maps each target signal to cloud/local reaction branches under `online`, `hybrid-online`, `hybrid-offline`, and `offline` states.
@@ -1127,7 +1127,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/build_signal_reaction_matrix.py`, `scripts/protocol_analysis/assert_signal_reaction_matrix.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_signal_reaction_matrix.py -q`
 
-- [ ] 15. Blind-spot quantification and reconstruction confidence scoring
+- [x] 15. Blind-spot quantification and reconstruction confidence scoring
 
   **What to do**:
   - Quantify known blind spots (missing parser meta fields, proxy_to_cloud visibility gap, unmatched pairs) and estimate impact on protocol reconstruction.
@@ -1196,7 +1196,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/score_reconstruction_confidence.py`, `scripts/protocol_analysis/assert_confidence_score.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_confidence_score.py -q`
 
-- [ ] 16. 3-day drift and anomaly comparative report
+- [x] 16. 3-day drift and anomaly comparative report
 
   **What to do**:
   - Compare day1/day2/day3 distributions (request classes, response classes, edge-case frequencies, mode transitions) and detect drift.
@@ -1266,7 +1266,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/build_drift_report.py`, `scripts/protocol_analysis/assert_drift_report.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_drift_report.py -q`
 
-- [ ] 17. Protocol data-adjustment backlog (safe changes only)
+- [x] 17. Protocol data-adjustment backlog (safe changes only)
 
   **What to do**:
   - Produce prioritized backlog of data-collection/protocol-observability adjustments based on evidence (no runtime implementation in this phase).
