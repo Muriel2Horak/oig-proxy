@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from oig_frame import build_frame
+from oig_frame import build_frame, build_end_time_frame
 
 if TYPE_CHECKING:
     from proxy import OIGProxy
@@ -358,18 +358,7 @@ class ControlSettings:
         ack_ok = has_ack
         tx_id = pending.get("tx_id")
 
-        now_local = datetime.now()
-        now_utc = datetime.now(timezone.utc)
-        end_inner = (
-            "<Result>END</Result>"
-            f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
-            f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
-        )
-        end_frame = build_frame(
-            end_inner,
-            add_crlf=True).encode(
-            "utf-8",
-            errors="strict")
+        end_frame = build_end_time_frame()
 
         box_writer.write(end_frame)
         try:
