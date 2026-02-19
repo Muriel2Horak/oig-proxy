@@ -579,7 +579,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/check_passive_guardrails.py`, `docs/protocol_analysis/passive_guardrails.md`
   - Pre-commit: `pytest tests/protocol_analysis/test_passive_guardrails.py -q`
 
-- [ ] 7. Day-slice frame extractor for 3-day windows
+- [x] 7. Day-slice frame extractor for 3-day windows
 
   **What to do**:
   - Implement extractor that produces per-day frame snapshots (read-only) from payload capture DB with stable schema.
@@ -647,7 +647,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/extract_day_slice.py`, `scripts/protocol_analysis/validate_day_slice.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_extract_day_slice.py -q`
 
-- [ ] 8. Telemetry and event topic snapshotter
+- [x] 8. Telemetry and event topic snapshotter
 
   **What to do**:
   - Implement read-only snapshotter for `oig/telemetry/<device_id>` and `oig/events/<device_id>` payloads over bounded collection windows.
@@ -715,7 +715,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/snapshot_telemetry_topics.py`, `scripts/protocol_analysis/validate_telemetry_snapshot.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_telemetry_snapshot.py -q`
 
-- [ ] 9. Signal timeline extractor (IsNew*/END/ACK/NACK)
+- [x] 9. Signal timeline extractor (IsNew*/END/ACK/NACK)
 
   **What to do**:
   - Build extractor that produces chronological signal timelines combining frame direction, table/result class, and pairing confidence.
@@ -784,7 +784,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/build_signal_timeline.py`, `scripts/protocol_analysis/assert_signal_timeline.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_signal_timeline.py -q`
 
-- [ ] 10. Mode and cloud health transition extractor
+- [x] 10. Mode and cloud health transition extractor
 
   **What to do**:
   - Extract mode and cloud-session transitions from telemetry snapshots and proxy status metrics.
@@ -852,7 +852,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/extract_mode_transitions.py`, `scripts/protocol_analysis/assert_transition_integrity.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_mode_transitions.py -q`
 
-- [ ] 11. Edge-case detector for timeout/eof/error/disconnect/NACK
+- [x] 11. Edge-case detector for timeout/eof/error/disconnect/NACK
 
   **What to do**:
   - Implement detector that flags protocol edge cases and creates per-class counts and samples.
@@ -921,7 +921,7 @@ Max Concurrent: 6
   - Files: `scripts/protocol_analysis/detect_edge_cases.py`, `scripts/protocol_analysis/assert_edge_case_report.py`
   - Pre-commit: `pytest tests/protocol_analysis/test_edge_case_detection.py -q`
 
-- [ ] 12. Daily validation CLI with hard pass/fail thresholds
+- [x] 12. Daily validation CLI with hard pass/fail thresholds
 
   **What to do**:
   - Implement a single validation CLI that checks daily capture health, schema integrity, signal presence, and minimum sample thresholds.
