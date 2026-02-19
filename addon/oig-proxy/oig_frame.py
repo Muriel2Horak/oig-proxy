@@ -103,13 +103,14 @@ def build_ack_only_frame() -> bytes:
 
 
 def build_end_time_frame() -> bytes:
-    """Sestaví END frame s aktuálním časem (local + UTC)."""
+    """Sestaví END frame s aktuálním časem (local + UTC) a příkazem GetActual."""
     now_local = datetime.now()
     now_utc = datetime.now(timezone.utc)
     inner = (
         f"{RESULT_END}"
         f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
         f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
+        "<ToDo>GetActual</ToDo>"
     )
     return build_frame(inner).encode("utf-8", errors="strict")
 
