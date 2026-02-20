@@ -184,7 +184,8 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
 
     def _flush_log_buffer(self) -> list[dict[str, Any]]:
         with self._logs_lock:
-            logs = self._snapshot_logs()
+            self._prune_log_buffer()
+            logs = [{k: v for k, v in item.items() if k != "_epoch"} for item in self.logs]
             self.logs.clear()
         return logs
 
