@@ -225,6 +225,10 @@ class CloudForwarder:
             self._proxy._tc.record_cloud_session_end(reason="eof")
         self._proxy._tc.fire_event(
             "error_cloud_disconnect", reason="eof")
+        self._proxy._tc.record_error_context(
+            event_type="cloud_eof",
+            details={"table_name": table_name, "conn_id": conn_id},
+        )
         self._proxy._hm.record_failure(
             reason="cloud_eof",
             local_ack=self._proxy._hm.is_hybrid_mode(),
@@ -262,6 +266,10 @@ class CloudForwarder:
             "error_cloud_timeout",
             cloud_host=TARGET_SERVER,
             timeout_s=CLOUD_ACK_TIMEOUT,
+        )
+        self._proxy._tc.record_error_context(
+            event_type="cloud_timeout",
+            details={"table_name": table_name, "conn_id": conn_id, "timeout_s": CLOUD_ACK_TIMEOUT},
         )
         self._proxy._hm.record_failure(
             reason="ack_timeout",
@@ -327,6 +335,10 @@ class CloudForwarder:
         self.errors += 1
         if self.session_connected:
             self._proxy._tc.record_cloud_session_end(reason="cloud_error")
+        self._proxy._tc.record_error_context(
+            event_type="cloud_error",
+            details={"table_name": table_name, "conn_id": conn_id, "error": str(error)},
+        )
         self._proxy._hm.record_failure(
             reason="cloud_error",
             local_ack=self._proxy._hm.is_hybrid_mode(),

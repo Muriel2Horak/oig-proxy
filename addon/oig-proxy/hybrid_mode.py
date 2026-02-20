@@ -137,6 +137,12 @@ class HybridModeManager:
                 self._proxy._tc.record_offline_event(
                     reason=reason, local_ack=local_ack,
                 )
+                self._proxy._tc.fire_event(
+                    "mode_change",
+                    from_state="online",
+                    to_state="offline",
+                    reason=reason or "cloud_failure",
+                )
                 logger.warning(
                     "☁️ HYBRID: %d failures → switching to offline mode",
                     self.fail_count,
@@ -157,6 +163,12 @@ class HybridModeManager:
             self.state = "online"
             self.state_since_epoch = transition_time
             self.last_offline_reason = None
+            self._proxy._tc.fire_event(
+                "mode_change",
+                from_state="offline",
+                to_state="online",
+                reason="cloud_recovered",
+            )
         self.fail_count = 0
         self.in_offline = False
 

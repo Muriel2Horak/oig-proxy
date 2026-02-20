@@ -70,6 +70,30 @@ class TelemetryCollector:
         self.req_pending: dict[int, deque[str]] = defaultdict(deque)
         self.stats: dict[tuple[str, str, str], Counter[str]] = {}
 
+        # DA-001: NACK reason tracking
+        self.nack_reasons: Counter[str] = Counter()
+
+        # DA-002: Cloud gap duration histogram
+        self.cloud_gap_durations: deque[dict[str, Any]] = deque()
+
+        # DA-004: Pairing confidence counters
+        self.pairing_high: int = 0
+        self.pairing_medium: int = 0
+        self.pairing_low: int = 0
+
+        # DA-005: Frame direction counters
+        self.frames_box_to_proxy: int = 0
+        self.frames_cloud_to_proxy: int = 0
+        self.frames_proxy_to_box: int = 0
+
+        # DA-007: Signal class distribution
+        self.signal_class_counts: Counter[str] = Counter()
+
+        # DA-009: END frame frequency
+        self.end_frames_received: int = 0
+        self.end_frames_sent: int = 0
+        self.last_end_frame_time: float | None = None
+
     # ------------------------------------------------------------------
     # Timestamp helpers
     # ------------------------------------------------------------------
@@ -190,6 +214,50 @@ class TelemetryCollector:
             return "resp_ack"
         return "resp_other"
 
+    @staticmethod
+    def _extract_nack_reason(response_text: str) -> str:
+        import re  # pylint: disable=import-outside-toplevel
+        match = re.search(r"<Reason>([^<]*)</Reason>", response_text)
+        return match.group(1).strip() if match else "unknown"
+
+    def record_nack_reason(self, reason: str) -> None:
+        """Zaznamená důvod NACK odpovědi."""
+        self.nack_reasons[reason] += 1
+
+    def record_cloud_gap(self, duration_s: float) -> None:
+        """Zaznamená dobu výpadku cloudového spojení."""
+        self.cloud_gap_durations.append({
+            "timestamp": self._utc_iso(),
+            "duration_s": duration_s,
+        })
+
+    def record_pairing_confidence(self, confidence: float) -> None:
+        """Zaznamená skóre spolehlivosti párování požadavku s odpovědí."""
+        if confidence >= 0.8:
+            self.pairing_high += 1
+        elif confidence >= 0.5:
+            self.pairing_medium += 1
+        else:
+            self.pairing_low += 1
+
+    def record_frame_direction(self, direction: str) -> None:
+        if direction == "box_to_proxy":
+            self.frames_box_to_proxy += 1
+        elif direction == "cloud_to_proxy":
+            self.frames_cloud_to_proxy += 1
+        elif direction == "proxy_to_box":
+            self.frames_proxy_to_box += 1
+
+    def record_signal_class(self, signal_class: str) -> None:
+        self.signal_class_counts[signal_class] += 1
+
+    def record_end_frame(self, sent: bool = False) -> None:
+        if sent:
+            self.end_frames_sent += 1
+        else:
+            self.end_frames_received += 1
+        self.last_end_frame_time = time.time()
+
     def record_response(
         self,
         response_text: str,
@@ -237,6 +305,8 @@ class TelemetryCollector:
         )
         stats_counter["req_count"] += 1
         stats_counter[self._response_kind(response_text)] += 1
+        if "<Result>NACK</Result>" in response_text:
+            self.record_nack_reason(self._extract_nack_reason(response_text))
         if source == "cloud":
             self.cloud_ok_in_window = True
 
@@ -582,6 +652,28 @@ class TelemetryCollector:
                 return value
         return None
 
+    def _build_cloud_gap_histogram(self) -> dict[str, int]:
+        buckets: dict[str, int] = {
+            "lt_60s": 0,
+            "60_120s": 0,
+            "120_300s": 0,
+            "300_600s": 0,
+            "gt_600s": 0,
+        }
+        for entry in self.cloud_gap_durations:
+            d = entry["duration_s"]
+            if d < 60:
+                buckets["lt_60s"] += 1
+            elif d < 120:
+                buckets["60_120s"] += 1
+            elif d < 300:
+                buckets["120_300s"] += 1
+            elif d <= 600:
+                buckets["300_600s"] += 1
+            else:
+                buckets["gt_600s"] += 1
+        return buckets
+
     def _build_device_specific_metrics(self, device_id: str) -> dict[str, Any]:
         return {
             "isnewfw_fw": self._cached_state_value(
@@ -636,7 +728,37 @@ class TelemetryCollector:
             "mqtt_queue": proxy.mqtt_publisher.queue.size() if proxy.mqtt_publisher else 0,
             "set_commands": set_commands,
             "window_metrics": window_metrics,
+            "nack_reasons": dict(self.nack_reasons),
+            "cloud_gap_histogram": self._build_cloud_gap_histogram(),
+            "pairing_confidence": {
+                "high": self.pairing_high,
+                "medium": self.pairing_medium,
+                "low": self.pairing_low,
+            },
+            "frame_directions": {
+                "box_to_proxy": self.frames_box_to_proxy,
+                "cloud_to_proxy": self.frames_cloud_to_proxy,
+                "proxy_to_box": self.frames_proxy_to_box,
+            },
+            "signal_distribution": dict(self.signal_class_counts),
+            "end_frames": {
+                "received": self.end_frames_received,
+                "sent": self.end_frames_sent,
+                "time_since_last_s": int(time.time() - self.last_end_frame_time) if self.last_end_frame_time else None,
+            },
         }
+        self.nack_reasons.clear()
+        self.cloud_gap_durations.clear()
+        self.pairing_high = 0
+        self.pairing_medium = 0
+        self.pairing_low = 0
+        self.frames_box_to_proxy = 0
+        self.frames_cloud_to_proxy = 0
+        self.frames_proxy_to_box = 0
+        self.signal_class_counts.clear()
+        self.end_frames_received = 0
+        self.end_frames_sent = 0
+        self.last_end_frame_time = None
         device_id = proxy.device_id if proxy.device_id != "AUTO" else ""
         if device_id:
             metrics.update(self._build_device_specific_metrics(device_id))
