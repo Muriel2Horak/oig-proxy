@@ -1547,16 +1547,16 @@ Max Concurrent: 6
 
 ## Final Verification Wave (MANDATORY - after ALL implementation tasks)
 
-- [ ] F1. **Plan Compliance Audit** - `oracle`
+- [x] F1. **Plan Compliance Audit** - `oracle`
   Validate all Must Have/Must NOT Have requirements against produced artifacts and evidence files.
 
-- [ ] F2. **Code Quality Review** - `unspecified-high`
+- [x] F2. **Code Quality Review** - `unspecified-high`
   Run `pytest`, lint/type checks for any new analysis scripts, and validate no unsafe runtime mutations were introduced.
 
-- [ ] F3. **Real Manual QA** - `unspecified-high`
+- [x] F3. **Real Manual QA** - `unspecified-high`
   Execute every QA scenario from Tasks 1-20 and verify evidence files exist in `.sisyphus/evidence/`.
 
-- [ ] F4. **Scope Fidelity Check** - `deep`
+- [x] F4. **Scope Fidelity Check** - `deep`
   Confirm all outputs match passive-analysis scope and no out-of-scope implementation slipped in.
 
 ---

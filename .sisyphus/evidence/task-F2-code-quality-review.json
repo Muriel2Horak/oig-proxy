@@ -1,0 +1,637 @@
+{
+  "task": "F2-code-quality-review",
+  "generated_at": "2026-02-20T00:14:00Z",
+  "reviewer": "sisyphus-agent",
+  "scope": "scripts/protocol_analysis/",
+  "files_reviewed": [
+    "snapshot_telemetry_topics.py",
+    "score_reconstruction_confidence.py",
+    "assert_pairing_quality.py",
+    "validate_telemetry_snapshot.py",
+    "validate_evidence_manifest.py",
+    "extract_mode_transitions.py",
+    "generate_drift_report.py",
+    "validate_taxonomy.py",
+    "validate_day_slice.py",
+    "assert_matrix_schema.py",
+    "validate_daily_collection.py",
+    "build_signal_timeline.py",
+    "generate_evidence_manifest.py",
+    "quantify_blind_spots.py",
+    "baseline_snapshot.py",
+    "validate_baseline.py",
+    "assert_confidence_score.py",
+    "build_signal_reaction_matrix.py",
+    "assert_transition_integrity.py",
+    "check_passive_guardrails.py",
+    "detect_edge_cases.py",
+    "build_standard_matrix.py",
+    "assert_edge_case_report.py",
+    "assert_signal_timeline.py",
+    "audit_capture_schema.py",
+    "assert_capture_audit.py",
+    "build_signal_taxonomy.py",
+    "pair_frames.py",
+    "build_drift_report.py",
+    "extract_day_slice.py",
+    "assert_signal_reaction_matrix.py",
+    "assert_confidence_report.py"
+  ],
+  "total_files_reviewed": 32,
+  "issues_found": [
+    {
+      "id": "CRIT-001",
+      "severity": "critical",
+      "file": "generate_drift_report.py",
+      "location": "lines 33-67 and lines 706-714",
+      "category": "duplicate_definition",
+      "description": "parse_args() function is defined TWICE. The second definition (lines 706-714) silently shadows the first (lines 33-67). The first definition contains the real argument parser with all arguments; the second is a stub that overrides it. Any code path using the second definition would receive an incomplete parser.",
+      "impact": "Runtime behavior depends on which definition Python loads at call time; the second stub definition wins and discards all argument definitions from the first."
+    },
+    {
+      "id": "CRIT-002",
+      "severity": "critical",
+      "file": "assert_confidence_report.py",
+      "location": "line 46",
+      "category": "missing_encoding",
+      "description": "open(EVIDENCE_PATH) is called without encoding='utf-8'. On Windows or non-UTF-8 locale systems this will use the system default encoding, potentially causing decoding errors or reading malformed data from JSON files that contain non-ASCII characters.",
+      "impact": "Portability failure on non-UTF-8 systems; inconsistent behavior vs. all other scripts that explicitly specify encoding='utf-8'."
+    },
+    {
+      "id": "CRIT-003",
+      "severity": "critical",
+      "file": "assert_confidence_report.py",
+      "location": "lines 37-39 and 42",
+      "category": "no_return_type_and_sys_exit_in_helper",
+      "description": "The fail() helper calls sys.exit(1) directly with no return type annotation, and main() is declared as '-> None' but never returns an int. The script uses sys.exit(1) in a helper rather than propagating errors via return codes through main(). This means the script cannot be called as a library function and violates the standard pattern used by 30 of 32 scripts.",
+      "impact": "Script cannot be unit-tested without mocking sys.exit; inconsistent with codebase pattern of 'sys.exit(main())'."
+    },
+    {
+      "id": "MAJOR-001",
+      "severity": "major",
+      "file": "snapshot_telemetry_topics.py",
+      "location": "multiple lines",
+      "category": "hardcoded_values",
+      "description": "Contains three hardcoded values that should be dynamic or configurable: (1) instance_hash = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6' (fake hash), (2) IP address '192.168.1.100:54321' as peer value, (3) version = '1.0.0'. These are placeholder values baked into the output evidence.",
+      "impact": "Evidence output contains fake/placeholder data that misrepresents actual captured protocol data."
+    },
+    {
+      "id": "MAJOR-002",
+      "severity": "major",
+      "file": "generate_evidence_manifest.py",
+      "location": "line with 'generated': '2026-02-19T00:00:00Z'",
+      "category": "hardcoded_timestamp",
+      "description": "The manifest output contains a hardcoded static timestamp '2026-02-19T00:00:00Z' for the 'generated' field instead of using datetime.now(timezone.utc). Every run will produce the same timestamp regardless of when the script is actually executed.",
+      "impact": "Evidence manifest always reports the same generation time, making it impossible to distinguish when the manifest was regenerated."
+    },
+    {
+      "id": "MAJOR-003",
+      "severity": "major",
+      "file": "generate_evidence_manifest.py",
+      "location": "open() calls for plan_path and output_path",
+      "category": "missing_encoding",
+      "description": "Two open() calls are missing encoding='utf-8': open(plan_path, 'r') for reading the plan file, and open(output_path, 'w') for writing the manifest. Other scripts in the codebase consistently use encoding='utf-8'.",
+      "impact": "Portability issue; may silently corrupt non-ASCII content on non-UTF-8 systems."
+    },
+    {
+      "id": "MAJOR-004",
+      "severity": "major",
+      "file": "validate_evidence_manifest.py",
+      "location": "open(manifest_path) call",
+      "category": "missing_encoding",
+      "description": "open(manifest_path) is called without encoding='utf-8'. Inconsistent with the codebase standard and risks mis-reading JSON with non-ASCII characters.",
+      "impact": "Portability issue; potential data corruption on non-UTF-8 locale systems."
+    },
+    {
+      "id": "MAJOR-005",
+      "severity": "major",
+      "file": "baseline_snapshot.py",
+      "location": "telemetry broker address in build_telemetry_snapshot()",
+      "category": "hardcoded_values",
+      "description": "Hardcodes MQTT broker address 'telemetry.muriel-cz.cz:1883' directly in the snapshot output. This is a real production hostname baked into the evidence artifact rather than being derived from configuration.",
+      "impact": "Evidence file reflects a hardcoded value rather than the actual runtime broker; not reusable in different environments."
+    },
+    {
+      "id": "MAJOR-006",
+      "severity": "major",
+      "file": "baseline_snapshot.py",
+      "location": "main() function, line ~131",
+      "category": "broad_exception_catch",
+      "description": "main() uses bare 'except Exception as e' to catch all exceptions. This swallows unexpected errors (e.g., KeyboardInterrupt is not caught, but MemoryError, SystemExit would be), making debugging difficult and hiding root causes.",
+      "impact": "Error messages are generic; stack traces are lost; unexpected exceptions produce confusing output."
+    },
+    {
+      "id": "MAJOR-007",
+      "severity": "major",
+      "file": "quantify_blind_spots.py",
+      "location": "line 59 and surrounding",
+      "category": "mid_file_import",
+      "description": "from typing import Any, TypeVar is placed mid-file after function definitions, not at the top of the module. This violates PEP 8's import ordering rule (all imports must appear at the top of the file before any non-import code) and causes NameError if those types are referenced before line 59.",
+      "impact": "Violates PEP 8; potential NameError if import order changes; confusing for readers."
+    },
+    {
+      "id": "MAJOR-008",
+      "severity": "major",
+      "file": "quantify_blind_spots.py",
+      "location": "multiple constants",
+      "category": "hardcoded_values",
+      "description": "Multiple hardcoded numeric values that represent specific dataset counts: 1005 (evidence count), 100 (percentage sentinel), 771 (frame count), 6 (match reasons), 27 (NACK count), 871952 (total frame count). These are all data-specific values baked into the script rather than computed from actual data.",
+      "impact": "Script outputs predetermined values regardless of actual input data; meaningless on any other dataset."
+    },
+    {
+      "id": "MAJOR-009",
+      "severity": "major",
+      "file": "audit_capture_schema.py",
+      "location": "line 110",
+      "category": "deprecated_datetime_api",
+      "description": "Uses __import__('datetime').datetime.utcnow().isoformat() + 'Z' — the inline __import__ hack is unconventional and utcnow() is deprecated since Python 3.12 in favor of datetime.now(timezone.utc). The pattern is also inconsistent with other scripts.",
+      "impact": "DeprecationWarning on Python 3.12+; non-standard import pattern reduces readability."
+    },
+    {
+      "id": "MAJOR-010",
+      "severity": "major",
+      "file": "build_signal_taxonomy.py",
+      "location": "open() call in save_taxonomy(), line 187",
+      "category": "missing_encoding",
+      "description": "open(output_path, 'w') in save_taxonomy() is called without encoding='utf-8'. All other file writes in the codebase explicitly specify encoding='utf-8'.",
+      "impact": "Portability issue; may silently corrupt non-ASCII JSON content on non-UTF-8 locale systems."
+    },
+    {
+      "id": "MAJOR-011",
+      "severity": "major",
+      "file": "build_signal_taxonomy.py",
+      "location": "line 40",
+      "category": "deprecated_datetime_api",
+      "description": "Uses datetime.utcnow().isoformat() + 'Z' for the generated_at timestamp. utcnow() is deprecated since Python 3.12. Should use datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z') for consistency with other scripts.",
+      "impact": "DeprecationWarning on Python 3.12+; inconsistent timestamp generation."
+    },
+    {
+      "id": "MAJOR-012",
+      "severity": "major",
+      "file": "pair_frames.py",
+      "location": "load_frames() function, lines 119-168",
+      "category": "missing_db_readonly_mode",
+      "description": "DB connection uses sqlite3.connect(db_path) without read-only URI mode (file:{db_path}?mode=ro). Most other scripts that open DB for analysis use read-only mode to prevent accidental modification. Also does not use a context manager — manual conn.close() without try/finally risks connection leak on exception.",
+      "impact": "Risk of accidental DB modification; connection may leak if an exception occurs before conn.close()."
+    },
+    {
+      "id": "MAJOR-013",
+      "severity": "major",
+      "file": "pair_frames.py",
+      "location": "generate_report(), line 420",
+      "category": "deprecated_datetime_api",
+      "description": "Uses datetime.utcnow().isoformat() + 'Z' which is deprecated since Python 3.12.",
+      "impact": "DeprecationWarning on Python 3.12+."
+    },
+    {
+      "id": "MAJOR-014",
+      "severity": "major",
+      "file": "assert_signal_reaction_matrix.py",
+      "location": "main() function, line 306",
+      "category": "missing_return_type",
+      "description": "main() is declared without a return type annotation (def main():) despite returning integer values 0 and 1. All other scripts in the codebase consistently annotate main() as '-> int'. The inconsistency suggests this was an oversight.",
+      "impact": "Type checkers cannot verify the return type; inconsistent with codebase standard."
+    },
+    {
+      "id": "MAJOR-015",
+      "severity": "major",
+      "file": "detect_edge_cases.py",
+      "location": "datetime.now().isoformat() call",
+      "category": "naive_datetime",
+      "description": "Uses datetime.now().isoformat() without timezone.utc, producing a naive (timezone-unaware) timestamp. All other scripts use datetime.now(timezone.utc) for UTC-aware timestamps. This creates inconsistent timestamp formats across evidence files.",
+      "impact": "Evidence timestamps lack timezone info; cannot be reliably compared with timestamps from other scripts."
+    },
+    {
+      "id": "MAJOR-016",
+      "severity": "major",
+      "file": "detect_edge_cases.py",
+      "location": "DB connection",
+      "category": "missing_db_readonly_mode",
+      "description": "sqlite3.connect(db_path) opens DB without read-only URI mode. The script only reads data for edge case detection but has write access to the database.",
+      "impact": "Risk of accidental DB modification during analysis."
+    },
+    {
+      "id": "MAJOR-017",
+      "severity": "major",
+      "file": "extract_mode_transitions.py",
+      "location": "_ts_diff_seconds() function",
+      "category": "silent_exception_swallow",
+      "description": "_ts_diff_seconds() catches ValueError silently (bare except or returns 0.0 without logging), making it impossible to detect malformed timestamps in the input data. The function returns 0.0 as a fallback which may produce incorrect transition timing data.",
+      "impact": "Corrupt timestamp data silently produces wrong timing calculations; no warning is emitted."
+    },
+    {
+      "id": "MAJOR-018",
+      "severity": "major",
+      "file": "score_reconstruction_confidence.py",
+      "location": "hardcoded filename reference",
+      "category": "hardcoded_values",
+      "description": "Hardcodes 'task-15-blind-spot-quantification.json' as a filename reference rather than receiving it as a parameter. Couples this script to a specific task number, making it non-reusable.",
+      "impact": "Script cannot be reused for different evidence files without code modification."
+    },
+    {
+      "id": "MINOR-001",
+      "severity": "minor",
+      "file": "snapshot_telemetry_topics.py",
+      "location": "script_dir variable",
+      "category": "unused_variable",
+      "description": "script_dir = Path(__file__).parent is defined but never used in the script.",
+      "impact": "Dead code; minor readability issue."
+    },
+    {
+      "id": "MINOR-002",
+      "severity": "minor",
+      "file": "snapshot_telemetry_topics.py",
+      "location": "main() definition",
+      "category": "missing_return_type",
+      "description": "main() function lacks a return type annotation. The function returns None implicitly but does not call sys.exit() either.",
+      "impact": "Type checker cannot verify return type; minor inconsistency."
+    },
+    {
+      "id": "MINOR-003",
+      "severity": "minor",
+      "file": "validate_telemetry_snapshot.py",
+      "location": "script_dir variable",
+      "category": "unused_variable",
+      "description": "script_dir = Path(__file__).parent is defined but never referenced elsewhere in the file.",
+      "impact": "Dead code."
+    },
+    {
+      "id": "MINOR-004",
+      "severity": "minor",
+      "file": "validate_telemetry_snapshot.py",
+      "location": "main() and argparse defaults",
+      "category": "hardcoded_default_path",
+      "description": "Default path '.sisyphus/evidence/task-8-telemetry-snapshot.json' is hardcoded as an argparse default. While this is common for convenience scripts, it tightly couples the script to a specific task output path.",
+      "impact": "Minor coupling; acceptable for single-use scripts but not reusable."
+    },
+    {
+      "id": "MINOR-005",
+      "severity": "minor",
+      "file": "validate_taxonomy.py",
+      "location": "line 156",
+      "category": "function_body_import",
+      "description": "from collections import Counter is placed inside a function body rather than at the module top level. While Python allows this and it works correctly, it violates PEP 8's import ordering convention and hides a dependency.",
+      "impact": "PEP 8 violation; slightly less readable."
+    },
+    {
+      "id": "MINOR-006",
+      "severity": "minor",
+      "file": "validate_taxonomy.py",
+      "location": "last line",
+      "category": "inconsistent_exit_pattern",
+      "description": "Uses raise SystemExit(main()) instead of sys.exit(main()). Both are functionally equivalent, but the rest of the codebase consistently uses sys.exit(main()).",
+      "impact": "Stylistic inconsistency."
+    },
+    {
+      "id": "MINOR-007",
+      "severity": "minor",
+      "file": "validate_day_slice.py",
+      "location": "import line",
+      "category": "unused_import",
+      "description": "from datetime import datetime, timezone — timezone is imported but not used anywhere in the script.",
+      "impact": "Unnecessary import; lint warning."
+    },
+    {
+      "id": "MINOR-008",
+      "severity": "minor",
+      "file": "build_signal_timeline.py",
+      "location": "DB connection in load_frames()",
+      "category": "missing_db_readonly_mode",
+      "description": "Opens DB without read-only URI mode. Other analysis scripts use sqlite3.connect(f'file:{db_path}?mode=ro', uri=True).",
+      "impact": "Minor risk of accidental DB modification."
+    },
+    {
+      "id": "MINOR-009",
+      "severity": "minor",
+      "file": "build_signal_timeline.py",
+      "location": "load_frames() conn.close()",
+      "category": "no_context_manager",
+      "description": "Database connection is closed via manual conn.close() rather than a context manager (with statement). If an exception occurs before close(), the connection leaks.",
+      "impact": "Potential connection leak on error paths."
+    },
+    {
+      "id": "MINOR-010",
+      "severity": "minor",
+      "file": "assert_confidence_score.py",
+      "location": "loop variable in failures loop",
+      "category": "confusing_variable_name",
+      "description": "Loop uses 'for f in failures: print(f\"  - {f}\")' where the loop variable 'f' shadows the f-string prefix 'f'. While Python resolves this correctly (f in 'f\"...\"' is a string prefix, not the variable), it is confusing to human readers.",
+      "impact": "Minor readability issue."
+    },
+    {
+      "id": "MINOR-011",
+      "severity": "minor",
+      "file": "build_signal_reaction_matrix.py",
+      "location": "_percentile() usage before definition",
+      "category": "use_before_definition",
+      "description": "_percentile() is called at line ~193 but defined later in the file. Python resolves this at runtime for regular functions (not at parse time), so it works, but it is bad practice and violates the convention of defining helpers before use.",
+      "impact": "Readability issue; confusing code organization."
+    },
+    {
+      "id": "MINOR-012",
+      "severity": "minor",
+      "file": "assert_transition_integrity.py",
+      "location": "import line",
+      "category": "unused_import",
+      "description": "from datetime import datetime, timezone — timezone is imported but not used in the logic (only datetime is used for parsing).",
+      "impact": "Unnecessary import; lint warning."
+    },
+    {
+      "id": "MINOR-013",
+      "severity": "minor",
+      "file": "check_passive_guardrails.py",
+      "location": "type hint imports",
+      "category": "legacy_typing_imports",
+      "description": "Uses Dict and List from typing module (from typing import Dict, List) instead of the built-in dict and list available since Python 3.9. All other scripts in the codebase use the modern built-in generic syntax.",
+      "impact": "Stylistic inconsistency with the rest of the codebase."
+    },
+    {
+      "id": "MINOR-014",
+      "severity": "minor",
+      "file": "check_passive_guardrails.py",
+      "location": "check_timestamp() function",
+      "category": "odd_metric",
+      "description": "check_timestamp() validates freshness by reading the script file's own modification time (Path(__file__).stat().st_mtime). This measures when the script was last modified, not when the data was captured — a meaningless metric for data quality validation.",
+      "impact": "The metric being checked does not correspond to anything meaningful about the data."
+    },
+    {
+      "id": "MINOR-015",
+      "severity": "minor",
+      "file": "check_passive_guardrails.py",
+      "location": "main() function",
+      "category": "inconsistent_exit_pattern",
+      "description": "main() calls sys.exit() directly with status codes rather than returning int values. The codebase standard is to return 0/1 from main() and call sys.exit(main()) at the bottom.",
+      "impact": "Inconsistent with codebase pattern; makes main() harder to unit-test."
+    },
+    {
+      "id": "MINOR-016",
+      "severity": "minor",
+      "file": "build_standard_matrix.py",
+      "location": "generated_at timestamp",
+      "category": "inconsistent_timestamp_format",
+      "description": "Uses datetime.now(timezone.utc).isoformat() without .replace('+00:00', 'Z'). This produces a timestamp like '2026-02-20T00:00:00+00:00' instead of '2026-02-20T00:00:00Z', inconsistent with the format used by most other scripts.",
+      "impact": "Inconsistent timestamp format across evidence files."
+    },
+    {
+      "id": "MINOR-017",
+      "severity": "minor",
+      "file": "assert_capture_audit.py",
+      "location": "module docstring",
+      "category": "missing_module_docstring",
+      "description": "The file has no module-level docstring. It jumps directly to imports. All other scripts in the codebase have a module docstring describing the script's purpose and usage.",
+      "impact": "Missing documentation; cannot quickly understand the script's purpose from the top of the file."
+    },
+    {
+      "id": "MINOR-018",
+      "severity": "minor",
+      "file": "assert_edge_case_report.py",
+      "location": "main() lines 134-145",
+      "category": "repeated_file_read",
+      "description": "The report file is read up to 3 times in main(): once in validate_edge_case_report(), once for --require-findings check, and once for summary printing. The file should be read once and the data passed around.",
+      "impact": "Minor performance issue; redundant I/O operations."
+    },
+    {
+      "id": "MINOR-019",
+      "severity": "minor",
+      "file": "assert_signal_timeline.py",
+      "location": "assert_no_unknown_signals() function, lines 45-54",
+      "category": "logic_comment_mismatch",
+      "description": "The function is named assert_no_unknown_signals but its docstring/logic actually checks if unknown signals are 'not marked' — it looks for events where is_unknown=True and reports them as errors. The logic appears inverted: it errors when unknown signals ARE marked as unknown, which is the expected behavior. The function name and error message are confusing.",
+      "impact": "Confusing semantics; function behavior may not match intent."
+    },
+    {
+      "id": "MINOR-020",
+      "severity": "minor",
+      "file": "audit_capture_schema.py",
+      "location": "except clause line 171",
+      "category": "redundant_broad_exception",
+      "description": "except (sqlite3.Error, Exception) — since Exception is a superclass of sqlite3.Error, the sqlite3.Error in the tuple is redundant. Just 'except Exception' would be equivalent (and equally broad). The pylint disable comment acknowledges it is a broad catch.",
+      "impact": "Minor code quality issue; redundant exception in tuple."
+    },
+    {
+      "id": "MINOR-021",
+      "severity": "minor",
+      "file": "extract_day_slice.py",
+      "location": "extract_day_slice() DB connection",
+      "category": "missing_db_readonly_mode",
+      "description": "sqlite3.connect(db_path) without read-only URI mode. The script only queries data but has write access.",
+      "impact": "Minor risk of accidental DB modification."
+    },
+    {
+      "id": "MINOR-022",
+      "severity": "minor",
+      "file": "extract_day_slice.py",
+      "location": "line 110",
+      "category": "inconsistent_timestamp_format",
+      "description": "extracted_at uses datetime.now(timezone.utc).isoformat() without .replace('+00:00', 'Z'), producing '+00:00' suffix instead of 'Z'.",
+      "impact": "Inconsistent timestamp format."
+    },
+    {
+      "id": "MINOR-023",
+      "severity": "minor",
+      "file": "build_drift_report.py",
+      "location": "confidence = 0.82 if existing_drift else 0.65, line 189",
+      "category": "hardcoded_values",
+      "description": "Confidence values 0.82 and 0.65 are hardcoded magic numbers with no explanation. The confidence score should be computed from the actual data rather than assigned from two arbitrary constants based on whether a prior file exists.",
+      "impact": "Confidence metric is not derived from data; misleading."
+    },
+    {
+      "id": "MINOR-024",
+      "severity": "minor",
+      "file": "assert_confidence_report.py",
+      "location": "EVIDENCE_PATH constant",
+      "category": "hardcoded_path_no_arg",
+      "description": "EVIDENCE_PATH is hardcoded at module level with no argparse option to override it. The script cannot be pointed at a different evidence file without code modification.",
+      "impact": "Not reusable for different evidence paths; requires code edit to run against other datasets."
+    },
+    {
+      "id": "MINOR-025",
+      "severity": "minor",
+      "file": "generate_drift_report.py",
+      "location": "main() return",
+      "category": "missing_sys_exit",
+      "description": "main() returns None (no return statement) and does not call sys.exit(). The script uses print() for output but lacks a proper exit code convention consistent with the rest of the codebase.",
+      "impact": "Script always exits 0 regardless of success/failure; no machine-readable status code."
+    }
+  ],
+  "severity_breakdown": {
+    "critical": 3,
+    "major": 18,
+    "minor": 25,
+    "total": 46
+  },
+  "files_with_issues": {
+    "snapshot_telemetry_topics.py": ["MAJOR-001", "MINOR-001", "MINOR-002"],
+    "score_reconstruction_confidence.py": ["MAJOR-018"],
+    "assert_pairing_quality.py": [],
+    "validate_telemetry_snapshot.py": ["MINOR-003", "MINOR-004"],
+    "validate_evidence_manifest.py": ["MAJOR-004"],
+    "extract_mode_transitions.py": ["MAJOR-017"],
+    "generate_drift_report.py": ["CRIT-001", "MINOR-025"],
+    "validate_taxonomy.py": ["MINOR-005", "MINOR-006"],
+    "validate_day_slice.py": ["MINOR-007"],
+    "assert_matrix_schema.py": [],
+    "validate_daily_collection.py": [],
+    "build_signal_timeline.py": ["MINOR-008", "MINOR-009"],
+    "generate_evidence_manifest.py": ["MAJOR-002", "MAJOR-003"],
+    "quantify_blind_spots.py": ["MAJOR-007", "MAJOR-008"],
+    "baseline_snapshot.py": ["MAJOR-005", "MAJOR-006"],
+    "validate_baseline.py": [],
+    "assert_confidence_score.py": ["MINOR-010"],
+    "build_signal_reaction_matrix.py": ["MINOR-011"],
+    "assert_transition_integrity.py": ["MINOR-012"],
+    "check_passive_guardrails.py": ["MINOR-013", "MINOR-014", "MINOR-015"],
+    "detect_edge_cases.py": ["MAJOR-015", "MAJOR-016"],
+    "build_standard_matrix.py": ["MINOR-016"],
+    "assert_edge_case_report.py": ["MINOR-018"],
+    "assert_signal_timeline.py": ["MINOR-019"],
+    "audit_capture_schema.py": ["MAJOR-009", "MINOR-020"],
+    "assert_capture_audit.py": ["MINOR-017"],
+    "build_signal_taxonomy.py": ["MAJOR-010", "MAJOR-011"],
+    "pair_frames.py": ["MAJOR-012", "MAJOR-013"],
+    "build_drift_report.py": ["MINOR-023"],
+    "extract_day_slice.py": ["MINOR-021", "MINOR-022"],
+    "assert_signal_reaction_matrix.py": ["MAJOR-014"],
+    "assert_confidence_report.py": ["CRIT-002", "CRIT-003", "MINOR-024"]
+  },
+  "clean_files": [
+    "assert_pairing_quality.py",
+    "assert_matrix_schema.py",
+    "validate_daily_collection.py",
+    "validate_baseline.py"
+  ],
+  "recommendations": [
+    {
+      "priority": "high",
+      "id": "REC-001",
+      "title": "Fix duplicate parse_args() in generate_drift_report.py",
+      "description": "Remove the second (stub) parse_args() definition at lines 706-714. Retain only the first complete definition with all argument declarations.",
+      "affects_files": ["generate_drift_report.py"]
+    },
+    {
+      "priority": "high",
+      "id": "REC-002",
+      "title": "Add encoding='utf-8' to all open() calls missing it",
+      "description": "Add encoding='utf-8' to: assert_confidence_report.py open(), generate_evidence_manifest.py (2 calls), validate_evidence_manifest.py open(), build_signal_taxonomy.py save_taxonomy() open().",
+      "affects_files": [
+        "assert_confidence_report.py",
+        "generate_evidence_manifest.py",
+        "validate_evidence_manifest.py",
+        "build_signal_taxonomy.py"
+      ]
+    },
+    {
+      "priority": "high",
+      "id": "REC-003",
+      "title": "Replace hardcoded timestamps and fake data in evidence generators",
+      "description": "Replace static '2026-02-19T00:00:00Z' in generate_evidence_manifest.py with datetime.now(timezone.utc). Replace fake instance_hash, IP, and version in snapshot_telemetry_topics.py with actual runtime values or argparse parameters.",
+      "affects_files": ["generate_evidence_manifest.py", "snapshot_telemetry_topics.py"]
+    },
+    {
+      "priority": "high",
+      "id": "REC-004",
+      "title": "Replace deprecated datetime.utcnow() calls",
+      "description": "Replace all datetime.utcnow().isoformat() + 'Z' with datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'). Affected files: build_signal_taxonomy.py, pair_frames.py, audit_capture_schema.py (also fix inline __import__ hack).",
+      "affects_files": ["build_signal_taxonomy.py", "pair_frames.py", "audit_capture_schema.py"]
+    },
+    {
+      "priority": "medium",
+      "id": "REC-005",
+      "title": "Standardize timestamp format across all scripts",
+      "description": "All scripts should use datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z') for UTC ISO 8601 timestamps with 'Z' suffix. Fix inconsistencies in build_standard_matrix.py, extract_day_slice.py, detect_edge_cases.py.",
+      "affects_files": ["build_standard_matrix.py", "extract_day_slice.py", "detect_edge_cases.py"]
+    },
+    {
+      "priority": "medium",
+      "id": "REC-006",
+      "title": "Use read-only DB connections for all analysis scripts",
+      "description": "All scripts that only query SQLite for analysis should use sqlite3.connect(f'file:{db_path}?mode=ro', uri=True) to prevent accidental writes. Fix: pair_frames.py, detect_edge_cases.py, extract_day_slice.py, build_signal_timeline.py.",
+      "affects_files": [
+        "pair_frames.py",
+        "detect_edge_cases.py",
+        "extract_day_slice.py",
+        "build_signal_timeline.py"
+      ]
+    },
+    {
+      "priority": "medium",
+      "id": "REC-007",
+      "title": "Move all imports to top of file per PEP 8",
+      "description": "Move 'from collections import Counter' in validate_taxonomy.py and 'from typing import Any, TypeVar' in quantify_blind_spots.py to the top of their respective files with other imports.",
+      "affects_files": ["validate_taxonomy.py", "quantify_blind_spots.py"]
+    },
+    {
+      "priority": "medium",
+      "id": "REC-008",
+      "title": "Standardize main() exit pattern across all scripts",
+      "description": "All scripts should use: def main() -> int: ... ; sys.exit(main()). Fix: check_passive_guardrails.py (uses sys.exit() directly in main), validate_taxonomy.py (uses raise SystemExit), assert_confidence_report.py (uses sys.exit in helper, main returns None), generate_drift_report.py (main returns None).",
+      "affects_files": [
+        "check_passive_guardrails.py",
+        "validate_taxonomy.py",
+        "assert_confidence_report.py",
+        "generate_drift_report.py"
+      ]
+    },
+    {
+      "priority": "medium",
+      "id": "REC-009",
+      "title": "Replace hardcoded numeric constants in quantify_blind_spots.py with computed values",
+      "description": "Values like 1005, 771, 6, 27, 871952 should be derived from actual data queries or clearly documented as known-good reference values with a comment explaining their origin.",
+      "affects_files": ["quantify_blind_spots.py"]
+    },
+    {
+      "priority": "low",
+      "id": "REC-010",
+      "title": "Remove unused variables and imports",
+      "description": "Remove unused script_dir variables in snapshot_telemetry_topics.py and validate_telemetry_snapshot.py. Remove unused timezone import in validate_day_slice.py and assert_transition_integrity.py.",
+      "affects_files": [
+        "snapshot_telemetry_topics.py",
+        "validate_telemetry_snapshot.py",
+        "validate_day_slice.py",
+        "assert_transition_integrity.py"
+      ]
+    },
+    {
+      "priority": "low",
+      "id": "REC-011",
+      "title": "Use modern dict/list type hints instead of typing.Dict/List",
+      "description": "Replace Dict, List from typing with built-in dict, list throughout check_passive_guardrails.py to match the Python 3.10+ style used by all other scripts.",
+      "affects_files": ["check_passive_guardrails.py"]
+    },
+    {
+      "priority": "low",
+      "id": "REC-012",
+      "title": "Add module docstring to assert_capture_audit.py",
+      "description": "The file is missing a module-level docstring explaining its purpose, usage, and expected input/output. All other scripts have this.",
+      "affects_files": ["assert_capture_audit.py"]
+    }
+  ],
+  "summary": {
+    "total_files_reviewed": 32,
+    "files_with_no_issues": 4,
+    "files_with_issues": 28,
+    "total_issues": 46,
+    "critical_issues": 3,
+    "major_issues": 18,
+    "minor_issues": 25,
+    "most_common_issue_categories": [
+      "missing_encoding (5 files)",
+      "hardcoded_values (4 files)",
+      "missing_db_readonly_mode (4 files)",
+      "deprecated_datetime_api (3 files)",
+      "inconsistent_exit_pattern (3 files)"
+    ],
+    "best_quality_scripts": [
+      "validate_daily_collection.py",
+      "assert_pairing_quality.py",
+      "assert_matrix_schema.py",
+      "validate_baseline.py"
+    ],
+    "highest_risk_scripts": [
+      "generate_drift_report.py (CRIT-001: duplicate parse_args)",
+      "assert_confidence_report.py (CRIT-002, CRIT-003)",
+      "quantify_blind_spots.py (mid-file import + hardcoded data values)",
+      "generate_evidence_manifest.py (hardcoded timestamp + missing encoding)"
+    ]
+  }
+}
