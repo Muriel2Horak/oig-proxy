@@ -485,3 +485,131 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
     assert res["ok"] is True
     assert ok is True
     assert results == ["ack"]
+
+
+def test_ack_with_wrong_conn_id_is_ignored(tmp_path):
+    """
+    RED TEST: ACK with wrong conn_id should be ignored.
+
+    Scenario:
+      1. Setting delivered on conn_id=1, pending state stored with conn_id=1
+      2. Connection closes, new connection conn_id=2 opens
+      3. ACK arrives on conn_id=2 (wrong connection)
+      4. ACK should be IGNORED, pending state should remain
+
+    Expected: FAIL - current code does not validate conn_id ownership
+    """
+    proxy = make_proxy(tmp_path)
+    writer1 = DummyWriter()  # Original connection (conn_id=1)
+    writer2 = DummyWriter()  # New connection after reconnect (conn_id=2)
+    proxy._active_box_writer = writer1
+    proxy._ctrl.ack_timeout_s = 10.0
+    ack_results = []
+
+    async def fake_ack(**kwargs):
+        ack_results.append(kwargs)
+
+    proxy._ctrl.on_box_setting_ack = fake_ack
+
+    async def run():
+        # Step 1: Send setting on conn_id=1
+        res = await proxy._cs.send_to_box(
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            confirm="New",
+            tx_id="tx1",
+        )
+        assert res["ok"] is True
+        assert proxy._cs.pending is not None
+
+        # Mark as delivered on conn_id=1
+        proxy._cs.pending["sent_at"] = time.monotonic()
+        # Store the conn_id where it was delivered (this should be part of pending)
+        proxy._cs.pending["delivered_conn_id"] = 1
+
+        # Step 2: Simulate connection switch (reconnect)
+        # Setting was sent on conn_id=1, now connection is conn_id=2
+        proxy._active_box_writer = writer2
+
+        # Step 3: ACK arrives on WRONG connection (conn_id=2)
+        # This ACK should be IGNORED because setting was delivered on conn_id=1
+        ok = proxy._cs.maybe_handle_ack(
+            "<Reason>Setting</Reason><Result>ACK</Result>",
+            writer2,
+            conn_id=2,  # Wrong connection!
+        )
+
+        await asyncio.sleep(0)
+
+        # Step 4: Assert ACK was IGNORED
+        # FAIL: Current code clears pending regardless of conn_id mismatch
+        assert ok is False, "ACK with wrong conn_id should return False (ignored)"
+        assert proxy._cs.pending is not None, "Pending state should NOT be cleared for wrong conn_id"
+        assert ack_results == [], "on_box_setting_ack should NOT be called for wrong conn_id"
+
+    asyncio.run(run())
+
+
+def test_nack_with_wrong_conn_id_is_ignored(tmp_path):
+    """
+    RED TEST: NACK with wrong conn_id should be ignored.
+
+    Scenario:
+      1. Setting delivered on conn_id=1, pending state stored with conn_id=1
+      2. Connection closes, new connection conn_id=2 opens
+      3. NACK arrives on conn_id=2 (wrong connection)
+      4. NACK should be IGNORED, pending state should remain
+
+    Expected: FAIL - current code does not validate conn_id ownership
+    """
+    proxy = make_proxy(tmp_path)
+    writer1 = DummyWriter()  # Original connection (conn_id=1)
+    writer2 = DummyWriter()  # New connection after reconnect (conn_id=2)
+    proxy._active_box_writer = writer1
+    proxy._ctrl.ack_timeout_s = 10.0
+    ack_results = []
+
+    async def fake_ack(**kwargs):
+        ack_results.append(kwargs)
+
+    proxy._ctrl.on_box_setting_ack = fake_ack
+
+    async def run():
+        # Step 1: Send setting on conn_id=1
+        res = await proxy._cs.send_to_box(
+            tbl_name="tbl_box_prms",
+            tbl_item="BAT_AC",
+            new_value="1",
+            confirm="New",
+            tx_id="tx2",
+        )
+        assert res["ok"] is True
+        assert proxy._cs.pending is not None
+
+        # Mark as delivered on conn_id=1
+        proxy._cs.pending["sent_at"] = time.monotonic()
+        # Store the conn_id where it was delivered (this should be part of pending)
+        proxy._cs.pending["delivered_conn_id"] = 1
+
+        # Step 2: Simulate connection switch (reconnect)
+        # Setting was sent on conn_id=1, now connection is conn_id=2
+        proxy._active_box_writer = writer2
+
+        # Step 3: NACK arrives on WRONG connection (conn_id=2)
+        # This NACK should be IGNORED because setting was delivered on conn_id=1
+        ok = proxy._cs.maybe_handle_ack(
+            "<Reason>Setting</Reason><Result>NACK</Result>",
+            writer2,
+            conn_id=2,  # Wrong connection!
+        )
+
+        await asyncio.sleep(0)
+
+        # Step 4: Assert NACK was IGNORED
+        # FAIL: Current code clears pending regardless of conn_id mismatch
+        assert ok is False, "NACK with wrong conn_id should return False (ignored)"
+        assert proxy._cs.pending is not None, "Pending state should NOT be cleared for wrong conn_id"
+        assert ack_results == [], "on_box_setting_ack should NOT be called for wrong conn_id"
+
+    asyncio.run(run())
