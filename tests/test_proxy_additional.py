@@ -881,6 +881,8 @@ def test_control_note_box_disconnect_marks_tx(tmp_path):
     ctrl = ControlPipeline.__new__(ControlPipeline)
     ctrl.lock = asyncio.Lock()
     ctrl.inflight = {"stage": "sent_to_box"}
+    ctrl.ack_task = None
+    ctrl.applied_task = None
     asyncio.run(ctrl.note_box_disconnect())
     assert ctrl.inflight["disconnected"] is True
 

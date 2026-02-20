@@ -241,7 +241,7 @@ class ControlSettings:
         tx_id: str | None = None,
     ) -> dict[str, Any]:
         proxy = self._proxy
-        
+
         if proxy.device_id == "AUTO":
             return {"ok": False, "error": "device_id_unknown"}
 
@@ -308,7 +308,7 @@ class ControlSettings:
     # ACK handling
     # -----------------------------------------------------------------
 
-    def maybe_handle_ack(
+    def maybe_handle_ack(  # pylint: disable=too-many-locals
         self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int
     ) -> bool:
         pending = self.pending

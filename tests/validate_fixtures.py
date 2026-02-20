@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 
-def validate_fixture(fixture_path: Path) -> tuple[bool, list[str]]:
+def validate_fixture(fixture_path: Path) -> tuple[bool, list[str]]:  # pylint: disable=too-many-branches
     """Validate a single fixture file."""
     errors = []
 
@@ -18,7 +18,7 @@ def validate_fixture(fixture_path: Path) -> tuple[bool, list[str]]:
         return False, errors
 
     try:
-        with open(fixture_path, 'r') as f:
+        with open(fixture_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
         errors.append(f"Invalid JSON: {e}")
@@ -107,7 +107,7 @@ def main():
             print(f"  ✓ PASSED")
 
             # Load and display key info
-            with open(fixture_path, 'r') as f:
+            with open(fixture_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
             print(f"    mode: {data['mode']}")
@@ -151,9 +151,8 @@ def main():
     if all_valid:
         print("\n✓ All fixtures validated successfully")
         return 0
-    else:
-        print("\n✗ Some fixtures failed validation")
-        return 1
+    print("\n✗ Some fixtures failed validation")
+    return 1
 
 
 if __name__ == "__main__":

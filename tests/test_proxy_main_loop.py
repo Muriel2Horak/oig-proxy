@@ -11,6 +11,8 @@ import pytest
 
 import proxy as proxy_module
 import cloud_forwarder as cf_module
+import control_settings as cs_module
+import control_pipeline as ctrl_module
 from cloud_forwarder import CloudForwarder
 from models import ProxyMode
 
@@ -168,8 +170,6 @@ async def test_handle_box_connection_processing_exception():
 # does not properly clean up pending settings state.
 # =============================================================================
 
-import control_settings as cs_module
-import control_pipeline as ctrl_module
 
 
 def _make_proxy_with_real_control_settings():
@@ -209,28 +209,32 @@ def _make_proxy_with_real_control_settings():
     proxy._cs.pending_frame = None
     proxy._cs.set_commands_buffer = []
 
-    # Real ControlPipeline object (minimal setup for timeout tracking)
-    proxy._ctrl = ctrl_module.ControlPipeline.__new__(ctrl_module.ControlPipeline)
-    proxy._ctrl._proxy = proxy
-    proxy._ctrl.lock = asyncio.Lock()
-    proxy._ctrl.inflight = None
-    proxy._ctrl.queue = deque()
-    proxy._ctrl.ack_task = None
-    proxy._ctrl.applied_task = None
-    proxy._ctrl.ack_timeout_s = 10.0
-    proxy._ctrl.applied_timeout_s = 30.0
-    proxy._ctrl.quiet_task = None
-    proxy._ctrl.retry_task = None
-    proxy._ctrl.max_attempts = 5
-    proxy._ctrl.retry_delay_s = 120.0
-    proxy._ctrl.last_result = None
-    proxy._ctrl.key_state = {}
-    proxy._ctrl.pending_keys = set()
-    proxy._ctrl.post_drain_refresh_pending = False
-    proxy._ctrl.mqtt_enabled = False
-    proxy._ctrl.whitelist = {"tbl_box_prms": {"MODE"}}
-
+    proxy._ctrl = _make_real_ctrl(proxy)
     return proxy
+
+
+def _make_real_ctrl(proxy):
+    """Create a minimal real ControlPipeline for timeout-tracking tests."""
+    ctrl = ctrl_module.ControlPipeline.__new__(ctrl_module.ControlPipeline)
+    ctrl._proxy = proxy
+    ctrl.lock = asyncio.Lock()
+    ctrl.inflight = None
+    ctrl.queue = deque()
+    ctrl.ack_task = None
+    ctrl.applied_task = None
+    ctrl.ack_timeout_s = 10.0
+    ctrl.applied_timeout_s = 30.0
+    ctrl.quiet_task = None
+    ctrl.retry_task = None
+    ctrl.max_attempts = 5
+    ctrl.retry_delay_s = 120.0
+    ctrl.last_result = None
+    ctrl.key_state = {}
+    ctrl.pending_keys = set()
+    ctrl.post_drain_refresh_pending = False
+    ctrl.mqtt_enabled = False
+    ctrl.whitelist = {"tbl_box_prms": {"MODE"}}
+    return ctrl
 
 
 @pytest.mark.asyncio

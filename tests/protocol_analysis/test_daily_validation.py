@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "protocol_analysis"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from validate_daily_collection import (
     DEFAULT_MAX_NULL_RATE,

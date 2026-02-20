@@ -34,7 +34,7 @@ ISNEW_STATE_TOPIC_ALIASES = {
 }
 
 
-class TelemetryCollector:
+class TelemetryCollector:  # pylint: disable=too-many-public-methods
     """Sbírá, agreguje a odesílá telemetrická data pro diagnostiku proxy."""
 
     def __init__(self, proxy: OIGProxy, *, interval_s: int) -> None:
@@ -247,6 +247,7 @@ class TelemetryCollector:
             self.pairing_low += 1
 
     def record_frame_direction(self, direction: str) -> None:
+        """Increment the counter for the given frame direction."""
         if direction == "box_to_proxy":
             self.frames_box_to_proxy += 1
         elif direction == "cloud_to_proxy":
@@ -255,9 +256,11 @@ class TelemetryCollector:
             self.frames_proxy_to_box += 1
 
     def record_signal_class(self, signal_class: str) -> None:
+        """Increment the counter for the given signal class."""
         self.signal_class_counts[signal_class] += 1
 
     def record_end_frame(self, sent: bool = False) -> None:
+        """Increment sent or received end-frame counter."""
         if sent:
             self.end_frames_sent += 1
         else:
