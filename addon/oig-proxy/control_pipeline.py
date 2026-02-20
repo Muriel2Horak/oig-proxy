@@ -1113,10 +1113,19 @@ class ControlPipeline:
         await self.handle_invertor_ack(tx, content)
 
     async def note_box_disconnect(self) -> None:
-        """Mark inflight control command as interrupted by box disconnect."""
+        """Mark inflight control command as interrupted by box disconnect.
+
+        Cancels pending timeout tasks (ack_task, applied_task) to prevent
+        stale callbacks from firing on the wrong connection state.
+        """
         async with self.lock:
             tx = self.inflight
             if tx is None:
                 return
             if tx.get("stage") in ("sent_to_box", "accepted"):
                 tx["disconnected"] = True
+            for task in (self.ack_task, self.applied_task):
+                if task and not task.done():
+                    task.cancel()
+            self.ack_task = None
+            self.applied_task = None

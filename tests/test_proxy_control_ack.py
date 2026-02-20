@@ -182,11 +182,12 @@ def _setup_pending_setting_on_connection(proxy, conn_id: int, elapsed_seconds: f
         "id": 12345678,
         "id_set": 1234567890,
         "tx_id": f"mock-setting-{conn_id}",
-        "sent_at": time.monotonic() - elapsed_seconds,  # Simulate elapsed time
+        "sent_at": time.monotonic() - elapsed_seconds,
+        "delivered_conn_id": conn_id,
     }
     proxy._cs.pending_frame = b"<mock>setting_frame</mock>\r\n"
     
-    return proxy._cs.pending.copy()  # Return a copy for comparison
+    return proxy._cs.pending.copy()
 
 
 def test_cross_session_ack_should_not_clear_pending_offline():

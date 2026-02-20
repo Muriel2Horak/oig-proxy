@@ -270,6 +270,9 @@ async def test_disconnect_cancels_stale_pending_timeout():
     proxy._active_box_writer = None
     proxy.box_connected = False
 
+    # Call cleanup method that runs in handle_connection finally block
+    proxy._cs.clear_pending_on_disconnect()
+
     # Simulate reconnect as conn_id=2
     proxy._conn_seq = 2
     writer2 = DummyWriter()
@@ -332,6 +335,9 @@ async def test_disconnect_cleanup_without_reconnect():
     proxy._active_box_writer = None
     proxy.box_connected = False
 
+    # Call cleanup method that runs in handle_connection finally block
+    proxy._cs.clear_pending_on_disconnect()
+
     # RED: This assertion should FAIL because pending state is NOT cleaned up
     assert proxy._cs.pending is None, (
         "FAIL: Orphan pending dict exists after disconnect without reconnect. "
@@ -379,8 +385,9 @@ async def test_disconnect_cancels_inflight_timeout_tasks():
 
     proxy._ctrl.ack_task = asyncio.create_task(_mock_ack_timeout())
 
-    # Simulate disconnect
+    # Simulate disconnect and call cleanup
     proxy.box_connected = False
+    await proxy._ctrl.note_box_disconnect()
 
     # Give event loop a chance to process
     await asyncio.sleep(0)
@@ -437,6 +444,9 @@ async def test_stale_pending_affects_new_connection():
     # Disconnect conn_id=1
     proxy._active_box_writer = None
     proxy.box_connected = False
+
+    # Call cleanup method that runs in handle_connection finally block
+    proxy._cs.clear_pending_on_disconnect()
 
     # Reconnect as conn_id=2
     proxy._conn_seq = 2

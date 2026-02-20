@@ -395,6 +395,8 @@ class OIGProxy:
                 box_peer=self._active_box_peer or str(addr))
             if self._ctrl.mqtt_enabled:
                 await self._ctrl.note_box_disconnect()
+            if self._cs:
+                self._cs.clear_pending_on_disconnect()
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
 
@@ -491,6 +493,12 @@ class OIGProxy:
             device_id = self._infer_device_id(frame)
         if device_id:
             await self._maybe_autodetect_device_id(device_id)
+
+        self._tc.record_frame_direction("box_to_proxy")
+        if table_name in ("ACK", "END", "NACK", "IsNewSet", "IsNewWeather", "IsNewFW"):
+            self._tc.record_signal_class(table_name)
+        if table_name == "END":
+            self._tc.record_end_frame(sent=False)
 
         self._mp.maybe_persist_table_state(parsed, table_name, device_id)
         capture_payload(
@@ -648,6 +656,7 @@ class OIGProxy:
             self._cs.pending_frame = None
             if self._cs.pending is not None:
                 self._cs.pending["sent_at"] = time.monotonic()
+                self._cs.pending["delivered_conn_id"] = conn_id
             if conn_id is not None:
                 self._tc.record_response(
                     setting_frame.decode("utf-8", errors="replace"),

@@ -315,6 +315,22 @@ class ControlSettings:
         if not pending:
             return False
 
+        # Validate conn_id ownership - only the connection that delivered the Setting
+        # should process the ACK/NACK response
+        delivered_conn_id = pending.get("delivered_conn_id")
+        if delivered_conn_id is not None and conn_id != delivered_conn_id:
+            logger.debug(
+                "CONTROL: ACK/NACK ignored — conn_id mismatch "
+                "(delivered_conn=%s, current_conn=%s, %s/%s)",
+                delivered_conn_id,
+                conn_id,
+                pending.get("tbl_name"),
+                pending.get("tbl_item"),
+            )
+            if hasattr(self._proxy, "_tc"):
+                self._proxy._tc.record_conn_mismatch()
+            return False
+
         sent_at = pending.get("sent_at")
         if sent_at is None:
             # Setting queued but not yet delivered to BOX via IsNewSet
@@ -397,3 +413,23 @@ class ControlSettings:
         })
         self.pending = None
         return True
+
+    # -----------------------------------------------------------------
+    # Disconnect cleanup
+    # -----------------------------------------------------------------
+
+    def clear_pending_on_disconnect(self) -> None:
+        """Clear all pending state when BOX disconnects.
+
+        This prevents stale pending_frame from being delivered to a new
+        connection and ensures clean reconnect state.
+        """
+        if self.pending is not None or self.pending_frame is not None:
+            logger.info(
+                "CONTROL: Clearing pending state on BOX disconnect "
+                "(pending=%s, pending_frame=%s)",
+                self.pending is not None,
+                self.pending_frame is not None,
+            )
+        self.pending = None
+        self.pending_frame = None

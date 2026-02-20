@@ -376,6 +376,7 @@ class CloudForwarder:
         await cloud_writer.drain()
         self._proxy.stats["frames_forwarded"] += 1
         self._proxy._tc.cloud_ok_in_window = True
+        self._proxy._tc.record_frame_direction("proxy_to_box")
         ack_data = await self.read_ack(
             cloud_reader=cloud_reader,
             ack_timeout_s=CLOUD_ACK_TIMEOUT,
@@ -442,6 +443,11 @@ class CloudForwarder:
         self._proxy._tc.record_response(
             ack_str, source="cloud", conn_id=conn_id
         )
+        self._proxy._tc.record_frame_direction("cloud_to_proxy")
+        if table_name in ("ACK", "END", "NACK"):
+            self._proxy._tc.record_signal_class(table_name)
+            if table_name == "END":
+                self._proxy._tc.record_end_frame(sent=True)
         if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             self._proxy._isnew_last_response = self._proxy._last_data_iso
             if self._proxy._isnew_last_poll_epoch:
@@ -474,6 +480,7 @@ class CloudForwarder:
             self._proxy._cs.pending_frame = None
             if self._proxy._cs.pending is not None:
                 self._proxy._cs.pending["sent_at"] = time.monotonic()
+                self._proxy._cs.pending["delivered_conn_id"] = conn_id
             self._proxy._tc.record_response(
                 setting_frame.decode("utf-8", errors="replace"),
                 source="local",

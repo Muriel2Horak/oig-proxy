@@ -73,6 +73,8 @@ class TelemetryCollector:
         # DA-001: NACK reason tracking
         self.nack_reasons: Counter[str] = Counter()
 
+        self.conn_mismatch_drops: int = 0
+
         # DA-002: Cloud gap duration histogram
         self.cloud_gap_durations: deque[dict[str, Any]] = deque()
 
@@ -223,6 +225,10 @@ class TelemetryCollector:
     def record_nack_reason(self, reason: str) -> None:
         """Zaznamená důvod NACK odpovědi."""
         self.nack_reasons[reason] += 1
+
+    def record_conn_mismatch(self) -> None:
+        """Zaznamená drop ACK/NACK kvůli nesprávnému conn_id."""
+        self.conn_mismatch_drops += 1
 
     def record_cloud_gap(self, duration_s: float) -> None:
         """Zaznamená dobu výpadku cloudového spojení."""
@@ -729,6 +735,7 @@ class TelemetryCollector:
             "set_commands": set_commands,
             "window_metrics": window_metrics,
             "nack_reasons": dict(self.nack_reasons),
+            "conn_mismatch_drops": self.conn_mismatch_drops,
             "cloud_gap_histogram": self._build_cloud_gap_histogram(),
             "pairing_confidence": {
                 "high": self.pairing_high,
@@ -748,6 +755,7 @@ class TelemetryCollector:
             },
         }
         self.nack_reasons.clear()
+        self.conn_mismatch_drops = 0
         self.cloud_gap_durations.clear()
         self.pairing_high = 0
         self.pairing_medium = 0
