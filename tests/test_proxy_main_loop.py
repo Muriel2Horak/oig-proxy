@@ -197,6 +197,7 @@ def _make_proxy_with_real_control_settings():
     proxy.stats = {"acks_local": 0}
     proxy.box_connected = False
     proxy.mqtt_publisher = MagicMock()
+    proxy.mqtt_publisher.publish_raw = AsyncMock()
     proxy._msc = MagicMock()
     proxy._msc.last_values = {}
     proxy._mp = MagicMock()
@@ -234,6 +235,11 @@ def _make_real_ctrl(proxy):
     ctrl.post_drain_refresh_pending = False
     ctrl.mqtt_enabled = False
     ctrl.whitelist = {"tbl_box_prms": {"MODE"}}
+    ctrl.result_topic = "oig_local/oig_proxy/control/result"
+    ctrl.qos = 1
+    ctrl.retain = False
+    ctrl.log_enabled = False
+    ctrl.maybe_queue_post_drain_refresh = AsyncMock()
     return ctrl
 
 

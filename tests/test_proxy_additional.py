@@ -6,7 +6,7 @@
 import asyncio
 import time
 from collections import deque
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 import pytest
 
 import oig_frame
@@ -876,15 +876,35 @@ def test_tune_socket_sets_options():
     assert writer.sock.calls
 
 
-def test_control_note_box_disconnect_marks_tx(tmp_path):
+def test_control_note_box_disconnect_defers_inflight(tmp_path):
     _ = make_proxy(tmp_path)
     ctrl = ControlPipeline.__new__(ControlPipeline)
     ctrl.lock = asyncio.Lock()
-    ctrl.inflight = {"stage": "sent_to_box"}
+    ctrl.inflight = {"stage": "sent_to_box", "_attempts": 1}
     ctrl.ack_task = None
     ctrl.applied_task = None
+    ctrl.quiet_task = None
+    ctrl.retry_task = None
+    ctrl.queue = deque()
+    ctrl.max_attempts = 5
+    ctrl.retry_delay_s = 120.0
+    ctrl._proxy = MagicMock()
+    ctrl._proxy.box_connected = False
+
+    published = []
+
+    async def fake_publish(**kwargs):
+        published.append(kwargs)
+
+    ctrl.publish_result = fake_publish
+    ctrl.maybe_start_next = AsyncMock()
+
     asyncio.run(ctrl.note_box_disconnect())
-    assert ctrl.inflight["disconnected"] is True
+
+    assert ctrl.inflight is None
+    assert len(ctrl.queue) == 1
+    assert ctrl.queue[0]["stage"] == "deferred"
+    assert ctrl.queue[0]["deferred_reason"] == "box_disconnected"
 
 
 def test_local_getactual_loop_sends_and_logs(tmp_path, monkeypatch):
