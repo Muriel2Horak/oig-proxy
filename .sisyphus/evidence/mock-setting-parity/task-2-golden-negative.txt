@@ -1,0 +1,21 @@
+{
+  "test_scenario": "Corrupt window rejection (negative)",
+  "test_date": "2026-02-18T19:39:00.000000Z",
+  "preconditions": "Validator available, golden fixture created",
+  "steps_executed": [
+    "1. Removed ack_id from golden fixture sample",
+    "2. Ran validator on corrupted fixture",
+    "3. Asserted failure with exact error location"
+  ],
+  "expected_result": "Invalid window rejected with deterministic message",
+  "actual_result": "SUCCESS - Corrupted fixture properly rejected",
+  "corruption_applied": "Removed ack_id field from metadata.validation_fields",
+  "validator_response": {
+    "status": "FAILED",
+    "error_type": "Missing validation field",
+    "field_name": "ack_id",
+    "error_location": "metadata.validation_fields.ack_id"
+  },
+  "failure_detection": "PASSED - Validator correctly identified missing required field",
+  "error_message_deterministic": "PASSED - Same error produced on repeated validation"
+}

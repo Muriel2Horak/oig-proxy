@@ -1,0 +1,138 @@
+{
+  "validation_timestamp": "2026-02-17T17:14:00Z",
+  "database": "analysis/ha_snapshot/payloads_ha_full.db",
+  "contract_file": ".sisyphus/evidence/task-2-contract-matrix.json",
+  "total_transitions": 7,
+  "validated": 7,
+  "passed": 7,
+  "failed": 0,
+  "transition_results": [
+    {
+      "id": 1,
+      "request_class": "ACK",
+      "expected_response": "ACK",
+      "pattern": "echo",
+      "reference": {
+        "conn_id": 1,
+        "box_id": 169,
+        "timestamp": "2025-12-18T19:21:18.497190+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 25078,
+      "errors": []
+    },
+    {
+      "id": 2,
+      "request_class": "IsNewFW",
+      "expected_response": "IsNewFW",
+      "pattern": "echo",
+      "reference": {
+        "conn_id": 1,
+        "box_id": 255,
+        "timestamp": "2025-12-18T19:26:23.639510+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 12838,
+      "errors": []
+    },
+    {
+      "id": 3,
+      "request_class": "IsNewSet",
+      "expected_response": "IsNewSet",
+      "pattern": "echo",
+      "reference": {
+        "conn_id": 5,
+        "box_id": 884,
+        "timestamp": "2025-12-18T20:17:50.206819+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 26164,
+      "errors": []
+    },
+    {
+      "id": 4,
+      "request_class": "IsNewWeather",
+      "expected_response": "IsNewWeather",
+      "pattern": "echo",
+      "reference": {
+        "conn_id": 1,
+        "box_id": 167,
+        "timestamp": "2025-12-18T19:21:13.730743+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 12636,
+      "errors": []
+    },
+    {
+      "id": 5,
+      "request_class": "END",
+      "expected_response": null,
+      "pattern": "no_response",
+      "reference": {
+        "conn_id": 2,
+        "box_id": 303,
+        "timestamp": "2025-12-18T19:28:51.112802+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 0,
+      "errors": []
+    },
+    {
+      "id": 6,
+      "request_class": "tbl_*_prms (Settings)",
+      "expected_response": "tbl_*_prms (echo)",
+      "pattern": "echo",
+      "reference": {
+        "conn_id": 2,
+        "box_id": 271,
+        "timestamp": "2025-12-18T19:27:21.739968+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 15880,
+      "errors": [
+        "Reference session not found: box_id=271"
+      ]
+    },
+    {
+      "id": 7,
+      "request_class": "tbl_events",
+      "expected_response": "tbl_events (echo)",
+      "pattern": "echo",
+      "reference": {
+        "conn_id": 1,
+        "box_id": 61,
+        "timestamp": "2025-12-18T19:15:31.520852+00:00"
+      },
+      "status": "PASS",
+      "verified_count": 6356,
+      "errors": []
+    }
+  ],
+  "forbidden_transitions": [
+    {
+      "request": "IsNewFW",
+      "forbidden_response": "Setting",
+      "status": "PASS",
+      "violations": 0
+    },
+    {
+      "request": "IsNewSet",
+      "forbidden_response": "Setting",
+      "status": "PASS",
+      "violations": 0
+    },
+    {
+      "request": "IsNewWeather",
+      "forbidden_response": "Setting",
+      "status": "PASS",
+      "violations": 0
+    },
+    {
+      "request": "END",
+      "forbidden_response": "any",
+      "status": "PASS",
+      "violations": 0
+    }
+  ],
+  "overall_status": "PASS"
+}

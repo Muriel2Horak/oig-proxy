@@ -14,16 +14,20 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 1. Checkout code
 2. Setup Python 3.11
 3. Install dependencies (from `requirements-dev.txt`)
-4. Run unit tests with coverage
-5. Run security scan (Bandit)
+4. Run unit tests with coverage (fail-under 80%)
+5. Type checking (mypy)
+6. Lint Dockerfile (hadolint)
+7. Run security scan (Bandit - blocking)
 
 **Steps:**
 ```yaml
 - Checkout code
-- Setup Python 3.11
+- Setup Python 3.11 (actions/setup-python@v5)
 - Install dependencies
-- Run pytest with coverage
-- Run bandit (Python SAST)
+- Run pytest with coverage (--cov-fail-under=80)
+- Run mypy (type checking, blocking)
+- Run hadolint (Dockerfile linting)
+- Run bandit (Python SAST, blocking)
 ```
 
 **Generated Reports:**
@@ -47,7 +51,7 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 **Steps:**
 ```yaml
 - Checkout code
-- Setup Python 3.11
+- Setup Python 3.11 (actions/setup-python@v5)
 - Install dependencies
 - Run pylint addon/oig-proxy/*.py tests/*.py
 ```
@@ -67,10 +71,10 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 
 **What it runs:**
 1. Checkout code
-2. Setup Python 3.13
+2. Setup Python 3.11
 3. Install dependencies
 4. Install security tools (Semgrep, Trivy, Gitleaks)
-5. Run **Bandit** (Python SAST)
+5. Run **Bandit** (Python SAST - blocking)
 6. Run **Safety** (Dependency vulnerabilities)
 7. Run **Semgrep** (Advanced SAST with custom rules)
 8. Run **Trivy** (Container/dependency scanning)
@@ -83,10 +87,10 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 **Steps:**
 ```yaml
 - Checkout code
-- Setup Python 3.13
+- Setup Python 3.11 (actions/setup-python@v5)
 - Install dependencies
 - Install security tools
-- Run bandit
+- Run bandit (blocking)
 - Run safety
 - Run semgrep
 - Run trivy
@@ -141,13 +145,14 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 | Feature | GitHub CI | Local CI (`ci.sh`) |
 |---------|-----------|---------------------|
 | **Setup** | Automatic on push/PR | Manual (`./.github/scripts/ci.sh`) |
-| **Python version** | 3.11/3.13 | System Python or venv |
+| **Python version** | 3.11 | System Python or venv |
 | **Dependencies** | Auto-installed | Auto-installed |
 | **Unit tests** | ✅ | ✅ (default, skip with `--no-tests`) |
-| **Coverage** | ✅ | ✅ |
+| **Coverage** | ✅ (fail-under 80%) | ✅ |
 | **Pylint** | ✅ (separate workflow) | ✅ (default, skip with `--no-lint`) |
-| **MyPy** | ❌ | ✅ |
-| **Bandit** | ✅ (in CI) | ✅ (in security) |
+| **MyPy** | ✅ (in CI workflow) | ✅ |
+| **Hadolint** | ✅ (in CI workflow) | ❌ |
+| **Bandit** | ✅ (blocking, in CI + security) | ✅ (in security) |
 | **Safety** | ✅ (in security) | ✅ (in security) |
 | **Semgrep** | ✅ (in security) | ✅ (in security) |
 | **Trivy** | ✅ (in security) | ✅ (in security) |
@@ -414,7 +419,7 @@ To view results:
 GitHub CI runs workflows in parallel:
 
 ```
-Push/PR → CI (tests + bandit)
+Push/PR → CI (tests + coverage threshold + mypy + hadolint + bandit)
         → Pylint (linting)
         → Security Scan (all security tools)
 

@@ -1,0 +1,879 @@
+                                        
+----------------------------------------
+========================================
+                                       
+---------------------------------------
+H2+H4: IsNewSet Format + Protocol State
+                                        
+----------------------------------------
+========================================
+
+
+
+                 
+-----------------
+DETEKCE DATABÁZE:
+Typ databáze             
+-------------------------
+payloads.db (bez raw_b64)
+
+
+
+          
+----------
+==========
+                                 
+---------------------------------
+H2.1: IsNewSet DÉLKY - DISTRIBUCE
+          
+----------
+==========
+
+
+
+Analýza         Počet  Min délka  Max délka  Prům. délka     
+--------------  -----  ---------  ---------  ----------------
+IsNewSet rámce  747    121        123        121.917001338688
+
+
+
+Délka (B)  Počet  Procento
+---------  -----  --------
+121        63     8.43    
+122        683    91.43   
+123        1      0.13    
+
+
+
+Kategorie       Počet  Procento  Min délka  Max délka
+--------------  -----  --------  ---------  ---------
+SHORT (<=150B)  747    100.0     121        123      
+
+
+
+          
+----------
+==========
+                              
+------------------------------
+H2.2: PŘECHOD FORMÁTU IsNewSet
+          
+----------
+==========
+
+
+
+Datum       IsNewSet počet  Min délka  Max délka  Prům. délka  SHORT (<=150B)  LONG (>=700B)
+----------  --------------  ---------  ---------  -----------  --------------  -------------
+2025-12-11  174             121        122        121.9        174             0            
+2025-12-12  573             121        123        121.9        573             0            
+
+
+
+                             
+-----------------------------
+LONG IsNewSet rámce (>=700B):
+
+
+
+          
+----------
+==========
+                              
+------------------------------
+H2.3: VERZE FIRMWARU (IsNewFW)
+          
+----------
+==========
+
+
+
+Analýza        Počet
+-------------  -----
+IsNewFW rámce  26   
+
+
+
+Datum       Počet  Verze FW       Ukázka raw                                                  
+----------  -----  -------------  ------------------------------------------------------------
+2025-12-11  4      v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-12  22     v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+
+
+          
+----------
+==========
+                                      
+--------------------------------------
+H4.1: STAV PŘED SETTINGS (payloads.db)
+          
+----------
+==========
+
+
+
+Analýza                            Počet
+---------------------------------  -----
+Odchozí Settings (proxy_to_cloud)  457  
+
+
+
+Datum       Čas Setting  Typ rámce   Směr            Počet  Prům. delta (s)
+----------  -----------  ----------  --------------  -----  ---------------
+2025-12-11  15:20:22     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  15:20:22     tbl_batt    box_to_proxy    1      16.0           
+2025-12-11  15:20:22     tbl_batt    proxy_to_cloud  1      16.0           
+2025-12-11  15:20:22     tbl_boiler  box_to_proxy    1      6.0            
+2025-12-11  15:20:22     tbl_boiler  proxy_to_cloud  1      6.0            
+2025-12-11  15:21:22     tbl_actual  box_to_proxy    1      7.0            
+2025-12-11  15:21:22     tbl_actual  proxy_to_cloud  1      7.0            
+2025-12-11  15:21:22     tbl_box     box_to_proxy    1      11.0           
+2025-12-11  15:21:22     tbl_box     proxy_to_cloud  1      11.0           
+2025-12-11  15:21:22     tbl_events  box_to_proxy    1      0.0            
+2025-12-11  15:21:59     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  15:21:59     tbl_batt    box_to_proxy    1      12.0           
+2025-12-11  15:21:59     tbl_batt    proxy_to_cloud  1      12.0           
+2025-12-11  15:21:59     tbl_boiler  box_to_proxy    1      7.0            
+2025-12-11  15:21:59     tbl_boiler  proxy_to_cloud  1      7.0            
+2025-12-11  18:05:13     IsNewSet    box_to_proxy    1      17.0           
+2025-12-11  18:05:13     IsNewSet    proxy_to_cloud  1      17.0           
+2025-12-11  18:05:13     tbl_actual  box_to_proxy    1      24.0           
+2025-12-11  18:05:13     tbl_actual  proxy_to_cloud  1      24.0           
+2025-12-11  18:05:13     tbl_events  box_to_proxy    1      0.0            
+2025-12-11  18:05:58     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:05:58     tbl_batt    box_to_proxy    1      11.0           
+2025-12-11  18:05:58     tbl_batt    proxy_to_cloud  1      11.0           
+2025-12-11  18:05:58     tbl_boiler  box_to_proxy    1      4.0            
+2025-12-11  18:05:58     tbl_boiler  proxy_to_cloud  1      4.0            
+2025-12-11  18:06:03     tbl_*_prms  box_to_proxy    2      2.5            
+2025-12-11  18:06:03     tbl_*_prms  proxy_to_cloud  1      5.0            
+2025-12-11  18:06:03     tbl_boiler  box_to_proxy    1      9.0            
+2025-12-11  18:06:03     tbl_boiler  proxy_to_cloud  1      9.0            
+2025-12-11  18:06:10     tbl_*_prms  box_to_proxy    3      6.33           
+2025-12-11  18:06:10     tbl_*_prms  proxy_to_cloud  2      9.5            
+2025-12-11  18:15:46     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:15:46     tbl_batt    box_to_proxy    1      13.0           
+2025-12-11  18:15:46     tbl_batt    proxy_to_cloud  1      13.0           
+2025-12-11  18:15:46     tbl_boiler  box_to_proxy    1      6.0            
+2025-12-11  18:15:46     tbl_boiler  proxy_to_cloud  1      6.0            
+2025-12-11  18:15:51     tbl_*_prms  box_to_proxy    2      2.5            
+2025-12-11  18:15:51     tbl_*_prms  proxy_to_cloud  1      5.0            
+2025-12-11  18:15:51     tbl_boiler  box_to_proxy    1      11.0           
+2025-12-11  18:15:51     tbl_boiler  proxy_to_cloud  1      11.0           
+2025-12-11  18:25:47     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:25:47     tbl_batt    box_to_proxy    1      13.0           
+2025-12-11  18:25:47     tbl_batt    proxy_to_cloud  1      13.0           
+2025-12-11  18:25:47     tbl_boiler  box_to_proxy    1      7.0            
+2025-12-11  18:25:47     tbl_boiler  proxy_to_cloud  1      7.0            
+2025-12-11  18:30:44     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:30:44     tbl_batt    box_to_proxy    1      12.0           
+2025-12-11  18:30:44     tbl_batt    proxy_to_cloud  1      12.0           
+2025-12-11  18:30:44     tbl_boiler  box_to_proxy    1      4.0            
+2025-12-11  18:30:44     tbl_boiler  proxy_to_cloud  1      4.0            
+2025-12-11  18:40:49     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:40:49     tbl_batt    box_to_proxy    1      13.0           
+2025-12-11  18:40:49     tbl_batt    proxy_to_cloud  1      13.0           
+2025-12-11  18:40:49     tbl_boiler  box_to_proxy    1      9.0            
+2025-12-11  18:40:49     tbl_boiler  proxy_to_cloud  1      9.0            
+2025-12-11  18:50:47     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:50:47     tbl_batt    box_to_proxy    1      15.0           
+2025-12-11  18:50:47     tbl_batt    proxy_to_cloud  1      15.0           
+2025-12-11  18:50:47     tbl_boiler  box_to_proxy    1      7.0            
+2025-12-11  18:50:47     tbl_boiler  proxy_to_cloud  1      7.0            
+2025-12-11  18:55:45     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  18:55:45     tbl_batt    box_to_proxy    1      12.0           
+2025-12-11  18:55:45     tbl_batt    proxy_to_cloud  1      12.0           
+2025-12-11  18:55:45     tbl_boiler  box_to_proxy    1      8.0            
+2025-12-11  18:55:45     tbl_boiler  proxy_to_cloud  1      8.0            
+2025-12-11  19:00:50     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  19:00:50     tbl_batt    box_to_proxy    1      16.0           
+2025-12-11  19:00:50     tbl_batt    proxy_to_cloud  1      16.0           
+2025-12-11  19:00:50     tbl_boiler  box_to_proxy    1      9.0            
+2025-12-11  19:00:50     tbl_boiler  proxy_to_cloud  1      9.0            
+2025-12-11  19:05:51     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  19:05:51     tbl_batt    box_to_proxy    1      12.0           
+2025-12-11  19:05:51     tbl_batt    proxy_to_cloud  1      12.0           
+2025-12-11  19:05:51     tbl_boiler  box_to_proxy    1      5.0            
+2025-12-11  19:05:51     tbl_boiler  proxy_to_cloud  1      5.0            
+2025-12-11  19:15:50     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  19:15:50     tbl_batt    box_to_proxy    1      13.0           
+2025-12-11  19:15:50     tbl_batt    proxy_to_cloud  1      13.0           
+2025-12-11  19:15:50     tbl_boiler  box_to_proxy    1      5.0            
+2025-12-11  19:15:50     tbl_boiler  proxy_to_cloud  1      5.0            
+2025-12-11  19:20:45     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  19:20:45     tbl_batt    box_to_proxy    1      10.0           
+2025-12-11  19:20:45     tbl_batt    proxy_to_cloud  1      10.0           
+2025-12-11  19:20:45     tbl_boiler  box_to_proxy    1      4.0            
+2025-12-11  19:20:45     tbl_boiler  proxy_to_cloud  1      4.0            
+2025-12-11  19:25:50     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  19:25:50     tbl_batt    box_to_proxy    1      13.0           
+2025-12-11  19:25:50     tbl_batt    proxy_to_cloud  1      13.0           
+2025-12-11  19:25:50     tbl_boiler  box_to_proxy    1      9.0            
+2025-12-11  19:25:50     tbl_boiler  proxy_to_cloud  1      9.0            
+2025-12-11  19:25:57     tbl_*_prms  box_to_proxy    2      3.5            
+2025-12-11  19:25:57     tbl_*_prms  proxy_to_cloud  1      7.0            
+2025-12-11  19:25:57     tbl_boiler  box_to_proxy    1      16.0           
+2025-12-11  19:25:57     tbl_boiler  proxy_to_cloud  1      16.0           
+2025-12-11  19:30:51     tbl_*_prms  box_to_proxy    1      0.0            
+2025-12-11  19:30:51     tbl_batt    box_to_proxy    1      12.0           
+2025-12-11  19:30:51     tbl_batt    proxy_to_cloud  1      12.0           
+2025-12-11  19:30:51     tbl_boiler  box_to_proxy    1      8.0            
+2025-12-11  19:30:51     tbl_boiler  proxy_to_cloud  1      8.0            
+2025-12-11  19:30:55     tbl_*_prms  box_to_proxy    2      2.0            
+
+
+
+                                                  
+--------------------------------------------------
+Nejčastější rámce před Setting (všechny Settings):
+Typ rámce   Směr            Počet výskytů  Prům. čas před Setting (s)  Min delta (s)  Max delta (s)
+----------  --------------  -------------  --------------------------  -------------  -------------
+tbl_*_prms  box_to_proxy    263            1.35                        0              13           
+tbl_boiler  box_to_proxy    200            7.49                        3              16           
+tbl_boiler  proxy_to_cloud  200            7.47                        3              16           
+tbl_batt    box_to_proxy    160            12.47                       8              18           
+tbl_batt    proxy_to_cloud  160            12.44                       8              18           
+tbl_*_prms  proxy_to_cloud  54             6.57                        4              13           
+tbl_events  box_to_proxy    25             0.4                         0              5            
+tbl_actual  box_to_proxy    24             18.92                       7              24           
+tbl_actual  proxy_to_cloud  24             18.92                       7              24           
+IsNewSet    box_to_proxy    21             14.76                       12             21           
+IsNewSet    proxy_to_cloud  21             14.76                       12             21           
+tbl_box     box_to_proxy    3              19.67                       11             25           
+tbl_box     proxy_to_cloud  3              19.67                       11             25           
+tbl_events  proxy_to_cloud  2              4.5                         4              5            
+
+
+
+          
+----------
+==========
+                                                 
+-------------------------------------------------
+H4.2: STAV PŘED SETTING ACK (payloads_ha_full.db)
+          
+----------
+==========
+
+
+
+Analýza                                              Počet
+---------------------------------------------------  -----
+Setting ACK (box_to_proxy, tbl_events Type=Setting)  20   
+
+
+
+Datum       ACK ID  Conn ID  Sekvence rámců (5 před ACK)                                   Směry                                                       
+----------  ------  -------  ------------------------------------------------------------  ------------------------------------------------------------
+2025-12-11  925              IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  4305             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  4501             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  6581             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  7133             tbl_actual -> tbl_actual -> tbl_box -> tbl_box -> tbl_*_prms  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                              (Setting z cloudu)                                           roxy -> proxy_to_cloud                                      
+
+2025-12-11  7621             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  7741             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  7957             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  8113             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  8505             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  9569             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  9805             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-11  9957             IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-12  18413            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_box   proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                                                                                           roxy -> proxy_to_cloud                                      
+
+2025-12-12  19077            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-12  19617            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-12  20113            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-12  20245            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-12  23533            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+2025-12-12  25565            IsNewSet -> IsNewSet -> tbl_actual -> tbl_actual -> tbl_actu  proxy_to_cloud -> box_to_proxy -> proxy_to_cloud -> box_to_p
+                             al                                                            roxy -> proxy_to_cloud                                      
+
+
+
+                                   
+-----------------------------------
+Nejčastější rámce před Setting ACK:
+Typ rámce                      Směr            Počet výskytů  Prům. čas před ACK (s)  Min delta (s)  Max delta (s)
+-----------------------------  --------------  -------------  ----------------------  -------------  -------------
+tbl_actual                     proxy_to_cloud  38             23.26                   18             32           
+tbl_actual                     box_to_proxy    20             20.2                    18             24           
+IsNewSet                       box_to_proxy    19             14.16                   12             17           
+IsNewSet                       proxy_to_cloud  19             14.16                   12             17           
+tbl_box                        proxy_to_cloud  2              24.5                    23             26           
+tbl_*_prms (Setting z cloudu)  proxy_to_cloud  1              27.0                    27             27           
+tbl_box                        box_to_proxy    1              23.0                    23             23           
+
+
+
+          
+----------
+==========
+                                              
+----------------------------------------------
+H4.3: PATTERN ANALÝZA - IsNewSet před Setting?
+          
+----------
+==========
+
+
+
+                                               
+-----------------------------------------------
+Payloads.db - IsNewSet před Setting (30s okno):
+Kategorie          Počet Settings  Procento
+-----------------  --------------  --------
+BEZ IsNewSet před  228             49.89   
+S IsNewSet před    229             50.11   
+
+
+
+                                                           
+-----------------------------------------------------------
+Payloads_ha_full.db - IsNewSet před Setting ACK (30s okno):
+Kategorie        Počet ACK  Procento
+---------------  ---------  --------
+S IsNewSet před  20         100.0   
+
+
+
+          
+----------
+==========
+                    
+--------------------
+H4.4: TIMING ANALÝZA
+          
+----------
+==========
+
+
+
+                                                    
+----------------------------------------------------
+Payloads.db - Čas od posledního IsNewSet do Setting:
+Počet párů  Prům. delta (s)  Min delta (s)  Max delta (s)  Prům. delta (min)
+----------  ---------------  -------------  -------------  -----------------
+229         242.15           12.0           1609.0         4.04             
+
+
+
+                                                            
+------------------------------------------------------------
+Payloads_ha_full.db - Čas od posledního rámce do Setting ACK
+:                                                           
+Počet ACK  Prům. delta (s)  Min delta (s)  Max delta (s)
+---------  ---------------  -------------  -------------
+20         14.35            12.0           18.0         
+
+
+
+                                                            
+------------------------------------------------------------
+Payloads_ha_full.db - Čas od posledního IsNewSet do Setting 
+ACK:                                                        
+Počet párů  Prům. delta (s)  Min delta (s)  Max delta (s)
+----------  ---------------  -------------  -------------
+20          16.85            12.0           68.0         
+
+
+
+                                        
+----------------------------------------
+========================================
+                       
+-----------------------
+SHRNUTÍ HYPOTÉZ H2 + H4
+                                        
+----------------------------------------
+========================================
+
+
+
+                     
+---------------------
+H2 - Formát IsNewSet:
+Verdikt                                       SHORT rámce  LONG rámce
+--------------------------------------------  -----------  ----------
+PODPOROVÁNO: Pouze SHORT IsNewSet (121-124B)  747          0         
+
+
+
+                                   
+-----------------------------------
+H4 - IsNewSet před Setting pattern:
+Verdikt zkontroluj 
+-------------------
+viz výše sekce H4.3
+
+
+
+             
+-------------
+KONEC ANALÝZY
+                                        
+----------------------------------------
+========================================
+                                       
+---------------------------------------
+H2+H4: IsNewSet Format + Protocol State
+                                        
+----------------------------------------
+========================================
+
+
+
+                 
+-----------------
+DETEKCE DATABÁZE:
+Typ databáze                            
+----------------------------------------
+payloads_ha_full.db (s raw_b64, conn_id)
+
+
+
+          
+----------
+==========
+                                 
+---------------------------------
+H2.1: IsNewSet DÉLKY - DISTRIBUCE
+          
+----------
+==========
+
+
+
+Analýza         Počet  Min délka  Max délka  Prům. délka     
+--------------  -----  ---------  ---------  ----------------
+IsNewSet rámce  26857  121        124        121.858398182969
+
+
+
+Délka (B)  Počet  Procento
+---------  -----  --------
+121        4098   15.26   
+122        22533  83.9    
+123        157    0.58    
+124        69     0.26    
+
+
+
+Kategorie       Počet  Procento  Min délka  Max délka
+--------------  -----  --------  ---------  ---------
+SHORT (<=150B)  26857  100.0     121        124      
+
+
+
+          
+----------
+==========
+                              
+------------------------------
+H2.2: PŘECHOD FORMÁTU IsNewSet
+          
+----------
+==========
+
+
+
+Datum       IsNewSet počet  Min délka  Max délka  Prům. délka  SHORT (<=150B)  LONG (>=700B)
+----------  --------------  ---------  ---------  -----------  --------------  -------------
+2025-12-18  96              121        122        121.9        96              0            
+2025-12-19  559             121        122        121.9        559             0            
+2025-12-20  417             121        124        121.9        417             0            
+2025-12-21  1283            121        124        121.9        1283            0            
+2025-12-22  790             121        124        121.9        790             0            
+2025-12-23  702             121        124        121.9        702             0            
+2025-12-24  652             121        124        121.9        652             0            
+2025-12-25  704             121        124        121.9        704             0            
+2025-12-26  791             121        124        121.9        791             0            
+2025-12-27  994             121        124        121.9        994             0            
+2025-12-28  1087            121        124        121.9        1087            0            
+2025-12-29  751             121        123        121.8        751             0            
+2025-12-30  548             121        123        121.8        548             0            
+2025-12-31  800             121        123        121.9        800             0            
+2026-01-01  727             121        124        121.9        727             0            
+2026-01-02  740             121        123        121.9        740             0            
+2026-01-03  774             121        124        121.9        774             0            
+2026-01-04  860             121        124        121.9        860             0            
+2026-01-05  870             121        123        121.8        870             0            
+2026-01-06  820             121        124        121.8        820             0            
+2026-01-07  824             121        123        121.8        824             0            
+2026-01-08  748             121        124        121.9        748             0            
+2026-01-09  807             121        124        121.9        807             0            
+2026-01-10  726             121        124        121.8        726             0            
+2026-01-11  929             121        124        121.9        929             0            
+2026-01-12  895             121        124        121.8        895             0            
+2026-01-13  899             121        124        121.8        899             0            
+2026-01-14  871             121        124        121.8        871             0            
+2026-01-15  859             121        124        121.9        859             0            
+2026-01-16  614             121        124        121.8        614             0            
+2026-01-17  629             121        124        121.9        629             0            
+2026-01-18  1080            121        124        121.8        1080            0            
+2026-01-19  457             121        124        121.8        457             0            
+2026-01-20  434             121        124        121.9        434             0            
+2026-01-21  405             121        124        121.9        405             0            
+2026-01-22  489             121        124        121.9        489             0            
+2026-01-23  226             121        124        121.8        226             0            
+
+
+
+                             
+-----------------------------
+LONG IsNewSet rámce (>=700B):
+
+
+
+          
+----------
+==========
+                              
+------------------------------
+H2.3: VERZE FIRMWARU (IsNewFW)
+          
+----------
+==========
+
+
+
+Analýza        Počet
+-------------  -----
+IsNewFW rámce  13637
+
+
+
+Datum       Počet  Verze FW       Ukázka raw                                                  
+----------  -----  -------------  ------------------------------------------------------------
+2025-12-18  11     v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-19  136    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-20  276    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-21  662    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-22  403    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-23  365    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-24  374    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-25  365    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-26  348    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-27  306    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-28  285    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-29  372    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-30  390    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2025-12-31  399    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-01  372    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-02  346    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-03  377    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-04  372    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-05  395    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-06  389    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-07  385    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-08  384    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-09  354    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-10  355    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-11  393    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-12  388    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-13  396    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-14  387    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-15  368    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-16  431    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-17  437    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-18  337    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-19  488    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-20  458    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-21  470    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-22  474    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+2026-01-23  189    v.4.4.43.0716  <Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Dev
+                                  ice><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>2169
+                                  1</CRC></Frame>                                             
+
+
+
+          
+----------
+==========
+                                      
+--------------------------------------
+H4.1: STAV PŘED SETTINGS (payloads.db)
+          
+----------
+==========
+
+
+
+Analýza                            Počet
+---------------------------------  -----
+Odchozí Settings (proxy_to_cloud)  0    
+
+
+
+
+
+
+                                                  
+--------------------------------------------------
+Nejčastější rámce před Setting (všechny Settings):
+
+
+
+          
+----------
+==========
+                                                 
+-------------------------------------------------
+H4.2: STAV PŘED SETTING ACK (payloads_ha_full.db)
+          
+----------
+==========
+
+
+
+Analýza                                              Počet
+---------------------------------------------------  -----
+Setting ACK (box_to_proxy, tbl_events Type=Setting)  767  
+
+
+
+Datum       ACK ID  Conn ID  Sekvence rámců (5 před ACK)                                   Směry                                                       
+----------  ------  -------  ------------------------------------------------------------  ------------------------------------------------------------
+2025-12-18  269     2        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  277     2        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  374     2        GetActual -> tbl_actual -> GetActual -> tbl_box -> GetActual  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  380     2        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  534     5        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  573     7        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  648     10       ACK -> ACK                                                    cloud_to_proxy -> box_to_proxy                              
+
+2025-12-18  652     10       ACK -> tbl_*_prms (Setting z cloudu) -> ACK -> tbl_events ->  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                              ACK                                                          roxy -> cloud_to_proxy                                      
+
+2025-12-18  785     3        END -> ACK -> tbl_actual -> GetActual -> tbl_actual           box_to_proxy -> cloud_to_proxy -> box_to_proxy -> cloud_to_p
+                                                                                           roxy -> box_to_proxy                                        
+
+2025-12-18  791     3        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  828     5        END -> ACK -> ACK -> ACK -> ACK                               box_to_proxy -> cloud_to_proxy -> box_to_proxy -> cloud_to_p
+                                                                                           roxy -> box_to_proxy                                        
+
+2025-12-18  834     5        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  840     5        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  890     6        ACK -> ACK -> ACK -> ACK -> IsNewWeather                      cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  896     6        ACK -> tbl_events -> ACK -> tbl_events -> ACK                 cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1088    16       GetActual -> tbl_actual                                       cloud_to_proxy -> box_to_proxy                              
+
+2025-12-18  1214    2        GetActual -> ACK -> ACK -> ACK -> IsNewSet                    cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1220    2        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1298    2        GetActual -> ACK -> ACK -> ACK -> ACK                         cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1304    2        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1306    2        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1314    2        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1316    2        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1337    3        GetActual -> ACK -> GetActual -> ACK -> GetActual             cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1338    4        ACK -> ACK -> ACK -> ACK -> ACK                               cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1468    1        GetActual -> ACK -> ACK -> ACK -> ACK                         cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                                                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1494    1        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1500    1        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1502    1        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+2025-12-18  1510    1        GetActual -> tbl_events -> GetActual -> tbl_events -> GetAct  cloud_to_proxy -> box_to_proxy -> cloud_to_proxy -> box_to_p
+                             ual                                                           roxy -> cloud_to_proxy                                      
+
+
+
+                                   
+-----------------------------------
+Nejčastější rámce před Setting ACK:

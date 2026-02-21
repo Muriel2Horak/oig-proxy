@@ -1,0 +1,71 @@
+{
+  "db_path": "analysis/ha_snapshot/payloads_ha_full.db",
+  "audit_timestamp": "2026-02-19T22:09:21.168239Z",
+  "status": "PASS",
+  "error": null,
+  "total_frames": 871952,
+  "direction_counts": {
+    "box_to_proxy": 315206,
+    "cloud_to_proxy": 281547,
+    "proxy_to_box": 275199
+  },
+  "table_counts": {
+    "tbl_actual": 276004,
+    "GetActual": 275199,
+    "IsNewSet": 53060,
+    "ACK": 51128,
+    "END": 26932,
+    "IsNewFW": 26515,
+    "IsNewWeather": 25696,
+    "tbl_batt_prms": 23717,
+    "tbl_ac_out": 15754,
+    "tbl_ac_in": 15746,
+    "tbl_box": 15498,
+    "tbl_batt": 15125,
+    "tbl_boiler": 14843,
+    "tbl_events": 12954,
+    "tbl_dc_in": 12778,
+    "tbl_invertor_prms": 3086,
+    "tbl_box_prms": 1897,
+    "tbl_invertor_prm1": 1197,
+    "tbl_h_pump_prms": 720,
+    "tbl_wl_charge_prms": 695,
+    "tbl_invertor_prm2": 688,
+    "tbl_box_prm2": 683,
+    "tbl_boiler_prms": 677,
+    "tbl_recuper_prms": 667,
+    "tbl_aircon_prms": 634,
+    "tbl_ac_in_b": 18,
+    "tbl_batt_prm1": 14,
+    "tbl_box_prm1": 12,
+    "tbl_car_charge_prms": 10
+  },
+  "null_rate_by_column": {
+    "ts": 0.0,
+    "device_id": 70.37,
+    "table_name": 0.0,
+    "direction": 0.0
+  },
+  "ts_range": {
+    "first": "2025-12-18T19:08:17.557413+00:00",
+    "last": "2026-02-01T14:32:27.211982+00:00"
+  },
+  "device_ids": [
+    "2206237016",
+    "0000000000"
+  ],
+  "connection_stats": {
+    "total_connections": 18334,
+    "avg_frames_per_connection": 47.56
+  },
+  "direction_summary": {
+    "box_to_proxy": 315206,
+    "cloud_to_proxy": 281547,
+    "total_bidirectional": 596753
+  },
+  "table_summary": {
+    "tbl_table_frames": 413417,
+    "other_table_frames": 458530,
+    "unique_tables": 29
+  }
+}

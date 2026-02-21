@@ -5,6 +5,7 @@
 # pylint: disable=duplicate-code
 import asyncio
 
+import control_pipeline as ctrl_module
 import mqtt_publisher
 import proxy as proxy_module
 
@@ -40,10 +41,10 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
             tmp_path / "mqtt.db"))
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
     monkeypatch.setattr(
-        proxy_module, "CONTROL_MQTT_PENDING_PATH", str(
+        ctrl_module, "CONTROL_MQTT_PENDING_PATH", str(
             tmp_path / "pending.json"))
     monkeypatch.setattr(
-        proxy_module, "CONTROL_MQTT_LOG_PATH", str(
+        ctrl_module, "CONTROL_MQTT_LOG_PATH", str(
             tmp_path / "control.log"))
 
     proxy = proxy_module.OIGProxy("AUTO")
@@ -63,7 +64,7 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
         return None
 
     proxy.publish_proxy_status = fake_proxy_status
-    proxy._control_publish_restart_errors = fake_publish
+    proxy._ctrl.publish_restart_errors = fake_publish
 
     async def fake_status_loop():
         return None
@@ -71,7 +72,7 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
     async def fake_full_refresh():
         return None
 
-    proxy._proxy_status_loop = fake_status_loop
+    proxy._ps.status_loop = fake_status_loop
     proxy._full_refresh_loop = fake_full_refresh
 
     async def fake_start_server(*_args, **_kwargs):
@@ -102,7 +103,7 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
 
     proxy = proxy_module.OIGProxy("AUTO")
-    proxy._mode_device_id = "DEVX"
+    proxy._mp.mode_device_id = "DEVX"
 
     proxy.mqtt_publisher.connect = lambda: False
 
@@ -119,7 +120,7 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
         return None
 
     proxy.publish_proxy_status = fake_proxy_status
-    proxy._control_publish_restart_errors = fake_publish
+    proxy._ctrl.publish_restart_errors = fake_publish
 
     calls = {"control_mqtt": 0, "cache": 0}
 
@@ -129,9 +130,9 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     def fake_setup_cache():
         calls["cache"] += 1
 
-    proxy._control_mqtt_enabled = True
-    proxy._setup_control_mqtt = fake_setup_control
-    proxy._setup_mqtt_state_cache = fake_setup_cache
+    proxy._ctrl.mqtt_enabled = True
+    proxy._ctrl.setup_mqtt = fake_setup_control
+    proxy._msc.setup = fake_setup_cache
 
     async def fake_status_loop():
         return None
@@ -139,7 +140,7 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     async def fake_full_refresh():
         return None
 
-    proxy._proxy_status_loop = fake_status_loop
+    proxy._ps.status_loop = fake_status_loop
     proxy._full_refresh_loop = fake_full_refresh
 
     async def fake_start_server(*_args, **_kwargs):

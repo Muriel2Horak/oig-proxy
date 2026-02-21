@@ -1,0 +1,26 @@
+{
+  "task": "F3-manual-qa-execution",
+  "generated_at": "2026-02-20T07:03:00Z",
+  "note": "QA scenarios already executed and validated in Task 18 (task-18-validation-results.json)",
+  "scenarios_tested": 13,
+  "passed": 12,
+  "warned": 1,
+  "failed": 0,
+  "reference": "See task-18-validation-results.json for detailed execution results",
+  "summary": {
+    "baseline_snapshot": "PASS",
+    "audit_capture_schema": "PASS",
+    "validate_baseline": "PASS",
+    "assert_capture_audit": "PASS",
+    "pair_frames": "PASS",
+    "assert_pairing_quality": "WARN (known protocol characteristic)",
+    "extract_day_slice": "PASS",
+    "validate_day_slice": "PASS",
+    "validate_daily_collection": "PASS",
+    "build_signal_timeline": "PASS",
+    "assert_signal_timeline": "PASS",
+    "detect_edge_cases": "PASS",
+    "assert_edge_case_report": "PASS"
+  },
+  "overall_status": "PASS"
+}

@@ -1,0 +1,805 @@
+SQL Script: h2_h4_isnewset_protocol.sql
+Database: analysis/ha_snapshot/payloads.db
+============================================================
+
+STATEMENT 1: SELECT '========================================' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('========================================',)
+
+STATEMENT 2: SELECT 'H2+H4: IsNewSet Format + Protocol State' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H2+H4: IsNewSet Format + Protocol State',)
+
+STATEMENT 3: SELECT '========================================' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('========================================',)
+
+STATEMENT 4: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 5: SELECT 'DETEKCE DATABÁZE:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('DETEKCE DATABÁZE:',)
+
+STATEMENT 6: SELECT 
+    CASE 
+        WHEN (SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name='raw_b64...
+--------------------------------------------------
+Rows returned: 1
+Columns: Typ databáze
+
+Data:
+  1: ('payloads.db (bez raw_b64)',)
+
+STATEMENT 7: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 8: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 9: SELECT 'H2.1: IsNewSet DÉLKY - DISTRIBUCE' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H2.1: IsNewSet DÉLKY - DISTRIBUCE',)
+
+STATEMENT 10: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 11: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 12: SELECT 
+    'IsNewSet rámce' AS 'Analýza',
+    COUNT(*) AS 'Počet',
+    MIN(length) AS 'Min délka',
+...
+--------------------------------------------------
+Rows returned: 1
+Columns: Analýza, Počet, Min délka, Max délka, Prům. délka
+
+Data:
+  1: ('IsNewSet rámce', 747, 121, 123, 121.91700133868808)
+
+STATEMENT 13: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 14: SELECT 
+    length AS 'Délka (B)',
+    COUNT(*) AS 'Počet',
+    ROUND(100.0 * COUNT(*) / (SELECT COU...
+--------------------------------------------------
+Rows returned: 3
+Columns: Délka (B), Počet, Procento
+
+Data:
+  1: (121, 63, 8.43)
+  2: (122, 683, 91.43)
+  3: (123, 1, 0.13)
+
+STATEMENT 15: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 16: SELECT 
+    CASE 
+        WHEN length <= 150 THEN 'SHORT (<=150B)'
+        WHEN length >= 700 THEN '...
+--------------------------------------------------
+Rows returned: 1
+Columns: Kategorie, Počet, Procento, Min délka, Max délka
+
+Data:
+  1: ('SHORT (<=150B)', 747, 100.0, 121, 123)
+
+STATEMENT 17: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 18: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 19: SELECT 'H2.2: PŘECHOD FORMÁTU IsNewSet' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H2.2: PŘECHOD FORMÁTU IsNewSet',)
+
+STATEMENT 20: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 21: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 22: SELECT 
+    DATE(ts) AS 'Datum',
+    COUNT(*) AS 'IsNewSet počet',
+    MIN(length) AS 'Min délka',
+ ...
+--------------------------------------------------
+Rows returned: 2
+Columns: Datum, IsNewSet počet, Min délka, Max délka, Prům. délka, SHORT (<=150B), LONG (>=700B)
+
+Data:
+  1: ('2025-12-11', 174, 121, 122, 121.9, 174, 0)
+  2: ('2025-12-12', 573, 121, 123, 121.9, 573, 0)
+
+STATEMENT 23: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 24: SELECT 'LONG IsNewSet rámce (>=700B):' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('LONG IsNewSet rámce (>=700B):',)
+
+STATEMENT 25: SELECT 
+    id,
+    ts AS 'Timestamp',
+    length AS 'Délka',
+    device_id,
+    SUBSTR(raw, 1, 200)...
+--------------------------------------------------
+Rows returned: 0
+Columns: id, Timestamp, Délka, device_id, Začátek raw
+
+STATEMENT 26: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 27: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 28: SELECT 'H2.3: VERZE FIRMWARU (IsNewFW)' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H2.3: VERZE FIRMWARU (IsNewFW)',)
+
+STATEMENT 29: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 30: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 31: SELECT 
+    'IsNewFW rámce' AS 'Analýza',
+    COUNT(*) AS 'Počet'
+FROM frames 
+WHERE raw LIKE '%Resu...
+--------------------------------------------------
+Rows returned: 1
+Columns: Analýza, Počet
+
+Data:
+  1: ('IsNewFW rámce', 26)
+
+STATEMENT 32: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 33: SELECT 
+    DATE(ts) AS 'Datum',
+    COUNT(*) AS 'Počet',
+    CASE 
+        WHEN raw LIKE '%<Fw>%v.%...
+--------------------------------------------------
+Rows returned: 2
+Columns: Datum, Počet, Verze FW, Ukázka raw
+
+Data:
+  1: ('2025-12-11', 4, 'v.4.4.43.0716', '<Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Device><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>21691</CRC></Frame>\r\n')
+  2: ('2025-12-12', 22, 'v.4.4.43.0716', '<Frame><Result>IsNewFW</Result><ID_Device>2206237016</ID_Device><Fw>v.4.4.43.0716</Fw><Up></Up><ver>27741</ver><CRC>21691</CRC></Frame>\r\n')
+
+STATEMENT 34: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 35: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 36: SELECT 'H4.1: STAV PŘED SETTINGS (payloads.db)' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H4.1: STAV PŘED SETTINGS (payloads.db)',)
+
+STATEMENT 37: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 38: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 39: SELECT 
+    'Odchozí Settings (proxy_to_cloud)' AS 'Analýza',
+    COUNT(*) AS 'Počet'
+FROM frames 
+W...
+--------------------------------------------------
+Rows returned: 1
+Columns: Analýza, Počet
+
+Data:
+  1: ('Odchozí Settings (proxy_to_cloud)', 457)
+
+STATEMENT 40: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 41: WITH settings AS (
+    SELECT id, ts, device_id
+    FROM frames 
+    WHERE direction = 'proxy_to_clo...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 42: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 43: SELECT 'Nejčastější rámce před Setting (všechny Settings):' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Nejčastější rámce před Setting (všechny Settings):',)
+
+STATEMENT 44: SELECT 
+    frame_type AS 'Typ rámce',
+    direction AS 'Směr',
+    COUNT(*) AS 'Počet výskytů',
+   ...
+--------------------------------------------------
+Rows returned: 14
+Columns: Typ rámce, Směr, Počet výskytů, Prům. čas před Setting (s), Min delta (s), Max delta (s)
+
+Data:
+  1: ('tbl_*_prms', 'box_to_proxy', 263, 1.35, 0, 13)
+  2: ('tbl_boiler', 'box_to_proxy', 200, 7.49, 3, 16)
+  3: ('tbl_boiler', 'proxy_to_cloud', 200, 7.47, 3, 16)
+  4: ('tbl_batt', 'box_to_proxy', 160, 12.47, 8, 18)
+  5: ('tbl_batt', 'proxy_to_cloud', 160, 12.44, 8, 18)
+  6: ('tbl_*_prms', 'proxy_to_cloud', 54, 6.57, 4, 13)
+  7: ('tbl_events', 'box_to_proxy', 25, 0.4, 0, 5)
+  8: ('tbl_actual', 'box_to_proxy', 24, 18.92, 7, 24)
+  9: ('tbl_actual', 'proxy_to_cloud', 24, 18.92, 7, 24)
+  10: ('IsNewSet', 'box_to_proxy', 21, 14.76, 12, 21)
+  ... and 4 more rows
+
+STATEMENT 45: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 46: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 47: SELECT 'H4.2: STAV PŘED SETTING ACK (payloads_ha_full.db)' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H4.2: STAV PŘED SETTING ACK (payloads_ha_full.db)',)
+
+STATEMENT 48: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 49: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 50: SELECT 
+    'Setting ACK (box_to_proxy, tbl_events Type=Setting)' AS 'Analýza',
+    COUNT(*) AS 'Poč...
+--------------------------------------------------
+Rows returned: 1
+Columns: Analýza, Počet
+
+Data:
+  1: ('Setting ACK (box_to_proxy, tbl_events Type=Setting)', 20)
+
+STATEMENT 51: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 52: WITH setting_acks AS (
+    SELECT id, ts, device_id, conn_id
+    FROM frames 
+    WHERE direction = ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 53: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 54: SELECT 'Nejčastější rámce před Setting ACK:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Nejčastější rámce před Setting ACK:',)
+
+STATEMENT 55: SELECT 
+    frame_type AS 'Typ rámce',
+    direction AS 'Směr',
+    COUNT(*) AS 'Počet výskytů',
+   ...
+--------------------------------------------------
+Rows returned: 7
+Columns: Typ rámce, Směr, Počet výskytů, Prům. čas před ACK (s), Min delta (s), Max delta (s)
+
+Data:
+  1: ('tbl_actual', 'proxy_to_cloud', 38, 23.26, 18, 32)
+  2: ('tbl_actual', 'box_to_proxy', 20, 20.2, 18, 24)
+  3: ('IsNewSet', 'box_to_proxy', 19, 14.16, 12, 17)
+  4: ('IsNewSet', 'proxy_to_cloud', 19, 14.16, 12, 17)
+  5: ('tbl_box', 'proxy_to_cloud', 2, 24.5, 23, 26)
+  6: ('tbl_*_prms (Setting z cloudu)', 'proxy_to_cloud', 1, 27.0, 27, 27)
+  7: ('tbl_box', 'box_to_proxy', 1, 23.0, 23, 23)
+
+STATEMENT 56: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 57: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 58: SELECT 'H4.3: PATTERN ANALÝZA - IsNewSet před Setting?' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H4.3: PATTERN ANALÝZA - IsNewSet před Setting?',)
+
+STATEMENT 59: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 60: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 61: SELECT 'Payloads.db - IsNewSet před Setting (30s okno):' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Payloads.db - IsNewSet před Setting (30s okno):',)
+
+STATEMENT 62: SELECT 
+    CASE 
+        WHEN has_isnewset = 1 THEN 'S IsNewSet před'
+        ELSE 'BEZ IsNewSet př...
+--------------------------------------------------
+Rows returned: 2
+Columns: Kategorie, Počet Settings, Procento
+
+Data:
+  1: ('BEZ IsNewSet před', 228, 49.89)
+  2: ('S IsNewSet před', 229, 50.11)
+
+STATEMENT 63: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 64: SELECT 'Payloads_ha_full.db - IsNewSet před Setting ACK (30s okno):' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Payloads_ha_full.db - IsNewSet před Setting ACK (30s okno):',)
+
+STATEMENT 65: SELECT 
+    CASE 
+        WHEN has_isnewset = 1 THEN 'S IsNewSet před'
+        ELSE 'BEZ IsNewSet př...
+--------------------------------------------------
+Rows returned: 1
+Columns: Kategorie, Počet ACK, Procento
+
+Data:
+  1: ('S IsNewSet před', 20, 100.0)
+
+STATEMENT 66: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 67: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 68: SELECT 'H4.4: TIMING ANALÝZA' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H4.4: TIMING ANALÝZA',)
+
+STATEMENT 69: SELECT '==========' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('==========',)
+
+STATEMENT 70: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 71: SELECT 'Payloads.db - Čas od posledního IsNewSet do Setting:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Payloads.db - Čas od posledního IsNewSet do Setting:',)
+
+STATEMENT 72: SELECT 
+    COUNT(*) AS 'Počet párů',
+    ROUND(AVG(delta_s), 2) AS 'Prům. delta (s)',
+    ROUND(MIN...
+--------------------------------------------------
+Rows returned: 1
+Columns: Počet párů, Prům. delta (s), Min delta (s), Max delta (s), Prům. delta (min)
+
+Data:
+  1: (229, 242.15, 12.0, 1609.0, 4.04)
+
+STATEMENT 73: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 74: SELECT 'Payloads_ha_full.db - Čas od posledního rámce do Setting ACK:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Payloads_ha_full.db - Čas od posledního rámce do Setting ACK:',)
+
+STATEMENT 75: SELECT 
+    COUNT(*) AS 'Počet ACK',
+    ROUND(AVG(delta_s), 2) AS 'Prům. delta (s)',
+    ROUND(MIN(...
+--------------------------------------------------
+Rows returned: 1
+Columns: Počet ACK, Prům. delta (s), Min delta (s), Max delta (s)
+
+Data:
+  1: (20, 14.35, 12.0, 18.0)
+
+STATEMENT 76: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 77: SELECT 'Payloads_ha_full.db - Čas od posledního IsNewSet do Setting ACK:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Payloads_ha_full.db - Čas od posledního IsNewSet do Setting ACK:',)
+
+STATEMENT 78: SELECT 
+    COUNT(*) AS 'Počet párů',
+    ROUND(AVG(delta_s), 2) AS 'Prům. delta (s)',
+    ROUND(MIN...
+--------------------------------------------------
+Rows returned: 1
+Columns: Počet párů, Prům. delta (s), Min delta (s), Max delta (s)
+
+Data:
+  1: (20, 16.85, 12.0, 68.0)
+
+STATEMENT 79: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 80: SELECT '========================================' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('========================================',)
+
+STATEMENT 81: SELECT 'SHRNUTÍ HYPOTÉZ H2 + H4' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('SHRNUTÍ HYPOTÉZ H2 + H4',)
+
+STATEMENT 82: SELECT '========================================' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('========================================',)
+
+STATEMENT 83: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 84: SELECT 'H2 - Formát IsNewSet:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H2 - Formát IsNewSet:',)
+
+STATEMENT 85: SELECT 
+    CASE 
+        WHEN short_count > 0 AND long_count = 0 THEN 'PODPOROVÁNO: Pouze SHORT IsN...
+--------------------------------------------------
+Rows returned: 1
+Columns: Verdikt, SHORT rámce, LONG rámce
+
+Data:
+  1: ('PODPOROVÁNO: Pouze SHORT IsNewSet (121-124B)', 747, 0)
+
+STATEMENT 86: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 87: SELECT 'H4 - IsNewSet před Setting pattern:' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('H4 - IsNewSet před Setting pattern:',)
+
+STATEMENT 88: SELECT 
+    'viz výše sekce H4.3' AS 'Verdikt zkontroluj'
+--------------------------------------------------
+Rows returned: 1
+Columns: Verdikt zkontroluj
+
+Data:
+  1: ('viz výše sekce H4.3',)
+
+STATEMENT 89: SELECT '' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 90: SELECT 'KONEC ANALÝZY' AS ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('KONEC ANALÝZY',)
+
+============================================================
+SCRIPT SUMMARY: h2_h4_isnewset_protocol.sql
+Total rows: 111
+Status: PASS

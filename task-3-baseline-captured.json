@@ -1,0 +1,84 @@
+{
+  "capture_info": {
+    "device_id": "2206237016",
+    "start_time": "2026-02-18T19:52:02Z",
+    "end_time": "2026-02-18T19:06:31.798081+00:00",
+    "total_duration": 510,
+    "poll_count": 1,
+    "terminal_state": "PENDING",
+    "notes": "ACTUAL BASELINE - Delivery stuck in PENDING state. This represents the pre-fix behavior where setting delivery does not progress to PROCESSING or DELIVERED states."
+  },
+  "poll_responses": [
+    {
+      "state": "PENDING",
+      "setting_data": {
+        "tbl_name": "tbl_box_prms",
+        "tbl_item": "MODE",
+        "new_value": "1",
+        "id": 90544077,
+        "burst_index": 0,
+        "burst_total": 2
+      },
+      "has_raw_frame": true,
+      "timestamp": 1771440722.9564857,
+      "timestamp_iso": "2026-02-18T19:52:02.956486",
+      "transition_count": 11,
+      "retry_count": 0,
+      "last_delivery_time": 0,
+      "failure_reason": null
+    }
+  ],
+  "transition_timeline": [
+    {
+      "poll_index": 0,
+      "timestamp": 0,
+      "state": "PENDING",
+      "elapsed": 0,
+      "transition": "Initial state - setting queued and stuck in PENDING"
+    }
+  ],
+  "retry_analysis": {
+    "total_retries": 0,
+    "success_on_retry": 0,
+    "average_retry_interval": 0,
+    "backoff_pattern": "none",
+    "total_delivery_time": null,
+    "efficiency": "failed - stuck in PENDING state"
+  },
+  "frame_analysis": {
+    "outbound_frames": 1,
+    "inbound_responses": 1,
+    "successful_delivery": false,
+    "last_frame_delay": 0,
+    "protocol_issues": [
+      "Setting delivery stuck in PENDING state",
+      "No progression to PROCESSING state",
+      "No retries initiated"
+    ],
+    "burst_info": {
+      "status": "active",
+      "tbl_name": "tbl_box_prms",
+      "tbl_item": "MODE",
+      "values": [
+        "1",
+        "2"
+      ],
+      "total_frames": 2,
+      "current_index": 0,
+      "delivered_count": 0,
+      "trigger_count": 0,
+      "started_at": 1771440722.9562643,
+      "started_at_iso": "2026-02-18T19:52:02.956264+01:00",
+      "completed_at": null,
+      "completed_at_iso": null,
+      "duration_s": 868.9
+    }
+  },
+  "baseline_integrity": {
+    "capture_type": "actual",
+    "capture_source": "mock_server_on_nas",
+    "network_access": "successful",
+    "valid_for_diffing": true,
+    "notes": "CRITICAL: This baseline shows the actual pre-fix bug - setting delivery gets stuck in PENDING state and never progresses to terminal states. This is the issue that needs to be fixed."
+  }
+}

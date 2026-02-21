@@ -88,31 +88,6 @@ class TestControlAPISecurity:
         assert "tbl_name" in json_str and "tbl_item" in json_str
 
 
-class TestSessionSecurity:
-    """Test session management security."""
-
-    @pytest.mark.skip(reason="Cloud session module may not be importable - placeholder test")
-    def test_cloud_session_uses_locks(self):
-        """Verify that cloud session uses locks for thread safety."""
-        # Cloud session test is skipped for now - module may not be importable
-        # This is a placeholder test that documents the requirement
-        assert False, "This test should be implemented when cloud session is available"
-
-    @pytest.mark.skip(reason="Cloud session module may not be importable - placeholder test")
-    def test_cloud_session_has_stats_tracking(self):
-        """Verify that cloud session tracks statistics."""
-        # Cloud session test is skipped for now - module may not be importable
-        # This is a placeholder test that documents the requirement
-        assert False, "This test should be implemented when cloud session is available"
-
-    @pytest.mark.skip(reason="Cloud session module may not be importable - placeholder test")
-    def test_cloud_session_handles_disconnects_gracefully(self):
-        """Verify that cloud session handles disconnects gracefully."""
-        # Cloud session test is skipped for now - module may not be importable
-        # This is a placeholder test that documents the requirement
-        assert False, "This test should be implemented when cloud session is available"
-
-
 class TestInputValidation:
     """Test input validation security."""
 
