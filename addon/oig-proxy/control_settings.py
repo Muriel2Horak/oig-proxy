@@ -419,17 +419,37 @@ class ControlSettings:
     # -----------------------------------------------------------------
 
     def clear_pending_on_disconnect(self) -> None:
-        """Clear all pending state when BOX disconnects.
+        """Clear pending state when BOX disconnects.
 
-        This prevents stale pending_frame from being delivered to a new
-        connection and ensures clean reconnect state.
+        Only clears Settings that were already DELIVERED to the BOX in this
+        session (sent_at is set). This prevents cross-session ACK confusion
+        where a new connection would process an ACK meant for the old one.
+
+        Undelivered Settings (pending_frame still set, sent_at not set) are
+        intentionally kept — the BOX never received them so there is zero
+        cross-session risk and they should be delivered on the next connection.
         """
-        if self.pending is not None or self.pending_frame is not None:
+        if self.pending is None and self.pending_frame is None:
+            return
+
+        sent_at = self.pending.get("sent_at") if self.pending else None
+
+        if sent_at is not None:
+            # Delivered but ACK not yet received — clear to avoid cross-session ACK.
             logger.info(
-                "CONTROL: Clearing pending state on BOX disconnect "
-                "(pending=%s, pending_frame=%s)",
-                self.pending is not None,
-                self.pending_frame is not None,
+                "CONTROL: Clearing delivered-but-unacked Setting on BOX disconnect "
+                "(tbl=%s/%s, delivered_conn=%s)",
+                self.pending.get("tbl_name") if self.pending else "?",
+                self.pending.get("tbl_item") if self.pending else "?",
+                self.pending.get("delivered_conn_id") if self.pending else "?",
             )
-        self.pending = None
-        self.pending_frame = None
+            self.pending = None
+            self.pending_frame = None
+        else:
+            # Not yet delivered — keep for the next connection.
+            logger.info(
+                "CONTROL: Keeping undelivered Setting across BOX disconnect "
+                "(tbl=%s/%s) — will deliver on next poll",
+                self.pending.get("tbl_name") if self.pending else "?",
+                self.pending.get("tbl_item") if self.pending else "?",
+            )

@@ -238,28 +238,26 @@ def _make_real_ctrl(proxy):
 
 
 @pytest.mark.asyncio
-async def test_disconnect_cancels_stale_pending_timeout():
+async def test_disconnect_keeps_undelivered_pending():
     """
-    RED TEST: Demonstrates that pending setting state is NOT cleaned up on disconnect.
+    Undelivered Settings (no sent_at) must survive a BOX disconnect.
+
+    The BOX never received the Setting, so there is zero cross-session ACK risk.
+    Clearing it would silently lose the user's change.
 
     Scenario:
-    1. Set up pending setting with active timeout on conn_id=1
-    2. Simulate disconnect of conn_id=1
-    3. Simulate reconnect as conn_id=2
-    4. Assert: stale pending state from conn_id=1 is cleaned up
-
-    Expected: FAIL - pending and pending_frame are NOT cleaned up on disconnect,
-    allowing stale state to affect new connection.
+    1. Queue a Setting that has NOT been sent to the BOX yet (no sent_at)
+    2. Simulate disconnect / reconnect (conn_id=1 → conn_id=2)
+    3. Assert: pending and pending_frame are still set after disconnect
     """
     proxy = _make_proxy_with_real_control_settings()
 
-    # Simulate conn_id=1 connecting
     proxy._conn_seq = 1
     writer1 = DummyWriter()
     proxy._active_box_writer = writer1
     proxy.box_connected = True
 
-    # Queue a pending setting on conn_id=1 (simulating send_to_box behavior)
+    # Undelivered — no sent_at, no delivered_conn_id
     proxy._cs.pending = {
         "tbl_name": "tbl_box_prms",
         "tbl_item": "MODE",
@@ -270,57 +268,89 @@ async def test_disconnect_cancels_stale_pending_timeout():
     }
     proxy._cs.pending_frame = b"<Setting>...</Setting>\r\n"
 
-    # Simulate disconnect of conn_id=1
     proxy._active_box_writer = None
     proxy.box_connected = False
-
-    # Call cleanup method that runs in handle_connection finally block
     proxy._cs.clear_pending_on_disconnect()
 
-    # Simulate reconnect as conn_id=2
+    # Reconnect
     proxy._conn_seq = 2
     writer2 = DummyWriter()
     proxy._active_box_writer = writer2
     proxy.box_connected = True
 
-    # RED: This assertion should FAIL because pending state is NOT cleaned up
-    # The stale pending from conn_id=1 should be cleared on disconnect
-    assert proxy._cs.pending is None, (
-        "FAIL: Stale pending dict from conn_id=1 still exists after disconnect. "
-        "Expected: pending=None. "
-        f"Actual: pending={proxy._cs.pending}"
+    # Undelivered Setting MUST be kept for the next connection
+    assert proxy._cs.pending is not None, (
+        "Undelivered Setting was incorrectly cleared on BOX disconnect. "
+        "It should be kept for delivery on the next connection."
     )
-
-    # RED: This assertion should FAIL because pending_frame is NOT cleaned up
-    assert proxy._cs.pending_frame is None, (
-        "FAIL: Stale pending_frame from conn_id=1 still exists after disconnect. "
-        "Expected: pending_frame=None. "
-        f"Actual: pending_frame={proxy._cs.pending_frame}"
+    assert proxy._cs.pending_frame is not None, (
+        "Undelivered pending_frame was incorrectly cleared on BOX disconnect."
     )
 
 
 @pytest.mark.asyncio
-async def test_disconnect_cleanup_without_reconnect():
+async def test_disconnect_clears_delivered_pending():
     """
-    RED TEST: Demonstrates that disconnect without reconnect does NOT clean up pending state.
+    Delivered-but-unacked Settings (sent_at is set) must be cleared on BOX disconnect.
+
+    Keeping them would allow a new connection's ACK to match a frame sent in the old
+    session — cross-session ACK confusion.
 
     Scenario:
-    1. Set up pending setting on conn_id=1
-    2. Simulate disconnect (no reconnect)
-    3. Assert: pending state is cleaned up, no orphan state remains
-
-    Expected: FAIL - pending and pending_frame are NOT cleaned up,
-    leaving orphan state that could affect future connections.
+    1. Queue a Setting that HAS been sent to the BOX (sent_at set, pending_frame cleared)
+    2. Simulate disconnect
+    3. Assert: pending is cleared so the new connection starts clean
     """
     proxy = _make_proxy_with_real_control_settings()
 
-    # Simulate conn_id=1 connecting
     proxy._conn_seq = 1
     writer1 = DummyWriter()
     proxy._active_box_writer = writer1
     proxy.box_connected = True
 
-    # Queue a pending setting on conn_id=1 (simulating send_to_box behavior)
+    # Delivered — sent_at is present, pending_frame consumed by the send
+    proxy._cs.pending = {
+        "tbl_name": "tbl_box_prms",
+        "tbl_item": "MODE",
+        "new_value": "1",
+        "id": 12345,
+        "id_set": 67890,
+        "tx_id": "test-tx-1",
+        "sent_at": 1700000000.0,
+        "delivered_conn_id": 1,
+    }
+    proxy._cs.pending_frame = None  # frame is consumed after delivery
+
+    proxy._active_box_writer = None
+    proxy.box_connected = False
+    proxy._cs.clear_pending_on_disconnect()
+
+    # Delivered Setting MUST be cleared to prevent cross-session ACK confusion
+    assert proxy._cs.pending is None, (
+        "Delivered-but-unacked Setting was NOT cleared on BOX disconnect. "
+        f"Actual: pending={proxy._cs.pending}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_disconnect_keeps_undelivered_pending_no_reconnect():
+    """
+    Undelivered Settings (no sent_at) must survive a BOX disconnect even when
+    no reconnect follows immediately.
+
+    Scenario:
+    1. Queue a Setting that has NOT been sent to the BOX yet (no sent_at)
+    2. Simulate disconnect (no reconnect)
+    3. Assert: pending and pending_frame are still intact
+    """
+    proxy = _make_proxy_with_real_control_settings()
+
+    proxy._conn_seq = 1
+    writer1 = DummyWriter()
+    proxy._active_box_writer = writer1
+    proxy.box_connected = True
+
+    # Undelivered — no sent_at
     proxy._cs.pending = {
         "tbl_name": "tbl_box_prms",
         "tbl_item": "MODE",
@@ -331,29 +361,20 @@ async def test_disconnect_cleanup_without_reconnect():
     }
     proxy._cs.pending_frame = b"<Setting>...</Setting>\r\n"
 
-    # Store reference to verify it's the same state
     original_pending = proxy._cs.pending
     original_frame = proxy._cs.pending_frame
 
-    # Simulate disconnect (no reconnect)
     proxy._active_box_writer = None
     proxy.box_connected = False
-
-    # Call cleanup method that runs in handle_connection finally block
     proxy._cs.clear_pending_on_disconnect()
 
-    # RED: This assertion should FAIL because pending state is NOT cleaned up
-    assert proxy._cs.pending is None, (
-        "FAIL: Orphan pending dict exists after disconnect without reconnect. "
-        "Expected: pending=None. "
-        f"Actual: pending={proxy._cs.pending} (same object: {proxy._cs.pending is original_pending})"
+    # Undelivered Setting MUST be preserved
+    assert proxy._cs.pending is original_pending, (
+        "Undelivered pending was incorrectly cleared after BOX disconnect. "
+        f"Actual: pending={proxy._cs.pending}"
     )
-
-    # RED: This assertion should FAIL because pending_frame is NOT cleaned up
-    assert proxy._cs.pending_frame is None, (
-        "FAIL: Orphan pending_frame exists after disconnect without reconnect. "
-        "Expected: pending_frame=None. "
-        f"Actual: pending_frame exists (same object: {proxy._cs.pending_frame is original_frame})"
+    assert proxy._cs.pending_frame is original_frame, (
+        "Undelivered pending_frame was incorrectly cleared after BOX disconnect."
     )
 
 
