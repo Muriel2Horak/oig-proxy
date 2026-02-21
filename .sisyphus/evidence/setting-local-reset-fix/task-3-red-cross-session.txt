@@ -1,0 +1,109 @@
+# Cross-Session Timeout Leakage - RED Test Evidence
+# Task: Add failing TDD tests for cross-session timeout leakage
+# Date: 2026-02-20
+# Status: RED (tests fail as expected)
+
+## Test Execution Results
+
+```
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/martinhorak/Projects/oig-proxy
+plugins: mock-3.15.1, asyncio-1.3.0, cov-7.0.0
+collected 11 items / 6 deselected / 5 selected
+
+tests/test_proxy_control_ack.py::test_cross_session_ack_should_not_clear_pending_offline FAILED [ 20%]
+tests/test_proxy_control_ack.py::test_cross_session_ack_with_timeout_exceeded_should_not_clear_pending_offline PASSED [ 40%]
+tests/test_proxy_control_ack.py::test_cross_session_ack_should_not_clear_pending_hybrid_offline FAILED [ 60%]
+tests/test_proxy_control_ack.py::test_cross_session_multiple_reconnects_pending_preserved FAILED [ 80%]
+tests/test_proxy_control_ack.py::test_cross_session_nack_should_not_clear_pending_offline FAILED [100%]
+
+============ 4 failed, 1 passed, 6 deselected, 4 warnings in 0.09s =============
+```
+
+## Failure Details
+
+### Test 1: test_cross_session_ack_should_not_clear_pending_offline
+```
+AssertionError: maybe_handle_ack should return False when conn_id doesn't match 
+the connection that delivered the setting
+assert True is False
+```
+**Root cause**: `maybe_handle_ack` returns True and clears `pending` when ACK arrives on conn_id=2,
+but the setting was delivered on conn_id=1.
+
+### Test 2: test_cross_session_ack_with_timeout_exceeded_should_not_clear_pending_offline
+```
+PASSED
+```
+**Note**: This test passes because timeout-exceeded path correctly returns False without
+clearing pending. This behavior is correct.
+
+### Test 3: test_cross_session_ack_should_not_clear_pending_hybrid_offline
+```
+AssertionError: maybe_handle_ack should return False when conn_id doesn't match 
+(hybrid-offline mode)
+assert True is False
+```
+**Root cause**: Same as Test 1, but for HYBRID mode.
+
+### Test 4: test_cross_session_multiple_reconnects_pending_preserved
+```
+AssertionError: pending should NOT be cleared by ACK on conn_id=2 (delivered on conn_id=1)
+assert None is not None
+```
+**Root cause**: After first reconnect (conn_id=2), `pending` is cleared by ACK,
+demonstrating cross-session mutation.
+
+### Test 5: test_cross_session_nack_should_not_clear_pending_offline
+```
+AssertionError: maybe_handle_ack should return False for NACK on wrong connection
+assert True is False
+```
+**Root cause**: Same as Test 1, but with NACK instead of ACK.
+
+## Bug Characteristics (from fixture)
+
+Source: tests/fixtures/setting_reproduction_offline.json
+
+```json
+{
+  "bug_characteristics": {
+    "type": "cross-session_timeout",
+    "description": "Timeout tracker fires on conn_id=2, but Setting was delivered on conn_id=1",
+    "root_cause": "ControlSettings.pending lacks conn_id tracking",
+    "retry_count": 0
+  },
+  "state_transitions": [
+    {"from": "INIT", "to": "PENDING"},
+    {"from": "PENDING", "to": "DELIVERED", "at": "conn_id=1"},
+    {"from": "DELIVERED", "to": "CONN_CLOSED"},
+    {"from": "CONN_CLOSED", "to": "RECONNECTED", "new_conn_id": 2},
+    {"from": "RECONNECTED", "to": "TIMEOUT"},
+    {"from": "TIMEOUT", "to": "FAILED"}
+  ]
+}
+```
+
+## Code Location
+
+- `addon/oig-proxy/control_settings.py:311` - `maybe_handle_ack` function
+- `addon/oig-proxy/control_settings.py:318-333` - timeout-age check (missing conn_id validation)
+- `addon/oig-proxy/control_settings.py:335-398` - ACK/NACK handling (missing conn_id validation)
+- `addon/oig-proxy/control_settings.py:398` - `self.pending = None` (clears pending without conn_id check)
+
+## Expected Fix
+
+The `ControlSettings.pending` dict should include a `conn_id` field that tracks which
+connection delivered the Setting. The `maybe_handle_ack` function should validate that
+the current `conn_id` matches the delivery `conn_id` before processing ACK/NACK.
+
+## Test Files Modified
+
+- `tests/test_proxy_control_ack.py` - Added 5 new test functions
+
+## Verification
+
+```bash
+python3 -m pytest tests/test_proxy_control_ack.py -v -k "cross_session"
+```

@@ -1,0 +1,43 @@
+{
+  "source_db": "analysis/ha_snapshot/payloads_ha_full.db",
+  "date": "2026-02-01",
+  "start_ts": "2026-02-01T00:00:00+00:00",
+  "end_ts": "2026-02-02T00:00:00+00:00",
+  "frame_count": 2,
+  "conn_id_count": 1,
+  "conn_ids": [
+    2
+  ],
+  "extracted_at": "2026-02-19T22:34:53.083248+00:00",
+  "frames": [
+    {
+      "id": 871951,
+      "ts": "2026-02-01T14:32:26.139989+00:00",
+      "device_id": "0000000000",
+      "table_name": "tbl_box",
+      "raw": "<Frame><TblName>tbl_box</TblName><ID_Device>0000000000</ID_Device><Reason>Diagnostic</Reason><ver>00000</ver><CRC>00000</CRC></Frame>\r\n",
+      "raw_b64": "PEZyYW1lPjxUYmxOYW1lPnRibF9ib3g8L1RibE5hbWU+PElEX0RldmljZT4wMDAwMDAwMDAwPC9JRF9EZXZpY2U+PFJlYXNvbj5EaWFnbm9zdGljPC9SZWFzb24+PHZlcj4wMDAwMDwvdmVyPjxDUkM+MDAwMDA8L0NSQz48L0ZyYW1lPg0K",
+      "parsed": {
+        "_table": "tbl_box",
+        "_device_id": "0000000000"
+      },
+      "direction": "box_to_proxy",
+      "conn_id": 2,
+      "peer": "10.0.0.166:59376",
+      "length": 135
+    },
+    {
+      "id": 871952,
+      "ts": "2026-02-01T14:32:27.211982+00:00",
+      "device_id": null,
+      "table_name": "tbl_box",
+      "raw": "<Frame><Result>NACK</Result><Reason>WC</Reason><CRC>21736</CRC></Frame>\r\n",
+      "raw_b64": "PEZyYW1lPjxSZXN1bHQ+TkFDSzwvUmVzdWx0PjxSZWFzb24+V0M8L1JlYXNvbj48Q1JDPjIxNzM2PC9DUkM+PC9GcmFtZT4NCg==",
+      "parsed": {},
+      "direction": "cloud_to_proxy",
+      "conn_id": 2,
+      "peer": "10.0.0.166:59376",
+      "length": 73
+    }
+  ]
+}

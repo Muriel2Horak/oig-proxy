@@ -1,0 +1,16 @@
+{
+  "passive_mode": true,
+  "active_probe_detected": false,
+  "forbidden_actions": [],
+  "warnings": [
+    "No config file found, using environment variables only"
+  ],
+  "issues": [],
+  "warning_details": [
+    {
+      "category": "config_missing",
+      "message": "No config file found, using environment variables only"
+    }
+  ],
+  "check_timestamp": "1771539127.3173723"
+}

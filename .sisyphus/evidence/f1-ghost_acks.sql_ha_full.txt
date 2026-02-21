@@ -1,0 +1,377 @@
+SQL Script: ghost_acks.sql
+Database: analysis/ha_snapshot/payloads_ha_full.db
+============================================================
+
+STATEMENT 1: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 2: SELECT 'SEKCE 1: Celkový přehled Setting ACKs' as ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 1: Celkový přehled Setting ACKs',)
+
+STATEMENT 3: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 4: SELECT 
+    '1.1a' as metric,
+    'Setting ACKs (R...
+Rows: 2
+------------------------------
+First few rows:
+  1: ('1.1a', 'Setting ACKs (Result=ACK, Reason=Setting)', 1031)
+  2: ('1.1b', 'tbl_events s Type=Setting', 767)
+
+STATEMENT 5: SELECT 
+    '1.2' as metric,
+    'Odchozí Settings...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('1.2', 'Odchozí Settings (proxy_to_cloud)', 0)
+
+STATEMENT 6: SELECT 
+    '1.3' as metric,
+    'Ghost ACKs (ACKs...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('1.3', 'Ghost ACKs (ACKs bez matching Setting)', 1031, 0, '100% ghost ACKs')
+
+STATEMENT 7: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 8: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 9: SELECT 'SEKCE 2: Časové rozmezí a distribuce' as '...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 2: Časové rozmezí a distribuce',)
+
+STATEMENT 10: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 11: SELECT 
+    '2.1' as metric,
+    'První Setting AC...
+Rows: 2
+------------------------------
+First few rows:
+  1: ('2.1', 'První Setting ACK', '2025-12-18T19:26:30.208926+00:00')
+  2: ('', 'Poslední Setting ACK', '2026-01-23T05:20:50.085003+00:00')
+
+STATEMENT 12: SELECT 
+    '2.2' as metric,
+    DATE(ts) as day,
+...
+Rows: 37
+------------------------------
+First few rows:
+  1: ('2.2', '2025-12-18', 58)
+  2: ('2.2', '2025-12-19', 44)
+  3: ('2.2', '2025-12-20', 41)
+  4: ('2.2', '2025-12-21', 22)
+  5: ('2.2', '2025-12-22', 21)
+
+STATEMENT 13: SELECT 
+    '2.3' as metric,
+    DATE(ts) as day,
+...
+Rows: 10
+------------------------------
+First few rows:
+  1: ('2.3', '2025-12-24', 90, 'HIGH')
+  2: ('2.3', '2025-12-28', 64, 'HIGH')
+  3: ('2.3', '2025-12-18', 58, 'HIGH')
+  4: ('2.3', '2025-12-19', 44, 'MEDIUM')
+  5: ('2.3', '2025-12-30', 43, 'MEDIUM')
+
+STATEMENT 14: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 15: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 16: SELECT 'SEKCE 3: Hodinová analýza (Time-of-Day)' a...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 3: Hodinová analýza (Time-of-Day)',)
+
+STATEMENT 17: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 18: SELECT 
+    '3.1' as metric,
+    CAST(strftime('%H...
+Rows: 24
+------------------------------
+First few rows:
+  1: ('3.1', 0, 36, 3.5)
+  2: ('3.1', 1, 37, 3.6)
+  3: ('3.1', 2, 34, 3.3)
+  4: ('3.1', 3, 20, 1.9)
+  5: ('3.1', 4, 38, 3.7)
+
+STATEMENT 19: SELECT 
+    '3.2' as metric,
+    CAST(strftime('%H...
+Rows: 5
+------------------------------
+First few rows:
+  1: ('3.2', 20, 100)
+  2: ('3.2', 12, 89)
+  3: ('3.2', 10, 74)
+  4: ('3.2', 21, 70)
+  5: ('3.2', 19, 56)
+
+STATEMENT 20: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 21: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 22: SELECT 'SEKCE 4: Interval mezi consecutive ACKs' a...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 4: Interval mezi consecutive ACKs',)
+
+STATEMENT 23: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 24: Non-SELECT executed
+
+STATEMENT 25: Non-SELECT executed
+
+STATEMENT 26: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 27: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 28: SELECT 'SEKCE 5: DT pole analýza (Rdt timestamp)' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 5: DT pole analýza (Rdt timestamp)',)
+
+STATEMENT 29: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 30: SELECT 
+    '5.1' as metric,
+    'Příklad Rdt pole...
+Rows: 3
+------------------------------
+First few rows:
+  1: ('5.1', 'Příklad Rdt pole v ACK frame', 257, '2025-12-18T19:26:30.208926+00:00', '2025-12-18 20:26:21')
+  2: ('5.1', 'Příklad Rdt pole v ACK frame', 259, '2025-12-18T19:26:39.136166+00:00', '2025-12-18 20:26:30')
+  3: ('5.1', 'Příklad Rdt pole v ACK frame', 261, '2025-12-18T19:26:47.366600+00:00', '2025-12-18 20:26:40')
+
+STATEMENT 31: Non-SELECT executed
+
+STATEMENT 32: Non-SELECT executed
+
+STATEMENT 33: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 34: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 35: SELECT 'SEKCE 6: Testování hypotéz' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 6: Testování hypotéz',)
+
+STATEMENT 36: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 37: SELECT 
+    'Hypotéza A' as hypothesis,
+    'Captu...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('Hypotéza A', 'Capture bug - proxy nezachytila odchozí Settings', 'Důkaz 1: proxy_to_cloud frames = 0', 'Důkaz 2: ACKs have varying intervals (not regular)', 'Důkaz 3: Rdt matches frame timestamp (real-time)', 'SUPPORTED', 'Proxy captures only box→proxy and cloud→proxy, NOT proxy→cloud')
+
+STATEMENT 38: SELECT 
+    'Hypotéza B' as hypothesis,
+    'BOX p...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('Hypotéza B', 'BOX přehrává staré ACKs', 'Důkaz 1: Max Rdt-frame diff = ~16 sec (within network latency)', 'Důkaz 2: Intervals vary widely (4.7s to 17 hours)', 'Důkaz 3: Hourly distribution shows user activity pattern', 'REFUTED', 'Rdt timestamps match real-time, no replay pattern detected')
+
+STATEMENT 39: SELECT 
+    'Hypotéza C' as hypothesis,
+    'Setti...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('Hypotéza C', 'Settings přišly jiným kanálem', 'Důkaz 1: BOX generates ACKs in real-time (Rdt ~ frame_ts)', 'Důkaz 2: ACK Content shows "Remotely : tbl_*_prms" (remote settings)', 'Důkaz 3: No proxy_to_cloud traffic captured', 'INCONCLUSIVE', 'Possible but cannot verify without full capture')
+
+STATEMENT 40: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 41: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 42: SELECT 'SEKCE 7: Verifikace známých případů' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 7: Verifikace známých případů',)
+
+STATEMENT 43: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 44: SELECT 
+    '7.1' as metric,
+    'Jan 23, 2026 gho...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('7.1', 'Jan 23, 2026 ghost ACKs', 7, 7, 'MATCH')
+
+STATEMENT 45: SELECT 
+    '7.2' as metric,
+    id,
+    ts as fra...
+Rows: 7
+------------------------------
+First few rows:
+  1: ('7.2', 865771, '2026-01-23T03:56:18.822152+00:00', '2026-01-23 04:56:10')
+  2: ('7.2', 865837, '2026-01-23T04:00:24.668624+00:00', '2026-01-23 05:00:15')
+  3: ('7.2', 865920, '2026-01-23T04:04:29.730630+00:00', '2026-01-23 05:04:19')
+  4: ('7.2', 866076, '2026-01-23T04:13:44.200740+00:00', '2026-01-23 05:13:35')
+  5: ('7.2', 866243, '2026-01-23T04:23:12.043017+00:00', '2026-01-23 05:23:06')
+
+STATEMENT 46: SELECT 
+    '7.3' as metric,
+    'Poslední cloud S...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('7.3', 'Poslední cloud Setting (z payloads.db)', '2026-01-04 17:37:40 UTC', '2026-01-23T05:20:50.085003+00:00', 443.7)
+
+STATEMENT 47: SELECT 
+    '7.4' as metric,
+    'Cloud Settings v...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('7.4', 'Cloud Settings v payloads_ha_full.db', 0, 'CONFIRMED: 0 Settings')
+
+STATEMENT 48: SELECT '' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('',)
+
+STATEMENT 49: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 50: SELECT 'SEKCE 8: Shrnutí a závěry' as ''...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SEKCE 8: Shrnutí a závěry',)
+
+STATEMENT 51: SELECT '========================================' ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('========================================',)
+
+STATEMENT 52: SELECT 
+    'SHRNUTÍ' as section,
+    'Ghost ACKs ...
+Rows: 1
+------------------------------
+First few rows:
+  1: ('SHRNUTÍ', 'Ghost ACKs Investigation', '')
+
+STATEMENT 53: SELECT 
+    'Zjištění' as category,
+    'Celkový p...
+Rows: 8
+------------------------------
+First few rows:
+  1: ('Zjištění', 'Celkový počet ghost ACKs', '1031', '100% ACKs bez matching Setting')
+  2: ('Zjištění', 'Proxy capture gap', '0 proxy_to_cloud frames', 'Proxy nezachytává odchozí Settings')
+  3: ('Zjištění', 'Rdt timestamp analýza', 'max 16 sec diff', 'ACKs jsou real-time, ne replay')
+  4: ('Zjištění', 'Interval mezi ACKs', '4.7s - 17h (avg 50min)', 'Není pravidelný - není replay')
+  5: ('Zjištění', 'Hodinová distribuce', 'Peak: 20:00, 12:00, 10:00', 'Odpovídá aktivitě uživatele')
+
+============================================================
+SCRIPT SUMMARY: ghost_acks.sql
+Total rows: 138
+Status: PASS

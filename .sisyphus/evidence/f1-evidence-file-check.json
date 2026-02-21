@@ -1,0 +1,130 @@
+{
+  "check_type": "Evidence File Reference Validation",
+  "check_date": "2026-02-17T17:57:00Z",
+  "plan_file": ".sisyphus/plans/offline-proxy-mock-alignment.md",
+  "evidence_directory": ".sisyphus/evidence/",
+  "summary": {
+    "total_referenced_in_plan": 16,
+    "files_found": 10,
+    "files_missing": 6
+  },
+  "validation_results": [
+    {
+      "task": "T1",
+      "status": "INCOMPLETE",
+      "referenced_files": [
+        ".sisyphus/evidence/task-1-baseline.json",
+        ".sisyphus/evidence/task-1-missing-db-error.txt"
+      ],
+      "found": [],
+      "missing": [
+        ".sisyphus/evidence/task-1-baseline.json",
+        ".sisyphus/evidence/task-1-missing-db-error.txt"
+      ],
+      "note": "Task marked complete but evidence files missing"
+    },
+    {
+      "task": "T2",
+      "status": "COMPLETE",
+      "referenced_files": [
+        ".sisyphus/evidence/task-2-contract-validation.json",
+        ".sisyphus/evidence/task-2-fake-transition-error.txt"
+      ],
+      "found": [
+        ".sisyphus/evidence/task-2-contract-validation.json",
+        ".sisyphus/evidence/task-2-fake-transition-error.txt"
+      ],
+      "missing": [],
+      "additional_files": [
+        ".sisyphus/evidence/task-2-contract-matrix.json",
+        ".sisyphus/evidence/task-2-protocol-contract-matrix.md"
+      ]
+    },
+    {
+      "task": "T3",
+      "status": "COMPLETE",
+      "referenced_files": [
+        ".sisyphus/evidence/task-3-gate-dry-run.txt",
+        ".sisyphus/evidence/task-3-checklist-failure.txt"
+      ],
+      "found": [
+        ".sisyphus/evidence/task-3-gate-dry-run.txt",
+        ".sisyphus/evidence/task-3-checklist-failure.txt"
+      ],
+      "missing": [],
+      "additional_files": [
+        ".sisyphus/evidence/task-3-feature-flag-spec.md",
+        ".sisyphus/evidence/task-3-rollback-gate-spec.md",
+        ".sisyphus/evidence/task-3-enable-disable-procedure.md"
+      ]
+    },
+    {
+      "task": "T4",
+      "status": "COMPLETE",
+      "referenced_files": [
+        ".sisyphus/evidence/task-4-mock-setting-handshake.json",
+        ".sisyphus/evidence/task-4-out-of-context-blocked.json"
+      ],
+      "found": [
+        ".sisyphus/evidence/task-4-mock-setting-handshake.json",
+        ".sisyphus/evidence/task-4-out-of-context-blocked.json"
+      ],
+      "missing": []
+    },
+    {
+      "task": "T5",
+      "status": "COMPLETE",
+      "referenced_files": [
+        ".sisyphus/evidence/task-5-hybrid-rescue.txt",
+        ".sisyphus/evidence/task-5-global-fallback.txt"
+      ],
+      "found": [
+        ".sisyphus/evidence/task-5-hybrid-rescue.txt",
+        ".sisyphus/evidence/task-5-global-fallback.txt"
+      ],
+      "missing": []
+    },
+    {
+      "task": "T6",
+      "status": "EXPECTED_MISSING",
+      "referenced_files": [
+        ".sisyphus/evidence/task-6-comparison-report.json",
+        ".sisyphus/evidence/task-6-mismatch-detected.txt"
+      ],
+      "found": [],
+      "missing": [
+        ".sisyphus/evidence/task-6-comparison-report.json",
+        ".sisyphus/evidence/task-6-mismatch-detected.txt"
+      ],
+      "note": "Task not complete - evidence expected to be missing"
+    },
+    {
+      "task": "T7",
+      "status": "EXPECTED_MISSING",
+      "referenced_files": [
+        ".sisyphus/evidence/task-7-hybrid-soak.json",
+        ".sisyphus/evidence/task-7-failure-injection.json"
+      ],
+      "found": [],
+      "missing": [
+        ".sisyphus/evidence/task-7-hybrid-soak.json",
+        ".sisyphus/evidence/task-7-failure-injection.json"
+      ],
+      "note": "Task not complete - evidence expected to be missing"
+    },
+    {
+      "task": "T8",
+      "status": "EXPECTED_MISSING",
+      "referenced_files": [
+        ".sisyphus/evidence/task-8-gate-decision.json",
+        ".sisyphus/evidence/task-8-gate-failure.txt"
+      ],
+      "found": [],
+      "missing": [
+        ".sisyphus/evidence/task-8-gate-decision.json",
+        ".sisyphus/evidence/task-8-gate-failure.txt"
+      ],
+      "note": "Task not complete - evidence expected to be missing"
+    }
+  ]
+}

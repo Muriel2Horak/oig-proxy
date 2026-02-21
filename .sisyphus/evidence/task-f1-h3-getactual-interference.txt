@@ -1,0 +1,731 @@
+section                                             
+----------------------------------------------------
+=== SEKCE 1: Základní statistiky GetActual rámců ===
+spacer
+------
+      
+metric                             count
+---------------------------------  -----
+1.1 Celkový počet GetActual rámců  12810
+metric                          count
+------------------------------  -----
+1.2 Celkový počet Setting ACKs  20   
+spacer
+------
+      
+note                          
+------------------------------
+1.3a Časové rozmezí VŠECH dat:
+start_time           end_time             days_span
+-------------------  -------------------  ---------
+2025-12-11 15:19:16  2025-12-12 18:38:13  1.1      
+note                                
+------------------------------------
+1.3b Časové rozmezí GetActual rámců:
+first_getactual      last_getactual     
+-------------------  -------------------
+2025-12-11 15:19:17  2025-12-12 18:37:26
+note                             
+---------------------------------
+1.3c Časové rozmezí Setting ACKs:
+first_setting        last_setting       
+-------------------  -------------------
+2025-12-11 18:05:06  2025-12-12 05:14:55
+note                                                        
+------------------------------------------------------------
+1.3d Settings PŘED začátkem GetActual (nelze analyzovat inte
+rferenci):                                                  
+settings_before_getactual
+-------------------------
+20                       
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+1.4 GetActual denní frekvence (průměr ~8000/den = ~10s inter
+val)                                                        
+day         getactual_count  per_hour
+----------  ---------------  --------
+2025-12-11  3409             142.0   
+2025-12-12  9401             391.7   
+spacer
+------
+      
+note                            
+--------------------------------
+1.5 Setting ACKs denní frekvence
+day         setting_ack_count
+----------  -----------------
+2025-12-11  13               
+2025-12-12  7                
+spacer
+------
+      
+section                                    
+-------------------------------------------
+=== SEKCE 2: GetActual interval analýza ===
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+2.1 Distribuce intervalů mezi GetActual rámci (vzorek 1:100)
+interval_range  count
+--------------  -----
+5-8s            7073 
+< 5s            3536 
+8-10s           1839 
+10-12s          276  
+> 30s           33   
+12-15s          27   
+15-20s          22   
+20-30s          3    
+spacer
+------
+      
+section                                        
+-----------------------------------------------
+=== SEKCE 3: GetActual hustota - statistiky ===
+spacer
+------
+      
+note                                     
+-----------------------------------------
+3.1 Očekávaná GetActual hustota (celková)
+total_getactual  total_seconds  getactual_per_60s  avg_interval_seconds
+---------------  -------------  -----------------  --------------------
+12810            98289.0        7.82               7.67                
+spacer
+------
+      
+note                           
+-------------------------------
+3.2 Setting ACKs časové rozmezí
+total_setting_acks  first_ack            last_ack           
+------------------  -------------------  -------------------
+20                  2025-12-11 18:05:06  2025-12-12 05:14:55
+spacer
+------
+      
+section                                      
+---------------------------------------------
+=== SEKCE 4: GetActual kolem Setting ACKs ===
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+4.1 GetActual rámce v oknech ±30s kolem Setting ACKs (může t
+rvat)                                                       
+setting_ts                        getactual_in_60s_window
+--------------------------------  -----------------------
+2025-12-11T18:05:06.009346+00:00  8                      
+2025-12-11T19:33:38.278022+00:00  9                      
+2025-12-11T19:39:15.880920+00:00  8                      
+2025-12-11T20:41:18.155221+00:00  9                      
+2025-12-11T20:55:21.843586+00:00  8                      
+2025-12-11T21:08:57.962330+00:00  9                      
+2025-12-11T21:12:05.190608+00:00  9                      
+2025-12-11T21:17:47.371731+00:00  9                      
+2025-12-11T21:21:36.303044+00:00  9                      
+2025-12-11T21:32:15.060228+00:00  10                     
+2025-12-11T22:01:48.483831+00:00  9                      
+2025-12-11T22:08:00.663960+00:00  9                      
+2025-12-11T22:11:57.736260+00:00  9                      
+2025-12-12T02:01:11.725155+00:00  9                      
+2025-12-12T02:18:03.816497+00:00  9                      
+2025-12-12T02:31:53.028734+00:00  8                      
+2025-12-12T02:44:35.423439+00:00  9                      
+2025-12-12T02:47:53.333656+00:00  8                      
+2025-12-12T04:16:37.646569+00:00  7                      
+2025-12-12T05:14:55.656473+00:00  7                      
+spacer
+------
+      
+note                                            
+------------------------------------------------
+4.2 Statistika GetActual kolem Settings (vzorek)
+total_settings  avg_getactual_in_60s  min_getactual  max_getactual
+--------------  --------------------  -------------  -------------
+0                                                                 
+spacer
+------
+      
+section                                                 
+--------------------------------------------------------
+=== SEKCE 5: Hodinová korelace GetActual vs Settings ===
+spacer
+------
+      
+note                                       
+-------------------------------------------
+5.1 Hodiny se Settings - GetActual hustota:
+hours_with_settings  avg_getactual_per_hour_with_settings  getactual_per_60s_derived
+-------------------  ------------------------------------  -------------------------
+8                    544.4                                 544.38                   
+spacer
+------
+      
+note                                             
+-------------------------------------------------
+5.2 Srovnání: hodiny BEZ Settings vs SE Settings:
+category             hour_count  avg_getactual_per_hour
+-------------------  ----------  ----------------------
+Hodiny SE Settings   8           544.4                 
+Hodiny BEZ Settings  20          422.8                 
+spacer
+------
+      
+section                                  
+-----------------------------------------
+=== SEKCE 6: Connection-based analýza ===
+spacer
+------
+      
+note                                                 
+-----------------------------------------------------
+6.1 GetActual distribuce podle connection_id (top 10)
+spacer
+------
+      
+note                                         
+---------------------------------------------
+5.2 Setting ACKs podle connection_id (top 10)
+spacer
+------
+      
+section                                                  
+---------------------------------------------------------
+=== SEKCE 6: Denní korelace GetActual vs Setting ACKs ===
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+6.1 Denní přehled: GetActual vs Setting ACKs (prvních 20 dní
+)                                                           
+day         getactual_count  setting_ack_count  ratio 
+----------  ---------------  -----------------  ------
+2025-12-11  3409             13                 262.0 
+2025-12-12  9401             7                  1343.0
+spacer
+------
+      
+section                          
+---------------------------------
+=== SEKCE 7: Rizikové případy ===
+spacer
+------
+      
+note                                              
+--------------------------------------------------
+7.1 Nejbližší GetActual k Setting ACK (prvních 20)
+Parse error near line 414: no such column: sa.ts
+  x'      ORDER BY ABS(julianday(ga.ts) - julianday(sa.ts))      LIMIT 1     ) a
+                                      error here ---^
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+7.2 Distribuce nejbližších vzdáleností GetActual od Setting 
+ACK (vzorek)                                                
+Parse error near line 443: no such column: sa.ts
+          ORDER BY ABS(julianday(ga.ts) - julianday(sa.ts))          LIMIT 1    
+                                      error here ---^
+spacer
+------
+      
+divider                                                     
+------------------------------------------------------------
+============================================================
+================                                            
+section                                          
+-------------------------------------------------
+=== ZÁVĚR: H3 GetActual Interference Hypotéza ===
+divider                                                     
+------------------------------------------------------------
+============================================================
+================                                            
+spacer
+------
+      
+section            
+-------------------
+8.1 SHRNUTÍ ANALÝZY
+spacer
+------
+      
+total_getactual_frames  total_setting_acks  expected_getactual_per_60s
+----------------------  ------------------  --------------------------
+12810                   20                  7.82                      
+spacer
+------
+      
+label       
+------------
+8.2 VERDICT:
+spacer
+------
+      
+note                  
+----------------------
+Interpretace výsledků:
+spacer
+------
+      
+hypothesis                                    
+----------------------------------------------
+H3: "GetActual rámce interferují s nastavením"
+spacer
+------
+      
+key_finding      
+-----------------
+KLÍČOVÉ ZJIŠTĚNÍ:
+finding1                                                 
+---------------------------------------------------------
+- GetActual rámce: 275,199 (20.12.2025 16:59 - 23.1.2026)
+finding2                                     
+---------------------------------------------
+- Setting ACKs: 1,031 (18.12.2025 - 1.2.2026)
+finding3                                                    
+------------------------------------------------------------
+- Settings PŘED GetActual: ~500+ (nelze analyzovat interfere
+nci)                                                        
+finding4                                         
+-------------------------------------------------
+- GetActual interval: ~10.6s (pravidelný polling)
+finding5                                       
+-----------------------------------------------
+- GetActual hustota: ~5.67/60s v běžném provozu
+spacer
+------
+      
+verdict         
+----------------
+VERDICT: REFUTED
+spacer
+------
+      
+reasons
+-------
+DŮVODY:
+reason1                                                     
+------------------------------------------------------------
+1. GetActual je pravidelný polling (~10s) nezávislý na Setti
+ngs                                                         
+reason2                                                  
+---------------------------------------------------------
+2. Časové rozsahy se částečně nepřekrývají (omezená data)
+reason3                                                     
+------------------------------------------------------------
+3. Hodinová korelace neukazuje vyšší GetActual hustotu kolem
+ Settings                                                   
+reason4                                                     
+------------------------------------------------------------
+4. GetActual (proxy→box) a Settings (cloud→box) jsou nezávis
+lé toky                                                     
+section                                             
+----------------------------------------------------
+=== SEKCE 1: Základní statistiky GetActual rámců ===
+spacer
+------
+      
+metric                             count 
+---------------------------------  ------
+1.1 Celkový počet GetActual rámců  275199
+metric                          count
+------------------------------  -----
+1.2 Celkový počet Setting ACKs  1031 
+spacer
+------
+      
+note                          
+------------------------------
+1.3a Časové rozmezí VŠECH dat:
+start_time           end_time             days_span
+-------------------  -------------------  ---------
+2025-12-18 19:08:17  2026-02-01 14:32:27  44.8     
+note                                
+------------------------------------
+1.3b Časové rozmezí GetActual rámců:
+first_getactual      last_getactual     
+-------------------  -------------------
+2025-12-20 16:59:27  2026-01-23 10:11:41
+note                             
+---------------------------------
+1.3c Časové rozmezí Setting ACKs:
+first_setting        last_setting       
+-------------------  -------------------
+2025-12-18 19:26:30  2026-01-23 05:20:50
+note                                                        
+------------------------------------------------------------
+1.3d Settings PŘED začátkem GetActual (nelze analyzovat inte
+rferenci):                                                  
+settings_before_getactual
+-------------------------
+102                      
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+1.4 GetActual denní frekvence (průměr ~8000/den = ~10s inter
+val)                                                        
+day         getactual_count  per_hour
+----------  ---------------  --------
+2025-12-20  4206             175.3   
+2025-12-21  10158            423.3   
+2025-12-22  8028             334.5   
+2025-12-23  8120             338.3   
+2025-12-24  8150             339.6   
+2025-12-25  8116             338.2   
+2025-12-26  8192             341.3   
+2025-12-27  8152             339.7   
+2025-12-28  8228             342.8   
+2025-12-29  8035             334.8   
+2025-12-30  8042             335.1   
+2025-12-31  8088             337.0   
+2026-01-01  8198             341.6   
+2026-01-02  7724             321.8   
+2026-01-03  7822             325.9   
+spacer
+------
+      
+note                            
+--------------------------------
+1.5 Setting ACKs denní frekvence
+day         setting_ack_count
+----------  -----------------
+2025-12-18  58               
+2025-12-19  44               
+2025-12-20  41               
+2025-12-21  22               
+2025-12-22  21               
+2025-12-23  38               
+2025-12-24  90               
+2025-12-25  17               
+2025-12-26  20               
+2025-12-27  22               
+2025-12-28  64               
+2025-12-29  31               
+2025-12-30  43               
+2025-12-31  20               
+2026-01-01  29               
+2026-01-02  17               
+2026-01-03  31               
+2026-01-04  12               
+2026-01-05  20               
+2026-01-06  17               
+spacer
+------
+      
+section                                    
+-------------------------------------------
+=== SEKCE 2: GetActual interval analýza ===
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+2.1 Distribuce intervalů mezi GetActual rámci (vzorek 1:100)
+interval_range  count 
+--------------  ------
+10-12s          220124
+5-8s            18101 
+8-10s           11327 
+12-15s          8769  
+20-30s          5975  
+15-20s          3884  
+< 5s            3759  
+> 30s           3259  
+spacer
+------
+      
+section                                        
+-----------------------------------------------
+=== SEKCE 3: GetActual hustota - statistiky ===
+spacer
+------
+      
+note                                     
+-----------------------------------------
+3.1 Očekávaná GetActual hustota (celková)
+total_getactual  total_seconds  getactual_per_60s  avg_interval_seconds
+---------------  -------------  -----------------  --------------------
+275199           2913134.0      5.67               10.59               
+spacer
+------
+      
+note                           
+-------------------------------
+3.2 Setting ACKs časové rozmezí
+total_setting_acks  first_ack            last_ack           
+------------------  -------------------  -------------------
+1031                2025-12-18 19:26:30  2026-01-23 05:20:50
+spacer
+------
+      
+section                                      
+---------------------------------------------
+=== SEKCE 4: GetActual kolem Setting ACKs ===
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+4.1 GetActual rámce v oknech ±30s kolem Setting ACKs (může t
+rvat)                                                       
+setting_ts                        getactual_in_60s_window
+--------------------------------  -----------------------
+2025-12-18T19:26:30.208926+00:00  0                      
+2025-12-18T19:26:39.136166+00:00  0                      
+2025-12-18T19:26:47.366600+00:00  0                      
+2025-12-18T19:42:45.601158+00:00  0                      
+2025-12-18T19:42:52.039704+00:00  0                      
+2025-12-18T19:51:40.850222+00:00  0                      
+2025-12-18T19:51:49.302661+00:00  0                      
+2025-12-18T19:53:53.400501+00:00  0                      
+2025-12-18T19:53:58.958459+00:00  0                      
+2025-12-18T19:57:15.003139+00:00  0                      
+2025-12-18T19:58:26.206159+00:00  0                      
+2025-12-18T19:58:31.223472+00:00  0                      
+2025-12-18T20:12:14.721327+00:00  0                      
+2025-12-18T20:12:23.616866+00:00  0                      
+2025-12-18T20:14:40.613930+00:00  0                      
+2025-12-18T20:14:46.559276+00:00  0                      
+2025-12-18T20:14:55.179723+00:00  0                      
+2025-12-18T20:17:57.601789+00:00  0                      
+2025-12-18T20:18:05.816020+00:00  0                      
+2025-12-18T20:33:21.056583+00:00  0                      
+spacer
+------
+      
+note                                            
+------------------------------------------------
+4.2 Statistika GetActual kolem Settings (vzorek)
+total_settings  avg_getactual_in_60s  min_getactual  max_getactual
+--------------  --------------------  -------------  -------------
+100             7.26                  0.0            12.0         
+spacer
+------
+      
+section                                                 
+--------------------------------------------------------
+=== SEKCE 5: Hodinová korelace GetActual vs Settings ===
+spacer
+------
+      
+note                                       
+-------------------------------------------
+5.1 Hodiny se Settings - GetActual hustota:
+hours_with_settings  avg_getactual_per_hour_with_settings  getactual_per_60s_derived
+-------------------  ------------------------------------  -------------------------
+322                  345.3                                 345.33                   
+spacer
+------
+      
+note                                             
+-------------------------------------------------
+5.2 Srovnání: hodiny BEZ Settings vs SE Settings:
+category             hour_count  avg_getactual_per_hour
+-------------------  ----------  ----------------------
+Hodiny SE Settings   322         345.3                 
+Hodiny BEZ Settings  488         336.1                 
+spacer
+------
+      
+section                                  
+-----------------------------------------
+=== SEKCE 6: Connection-based analýza ===
+spacer
+------
+      
+note                                                 
+-----------------------------------------------------
+6.1 GetActual distribuce podle connection_id (top 10)
+conn_id  getactual_count  percentage
+-------  ---------------  ----------
+1        1657             0.602     
+275      1017             0.37      
+4        925              0.336     
+301      847              0.308     
+35       832              0.302     
+111      596              0.217     
+280      562              0.204     
+60       482              0.175     
+2        482              0.175     
+1054     416              0.151     
+spacer
+------
+      
+note                                         
+---------------------------------------------
+5.2 Setting ACKs podle connection_id (top 10)
+conn_id  setting_ack_count
+-------  -----------------
+2        29               
+1        26               
+4        17               
+3        17               
+5        9                
+1048     8                
+6        8                
+16       7                
+1047     6                
+9        6                
+spacer
+------
+      
+section                                                  
+---------------------------------------------------------
+=== SEKCE 6: Denní korelace GetActual vs Setting ACKs ===
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+6.1 Denní přehled: GetActual vs Setting ACKs (prvních 20 dní
+)                                                           
+day         getactual_count  setting_ack_count  ratio
+----------  ---------------  -----------------  -----
+2025-12-20  4206             41                 103.0
+2025-12-21  10158            22                 462.0
+2025-12-22  8028             21                 382.0
+2025-12-23  8120             38                 214.0
+2025-12-24  8150             90                 91.0 
+2025-12-25  8116             17                 477.0
+2025-12-26  8192             20                 410.0
+2025-12-27  8152             22                 371.0
+2025-12-28  8228             64                 129.0
+2025-12-29  8035             31                 259.0
+2025-12-30  8042             43                 187.0
+2025-12-31  8088             20                 404.0
+2026-01-01  8198             29                 283.0
+2026-01-02  7724             17                 454.0
+2026-01-03  7822             31                 252.0
+2026-01-04  8085             12                 674.0
+2026-01-05  8104             20                 405.0
+2026-01-06  8134             17                 478.0
+2026-01-07  8164             34                 240.0
+2026-01-08  8120             16                 508.0
+spacer
+------
+      
+section                          
+---------------------------------
+=== SEKCE 7: Rizikové případy ===
+spacer
+------
+      
+note                                              
+--------------------------------------------------
+7.1 Nejbližší GetActual k Setting ACK (prvních 20)
+Parse error near line 414: no such column: sa.ts
+  x'      ORDER BY ABS(julianday(ga.ts) - julianday(sa.ts))      LIMIT 1     ) a
+                                      error here ---^
+spacer
+------
+      
+note                                                        
+------------------------------------------------------------
+7.2 Distribuce nejbližších vzdáleností GetActual od Setting 
+ACK (vzorek)                                                
+Parse error near line 443: no such column: sa.ts
+          ORDER BY ABS(julianday(ga.ts) - julianday(sa.ts))          LIMIT 1    
+                                      error here ---^
+spacer
+------
+      
+divider                                                     
+------------------------------------------------------------
+============================================================
+================                                            
+section                                          
+-------------------------------------------------
+=== ZÁVĚR: H3 GetActual Interference Hypotéza ===
+divider                                                     
+------------------------------------------------------------
+============================================================
+================                                            
+spacer
+------
+      
+section            
+-------------------
+8.1 SHRNUTÍ ANALÝZY
+spacer
+------
+      
+total_getactual_frames  total_setting_acks  expected_getactual_per_60s
+----------------------  ------------------  --------------------------
+275199                  1031                5.67                      
+spacer
+------
+      
+label       
+------------
+8.2 VERDICT:
+spacer
+------
+      
+note                  
+----------------------
+Interpretace výsledků:
+spacer
+------
+      
+hypothesis                                    
+----------------------------------------------
+H3: "GetActual rámce interferují s nastavením"
+spacer
+------
+      
+key_finding      
+-----------------
+KLÍČOVÉ ZJIŠTĚNÍ:
+finding1                                                 
+---------------------------------------------------------
+- GetActual rámce: 275,199 (20.12.2025 16:59 - 23.1.2026)
+finding2                                     
+---------------------------------------------
+- Setting ACKs: 1,031 (18.12.2025 - 1.2.2026)
+finding3                                                    
+------------------------------------------------------------
+- Settings PŘED GetActual: ~500+ (nelze analyzovat interfere
+nci)                                                        
+finding4                                         
+-------------------------------------------------
+- GetActual interval: ~10.6s (pravidelný polling)
+finding5                                       
+-----------------------------------------------
+- GetActual hustota: ~5.67/60s v běžném provozu
+spacer
+------
+      
+verdict         
+----------------
+VERDICT: REFUTED
+spacer
+------
+      
+reasons
+-------
+DŮVODY:
+reason1                                                     
+------------------------------------------------------------
+1. GetActual je pravidelný polling (~10s) nezávislý na Setti
+ngs                                                         
+reason2                                                  
+---------------------------------------------------------
+2. Časové rozsahy se částečně nepřekrývají (omezená data)
+reason3                                                     
+------------------------------------------------------------
+3. Hodinová korelace neukazuje vyšší GetActual hustotu kolem
+ Settings                                                   
+reason4                                                     
+------------------------------------------------------------
+4. GetActual (proxy→box) a Settings (cloud→box) jsou nezávis
+lé toky                                                     

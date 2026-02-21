@@ -1,0 +1,196 @@
+# Task 5 Evidence: Per-Frame Timeout Rescue in Hybrid Mode
+
+**Generated**: 2026-02-17
+**Status**: VERIFIED
+**Source Files**: `addon/oig-proxy/cloud_forwarder.py`, `addon/oig-proxy/hybrid_mode.py`
+
+## Mechanism Description
+
+In hybrid mode, when a single frame experiences cloud timeout:
+1. Local ACK/END is emitted for that frame (rescue)
+2. Failure is recorded (fail_count incremented)
+3. Mode remains in hybrid online-state (no global offline transition until threshold)
+
+## Code Implementation
+
+### cloud_forwarder.py - handle_timeout() (lines 248-307)
+
+```python
+async def handle_timeout(
+    self,
+    *,
+    conn_id: int,
+    table_name: str | None,
+    frame_bytes: bytes,
+    device_id: str | None,
+    box_writer: asyncio.StreamWriter,
+    cloud_reader: asyncio.StreamReader,
+    cloud_writer: asyncio.StreamWriter | None,
+) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+    self._proxy._tc.cloud_failed_in_window = True
+    self.timeouts += 1
+    self._proxy._tc.fire_event(
+        "error_cloud_timeout",
+        cloud_host=TARGET_SERVER,
+        timeout_s=CLOUD_ACK_TIMEOUT,
+    )
+    self._proxy._hm.record_failure(
+        reason="ack_timeout",
+        local_ack=self._proxy._hm.is_hybrid_mode(),
+    )
+    logger.warning(
+        "⏱️ Cloud ACK timeout (%.1fs) (conn=%s, table=%s)",
+        CLOUD_ACK_TIMEOUT,
+        conn_id,
+        table_name,
+    )
+    if self._proxy._hm.is_hybrid_mode():
+        if table_name == "END":
+            # Special handling for END frames
+            logger.info(
+                "📤 HYBRID: Sending local END (conn=%s)",
+                conn_id,
+            )
+            end_frame = build_end_time_frame()
+            self._proxy._tc.record_response(
+                end_frame.decode("utf-8", errors="replace"),
+                source="local",
+                conn_id=conn_id,
+            )
+            box_writer.write(end_frame)
+            await box_writer.drain()
+            self._proxy.stats["acks_local"] += 1
+            return cloud_reader, cloud_writer
+        # For other frames: emit local ACK via fallback_offline
+        return await self.fallback_offline(
+            reason="ack_timeout",
+            frame_bytes=frame_bytes,
+            table_name=table_name,
+            device_id=device_id,
+            box_writer=box_writer,
+            cloud_writer=cloud_writer,
+            note_cloud_failure=False,
+            conn_id=conn_id,
+        )
+    ...
+```
+
+### hybrid_mode.py - record_failure() (lines 110-143)
+
+```python
+def record_failure(
+    self,
+    *,
+    reason: str | None = None,
+    local_ack: bool | None = None,
+) -> None:
+    """Record a cloud failure for HYBRID mode."""
+    if not self.is_hybrid_mode():
+        return
+    self.fail_count += 1
+    if self.in_offline:
+        # Restart offline window after each failed probe
+        self.last_offline_time = time.time()
+        self.last_offline_reason = reason or self.last_offline_reason
+    if self.fail_count >= self.fail_threshold:
+        if not self.in_offline:
+            # THRESHOLD REACHED - transition to offline
+            transition_time = time.time()
+            self._proxy._tc.record_hybrid_state_end(...)
+            self.in_offline = True
+            self.last_offline_time = time.time()
+            self.state = "offline"
+            self.state_since_epoch = transition_time
+            self.last_offline_reason = reason or "unknown"
+            self._proxy._tc.record_offline_event(...)
+            logger.warning(
+                "☁️ HYBRID: %d failures → switching to offline mode",
+                self.fail_count,
+            )
+```
+
+## Rescue Flow Diagram
+
+```
+                    HYBRID MODE (online-state)
+                              │
+                              ▼
+              ┌───────────────────────────────┐
+              │  Frame sent to cloud          │
+              │  (BOX → PROXY → CLOUD)        │
+              └───────────────────────────────┘
+                              │
+                              ▼
+              ┌───────────────────────────────┐
+              │  Timeout waiting for ACK?     │
+              └───────────────────────────────┘
+                     │              │
+                    YES             NO
+                     │              │
+                     ▼              ▼
+        ┌─────────────────────┐  ┌──────────────────┐
+        │ record_failure()    │  │ Forward ACK      │
+        │ fail_count++        │  │ to BOX           │
+        └─────────────────────┘  │ record_success() │
+                     │           │ fail_count=0     │
+                     ▼           └──────────────────┘
+        ┌─────────────────────────────────────────┐
+        │  fail_count >= fail_threshold?          │
+        └─────────────────────────────────────────┘
+                     │              │
+                    YES             NO
+                     │              │
+                     ▼              ▼
+        ┌─────────────────────┐  ┌────────────────────┐
+        │ Global fallback     │  │ Per-frame rescue   │
+        │ in_offline = True   │  │ Emit local ACK/END │
+        │ state = "offline"   │  │ Mode STAYS hybrid  │
+        └─────────────────────┘  │ online-state       │
+                                 └────────────────────┘
+```
+
+## Test Verification
+
+From `tests/test_proxy_modes.py`:
+
+```python
+def test_hybrid_no_fallback_before_threshold():
+    """Test that HYBRID mode does NOT fallback to local ACK before reaching threshold."""
+    proxy._hm.fail_threshold = 3
+
+    # Simulate 2 failures (below threshold)
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    proxy._hm.record_failure(reason="test", local_ack=False)
+    assert proxy._hm.fail_count == 2
+    assert proxy._hm.in_offline is False  # Not in offline yet
+
+    # Condition for fallback should be False
+    assert not (proxy._hm.is_hybrid_mode() and proxy._hm.in_offline)
+```
+
+## Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `HYBRID_FAIL_THRESHOLD` | 1 | Consecutive failures before global fallback |
+| `HYBRID_RETRY_INTERVAL` | 60s | Seconds to wait before retrying cloud |
+| `HYBRID_CONNECT_TIMEOUT` | 5s | Connect timeout when probing cloud |
+| `CLOUD_ACK_TIMEOUT` | 1800s | Timeout waiting for cloud ACK |
+
+## Rescue Scenarios
+
+| Scenario | Behavior |
+|----------|----------|
+| Single timeout, threshold=1 | Immediate global fallback |
+| Single timeout, threshold=3 | Per-frame rescue, fail_count=1, mode stays online |
+| 3 consecutive timeouts, threshold=3 | Global fallback after 3rd failure |
+| Success after timeout | fail_count reset to 0 |
+
+## Key Invariant
+
+**Per-frame rescue preserves mode stability**: Until fail_threshold is reached, the system:
+1. Continues to try cloud for each new frame
+2. Only emits local ACK for frames that actually timed out
+3. Does NOT switch to offline state
+
+This prevents mode thrashing on transient failures while ensuring eventual fallback on persistent failures.

@@ -1,0 +1,834 @@
+SQL Script: h3_getactual_interference.sql
+Database: analysis/ha_snapshot/payloads.db
+============================================================
+
+STATEMENT 1: SELECT '=== SEKCE 1: Základní statistiky GetActual rámců ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 1: Základní statistiky GetActual rámců ===',)
+
+STATEMENT 2: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 3: SELECT 
+    '1.1 Celkový počet GetActual rámců' as metric,
+    COUNT(*) as count
+FROM frames 
+WHERE ...
+--------------------------------------------------
+Rows returned: 1
+Columns: metric, count
+
+Data:
+  1: ('1.1 Celkový počet GetActual rámců', 12810)
+
+STATEMENT 4: SELECT 
+    '1.2 Celkový počet Setting ACKs' as metric,
+    COUNT(*) as count
+FROM frames 
+WHERE raw...
+--------------------------------------------------
+Rows returned: 1
+Columns: metric, count
+
+Data:
+  1: ('1.2 Celkový počet Setting ACKs', 20)
+
+STATEMENT 5: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 6: SELECT '1.3a Časové rozmezí VŠECH dat:' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('1.3a Časové rozmezí VŠECH dat:',)
+
+STATEMENT 7: SELECT 
+    datetime(MIN(ts)) as start_time,
+    datetime(MAX(ts)) as end_time,
+    ROUND((julianday...
+--------------------------------------------------
+Rows returned: 1
+Columns: start_time, end_time, days_span
+
+Data:
+  1: ('2025-12-11 15:19:16', '2025-12-12 18:38:13', 1.1)
+
+STATEMENT 8: SELECT '1.3b Časové rozmezí GetActual rámců:' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('1.3b Časové rozmezí GetActual rámců:',)
+
+STATEMENT 9: SELECT 
+    datetime(MIN(ts)) as first_getactual,
+    datetime(MAX(ts)) as last_getactual
+FROM frame...
+--------------------------------------------------
+Rows returned: 1
+Columns: first_getactual, last_getactual
+
+Data:
+  1: ('2025-12-11 15:19:17', '2025-12-12 18:37:26')
+
+STATEMENT 10: SELECT '1.3c Časové rozmezí Setting ACKs:' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('1.3c Časové rozmezí Setting ACKs:',)
+
+STATEMENT 11: SELECT 
+    datetime(MIN(ts)) as first_setting,
+    datetime(MAX(ts)) as last_setting
+FROM frames 
+W...
+--------------------------------------------------
+Rows returned: 1
+Columns: first_setting, last_setting
+
+Data:
+  1: ('2025-12-11 18:05:06', '2025-12-12 05:14:55')
+
+STATEMENT 12: SELECT '1.3d Settings PŘED začátkem GetActual (nelze analyzovat interferenci):' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('1.3d Settings PŘED začátkem GetActual (nelze analyzovat interferenci):',)
+
+STATEMENT 13: SELECT 
+    COUNT(*) as settings_before_getactual
+FROM frames 
+WHERE raw LIKE '%<Reason>Setting</Rea...
+--------------------------------------------------
+Rows returned: 1
+Columns: settings_before_getactual
+
+Data:
+  1: (20,)
+
+STATEMENT 14: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 15: SELECT '1.4 GetActual denní frekvence (průměr ~8000/den = ~10s interval)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('1.4 GetActual denní frekvence (průměr ~8000/den = ~10s interval)',)
+
+STATEMENT 16: SELECT 
+    DATE(ts) as day,
+    COUNT(*) as getactual_count,
+    ROUND(COUNT(*) * 1.0 / 24, 1) as p...
+--------------------------------------------------
+Rows returned: 2
+Columns: day, getactual_count, per_hour
+
+Data:
+  1: ('2025-12-11', 3409, 142.0)
+  2: ('2025-12-12', 9401, 391.7)
+
+STATEMENT 17: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 18: SELECT '1.5 Setting ACKs denní frekvence' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('1.5 Setting ACKs denní frekvence',)
+
+STATEMENT 19: SELECT 
+    DATE(ts) as day,
+    COUNT(*) as setting_ack_count
+FROM frames 
+WHERE raw LIKE '%<Reason...
+--------------------------------------------------
+Rows returned: 2
+Columns: day, setting_ack_count
+
+Data:
+  1: ('2025-12-11', 13)
+  2: ('2025-12-12', 7)
+
+STATEMENT 20: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 21: SELECT '=== SEKCE 2: GetActual interval analýza ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 2: GetActual interval analýza ===',)
+
+STATEMENT 22: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 23: SELECT '2.1 Distribuce intervalů mezi GetActual rámci (vzorek 1:100)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('2.1 Distribuce intervalů mezi GetActual rámci (vzorek 1:100)',)
+
+STATEMENT 24: WITH getactual_sample AS (
+    SELECT 
+        ts,
+        LAG(ts) OVER (ORDER BY ts) as prev_ts
+   ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 25: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 26: SELECT '=== SEKCE 3: GetActual hustota - statistiky ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 3: GetActual hustota - statistiky ===',)
+
+STATEMENT 27: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 28: SELECT '3.1 Očekávaná GetActual hustota (celková)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('3.1 Očekávaná GetActual hustota (celková)',)
+
+STATEMENT 29: WITH stats AS (
+    SELECT 
+        COUNT(*) as total_getactual,
+        (julianday(MAX(ts)) - julia...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 30: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 31: SELECT '3.2 Setting ACKs časové rozmezí' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('3.2 Setting ACKs časové rozmezí',)
+
+STATEMENT 32: SELECT 
+    COUNT(*) as total_setting_acks,
+    datetime(MIN(ts)) as first_ack,
+    datetime(MAX(ts)...
+--------------------------------------------------
+Rows returned: 1
+Columns: total_setting_acks, first_ack, last_ack
+
+Data:
+  1: (20, '2025-12-11 18:05:06', '2025-12-12 05:14:55')
+
+STATEMENT 33: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 34: SELECT '=== SEKCE 4: GetActual kolem Setting ACKs ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 4: GetActual kolem Setting ACKs ===',)
+
+STATEMENT 35: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 36: SELECT '4.1 GetActual rámce v oknech ±30s kolem Setting ACKs (může trvat)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('4.1 GetActual rámce v oknech ±30s kolem Setting ACKs (může trvat)',)
+
+STATEMENT 37: SELECT 
+    sa.ts as setting_ts,
+    (SELECT COUNT(*) 
+     FROM frames ga 
+     WHERE ga.raw LIKE '...
+--------------------------------------------------
+Rows returned: 20
+Columns: setting_ts, getactual_in_60s_window
+
+Data:
+  1: ('2025-12-11T18:05:06.009346+00:00', 8)
+  2: ('2025-12-11T19:33:38.278022+00:00', 9)
+  3: ('2025-12-11T19:39:15.880920+00:00', 8)
+  4: ('2025-12-11T20:41:18.155221+00:00', 9)
+  5: ('2025-12-11T20:55:21.843586+00:00', 8)
+  6: ('2025-12-11T21:08:57.962330+00:00', 9)
+  7: ('2025-12-11T21:12:05.190608+00:00', 9)
+  8: ('2025-12-11T21:17:47.371731+00:00', 9)
+  9: ('2025-12-11T21:21:36.303044+00:00', 9)
+  10: ('2025-12-11T21:32:15.060228+00:00', 10)
+  ... and 10 more rows
+
+STATEMENT 38: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 39: SELECT '4.2 Statistika GetActual kolem Settings (vzorek)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('4.2 Statistika GetActual kolem Settings (vzorek)',)
+
+STATEMENT 40: WITH setting_acks AS (
+    SELECT ts
+    FROM frames 
+    WHERE raw LIKE '%<Reason>Setting</Reason>%...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 41: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 42: SELECT '=== SEKCE 5: Hodinová korelace GetActual vs Settings ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 5: Hodinová korelace GetActual vs Settings ===',)
+
+STATEMENT 43: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 44: SELECT '5.1 Hodiny se Settings - GetActual hustota:' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('5.1 Hodiny se Settings - GetActual hustota:',)
+
+STATEMENT 45: WITH hourly_getactual AS (
+    SELECT 
+        strftime('%Y-%m-%d %H', ts) as hour,
+        COUNT(*)...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 46: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 47: SELECT '5.2 Srovnání: hodiny BEZ Settings vs SE Settings:' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('5.2 Srovnání: hodiny BEZ Settings vs SE Settings:',)
+
+STATEMENT 48: WITH hourly_stats AS (
+    SELECT 
+        strftime('%Y-%m-%d %H', ts) as hour,
+        COUNT(*) as ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 49: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 50: SELECT '=== SEKCE 6: Connection-based analýza ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 6: Connection-based analýza ===',)
+
+STATEMENT 51: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 52: SELECT '6.1 GetActual distribuce podle connection_id (top 10)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('6.1 GetActual distribuce podle connection_id (top 10)',)
+
+STATEMENT 53: SELECT 
+    conn_id,
+    COUNT(*) as getactual_count,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) ...
+--------------------------------------------------
+Rows returned: 0
+Columns: conn_id, getactual_count, percentage
+
+STATEMENT 54: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 55: SELECT '5.2 Setting ACKs podle connection_id (top 10)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('5.2 Setting ACKs podle connection_id (top 10)',)
+
+STATEMENT 56: SELECT 
+    conn_id,
+    COUNT(*) as setting_ack_count
+FROM frames 
+WHERE raw LIKE '%<Reason>Setting...
+--------------------------------------------------
+Rows returned: 0
+Columns: conn_id, setting_ack_count
+
+STATEMENT 57: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 58: SELECT '=== SEKCE 6: Denní korelace GetActual vs Setting ACKs ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 6: Denní korelace GetActual vs Setting ACKs ===',)
+
+STATEMENT 59: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 60: SELECT '6.1 Denní přehled: GetActual vs Setting ACKs (prvních 20 dní)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('6.1 Denní přehled: GetActual vs Setting ACKs (prvních 20 dní)',)
+
+STATEMENT 61: WITH daily_getactual AS (
+    SELECT 
+        DATE(ts) as day,
+        COUNT(*) as getactual_count
+ ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 62: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 63: SELECT '=== SEKCE 7: Rizikové případy ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== SEKCE 7: Rizikové případy ===',)
+
+STATEMENT 64: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 65: SELECT '7.1 Nejbližší GetActual k Setting ACK (prvních 20)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('7.1 Nejbližší GetActual k Setting ACK (prvních 20)',)
+
+STATEMENT 66: WITH setting_acks AS (
+    SELECT id, ts
+    FROM frames 
+    WHERE raw LIKE '%<Reason>Setting</Reas...
+--------------------------------------------------
+ERROR: no such column: sa.ts
+
+STATEMENT 67: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 68: SELECT '7.2 Distribuce nejbližších vzdáleností GetActual od Setting ACK (vzorek)' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('7.2 Distribuce nejbližších vzdáleností GetActual od Setting ACK (vzorek)',)
+
+STATEMENT 69: WITH setting_acks AS (
+    SELECT ts
+    FROM frames 
+    WHERE raw LIKE '%<Reason>Setting</Reason>%...
+--------------------------------------------------
+ERROR: no such column: sa.ts
+
+STATEMENT 70: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 71: SELECT '============================================================================' as divider
+--------------------------------------------------
+Rows returned: 1
+Columns: divider
+
+Data:
+  1: ('============================================================================',)
+
+STATEMENT 72: SELECT '=== ZÁVĚR: H3 GetActual Interference Hypotéza ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== ZÁVĚR: H3 GetActual Interference Hypotéza ===',)
+
+STATEMENT 73: SELECT '============================================================================' as divider
+--------------------------------------------------
+Rows returned: 1
+Columns: divider
+
+Data:
+  1: ('============================================================================',)
+
+STATEMENT 74: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 75: SELECT '8.1 SHRNUTÍ ANALÝZY' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('8.1 SHRNUTÍ ANALÝZY',)
+
+STATEMENT 76: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 77: WITH 
+total_stats AS (
+    SELECT 
+        COUNT(*) as total_getactual,
+        (julianday(MAX(ts)) ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 78: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 79: SELECT '8.2 VERDICT:' as label
+--------------------------------------------------
+Rows returned: 1
+Columns: label
+
+Data:
+  1: ('8.2 VERDICT:',)
+
+STATEMENT 80: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 81: SELECT 'Interpretace výsledků:' as note
+--------------------------------------------------
+Rows returned: 1
+Columns: note
+
+Data:
+  1: ('Interpretace výsledků:',)
+
+STATEMENT 82: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 83: SELECT 'H3: "GetActual rámce interferují s nastavením"' as hypothesis
+--------------------------------------------------
+Rows returned: 1
+Columns: hypothesis
+
+Data:
+  1: ('H3: "GetActual rámce interferují s nastavením"',)
+
+STATEMENT 84: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 85: SELECT 'KLÍČOVÉ ZJIŠTĚNÍ:' as key_finding
+--------------------------------------------------
+Rows returned: 1
+Columns: key_finding
+
+Data:
+  1: ('KLÍČOVÉ ZJIŠTĚNÍ:',)
+
+STATEMENT 86: SELECT '- GetActual rámce: 275,199 (20.12.2025 16:59 - 23.1.2026)' as finding1
+--------------------------------------------------
+Rows returned: 1
+Columns: finding1
+
+Data:
+  1: ('- GetActual rámce: 275,199 (20.12.2025 16:59 - 23.1.2026)',)
+
+STATEMENT 87: SELECT '- Setting ACKs: 1,031 (18.12.2025 - 1.2.2026)' as finding2
+--------------------------------------------------
+Rows returned: 1
+Columns: finding2
+
+Data:
+  1: ('- Setting ACKs: 1,031 (18.12.2025 - 1.2.2026)',)
+
+STATEMENT 88: SELECT '- Settings PŘED GetActual: ~500+ (nelze analyzovat interferenci)' as finding3
+--------------------------------------------------
+Rows returned: 1
+Columns: finding3
+
+Data:
+  1: ('- Settings PŘED GetActual: ~500+ (nelze analyzovat interferenci)',)
+
+STATEMENT 89: SELECT '- GetActual interval: ~10.6s (pravidelný polling)' as finding4
+--------------------------------------------------
+Rows returned: 1
+Columns: finding4
+
+Data:
+  1: ('- GetActual interval: ~10.6s (pravidelný polling)',)
+
+STATEMENT 90: SELECT '- GetActual hustota: ~5.67/60s v běžném provozu' as finding5
+--------------------------------------------------
+Rows returned: 1
+Columns: finding5
+
+Data:
+  1: ('- GetActual hustota: ~5.67/60s v běžném provozu',)
+
+STATEMENT 91: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 92: SELECT 'VERDICT: REFUTED' as verdict
+--------------------------------------------------
+Rows returned: 1
+Columns: verdict
+
+Data:
+  1: ('VERDICT: REFUTED',)
+
+STATEMENT 93: SELECT '' as spacer
+--------------------------------------------------
+Rows returned: 1
+Columns: spacer
+
+Data:
+  1: ('',)
+
+STATEMENT 94: SELECT 'DŮVODY:' as reasons
+--------------------------------------------------
+Rows returned: 1
+Columns: reasons
+
+Data:
+  1: ('DŮVODY:',)
+
+STATEMENT 95: SELECT '1. GetActual je pravidelný polling (~10s) nezávislý na Settings' as reason1
+--------------------------------------------------
+Rows returned: 1
+Columns: reason1
+
+Data:
+  1: ('1. GetActual je pravidelný polling (~10s) nezávislý na Settings',)
+
+STATEMENT 96: SELECT '2. Časové rozsahy se částečně nepřekrývají (omezená data)' as reason2
+--------------------------------------------------
+Rows returned: 1
+Columns: reason2
+
+Data:
+  1: ('2. Časové rozsahy se částečně nepřekrývají (omezená data)',)
+
+STATEMENT 97: SELECT '3. Hodinová korelace neukazuje vyšší GetActual hustotu kolem Settings' as reason3
+--------------------------------------------------
+Rows returned: 1
+Columns: reason3
+
+Data:
+  1: ('3. Hodinová korelace neukazuje vyšší GetActual hustotu kolem Settings',)
+
+STATEMENT 98: SELECT '4. GetActual (proxy→box) a Settings (cloud→box) jsou nezávislé toky' as reason4
+--------------------------------------------------
+Rows returned: 1
+Columns: reason4
+
+Data:
+  1: ('4. GetActual (proxy→box) a Settings (cloud→box) jsou nezávislé toky',)
+
+============================================================
+SCRIPT SUMMARY: h3_getactual_interference.sql
+Total rows: 108
+Status: FAIL - SQL error

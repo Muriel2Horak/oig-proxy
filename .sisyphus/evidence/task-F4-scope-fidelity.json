@@ -1,0 +1,142 @@
+{
+  "task": "F4-scope-fidelity-check",
+  "generated_at": "2026-02-19T23:16:31.788119+00:00",
+  "plan_reference": ".sisyphus/plans/oig-protocol-3day-passive-analysis.md",
+  "guardrails_checked": [
+    {
+      "id": "G1",
+      "description": "No active MITM injection, replay against production, or traffic manipulation",
+      "status": "PASS",
+      "evidence": [
+        "All scripts in scripts/protocol_analysis/ are read-only DB consumers",
+        "No scripts publish to MQTT control topics",
+        "No scripts send frames to BOX or cloud",
+        "Telemetry snapshotter generates MOCK data (synthetic), not live MQTT",
+        "Preflight checker (check_passive_guardrails.py) validates passive mode",
+        "task-6-preflight-check.json shows passive_mode=true, forbidden_actions=[]"
+      ],
+      "violations": []
+    },
+    {
+      "id": "G2",
+      "description": "No protocol-changing code in proxy runtime during collection window",
+      "status": "PASS_WITH_NOTE",
+      "evidence": [
+        "Passive analysis scripts make NO changes to addon/oig-proxy/*.py",
+        "All scripts are pure analysis/read-only tools",
+        "Collection used historical DB (analysis/ha_snapshot/payloads_ha_full.db)",
+        "Data range: 2025-12-18 to 2026-02-01 (before plan execution)"
+      ],
+      "violations": [],
+      "notes": [
+        "OTHER concurrent plans (setting-ack-parity, mock-server) DID modify runtime code Feb 16-19",
+        "These changes are NOT from the passive analysis plan",
+        "Passive analysis used pre-existing historical data, unaffected by runtime changes"
+      ],
+      "concurrent_changes": [
+        "b450c17 2026-02-19 - fix(control_settings): use build_end_time_frame",
+        "1edef5d 2026-02-19 - fix(oig_frame): add ToDo GetActual",
+        "13925a0 2026-02-17 - feat(mock-server): add pending Setting queue",
+        "a6960fe 2026-02-17 - fix(proxy): deliver Settings on any poll type"
+      ]
+    },
+    {
+      "id": "G3",
+      "description": "No expansion into unrelated UI/dashboard or infrastructure redesign tasks",
+      "status": "PASS",
+      "evidence": [
+        "No dashboard files created",
+        "No UI/frontend code added",
+        "No infrastructure/k8s/docker changes",
+        "All deliverables match plan: evidence files, scripts, documentation",
+        "Scope limited to: analysis scripts, JSON evidence, Markdown reports, Czech brief"
+      ],
+      "violations": []
+    }
+  ],
+  "user_constraints_verified": [
+    {
+      "constraint": "bez zasahu do live komunikace (no interference in live communication)",
+      "status": "SATISFIED",
+      "evidence": [
+        "All analysis on historical capture data",
+        "No live MQTT publishing",
+        "No control topic injection",
+        "task-6-non-interference-runbook.md documents safety guardrails"
+      ]
+    },
+    {
+      "constraint": "Proxy+telemetry only data source (no pcap sniffing)",
+      "status": "SATISFIED",
+      "evidence": [
+        "Data source: analysis/ha_snapshot/payloads_ha_full.db (proxy capture)",
+        "No tcpdump/wireshark integration",
+        "Telemetry snapshotter creates synthetic mock data"
+      ]
+    }
+  ],
+  "scope_creep_detected": false,
+  "scope_creep_items": [],
+  "deliverables_vs_plan": {
+    "planned": 20,
+    "delivered": 20,
+    "match_percentage": 100.0,
+    "all_tasks_covered": true,
+    "details": [
+      "Task 1: baseline_snapshot.py + task-1-baseline.json",
+      "Task 2: audit_capture_schema.py + task-2-capture-audit.json",
+      "Task 3: build_signal_taxonomy.py + task-3-signal-taxonomy.json",
+      "Task 4: pair_frames.py + task-4-pairing-sample.json",
+      "Task 5: generate_evidence_manifest.py + task-5-evidence-manifest.json",
+      "Task 6: check_passive_guardrails.py + task-6-non-interference-runbook.md",
+      "Task 7: extract_day_slice.py + task-7-day*-frames.json",
+      "Task 8: snapshot_telemetry_topics.py + task-8-telemetry-snapshot.json",
+      "Task 9: build_signal_timeline.py + task-9-signal-timeline.json",
+      "Task 10: extract_mode_transitions.py + task-10-mode-cloud-transitions.json",
+      "Task 11: detect_edge_cases.py + task-11-edge-cases.json",
+      "Task 12: validate_daily_collection.py + task-12-daily-validation.json",
+      "Task 13: build_standard_matrix.py + task-13-standard-request-matrix.json",
+      "Task 14: build_signal_reaction_matrix.py + task-14-signal-reaction-matrix.json",
+      "Task 15: quantify_blind_spots.py + task-15-confidence-score.json",
+      "Task 16: generate_drift_report.py + task-16-drift-anomaly-report.json",
+      "Task 17: task-17-data-adjustment-backlog.md",
+      "Task 18: task-18-validation-results.json",
+      "Task 19: task-19-final-package/ + EXECUTIVE_SUMMARY_CZ.md",
+      "Task 20: task-20-handoff-checklist.md"
+    ]
+  },
+  "fidelity_score": {
+    "overall": 0.95,
+    "breakdown": {
+      "guardrail_compliance": 1.0,
+      "scope_adherence": 1.0,
+      "deliverable_completeness": 1.0,
+      "user_constraint_satisfaction": 1.0,
+      "passive_method_purity": 1.0,
+      "concurrent_plan_interference": 0.75
+    },
+    "explanation": "Score of 0.95 reflects excellent fidelity. The passive analysis work itself is fully compliant. Small deduction (0.05) for concurrent plans modifying runtime code in the same time window, though this did not affect the passive analysis which used pre-existing historical data."
+  },
+  "violations": [],
+  "recommendations": [
+    {
+      "id": "R1",
+      "priority": "MEDIUM",
+      "description": "Document separation of concerns between concurrent plans",
+      "reason": "Multiple plans were executing simultaneously (setting-ack-parity, mock-server, passive-analysis). Future work should clearly document which changes belong to which plan."
+    },
+    {
+      "id": "R2",
+      "priority": "LOW",
+      "description": "Add timestamp to preflight check output",
+      "reason": "task-6-preflight-check.json uses st_mtime which is file modification time, not execution time. Use ISO timestamp for clarity."
+    }
+  ],
+  "verification_summary": {
+    "all_guardrails_passed": true,
+    "no_scope_creep": true,
+    "user_constraints_satisfied": true,
+    "deliverables_complete": true,
+    "ready_for_final_signoff": true
+  }
+}

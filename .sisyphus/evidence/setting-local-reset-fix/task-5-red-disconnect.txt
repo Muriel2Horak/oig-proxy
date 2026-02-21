@@ -1,0 +1,138 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/martinhorak/Projects/oig-proxy
+configfile: pytest.ini
+plugins: mock-3.15.1, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 10 items / 8 deselected / 2 selected
+
+../../tests/test_proxy_main_loop.py::test_disconnect_cancels_stale_pending_timeout FAILED [ 50%]
+../../tests/test_proxy_main_loop.py::test_stale_pending_affects_new_connection FAILED [100%]
+
+=================================== FAILURES ===================================
+________________ test_disconnect_cancels_stale_pending_timeout _________________
+
+    @pytest.mark.asyncio
+    async def test_disconnect_cancels_stale_pending_timeout():
+        """
+        RED TEST: Demonstrates that pending setting state is NOT cleaned up on disconnect.
+    
+        Scenario:
+        1. Set up pending setting with active timeout on conn_id=1
+        2. Simulate disconnect of conn_id=1
+        3. Simulate reconnect as conn_id=2
+        4. Assert: stale pending state from conn_id=1 is cleaned up
+    
+        Expected: FAIL - pending and pending_frame are NOT cleaned up on disconnect,
+        allowing stale state to affect new connection.
+        """
+        proxy = _make_proxy_with_real_control_settings()
+    
+        # Simulate conn_id=1 connecting
+        proxy._conn_seq = 1
+        writer1 = DummyWriter()
+        proxy._active_box_writer = writer1
+        proxy.box_connected = True
+    
+        # Queue a pending setting on conn_id=1 (simulating send_to_box behavior)
+        proxy._cs.pending = {
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "MODE",
+            "new_value": "1",
+            "id": 12345,
+            "id_set": 67890,
+            "tx_id": "test-tx-1",
+        }
+        proxy._cs.pending_frame = b"<Setting>...</Setting>\r\n"
+    
+        # Simulate disconnect of conn_id=1
+        proxy._active_box_writer = None
+        proxy.box_connected = False
+    
+        # Simulate reconnect as conn_id=2
+        proxy._conn_seq = 2
+        writer2 = DummyWriter()
+        proxy._active_box_writer = writer2
+        proxy.box_connected = True
+    
+        # RED: This assertion should FAIL because pending state is NOT cleaned up
+        # The stale pending from conn_id=1 should be cleared on disconnect
+>       assert proxy._cs.pending is None, (
+            "FAIL: Stale pending dict from conn_id=1 still exists after disconnect. "
+            "Expected: pending=None. "
+            f"Actual: pending={proxy._cs.pending}"
+        )
+E       AssertionError: FAIL: Stale pending dict from conn_id=1 still exists after disconnect. Expected: pending=None. Actual: pending={'tbl_name': 'tbl_box_prms', 'tbl_item': 'MODE', 'new_value': '1', 'id': 12345, 'id_set': 67890, 'tx_id': 'test-tx-1'}
+E       assert {'id': 12345, 'id_set': 67890, 'new_value': '1', 'tbl_item': 'MODE', ...} is None
+E        +  where {'id': 12345, 'id_set': 67890, 'new_value': '1', 'tbl_item': 'MODE', ...} = <control_settings.ControlSettings object at 0x109d5c6e0>.pending
+E        +    where <control_settings.ControlSettings object at 0x109d5c6e0> = <proxy.OIGProxy object at 0x10960a7b0>._cs
+
+../../tests/test_proxy_main_loop.py:281: AssertionError
+__________________ test_stale_pending_affects_new_connection ___________________
+
+    @pytest.mark.asyncio
+    async def test_stale_pending_affects_new_connection():
+        """
+        RED TEST: Demonstrates that stale pending state can affect a new connection.
+    
+        Scenario:
+        1. Queue pending setting on conn_id=1 with sent_at timestamp
+        2. Disconnect conn_id=1
+        3. Reconnect as conn_id=2
+        4. When new poll arrives on conn_id=2, stale pending could be delivered
+    
+        Expected: FAIL - stale pending_frame is delivered to conn_id=2,
+        causing cross-session state corruption.
+        """
+        proxy = _make_proxy_with_real_control_settings()
+    
+        # Simulate conn_id=1 with pending setting that was delivered (sent_at set)
+        proxy._conn_seq = 1
+        writer1 = DummyWriter()
+        proxy._active_box_writer = writer1
+        proxy.box_connected = True
+    
+        proxy._cs.pending = {
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "MODE",
+            "new_value": "4",
+            "id": 33333,
+            "id_set": 44444,
+            "tx_id": "test-tx-4",
+            "sent_at": 1000.0,  # Simulate already delivered
+        }
+        proxy._cs.pending_frame = b"<Setting from conn1>...</Setting>\r\n"
+    
+        # Disconnect conn_id=1
+        proxy._active_box_writer = None
+        proxy.box_connected = False
+    
+        # Reconnect as conn_id=2
+        proxy._conn_seq = 2
+        writer2 = DummyWriter()
+        proxy._active_box_writer = writer2
+        proxy.box_connected = True
+    
+        # Simulate a new poll arriving on conn_id=2 (IsNewSet poll)
+        # In _process_frame_offline, this would check pending_frame and deliver it
+    
+        # RED: pending_frame should be None, but it's not!
+        # If _process_frame_offline is called, it would deliver the stale frame
+        # to conn_id=2, which is wrong!
+    
+>       assert proxy._cs.pending_frame is None, (
+            "FAIL: Stale pending_frame from conn_id=1 can be delivered to conn_id=2. "
+            "This causes cross-session state corruption. "
+            f"pending_frame={proxy._cs.pending_frame}"
+        )
+E       AssertionError: FAIL: Stale pending_frame from conn_id=1 can be delivered to conn_id=2. This causes cross-session state corruption. pending_frame=b'<Setting from conn1>...</Setting>\r\n'
+E       assert b'<Setting from conn1>...</Setting>\r\n' is None
+E        +  where b'<Setting from conn1>...</Setting>\r\n' = <control_settings.ControlSettings object at 0x109ca79d0>.pending_frame
+E        +    where <control_settings.ControlSettings object at 0x109ca79d0> = <proxy.OIGProxy object at 0x10960a3c0>._cs
+
+../../tests/test_proxy_main_loop.py:454: AssertionError
+=========================== short test summary info ============================
+FAILED ../../tests/test_proxy_main_loop.py::test_disconnect_cancels_stale_pending_timeout
+FAILED ../../tests/test_proxy_main_loop.py::test_stale_pending_affects_new_connection
+======================= 2 failed, 8 deselected in 0.07s ========================

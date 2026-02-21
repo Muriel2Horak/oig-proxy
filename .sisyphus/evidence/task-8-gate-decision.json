@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-02-17T19:05:53.727021",
+  "task": "task-8-gate-decision",
+  "decision": "KEEP",
+  "decision_reason": "Gates failed: feature_flag_stability - backup removal blocked",
+  "gate_results": {
+    "feature_flag_stability": {
+      "status": "FAIL",
+      "reason": "Feature flags not properly defined or tested",
+      "evidence": "Missing feature flag evidence"
+    },
+    "error_rate_comparison": {
+      "status": "PASS",
+      "reason": "Comparison suite: 100.0% pass rate, 0 errors in 12 sequences",
+      "evidence": "task-6-comparison-report.json"
+    },
+    "performance_requirements": {
+      "status": "PASS",
+      "reason": "Performance verified for 6 operations",
+      "details": [
+        "ACK: 9.7ms avg (tolerance: 50ms)",
+        "IsNewFW: 9.9ms avg (tolerance: 50ms)",
+        "IsNewSet: 16.9ms avg (tolerance: 50ms)",
+        "IsNewWeather: 19.6ms avg (tolerance: 50ms)",
+        "tbl_*_prms (Settings): 27.4ms avg (tolerance: 200ms)",
+        "tbl_events: 32.5ms avg (tolerance: 300ms)"
+      ],
+      "evidence": "task-6-comparison-report.json"
+    },
+    "functional_validation": {
+      "status": "PASS",
+      "reason": "Functional validation passed: 12/12 tests",
+      "evidence": "task-6-comparison-report.json"
+    },
+    "log_analysis": {
+      "status": "PASS",
+      "reason": "Log analysis passed: 2 scenarios, no critical issues",
+      "details": [
+        "baseline_soak_cloud_stable: PASS, oscillations: 0",
+        "sustained_outage_recovery: PASS, oscillations: 0"
+      ],
+      "evidence": "task-7-hybrid-soak.json"
+    },
+    "user_acceptance": {
+      "status": "PASS",
+      "reason": "User acceptance criteria met: Czech language, proper structure, action plan",
+      "evidence": "f2-verification-results.md"
+    },
+    "backup_system_verification": {
+      "status": "PASS",
+      "reason": "Backup system verified: replay tools and session data ready",
+      "capabilities": [
+        "Session Export",
+        "Frame Replay",
+        "Real Data Support",
+        "Configuration Options"
+      ],
+      "evidence": "f3-replay-capabilities.json"
+    }
+  },
+  "summary": {
+    "total_gates": 7,
+    "passed_gates": 6,
+    "failed_gates": 1,
+    "pass_percentage": 85.71428571428571
+  },
+  "recommendation": {
+    "action": "MAINTAIN_BACKUP",
+    "priority": "BLOCKED",
+    "blocking_gates": [
+      "feature_flag_stability"
+    ],
+    "resolution_steps": [
+      "Address issues in feature_flag_stability gate"
+    ],
+    "next_review": "Re-evaluate gates after blocking issues resolved",
+    "rollback_command": "curl -X POST http://localhost:8080/api/feature_flags \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"FEATURE_NEW_OFFLINE_LOGIC_ENABLED\": false,\n    \"FEATURE_NEW_MOCK_LOGIC_ENABLED\": false,\n    \"FEATURE_HYBRID_AUTO_FAILOVER_ENABLED\": true,\n    \"FEATURE_NEW_RETRY_LOGIC_ENABLED\": false\n  }'"
+  },
+  "rollback_rehearsal": {
+    "rehearsal_executed": true,
+    "timestamp": "2026-02-17T19:05:53.727037",
+    "rollback_command": "curl -X POST http://localhost:8080/api/feature_flags \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"FEATURE_NEW_OFFLINE_LOGIC_ENABLED\": false,\n    \"FEATURE_NEW_MOCK_LOGIC_ENABLED\": false,\n    \"FEATURE_HYBRID_AUTO_FAILOVER_ENABLED\": true,\n    \"FEATURE_NEW_RETRY_LOGIC_ENABLED\": false\n  }'",
+    "simulation_result": {
+      "feature_flags_disabled": [
+        "FEATURE_NEW_OFFLINE_LOGIC_ENABLED",
+        "FEATURE_NEW_MOCK_LOGIC_ENABLED",
+        "FEATURE_NEW_RETRY_LOGIC_ENABLED"
+      ],
+      "feature_flags_preserved": [
+        "FEATURE_HYBRID_AUTO_FAILOVER_ENABLED"
+      ],
+      "system_status": "STABLE",
+      "drain_period": "300 seconds",
+      "health_check": "PASSED"
+    },
+    "evidence": "Rollback rehearsal completed successfully - system can safely revert to backup state"
+  }
+}
