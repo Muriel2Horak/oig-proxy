@@ -1,0 +1,6 @@
+Gate Decision: KEEP (backup removal blocked)
+Timestamp: 2026-02-17T19:05:53.728110
+Blocking Gates: feature_flag_stability
+Decision Reason: Gates failed: feature_flag_stability - backup removal blocked
+
+Rollback rehearsal completed successfully - backup maintained

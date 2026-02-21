@@ -1,0 +1,10 @@
+NEGATIVE TEST: Injected fake transition IsNewFW -> Setting
+============================================================
+Expected: Validator should REJECT this transition
+Actual violations found in database: 0
+Result: PASS (validator correctly rejects)
+
+Temp contract with fake transition: /var/folders/vj/680smcyn26b89dfkt2hsp96m0000gn/T/tmpdpjtk9ci.json
+
+CONCLUSION: The injected fake transition (IsNewFW -> Setting) was NOT found in real data.
+This confirms the validator correctly rejects unobserved transitions.

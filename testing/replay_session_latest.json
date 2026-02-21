@@ -1,0 +1,200 @@
+{
+  "source": "ha:/data/payloads.db",
+  "conn_id": 2315,
+  "frame_count": 24,
+  "exported_at": "2026-02-17T13:17:57.631294Z",
+  "frames": [
+    {
+      "id": 13794,
+      "ts": "2026-02-17T08:05:13.198931+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "IsNewSet",
+      "raw": "<Frame><Result>IsNewSet</Result><ID_Device>2206237016</ID_Device><Lat>636</Lat><TblName>tbl_actual</TblName><ID_Set>842519108</ID_Set><DT>2026-02-17 09:05:08</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ENBL>1</ENBL><VIZ>17</VIZ><Temp>22.90</Temp><Humid>20.8</Humid><ACO_P>700</ACO_P><FV_P1>38</FV_P1><FV_P2>0</FV_P2><ACI_WR>662</ACI_WR><ACI_WS>101</ACI_WS><ACI_WT>120</ACI_WT><BAT_P>0</BAT_P><FV_PROC>0</FV_PROC><BAT_C>100</BAT_C><MSC_SELF>0</MSC_SELF><STAT>0</STAT><FV_AD>23</FV_AD><FVE_PROD>38</FVE_PROD><INFLOW>0</INFLOW><LOAD>840</LOAD><MAXFG>5300</MAXFG><STATX>0</STATX><ACINB_WR>64</ACINB_WR><ACINB_WS>20</ACINB_WS><ACINB_WT>56</ACINB_WT><ACO_PR>577</ACO_PR><ACO_PS>69</ACO_PS><ACO_PT>54</ACO_PT><ver>44094</ver><CRC>52615</CRC></Frame>\r\n",
+      "length": 760
+    },
+    {
+      "id": 13795,
+      "ts": "2026-02-17T08:05:13.227130+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "IsNewSet",
+      "raw": "<Frame><Result>END</Result><Time>2026-02-17 09:05:13</Time><UTCTime>2026-02-17 08:05:13</UTCTime><CRC>45896</CRC></Frame>\r\n",
+      "length": 123
+    },
+    {
+      "id": 13796,
+      "ts": "2026-02-17T08:05:16.785794+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_dc_in",
+      "raw": "<Frame><TblName>tbl_dc_in</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><FV_V1>349.7</FV_V1><FV_I1>0.1</FV_I1><FV_P1>38</FV_P1><FV_V2>0.0</FV_V2><FV_I2>0.0</FV_I2><FV_P2>0</FV_P2><FV_AD>23</FV_AD><FV_AM>0</FV_AM><FV_AY>42</FV_AY><FV_PROC>0</FV_PROC><ver>10785</ver><CRC>23873</CRC></Frame>\r\n",
+      "length": 363
+    },
+    {
+      "id": 13797,
+      "ts": "2026-02-17T08:05:16.804973+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_dc_in",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13798,
+      "ts": "2026-02-17T08:05:21.043900+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_ac_in",
+      "raw": "<Frame><TblName>tbl_ac_in</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_VR>240.1</ACI_VR><ACI_VS>240.6</ACI_VS><ACI_VT>240.6</ACI_VT><ACI_WR>630</ACI_WR><ACI_WS>101</ACI_WS><ACI_WT>127</ACI_WT><ACI_F>49.98</ACI_F><AC_AD>27250</AC_AD><AC_AM>42</AC_AM><AC_AY>938</AC_AY><AC_PD>0</AC_PD><AC_PM>0</AC_PM><AC_PY>5</AC_PY><ver>52516</ver><CRC>21873</CRC></Frame>\r\n",
+      "length": 435
+    },
+    {
+      "id": 13799,
+      "ts": "2026-02-17T08:05:21.064070+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_ac_in",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13800,
+      "ts": "2026-02-17T08:05:25.994255+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_ac_out",
+      "raw": "<Frame><TblName>tbl_ac_out</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACO_VR>239.9</ACO_VR><ACO_VS>240.8</ACO_VS><ACO_VT>240.6</ACO_VT><ACO_PR>577</ACO_PR><ACO_PS>69</ACO_PS><ACO_PT>54</ACO_PT><ACO_P>700</ACO_P><ACO_PAR>671.0</ACO_PAR><ACO_PAS>216.0</ACO_PAS><ACO_PAT>192.0</ACO_PAT><ACO_PA>1079.0</ACO_PA><ACO_F>49.98</ACO_F><EN_DAY>3610</EN_DAY><EN_MONT>12</EN_MONT><EN_YEAR>496</EN_YEAR><ver>60892</ver><CRC>54977</CRC></Frame>\r\n",
+      "length": 508
+    },
+    {
+      "id": 13801,
+      "ts": "2026-02-17T08:05:26.011625+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_ac_out",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13802,
+      "ts": "2026-02-17T08:05:29.630891+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_batt",
+      "raw": "<Frame><TblName>tbl_batt</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><BAT_V>56.560</BAT_V><BAT_C>100</BAT_C><BAT_I>0.000</BAT_I><BAT_T>11.9</BAT_T><BAT_Q>100</BAT_Q><BAT_AD>0</BAT_AD><BAT_AM>3</BAT_AM><BAT_AY>367</BAT_AY><BAT_P>0</BAT_P><BAT_APD>0</BAT_APD><BAT_AND>0</BAT_AND><ID_SubD>0</ID_SubD><ver>17477</ver><CRC>51923</CRC></Frame>\r\n",
+      "length": 413
+    },
+    {
+      "id": 13803,
+      "ts": "2026-02-17T08:05:29.649582+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_batt",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13804,
+      "ts": "2026-02-17T08:05:33.186306+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_box",
+      "raw": "<Frame><TblName>tbl_box</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><Temp>23.00</Temp><Humid>20.8</Humid><MSC_SELF>0</MSC_SELF><STRNGHT>-44</STRNGHT><TMLASTCALL>5</TMLASTCALL><ver>04793</ver><CRC>19777</CRC></Frame>\r\n",
+      "length": 291
+    },
+    {
+      "id": 13805,
+      "ts": "2026-02-17T08:05:33.207433+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_box",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13806,
+      "ts": "2026-02-17T08:05:37.730621+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_ac_in_b",
+      "raw": "<Frame><TblName>tbl_ac_in_b</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_WR>36</ACI_WR><ACI_WS>25</ACI_WS><ACI_WT>58</ACI_WT><AC_AD>23084</AC_AD><AC_AM>26</AC_AM><AC_AY>26</AC_AY><ver>64156</ver><CRC>03822</CRC></Frame>\r\n",
+      "length": 299
+    },
+    {
+      "id": 13807,
+      "ts": "2026-02-17T08:05:37.749359+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_ac_in_b",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13808,
+      "ts": "2026-02-17T08:05:41.315752+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_actual",
+      "raw": "<Frame><TblName>tbl_actual</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ENBL>1</ENBL><VIZ>17</VIZ><Temp>23.00</Temp><Humid>20.8</Humid><ACO_P>700</ACO_P><FV_P1>38</FV_P1><FV_P2>0</FV_P2><ACI_WR>630</ACI_WR><ACI_WS>101</ACI_WS><ACI_WT>127</ACI_WT><BAT_P>0</BAT_P><FV_PROC>0</FV_PROC><BAT_C>100</BAT_C><MSC_SELF>0</MSC_SELF><STAT>0</STAT><FV_AD>23</FV_AD><FVE_PROD>37</FVE_PROD><INFLOW>0</INFLOW><LOAD>842</LOAD><MAXFG>5300</MAXFG><STATX>0</STATX><ACINB_WR>36</ACINB_WR><ACINB_WS>25</ACINB_WS><ACINB_WT>58</ACINB_WT><ACO_PR>577</ACO_PR><ACO_PS>69</ACO_PS><ACO_PT>54</ACO_PT><ver>47508</ver><CRC>43616</CRC></Frame>\r\n",
+      "length": 688
+    },
+    {
+      "id": 13809,
+      "ts": "2026-02-17T08:05:41.337159+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_actual",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13810,
+      "ts": "2026-02-17T08:05:45.932293+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_invertor",
+      "raw": "<Frame><TblName>tbl_invertor</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><T_INN>25.0</T_INN><ver>34764</ver><CRC>28157</CRC></Frame>\r\n",
+      "length": 208
+    },
+    {
+      "id": 13811,
+      "ts": "2026-02-17T08:05:45.950209+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_invertor",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13812,
+      "ts": "2026-02-17T08:05:49.483926+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_ac_in2",
+      "raw": "<Frame><TblName>tbl_ac_in2</TblName><ID_Set>842519101</ID_Set><DT>2026-02-17 09:05:00</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ACI_WR>598</ACI_WR><ACI_WS>81</ACI_WS><ACI_WT>64</ACI_WT><ver>40230</ver><CRC>27854</CRC></Frame>\r\n",
+      "length": 245
+    },
+    {
+      "id": 13813,
+      "ts": "2026-02-17T08:05:49.504925+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_ac_in2",
+      "raw": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>00167</CRC></Frame>\r\n",
+      "length": 75
+    },
+    {
+      "id": 13814,
+      "ts": "2026-02-17T08:05:54.105134+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "tbl_actual",
+      "raw": "<Frame><TblName>tbl_actual</TblName><ID_Set>842519149</ID_Set><DT>2026-02-17 09:05:49</DT><Reason>Table</Reason><ID_Device>2206237016</ID_Device><ENBL>1</ENBL><VIZ>17</VIZ><Temp>23.00</Temp><Humid>20.8</Humid><ACO_P>734</ACO_P><FV_P1>39</FV_P1><FV_P2>0</FV_P2><ACI_WR>644</ACI_WR><ACI_WS>111</ACI_WS><ACI_WT>119</ACI_WT><BAT_P>0</BAT_P><FV_PROC>0</FV_PROC><BAT_C>100</BAT_C><MSC_SELF>0</MSC_SELF><STAT>0</STAT><FV_AD>23</FV_AD><FVE_PROD>39</FVE_PROD><INFLOW>0</INFLOW><LOAD>853</LOAD><MAXFG>5300</MAXFG><STATX>0</STATX><ACINB_WR>37</ACINB_WR><ACINB_WS>37</ACINB_WS><ACINB_WT>45</ACINB_WT><ACO_PR>587</ACO_PR><ACO_PS>73</ACO_PS><ACO_PT>74</ACO_PT><ver>39261</ver><CRC>02618</CRC></Frame>\r\n",
+      "length": 688
+    },
+    {
+      "id": 13815,
+      "ts": "2026-02-17T08:05:54.127315+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "tbl_actual",
+      "raw": "<Frame><Result>ACK</Result><CRC>54590</CRC></Frame>\r\n",
+      "length": 53
+    },
+    {
+      "id": 13816,
+      "ts": "2026-02-17T08:06:00.611910+00:00",
+      "direction": "box_to_proxy",
+      "table_name": "END",
+      "raw": "<Frame><Result>END</Result><Rdt>2026-02-17 09:05:56</Rdt><Reason>All data sent</Reason><CRC>42651</CRC></Frame>\r\n",
+      "length": 113
+    },
+    {
+      "id": 13817,
+      "ts": "2026-02-17T08:06:00.629500+00:00",
+      "direction": "cloud_to_proxy",
+      "table_name": "END",
+      "raw": "<Frame><Result>ACK</Result><CRC>54590</CRC></Frame>\r\n",
+      "length": 53
+    }
+  ]
+}

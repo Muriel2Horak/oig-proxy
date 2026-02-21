@@ -1,0 +1,12 @@
+{
+  "task": "T1 - Protocol baseline capture pack",
+  "scenario": "negative - missing DB",
+  "timestamp": "2026-02-17T18:02:04.640273",
+  "status": "VERIFIED",
+  "test_command": "sqlite3 /nonexistent/path/to/payloads.db \"SELECT 1;\"",
+  "expected_result": "Clear error, non-zero exit, no corrupt artifacts",
+  "actual_exit_code": 1,
+  "actual_behavior": "Command failed with: Error: unable to open database file",
+  "test_result": "PASS - Graceful error with clear message",
+  "evidence_files_exist": true
+}

@@ -1,0 +1,36 @@
+Current DB|1
+2025-12-11T15:19:16.437511+00:00|2025-12-12T18:38:13.509436+00:00|52107|1.13816054398194
+0|POUŽITO PRO TESTOVÁNÍ - TATO DATA MUSÍ BÝT VYŘAZENA
+box_to_proxy|13029|25.0
+proxy_to_cloud|13028|25.0
+proxy_to_box|13025|25.0
+cloud_to_proxy|13025|25.0
+tbl_actual|38305|73.51
+tbl_dc_in|1232|2.36
+tbl_batt|1232|2.36
+tbl_ac_out|1232|2.36
+tbl_ac_in|1232|2.36
+tbl_box|1228|2.36
+tbl_boiler|1228|2.36
+tbl_events|992|1.9
+tbl_batt_prms|560|1.07
+tbl_invertor_prms|208|0.4
+0|52107
+Current DB|1
+2025-12-18T19:08:17.557413+00:00|2026-02-01T14:32:27.211982+00:00|871952|44.8084450806491
+0|POUŽITO PRO TESTOVÁNÍ - TATO DATA MUSÍ BÝT VYŘAZENA
+box_to_proxy|315206|36.15
+cloud_to_proxy|281547|32.29
+proxy_to_box|275199|31.56
+tbl_actual|276004|31.65
+GetActual|275199|31.56
+IsNewSet|53060|6.09
+ACK|51128|5.86
+END|26932|3.09
+IsNewFW|26515|3.04
+IsNewWeather|25696|2.95
+tbl_batt_prms|23717|2.72
+tbl_ac_out|15754|1.81
+tbl_ac_in|15746|1.81
+18334|871952
+871952

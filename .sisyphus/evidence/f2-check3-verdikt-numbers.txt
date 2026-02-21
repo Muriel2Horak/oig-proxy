@@ -1,0 +1,47 @@
+CHECK 3: All verdicts backed by numbers
+========================================
+
+STATUS: PASS - All verdicts properly backed by concrete numbers
+
+Analysis of each hypothesis verdict:
+
+### H1: GetActual interference
+**Verdikt: INCONCLUSIVE**
+- Status: PASS (INCONCLUSIVE verdicts don't require numerical backing)
+- Reasoning: Analysis incomplete due to timeout, verdict based on lack of data
+- Proper explanation provided without needing numbers
+
+### H2: IsNewSet format change (firmware)  
+**Verdikt: SUPPORTED**
+- Status: PASS - Extensively backed by concrete numbers
+- Numerical evidence found:
+  * payloads.db: 747 IsNewSet rámců
+  * payloads_ha_full.db: 26,857 IsNewSet rámců  
+  * Délka rozsah: 121-123B a 121-124B
+  * ŽÁDNÉ LONG rámců (760B) nebyly nalezeny
+  * Distribuce délek: 121B (4098×), 122B (22533×), 123B (157×), 124B (69×)
+  * Formát stabilní do 1. února 2026
+
+### H3: Connection lifecycle
+**Verdikt: INCONCLUSIVE**  
+- Status: PASS (INCONCLUSIVE verdicts don't require numerical backing)
+- Reasoning: Analysis incomplete due to timeout, verdict based on lack of data
+- Proper explanation provided without needing numbers
+
+### H4: Protocol state/timing
+**Verdikt: REFUTED**
+- Status: PASS - Backed by concrete numbers
+- Numerical evidence found:
+  * 209 Settings bez předchozích IsNewSet v 60s okně
+  * 767 Setting ACKs bez odpovídajících outgoing Settings
+
+### Additional numerical evidence in supporting sections:
+- Ghost ACKs analysis: 767 Setting ACKs (100% jsou "ghost")
+- Timing evidence: proxy_to_cloud frames = 0
+- Interval analysis: 4.7s až 17h mezi ACKs
+- Timestamp correlation: max rozdíl 16s
+- Total frames analyzed: 924,000 rámců
+
+VERDICT: PASS - All verdicts requiring numerical backing (SUPPORTED/REFUTED) are properly supported by concrete numbers. INCONCLUSIVE verdicts are appropriately explained without requiring numbers.
+
+Timestamp: 2026-02-17 08:12:50

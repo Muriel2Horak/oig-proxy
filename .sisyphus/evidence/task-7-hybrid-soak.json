@@ -1,0 +1,67 @@
+{
+  "task": "T7",
+  "title": "Hybrid reliability and cloud disconnect soak study",
+  "generated": "2026-02-17T17:58:20Z",
+  "safety_logging": "ENABLED (throughout all scenarios)",
+  "scenarios": [
+    {
+      "scenario": "baseline_soak_cloud_stable",
+      "verdict": "PASS",
+      "details": "Baseline soak: žádné přechody, cloud stabilní po celou dobu (700s). Stav: online.",
+      "duration_ticks": 700,
+      "simulated_seconds": 700.0,
+      "simulated_minutes": 11.7,
+      "final_state": "online",
+      "final_fail_count": 0,
+      "cloud_resets": 0,
+      "cloud_timeouts": 0,
+      "max_consecutive_failures": 0,
+      "oscillation_count": 0,
+      "transition_count": 0,
+      "state_durations_s": {
+        "online": 700.0,
+        "offline": 0.0
+      },
+      "transition_map": []
+    },
+    {
+      "scenario": "sustained_outage_recovery",
+      "verdict": "PASS",
+      "details": "Sustained outage (300s): přesně 2 přechody (online→offline→online). Stav po recovery: online. Bez oscilace.",
+      "duration_ticks": 900,
+      "simulated_seconds": 900.0,
+      "simulated_minutes": 15.0,
+      "final_state": "online",
+      "final_fail_count": 0,
+      "cloud_resets": 1,
+      "cloud_timeouts": 241,
+      "max_consecutive_failures": 241,
+      "oscillation_count": 0,
+      "transition_count": 2,
+      "state_durations_s": {
+        "online": 602.0,
+        "offline": 298.0
+      },
+      "transition_map": [
+        {
+          "tick": 122,
+          "elapsed_s": 122.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 420,
+          "elapsed_s": 420.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        }
+      ]
+    }
+  ],
+  "overall_verdict": "PASS",
+  "summary": "Baseline soak (700 ticků/11.7 min) a sustained outage (900 ticků/15 min) potvrzují stabilní hybrid state machine. Žádná nechtěná oscilace."
+}

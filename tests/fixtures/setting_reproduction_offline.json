@@ -1,0 +1,41 @@
+{
+  "mode": "offline",
+  "conn_id": 1,
+  "setting_tx_id": "mock-setting-1-offline",
+  "delivered_at": 1771483575000,
+  "closed_at": 1771483599000,
+  "reconnected_at": 1771483605000,
+  "timeout_at": 1771483609000,
+  "ack_seen": false,
+  "expected_outcome": "FAILED",
+  "source_provenance": {
+    "evidence_files": [
+      ".sisyphus/evidence/setting-ack-parity/task-14-divergence.txt",
+      ".sisyphus/evidence/setting-ack-parity/task-15-root-cause-report.txt",
+      ".sisyphus/evidence/setting-ack-parity/task-13-state-machine.txt"
+    ],
+    "base_case": "mock-setting-1",
+    "original_timestamp": "2026-02-19T06:46:39+00:00",
+    "confidence_score": 0.95
+  },
+  "state_transitions": [
+    {"from": "INIT", "to": "PENDING", "at": 1771483574000},
+    {"from": "PENDING", "to": "DELIVERED", "at": 1771483575000},
+    {"from": "DELIVERED", "to": "CONN_CLOSED", "at": 1771483599000, "reason": "BOX closes connection without protocol ACK"},
+    {"from": "CONN_CLOSED", "to": "RECONNECTED", "at": 1771483605000, "new_conn_id": 2},
+    {"from": "RECONNECTED", "to": "TIMEOUT", "at": 1771483609000, "reason": "cross-session timeout on conn_id=2"},
+    {"from": "TIMEOUT", "to": "FAILED", "at": 1771483609000}
+  ],
+  "timing_breakdown_ms": {
+    "delivery_to_close": 24000,
+    "close_to_reconnect": 6000,
+    "delivery_to_timeout": 34000,
+    "total_duration": 34000
+  },
+  "bug_characteristics": {
+    "type": "cross-session_timeout",
+    "description": "Timeout tracker fires on conn_id=2, but Setting was delivered on conn_id=1",
+    "root_cause": "Mock proxy lacks protocol-level ACK reception mechanism",
+    "retry_count": 0
+  }
+}
