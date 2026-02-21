@@ -654,6 +654,7 @@ def test_forward_frame_intercepts_isnewset_with_pending_setting(
         "tbl_name": "tbl_box_prms",
         "tbl_item": "MODE",
         "new_value": "1",
+        "confirm": "New",
         "id": 123,
         "id_set": 456,
     }
@@ -677,7 +678,13 @@ def test_forward_frame_intercepts_isnewset_with_pending_setting(
             connect_timeout_s=0.1,
         )
     )
-    assert box_writer.data == [setting_frame]
+    assert len(box_writer.data) == 1
+    sent = box_writer.data[0].decode("utf-8")
+    assert "<Reason>Setting</Reason>" in sent
+    assert "<TblName>tbl_box_prms</TblName>" in sent
+    assert "<TblItem>MODE</TblItem>" in sent
+    assert "<NewValue>1</NewValue>" in sent
+    assert "<Confirm>New</Confirm>" in sent
     assert proxy._cs.pending_frame is None
     assert proxy._cs.pending["sent_at"] is not None
     assert proxy.stats["acks_local"] == 1

@@ -286,6 +286,7 @@ class ControlSettings:
             "tbl_name": tbl_name,
             "tbl_item": tbl_item,
             "new_value": new_value,
+            "confirm": confirm,
             "id": msg_id,
             "id_set": id_set,
             "tx_id": tx_id,

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from contextlib import suppress
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from config import (
@@ -23,6 +25,7 @@ from config import (
 )
 from oig_frame import (
     build_end_time_frame,
+    build_frame,
     extract_one_xml_frame,
 )
 from utils import capture_payload, resolve_cloud_host
@@ -476,7 +479,29 @@ class CloudForwarder:
         connect_timeout_s: float,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
         if table_name in ("IsNewSet", "IsNewFW", "IsNewWeather") and self._proxy._cs.pending_frame is not None:
-            setting_frame = self._proxy._cs.pending_frame
+            pending = self._proxy._cs.pending
+            if pending is not None:
+                now_local = datetime.now()
+                now_utc = datetime.now(timezone.utc)
+                inner = (
+                    f"<ID>{pending['id']}</ID>"
+                    f"<ID_Device>{self._proxy.device_id}</ID_Device>"
+                    f"<ID_Set>{pending['id_set']}</ID_Set>"
+                    "<ID_SubD>0</ID_SubD>"
+                    f"<DT>{now_local.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+                    f"<NewValue>{pending['new_value']}</NewValue>"
+                    f"<Confirm>{pending['confirm']}</Confirm>"
+                    f"<TblName>{pending['tbl_name']}</TblName>"
+                    f"<TblItem>{pending['tbl_item']}</TblItem>"
+                    "<ID_Server>5</ID_Server>"
+                    "<mytimediff>0</mytimediff>"
+                    "<Reason>Setting</Reason>"
+                    f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+                    f"<ver>{secrets.randbelow(90000) + 10000:05d}</ver>"
+                )
+                setting_frame = build_frame(inner, add_crlf=True).encode("utf-8", errors="strict")
+            else:
+                setting_frame = self._proxy._cs.pending_frame
             self._proxy._cs.pending_frame = None
             if self._proxy._cs.pending is not None:
                 self._proxy._cs.pending["sent_at"] = time.monotonic()
