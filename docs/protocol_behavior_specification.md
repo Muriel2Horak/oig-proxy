@@ -360,25 +360,85 @@ While no errors were observed in the capture, the expected error response format
 
 ---
 
-## 8. Implementation Guidelines
 
-### 8.1 Mock Cloud Server Requirements
+## 8. Settings Command Flow
+
+### 8.1 Key Finding
+The Cloud does **not** send individual register changes. Instead, it sends a high-level `Setting` command to the Box during an `IsNewSet` poll response. The Box applies this mode change, which alters multiple internal parameters. The Box then ACKs this by sending a series of `tbl_events` messages back to the Cloud.
+
+### 8.2 Setting Command Structure
+```xml
+<Reason>Setting</Reason>
+<TblName>tbl_box_prms</TblName>
+<TblItem>MODE</TblItem>
+<NewValue>3</NewValue>
+<ID_Set>[unique_setting_id]</ID_Set>
+<DT>[user_submission_time]</DT>
+<Confirm>New</Confirm>
+```
+
+### 8.3 Box Response via tbl_events
+After receiving and applying the Setting command, the Box sends ACK messages using `tbl_events` with the following structure:
+```xml
+<Type>Change</Type>
+<Content>Input : tbl_batt_prms / BAT_DI: [100.0]->[200.0]</Content>
+```
+The Box sends multiple `tbl_events` messages, one for each internal parameter that was updated by the mode change.
+
+### 8.4 Timing Characteristics
+- **RTT measurement**: Between 30 and 60 seconds from poll to full ACK completion
+- **Connection lifecycle**: Box closes connection ~24s after receiving Setting
+- **ACK mechanism**: Multiple `tbl_events` messages confirm the setting application
+
+### 8.5 Mermaid Sequence Diagram
+```mermaid
+sequenceDiagram
+    participant B as Box
+    participant C as Cloud
+    participant M as MQTT (Proxy observes)
+
+    Note over B,C: Polling Cycle
+    B->>C: TCP Connect
+    B->>C: IsNewSet POLL
+    C-->>B: END (no pending settings) OR
+    C->>B: Setting Command (if pending)
+    Note over C,B: <Reason>Setting</Reason><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>3</NewValue>
+
+    B->>B: Apply mode change internally
+    Note over B: Updates multiple internal parameters
+    
+    B->>C: Protocol ACK (within same connection)
+    Note over B,C: <Result>ACK</Result><Reason>Setting</Reason>
+    
+    B->>C: Send tbl_events (Change type)
+    Note over B,C: Multiple messages for each updated parameter
+    
+    Note over B: Connection closes (~24s after Setting)
+    
+    Note over B,M: Proxy observes tbl_events
+    B->>M: tbl_events with Type="Change" and Content="[old]->[new]"
+    Note over M: Proxy publishes to MQTT: "SETTING: State publish tbl_box_prms/MODE=[value]"
+```
+
+## 9. Implementation Guidelines
+
+### 9.1 Mock Cloud Server Requirements
 
 For implementing a mock cloud server, the following requirements must be met:
 
-#### 8.1.1 Basic Functionality
+#### 9.1.1 Basic Functionality
 - **TCP Server**: Listen on port 5710
 - **HTTP/1.1**: Support basic HTTP requests
 - **XML Parsing**: Parse incoming XML frames
 - **ACK Generation**: Generate proper ACK responses
 - **State Management**: Track connection states
 
-#### 8.1.2 Response Timing
+#### 9.1.2 Response Timing
 - **Response Delay**: 4.66-32.05ms (mean: 9.58ms)
 - **Response Size**: 53-75 bytes
 - **Table-Specific Delays**: Implement table-specific timing patterns
 
-#### 8.1.3 State Machine Implementation
+#### 9.1.3 State Machine Implementation
 ```python
 class ConnectionState:
     INIT = "INIT"
@@ -412,17 +472,17 @@ class OIGProtocolHandler:
                 self.state = ConnectionState.IDLE
 ```
 
-### 8.2 Diagnostic Tool Requirements
+### 9.2 Diagnostic Tool Requirements
 
 For diagnostic tools, the following features should be implemented:
 
-#### 8.2.1 Monitoring
+#### 9.2.1 Monitoring
 - **Connection Tracking**: Monitor state transitions
 - **Latency Measurement**: Track request/response times
 - **Table Statistics**: Count tables by type
 - **Error Detection**: Identify communication errors
 
-#### 8.2.2 Logging
+#### 9.2.2 Logging
 - **State Changes**: Log all state transitions
 - **Message Flow**: Log all XML messages
 - **Timing Data**: Record latency statistics
@@ -430,42 +490,41 @@ For diagnostic tools, the following features should be implemented:
 
 ---
 
-## 9. Conclusion
+## 10. Conclusion
 
 This protocol behavior specification provides a comprehensive analysis of the OIG cloud communication model based on real-world data. The specification captures all essential aspects needed for implementing a compatible mock cloud server or diagnostic tools.
 
-### 9.1 Key Findings
+### 10.1 Key Findings
 
 1. **Stable Protocol**: The protocol demonstrates stable behavior with no observed errors
 2. **Predictable Timing**: Response latencies follow consistent patterns per table type
 3. **Simple State Machine**: The state machine is straightforward with clear transitions
 4. **Regular Data Flow**: Data transmission occurs in regular cycles with idle periods
 
-### 9.2 Implementation Notes
+### 10.2 Implementation Notes
 
 - The mock server should prioritize accurate timing simulation
 - State management should be simple but robust
 - Error handling, while not observed, should be implemented for completeness
 - The XML parsing should be flexible to handle table variations
 
-### 9.3 Future Enhancements
+### 10.3 Future Enhancements
 
-- **Setting Commands**: The analysis didn't reveal setting commands, but they should be supported
 - **Multiple Device Support**: The mock should handle multiple simultaneous devices
 - **Performance Testing**: Include features for load testing and performance analysis
 
 ---
 
-## 10. Appendix
+## 11. Appendix
 
-### 10.1 Raw Data Files
+### 11.1 Raw Data Files
 
 The following data files were used in this analysis:
 - `unified_timeline.json`: Complete communication timeline
 - `.sisyphus/evidence/task-7-states.json`: State machine analysis
 - `.sisyphus/evidence/task-8-timing-stats.txt`: Timing statistics
 
-### 10.2 Analysis Tools
+### 11.2 Analysis Tools
 
 The analysis was performed using custom scripts that:
 - Parse JSON timeline data
@@ -474,7 +533,7 @@ The analysis was performed using custom scripts that:
 - Generate sequence diagrams
 - Extract message patterns
 
-### 10.3 Glossary
+### 11.3 Glossary
 
 | Term | Definition |
 |------|------------|
