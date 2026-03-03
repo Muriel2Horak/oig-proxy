@@ -1,0 +1,30 @@
+============================================================
+DATA PAIRING REPORT
+============================================================
+
+SUMMARY
+------------------------------------------------------------
+Loki Log Entries:             67463
+DB Frame Entries:             24770
+
+PAIRING RESULTS
+------------------------------------------------------------
+Loki Paired:                  22520 (33.4%)
+Loki Unpaired:                44943
+DB Paired:                    22520 (90.9%)
+DB Unpaired:                   2250
+
+PAIRING METHODS
+------------------------------------------------------------
+By Session ID + Timestamp:    22520
+By Timestamp Only:                0
+
+============================================================
+
+NOTES:
+- Maximum time delta for pairing: 2.0 seconds
+- Pairing requires matching session/connection ID
+- Unpaired entries are still included in unified timeline
+
+SPOT CHECK:
+------------------------------------------------------------
