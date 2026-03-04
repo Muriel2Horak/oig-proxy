@@ -1,0 +1,51 @@
+# Task 2: Frame Comparison - Local vs Cloud Setting Frames
+# Date: 2026-03-02
+
+## CRITICAL FINDING: No proxy_to_box setting frames in DB
+## Cloud_forwarder.py DOES call capture_payload for MQTT-initiated settings
+## Zero proxy_to_box setting frames = MQTT settings NEVER REACHED delivery point
+## (or never attempted during 2-day capture window)
+
+## Cloud Setting Frame Structure (from DB):
+<Frame>
+  <ID>13747926</ID>               # Server-assigned ID (millions range)
+  <ID_Device>2206237016</ID_Device>
+  <ID_Set>1772380411</ID_Set>     # Unix timestamp (seconds)
+  <ID_SubD>0</ID_SubD>
+  <DT>01.03.2026 16:53:31</DT>    # Local datetime string
+  <NewValue>0</NewValue>
+  <Confirm>New</Confirm>
+  <TblName>tbl_boiler_prms</TblName>
+  <TblItem>MANUAL</TblItem>
+  <ID_Server>5</ID_Server>
+  <mytimediff>0</mytimediff>
+  <Reason>Setting</Reason>
+  <TSec>2026-03-01 16:08:51</TSec>  # UTC datetime
+  <ver>01550</ver>                  # RANDOM, 5-digit padded
+  <CRC>58060</CRC>
+</Frame>
+Frame length: 383 bytes
+
+## Local Code Frame Structure (control_settings.py:234-290):
+Same fields, BUT:
+  <ver>55734</ver>  # HARDCODED static value (Hypothesis 1 territory)
+  <ID>random 10-99M</ID>  # Different range than cloud
+
+## cloud_forwarder.py (online/hybrid delivery):
+- REBUILDS frame with random ver: secrets.randbelow(90000) + 10000:05d
+- Calls capture_payload() -> would appear in proxy_to_box
+- Uses fresh timestamps at delivery time
+
+## proxy.py (offline delivery):
+- Uses PRE-BUILT pending_frame (has hardcoded ver=55734)
+- Does NOT call capture_payload -> invisible in DB
+- Has STALE timestamps from when setting was queued
+
+## ver values observed in cloud frames:
+01550, 23822, 12897, 11211, 55480 - all random
+
+## VERDICT for Hypothesis 1 (<ver> field):
+- In OFFLINE mode: uses hardcoded ver=55734 (possibly problematic)
+- In ONLINE/HYBRID mode: rebuilds with random ver (same as cloud) -> should work
+- Cannot verify from DB (no proxy_to_box setting frames exist)
+- INCONCLUSIVE from DB analysis; requires live test
