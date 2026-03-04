@@ -1,0 +1,23 @@
+=== VERIFICATION: logger.debug calls in digital_twin.py ===
+
+Line | Context
+-----|--------
+
+165:            logger.debug(
+242:            logger.debug(
+300:            logger.debug(
+369:            logger.debug(
+470:            logger.debug(
+626:        logger.debug(
+664:            logger.debug(
+739:        logger.debug(
+961:        logger.debug(
+979:                logger.debug("INV-3 validation in ack_timeout: %s", err)
+989:        logger.debug(
+1007:                logger.debug("INV-3 validation in applied_timeout: %s", err)
+
+=== VERIFICATION: py_compile ===
+Syntax OK
+
+=== Total logger.debug calls ===
+12

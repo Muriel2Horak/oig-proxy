@@ -1,0 +1,85 @@
+# Task 4: Routing respects TWIN_CLOUD_ALIGNED flag
+
+## Summary
+Updated `addon/oig-proxy/proxy.py` to respect the `TWIN_CLOUD_ALIGNED` flag in routing logic. Added conditional logic in `_resolve_local_control_routing()` method to use simplified routing when the flag is True.
+
+## Changes Made
+
+### 1. Import TWIN_CLOUD_ALIGNED (line ~51-55)
+Added TWIN_CLOUD_ALIGNED to imports from config:
+```python
+from config import (
+    TWIN_CLOUD_ALIGNED,
+    TWIN_ENABLED,
+    TWIN_KILL_SWITCH,
+    LOCAL_CONTROL_ROUTING,
+)
+```
+
+### 2. Simplified routing logic (line ~810-815)
+Added conditional logic in `_resolve_local_control_routing()`:
+```python
+if TWIN_CLOUD_ALIGNED:
+    if self._is_twin_routing_available():
+        return "twin"
+    return "local"
+```
+
+This provides simplified routing that always prefers twin if available, mirroring the simplified ACK handling in `digital_twin.py`.
+
+## Verification
+
+### Syntax Check
+```
+python3 -m py_compile addon/oig-proxy/proxy.py
+# Result: PASSED (no errors)
+```
+
+### LSP Diagnostics
+```
+lsp_diagnostics on proxy.py
+# Result: No errors found
+```
+
+### Legacy Mode Test (TWIN_CLOUD_ALIGNED=False)
+```
+TWIN_CLOUD_ALIGNED import: OK
+TWIN_CLOUD_ALIGNED value: False
+proxy module: OK
+TWIN_CLOUD_ALIGNED used in proxy: OK
+All checks passed
+```
+
+### Cloud-Aligned Mode Test (TWIN_CLOUD_ALIGNED=True)
+```
+TWIN_CLOUD_ALIGNED (True mode): True
+proxy module with TWIN_CLOUD_ALIGNED=true: OK
+```
+
+### Regression Tests
+```
+tests/test_proxy_modes.py::test_switch_mode_tracks_changes PASSED
+tests/test_proxy_modes.py::test_hybrid_record_failure_triggers_offline PASSED
+tests/test_proxy_modes.py::test_hybrid_record_success_resets PASSED
+tests/test_proxy_modes.py::test_hybrid_no_fallback_before_threshold PASSED
+tests/test_proxy_modes.py::test_hybrid_fallback_after_threshold PASSED
+tests/test_proxy_modes.py::test_hybrid_mode_detection PASSED
+============================== 6 passed in 0.05s ==============================
+
+tests/test_proxy_internal.py - 15 tests PASSED
+```
+
+## Routing Behavior
+
+| Mode | TWIN_CLOUD_ALIGNED | Routing Behavior |
+|------|-------------------|------------------|
+| Legacy | False | Complex mode-based logic (ONLINE→cloud, OFFLINE→twin/local, HYBRID→conditional) |
+| Cloud-Aligned | True | Simplified: always prefer twin if available, else local |
+
+## Design Pattern
+
+Following the same pattern as Task 3 (ACK handling):
+- Legacy mode: Complex routing logic based on proxy mode
+- Cloud-aligned mode: Simplified routing that always prefers twin
+
+This ensures consistency with the digital twin's cloud-aligned ACK handling.

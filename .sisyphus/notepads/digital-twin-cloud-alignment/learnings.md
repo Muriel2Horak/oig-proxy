@@ -1,6 +1,73 @@
 
 
-# Task 3: Add simplified on_ack() with TWIN_CLOUD_ALIGNED flag
+---
+
+# Task 4: Routing respects TWIN_CLOUD_ALIGNED flag
+
+## Summary
+Updated `addon/oig-proxy/proxy.py` to respect the `TWIN_CLOUD_ALIGNED` flag in routing logic. Added conditional logic in `_resolve_local_control_routing()` to use simplified routing when flag is True.
+
+## Implementation
+
+### Changes to `addon/oig-proxy/proxy.py`
+
+1. **Import TWIN_CLOUD_ALIGNED flag** (lines ~51-55)
+   - Added to existing config imports
+
+2. **Modified `_resolve_local_control_routing()` method** (lines ~810-815)
+   - Added conditional check at start of method
+   - When TWIN_CLOUD_ALIGNED=True: always prefer twin if available, else local
+   - Legacy mode (False): uses existing complex mode-based logic
+
+## Key Differences Between Modes
+
+| Aspect | Legacy Mode (False) | Cloud-Aligned Mode (True) |
+|--------|---------------------|---------------------------|
+| Routing Logic | Complex mode-based (ONLINE→cloud, OFFLINE→twin, HYBRID→conditional) | Simplified: always prefer twin |
+| Decision Tree | 3+ branches based on mode, configured_mode, cloud availability | 2 branches: twin available? |
+| Pattern | Full flexibility for different modes | Simple like ControlSettings |
+
+## Verification
+
+### Syntax Check
+```
+python3 -m py_compile addon/oig-proxy/proxy.py
+# Result: PASSED
+```
+
+### Legacy Mode Test
+```
+TWIN_CLOUD_ALIGNED import: OK
+TWIN_CLOUD_ALIGNED value: False
+proxy module: OK
+TWIN_CLOUD_ALIGNED used in proxy: OK
+All checks passed
+```
+
+### Cloud-Aligned Mode Test
+```
+TWIN_CLOUD_ALIGNED (True mode): True
+proxy module with TWIN_CLOUD_ALIGNED=true: OK
+```
+
+### Regression Tests
+- test_proxy_modes.py: 6 passed
+- test_proxy_internal.py: 15 passed
+
+## Evidence Files
+- `.sisyphus/evidence/task-4-routing.txt`
+
+## Design Patterns Used
+
+1. **Consistency with Task 3**: Routing uses same flag-based delegation pattern as ACK handling
+2. **Simplified Decision**: Cloud-aligned mode uses simpler 2-branch logic
+3. **Backward Compatibility**: Legacy mode is default, existing behavior unchanged
+
+## Notes
+- LSP diagnostics: No errors on modified file
+- All existing tests pass
+- Routing mirrors simplified ACK pattern from digital_twin.py
+- Does not affect Cloud mode routing or OFFLINE mode behavior
 
 ## Summary
 Added simplified ACK handling following the ControlSettings pattern. The `on_ack()` method now routes to either cloud-aligned or legacy implementation based on the `TWIN_CLOUD_ALIGNED` flag.

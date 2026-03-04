@@ -162,6 +162,15 @@ class DigitalTwin:
 
             self._queue.append(dto)
 
+            logger.debug(
+                "TWIN: Queued Setting %s/%s=%s tx_id=%s conn_id=%s",
+                dto.tbl_name,
+                dto.tbl_item,
+                dto.new_value,
+                tx_id,
+                dto.conn_id,
+            )
+
             return TransactionResultDTO(
                 tx_id=tx_id,
                 conn_id=dto.conn_id,
@@ -230,6 +239,14 @@ class DigitalTwin:
             self._inflight = pending
             self._inflight_ctx = ctx
 
+            logger.debug(
+                "TWIN: Started inflight Setting %s/%s tx_id=%s conn_id=%s",
+                pending.tbl_name,
+                pending.tbl_item,
+                pending.tx_id,
+                conn_id,
+            )
+
             return pending
 
     async def finish_inflight(
@@ -279,6 +296,14 @@ class DigitalTwin:
             if success:
                 self._completed_tx_ids.add(tx_id)
                 self._prune_completed_tx_ids()
+
+            logger.debug(
+                "TWIN: Finished inflight tx_id=%s conn_id=%s success=%s status=%s",
+                tx_id,
+                conn_id,
+                success,
+                status,
+            )
 
             self._inflight = None
             self._inflight_ctx = None
@@ -339,6 +364,14 @@ class DigitalTwin:
                 self._inflight.delivered_conn_id
                 if self._inflight.delivered_conn_id is not None
                 else self._inflight.conn_id
+            )
+
+            logger.debug(
+                "TWIN: ACK received for tx_id=%s conn_id=%s delivered_conn_id=%s ack=%s",
+                dto.tx_id,
+                dto.conn_id,
+                delivered_conn_id,
+                dto.ack,
             )
 
             if delivered_conn_id != dto.conn_id:
@@ -433,6 +466,14 @@ class DigitalTwin:
             new_pending = self._inflight.mark_ack_received(dto.ack)
             self._inflight = new_pending
             self._inflight_ctx = ctx.with_stage(new_pending.stage.value)
+
+            logger.debug(
+                "TWIN: Legacy ACK received for tx_id=%s conn_id=%s ack=%s stage=%s",
+                dto.tx_id,
+                dto.conn_id,
+                dto.ack,
+                new_pending.stage.value,
+            )
 
             self._cancel_ack_task()
 
@@ -582,6 +623,13 @@ class DigitalTwin:
 
         No unsolicited command push is allowed.
         """
+        logger.debug(
+            "TWIN: Poll received tx_id=%s conn_id=%s table_name=%s",
+            tx_id,
+            conn_id,
+            table_name,
+        )
+
         if table_name != "IsNewSet":
             return PollResponseDTO(
                 tx_id=tx_id,
@@ -613,6 +661,13 @@ class DigitalTwin:
             PollResponseDTO with frame_data (setting) or END frame
         """
         async with self._lock:
+            logger.debug(
+                "TWIN: IsNewSet poll handling conn_id=%s queue_len=%d inflight=%s",
+                conn_id,
+                len(self._queue),
+                self._inflight is not None,
+            )
+
             if self._inflight is None and self._queue:
                 dto = self._queue.popleft()
                 replay_count = self._replay_tx_counts.pop(dto.tx_id, 0)
@@ -680,6 +735,14 @@ class DigitalTwin:
             )
 
         frame_data = self._build_setting_frame(self._inflight)
+
+        logger.debug(
+            "TWIN: Building delivery response conn_id=%s tx_id=%s tbl=%s/%s",
+            conn_id,
+            new_pending.tx_id,
+            new_pending.tbl_name,
+            new_pending.tbl_item,
+        )
 
         new_pending = self._inflight.mark_delivered(conn_id)
         self._inflight = new_pending
@@ -895,6 +958,12 @@ class DigitalTwin:
 
     async def _ack_timeout_handler(self, ctx: TransactionContext) -> None:
         """Handle ACK timeout with INV-3 validation."""
+        logger.debug(
+            "TWIN: ACK timeout started for tx_id=%s conn_id=%s timeout=%.1fs",
+            ctx.tx_id,
+            ctx.conn_id,
+            self.config.ack_timeout_s,
+        )
         await asyncio.sleep(self.config.ack_timeout_s)
 
         async with self._lock:
@@ -917,6 +986,12 @@ class DigitalTwin:
 
     async def _applied_timeout_handler(self, ctx: TransactionContext) -> None:
         """Handle applied timeout with INV-3 validation."""
+        logger.debug(
+            "TWIN: Applied timeout started for tx_id=%s conn_id=%s timeout=%.1fs",
+            ctx.tx_id,
+            ctx.conn_id,
+            self.config.applied_timeout_s,
+        )
         await asyncio.sleep(self.config.applied_timeout_s)
 
         async with self._lock:

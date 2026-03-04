@@ -332,7 +332,7 @@ Parallel Speedup: ~40% faster than sequential
   - Files: `addon/oig-proxy/digital_twin.py`
   - Pre-commit: `pytest tests/test_digital_twin.py -v -k ack`
 
-- [ ] 4. Update Proxy.py Routing for New Behavior
+- [x] 4. Update Proxy.py Routing for New Behavior
 
   **What to do**:
   - Review `proxy.py:795-834` - routing decision logic
@@ -384,7 +384,7 @@ Parallel Speedup: ~40% faster than sequential
   - Files: `addon/oig-proxy/proxy.py`
   - Pre-commit: `python -m py_compile addon/oig-proxy/proxy.py`
 
-- [ ] 5. Implement Parity Logging
+- [x] 5. Implement Parity Logging
 
   **What to do**:
   - Add DEBUG logging in Digital Twin to help verify parity with Cloud
