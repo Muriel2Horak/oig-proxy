@@ -1,0 +1,45 @@
+# Task 3: BOX ACK/NACK Pattern Analysis
+# Date: 2026-03-02
+
+## CRITICAL FINDING: BOX does NOT send <Result>ACK</Result> for settings!
+
+## Actual BOX confirmation for settings (tbl_events frames):
+<Frame>
+  <TblName>tbl_events</TblName>
+  <Reason>Table</Reason>
+  <ID_Device>2206237016</ID_Device>
+  <ID_Set>843844135</ID_Set>
+  <DT>2026-03-01 17:08:54</DT>
+  <Type>Setting</Type>
+  <Confirm>NoNeed</Confirm>
+  <Content>Remotely : tbl_boiler_prms / MANUAL: [0]->[0]</Content>
+  <ver>25788</ver>
+  <CRC>41254</CRC>
+</Frame>
+
+## Our maybe_handle_ack() code looks for:
+  has_reason = "<Reason>Setting</Reason>" in frame  <- NOT in event frame
+  has_ack = "<Result>ACK</Result>" in frame         <- NEVER appears
+  requires BOTH for successful ACK detection
+
+## VERDICT for Hypothesis 2 (conn_id mismatch / ACK detection):
+- ACK detection logic FUNDAMENTALLY WRONG
+- BOX never sends <Result>ACK</Result> + <Reason>Setting</Reason> together
+- Our code will NEVER detect a successful setting ACK via maybe_handle_ack()
+- Cloud settings work because cloud manages its OWN ACK detection
+  (cloud doesn't rely on our maybe_handle_ack)
+
+## ACK/NACK frames in DB (all <Result>ACK>):
+- ALL are for Weather/tbl_actual (GetActual responses)
+- NONE are for Settings
+- confirmed: 0 <Result>ACK</Result> frames for any setting
+
+## Setting confirmations (tbl_events Type=Setting): 5 found
+- All triggered by cloud-originated commands
+- Prove cloud settings DID reach BOX and were applied
+- Example: "MODE: [3]->[0]", "MANUAL: [0]->[1]"
+
+## conn_id at cloud setting delivery vs BOX event:
+- Cloud setting CONN=1, BOX event CONN=2 (consecutive connection)
+- Cloud setting CONN=1946, BOX event CONN=1946 (same connection!)
+- Appears conn_id mismatch is NOT the main issue for cloud settings

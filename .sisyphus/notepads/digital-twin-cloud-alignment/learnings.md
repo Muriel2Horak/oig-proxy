@@ -1,23 +1,83 @@
-# Task 1: Add TWIN_CLOUD_ALIGNED flag
+
+
+# Task 3: Add simplified on_ack() with TWIN_CLOUD_ALIGNED flag
 
 ## Summary
-Added `TWIN_CLOUD_ALIGNED` boolean feature flag to `addon/oig-proxy/config.py` with default `False`.
+Added simplified ACK handling following the ControlSettings pattern. The `on_ack()` method now routes to either cloud-aligned or legacy implementation based on the `TWIN_CLOUD_ALIGNED` flag.
 
 ## Implementation
-- Location: Twin Configuration section (lines 249-252)
-- Pattern used: `_get_bool_env("TWIN_CLOUD_ALIGNED", False)` - same as `TWIN_ENABLED`
-- Added comment explaining flag purpose (necessary for config documentation)
+
+### Changes to `addon/oig-proxy/digital_twin.py`
+
+1. **Import TWIN_CLOUD_ALIGNED flag**
+   - Added: `from config import TWIN_CLOUD_ALIGNED`
+
+2. **Modified `on_ack()` method** (lines ~296-305)
+   - Now acts as a router based on `TWIN_CLOUD_ALIGNED` flag
+   - Calls `_on_ack_cloud_aligned()` when flag is `True`
+   - Calls `_on_ack_legacy()` when flag is `False` (default)
+
+3. **Added `_on_ack_cloud_aligned()` method** (lines ~307-383)
+   - Simplified conn_id validation (no INV-1/2/3)
+   - Follows ControlSettings pattern:
+     - Basic conn_id comparison: `delivered_conn_id vs incoming conn_id`
+     - Falls back to original `conn_id` if `delivered_conn_id` is None
+     - Returns `None` on mismatch (doesn't raise exception)
+   - Updates `_pending_simple` dict for state tracking
+   - Logs conn_id mismatches with context
+
+4. **Added `_on_ack_legacy()` method** (lines ~385-440)
+   - Preserves existing INV-1/2/3 validation
+   - Raises `InvariantViolationError` on invariant violations
+   - Maintains full backward compatibility
+
+## Key Differences Between Modes
+
+| Aspect | Legacy Mode (False) | Cloud-Aligned Mode (True) |
+|--------|---------------------|---------------------------|
+| Validation | INV-1/2/3 via TransactionValidator | Basic conn_id check only |
+| Error Handling | Raises InvariantViolationError | Returns None on mismatch |
+| State Tracking | Uses _inflight_ctx | Uses _pending_simple dict |
+| Pattern | Strict invariant enforcement | Simple matching like ControlSettings |
 
 ## Verification
-- ✅ Syntax check: `python3 -m py_compile addon/oig-proxy/config.py` - passes
-- ✅ Default value: `from config import TWIN_CLOUD_ALIGNED` → prints `False`
-- ✅ Environment variable: `TWIN_CLOUD_ALIGNED=true` → prints `True`
 
-## Evidence files
-- `.sisyphus/evidence/task-1-default-flag.txt`
-- `.sisyphus/evidence/task-1-env-flag.txt`
+### Syntax Check
+```bash
+python3 -m py_compile addon/oig-proxy/digital_twin.py
+# Result: PASSED
+```
+
+### Legacy Mode Test (Default)
+```
+✓ Setting queued: accepted
+✓ Inflight started: tx-123
+✓ Setting delivered on conn_id=1
+✓ ACK on same conn_id succeeded: box_ack
+```
+
+### Cloud-Aligned Mode Test
+```
+✓ Setting queued: accepted
+✓ Inflight started: tx-cloud-456
+✓ Setting delivered on conn_id=1
+✓ ACK on same conn_id succeeded: box_ack
+✓ _pending_simple dict updated with transaction state
+✓ ACK on wrong conn_id correctly returned None
+```
+
+## Evidence Files
+- `.sisyphus/evidence/task-3-cloud-ack.txt`
+- `.sisyphus/evidence/task-3-legacy-ack.txt`
+
+## Design Patterns Used
+
+1. **Strategy Pattern**: `on_ack()` delegates to different implementations based on configuration
+2. **ControlSettings Pattern**: Cloud-aligned mode mirrors the simple ACK handling in `control_settings.py`
+3. **Backward Compatibility**: Legacy mode is default, existing behavior unchanged
 
 ## Notes
-- LSP errors in `tests/test_digital_twin.py` are pre-existing (unrelated imports)
-- Flag follows existing pattern from `TWIN_ENABLED`, `TWIN_KILL_SWITCH`, etc.
-- Backward compatible: default `False` preserves existing behavior
+- LSP diagnostics: No errors on modified file
+- All existing tests remain compatible (legacy mode is default)
+- `_pending_simple` dict already existed from Wave 1 (Task 2)
+- No changes to timeout values or cloud mode behavior

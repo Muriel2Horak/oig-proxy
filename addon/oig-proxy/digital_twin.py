@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from config import TWIN_CLOUD_ALIGNED
 from oig_frame import build_end_time_frame, build_frame
 from twin_state import (
     AckResult,
@@ -297,7 +298,106 @@ class DigitalTwin:
         self,
         dto: OnAckDTO,
     ) -> TransactionResultDTO | None:
-        """Handle ACK/NACK response with INV-1 validation.
+        """Handle ACK/NACK response.
+
+        Routes to cloud-aligned or legacy validation based on TWIN_CLOUD_ALIGNED flag.
+
+        Args:
+            dto: OnAckDTO with tx_id, conn_id, and ACK result
+
+        Returns:
+            TransactionResultDTO with updated status, None if no matching tx
+        """
+        if TWIN_CLOUD_ALIGNED:
+            return await self._on_ack_cloud_aligned(dto)
+        else:
+            return await self._on_ack_legacy(dto)
+
+    async def _on_ack_cloud_aligned(
+        self,
+        dto: OnAckDTO,
+    ) -> TransactionResultDTO | None:
+        """Handle ACK/NACK with simplified conn_id validation (cloud-aligned mode).
+
+        Follows the ControlSettings pattern: basic conn_id check only,
+        no INV-1/2/3 validation. Uses _pending_simple dict for state tracking.
+
+        Args:
+            dto: OnAckDTO with tx_id, conn_id, and ACK result
+
+        Returns:
+            TransactionResultDTO with updated status, None if no matching tx
+        """
+        async with self._lock:
+            if self._inflight is None:
+                return None
+
+            if self._inflight.tx_id != dto.tx_id:
+                return None
+
+            delivered_conn_id = (
+                self._inflight.delivered_conn_id
+                if self._inflight.delivered_conn_id is not None
+                else self._inflight.conn_id
+            )
+
+            if delivered_conn_id != dto.conn_id:
+                logger.info(
+                    "TWIN: ACK ignored — conn_id mismatch "
+                    "(delivered=%s, ack=%s, %s/%s)",
+                    delivered_conn_id,
+                    dto.conn_id,
+                    self._inflight.tbl_name,
+                    self._inflight.tbl_item,
+                )
+                return None
+
+            new_pending = self._inflight.mark_ack_received(dto.ack)
+            self._inflight = new_pending
+
+            if dto.ack:
+                self._pending_simple = {
+                    "tx_id": dto.tx_id,
+                    "conn_id": dto.conn_id,
+                    "tbl_name": self._inflight.tbl_name,
+                    "tbl_item": self._inflight.tbl_item,
+                    "status": "ack_received",
+                    "timestamp": get_timestamp(),
+                }
+            else:
+                self._pending_simple.clear()
+
+            self._cancel_ack_task()
+
+            if dto.ack:
+                ctx = self._inflight_ctx
+                if ctx:
+                    self._ack_task = asyncio.create_task(
+                        self._applied_timeout_handler(ctx)
+                    )
+                return TransactionResultDTO(
+                    tx_id=dto.tx_id,
+                    conn_id=dto.conn_id,
+                    status="box_ack",
+                    timestamp=get_timestamp(),
+                )
+            else:
+                result = TransactionResultDTO(
+                    tx_id=dto.tx_id,
+                    conn_id=dto.conn_id,
+                    status="error",
+                    error="box_nack",
+                    timestamp=get_timestamp(),
+                )
+                self._inflight = None
+                self._inflight_ctx = None
+                return result
+
+    async def _on_ack_legacy(
+        self,
+        dto: OnAckDTO,
+    ) -> TransactionResultDTO | None:
+        """Handle ACK/NACK response with full INV-1/2/3 validation (legacy mode).
 
         INVARIANT INV-1: The ACK must arrive on the same connection
         where the setting was delivered.
