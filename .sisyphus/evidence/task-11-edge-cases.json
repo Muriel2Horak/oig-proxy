@@ -1,0 +1,268 @@
+{
+  "metadata": {
+    "source_db": "analysis/ha_snapshot/payloads_ha_full.db",
+    "telemetry_source": null,
+    "generated_at": "2026-02-19T23:42:35.321928",
+    "sample_limit": 10
+  },
+  "categories": {
+    "cloud_timeout": {
+      "count": 0,
+      "samples": [],
+      "source_file": "addon/oig-proxy/cloud_forwarder.py",
+      "source_function": "handle_timeout()",
+      "description": "Cloud ACK timeout - asyncio.TimeoutError raised during cloud response wait"
+    },
+    "cloud_eof": {
+      "count": 0,
+      "samples": [],
+      "source_file": "addon/oig-proxy/cloud_forwarder.py",
+      "source_function": "handle_eof()",
+      "description": "Cloud closed connection - EOFError or empty ack_data received"
+    },
+    "cloud_error": {
+      "count": 0,
+      "samples": [],
+      "source_file": "addon/oig-proxy/cloud_forwarder.py",
+      "source_function": "handle_error()",
+      "description": "General cloud error - unexpected exception during cloud communication"
+    },
+    "box_disconnect": {
+      "count": 18334,
+      "samples": [
+        {
+          "frame_id": 234,
+          "ts": "2025-12-18T19:25:02.008483+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "ACK",
+          "raw_preview": "<Frame><Result>END</Result><ToDo>GetActual</ToDo><CRC>21021</CRC></Frame>\r\n",
+          "conn_id": 1,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 262,
+          "ts": "2025-12-18T19:26:47.374688+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "ACK",
+          "raw_preview": "<Frame><Result>END</Result><Time>2025-12-18 20:26:47</Time><UTCTime>2025-12-18 19:26:47</UTCTime><CRC>51303</CRC></Frame>\r\n",
+          "conn_id": 1,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 303,
+          "ts": "2025-12-18T19:28:51.112802+00:00",
+          "direction": "box_to_proxy",
+          "table_name": "END",
+          "raw_preview": "<Frame><Result>END</Result><Rdt>2025-12-18 20:28:46</Rdt><Reason>All data sent</Reason><ver>17385</ver><CRC>30812</CRC></Frame>\r\n",
+          "conn_id": 2,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 373,
+          "ts": "2025-12-18T19:42:52.047732+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "ACK",
+          "raw_preview": "<Frame><Result>END</Result><Time>2025-12-18 20:42:52</Time><UTCTime>2025-12-18 19:42:52</UTCTime><CRC>02925</CRC></Frame>\r\n",
+          "conn_id": 1,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 404,
+          "ts": "2025-12-18T19:44:28.252957+00:00",
+          "direction": "box_to_proxy",
+          "table_name": "END",
+          "raw_preview": "<Frame><Result>END</Result><Rdt>2025-12-18 20:44:20</Rdt><Reason>All data sent</Reason><ver>29815</ver><CRC>64442</CRC></Frame>\r\n",
+          "conn_id": 2,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 416,
+          "ts": "2025-12-18T19:45:16.202921+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "ACK",
+          "raw_preview": "<Frame><Result>END</Result><ToDo>GetActual</ToDo><CRC>21021</CRC></Frame>\r\n",
+          "conn_id": 3,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 435,
+          "ts": "2025-12-18T19:46:25.586522+00:00",
+          "direction": "box_to_proxy",
+          "table_name": "END",
+          "raw_preview": "<Frame><Result>END</Result><Rdt>2025-12-18 20:46:18</Rdt><Reason>All data sent</Reason><ver>02448</ver><CRC>62813</CRC></Frame>\r\n",
+          "conn_id": 3,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 499,
+          "ts": "2025-12-18T19:50:17.766313+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "ACK",
+          "raw_preview": "<Frame><Result>END</Result><ToDo>GetActual</ToDo><CRC>21021</CRC></Frame>\r\n",
+          "conn_id": 4,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 527,
+          "ts": "2025-12-18T19:51:49.309526+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "ACK",
+          "raw_preview": "<Frame><Result>END</Result><Time>2025-12-18 20:51:49</Time><UTCTime>2025-12-18 19:51:49</UTCTime><CRC>14517</CRC></Frame>\r\n",
+          "conn_id": 4,
+          "details": {
+            "type": "end_frame"
+          }
+        },
+        {
+          "frame_id": 552,
+          "ts": "2025-12-18T19:53:09.028544+00:00",
+          "direction": "box_to_proxy",
+          "table_name": "END",
+          "raw_preview": "<Frame><Result>END</Result><Rdt>2025-12-18 20:53:03</Rdt><Reason>All data sent</Reason><ver>14564</ver><CRC>62481</CRC></Frame>\r\n",
+          "conn_id": 5,
+          "details": {
+            "type": "end_frame"
+          }
+        }
+      ],
+      "source_file": "addon/oig-proxy/proxy.py",
+      "source_function": "_read_box_bytes(), handle_connection()",
+      "description": "BOX disconnection - ConnectionResetError, idle timeout, EOF, or forced disconnect"
+    },
+    "nack": {
+      "count": 27,
+      "samples": [
+        {
+          "frame_id": 16441,
+          "ts": "2025-12-19T12:10:15.529837+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 40,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 24541,
+          "ts": "2025-12-19T22:20:04.727212+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewWeather",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 70,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 30733,
+          "ts": "2025-12-20T05:36:24.581561+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 260,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 111795,
+          "ts": "2025-12-23T13:34:00.088230+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 1194,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 241168,
+          "ts": "2025-12-28T15:30:28.595701+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": null,
+          "raw_preview": "<Frame><Result>NACK</Result><CRC>56002</CRC></Frame>\r\n",
+          "conn_id": 3,
+          "details": {}
+        },
+        {
+          "frame_id": 241170,
+          "ts": "2025-12-28T15:30:29.599679+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": null,
+          "raw_preview": "<Frame><Result>NACK</Result><CRC>56002</CRC></Frame>\r\n",
+          "conn_id": 2,
+          "details": {}
+        },
+        {
+          "frame_id": 252688,
+          "ts": "2025-12-29T02:28:01.130779+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 464,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 498995,
+          "ts": "2026-01-08T02:24:31.576961+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 465,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 505675,
+          "ts": "2026-01-08T08:52:39.309045+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 974,
+          "details": {
+            "reason": "OneMore"
+          }
+        },
+        {
+          "frame_id": 520912,
+          "ts": "2026-01-08T23:35:14.366351+00:00",
+          "direction": "cloud_to_proxy",
+          "table_name": "IsNewSet",
+          "raw_preview": "<Frame><Result>NACK</Result><Reason>OneMore</Reason><CRC>45909</CRC></Frame>\r\n",
+          "conn_id": 2104,
+          "details": {
+            "reason": "OneMore"
+          }
+        }
+      ],
+      "source_file": "addon/oig-proxy/control_settings.py",
+      "source_function": "maybe_handle_ack()",
+      "description": "Negative acknowledgment - BOX rejected a setting with NACK response"
+    }
+  },
+  "summary": {
+    "total_edge_cases": 18361,
+    "categories_with_findings": 2,
+    "categories_empty": 3
+  }
+}

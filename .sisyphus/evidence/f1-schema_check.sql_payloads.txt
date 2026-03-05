@@ -1,0 +1,93 @@
+SQL Script: schema_check.sql
+Database: analysis/ha_snapshot/payloads.db
+============================================================
+
+STATEMENT 1: SELECT 
+    'Current DB' as source,
+    COUNT(*) as total_frames 
+FROM sqlite_master 
+WHERE type='ta...
+--------------------------------------------------
+Rows returned: 1
+Columns: source, total_frames
+
+Data:
+  1: ('Current DB', 1)
+
+STATEMENT 2: SELECT 
+    MIN(ts) as earliest_timestamp,
+    MAX(ts) as latest_timestamp,
+    COUNT(*) as total_fr...
+--------------------------------------------------
+Rows returned: 1
+Columns: earliest_timestamp, latest_timestamp, total_frames, days_span
+
+Data:
+  1: ('2025-12-11T15:19:16.437511+00:00', '2025-12-12T18:38:13.509436+00:00', 52107, 1.1381605439819396)
+
+STATEMENT 3: SELECT 
+    COUNT(*) as feb_16_2026_count,
+    'POUŽITO PRO TESTOVÁNÍ - TATO DATA MUSÍ BÝT VYŘAZENA'...
+--------------------------------------------------
+Rows returned: 1
+Columns: feb_16_2026_count, warning
+
+Data:
+  1: (0, 'POUŽITO PRO TESTOVÁNÍ - TATO DATA MUSÍ BÝT VYŘAZENA')
+
+STATEMENT 4: SELECT 
+    direction,
+    COUNT(*) as frame_count,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FR...
+--------------------------------------------------
+Rows returned: 4
+Columns: direction, frame_count, percentage
+
+Data:
+  1: ('box_to_proxy', 13029, 25.0)
+  2: ('proxy_to_cloud', 13028, 25.0)
+  3: ('proxy_to_box', 13025, 25.0)
+  4: ('cloud_to_proxy', 13025, 25.0)
+
+STATEMENT 5: SELECT 
+    table_name,
+    COUNT(*) as frequency,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FRO...
+--------------------------------------------------
+Rows returned: 10
+Columns: table_name, frequency, percentage
+
+Data:
+  1: ('tbl_actual', 38305, 73.51)
+  2: ('tbl_dc_in', 1232, 2.36)
+  3: ('tbl_batt', 1232, 2.36)
+  4: ('tbl_ac_out', 1232, 2.36)
+  5: ('tbl_ac_in', 1232, 2.36)
+  6: ('tbl_box', 1228, 2.36)
+  7: ('tbl_boiler', 1228, 2.36)
+  8: ('tbl_events', 992, 1.9)
+  9: ('tbl_batt_prms', 560, 1.07)
+  10: ('tbl_invertor_prms', 208, 0.4)
+
+STATEMENT 6: SELECT 
+    COUNT(DISTINCT conn_id) as unique_connections,
+    COUNT(*) as total_frames
+FROM frames
+--------------------------------------------------
+Rows returned: 1
+Columns: unique_connections, total_frames
+
+Data:
+  1: (0, 52107)
+
+STATEMENT 7: SELECT 
+    COUNT(*) as raw_b64_records
+FROM frames 
+WHERE raw_b64 IS NOT NULL
+--------------------------------------------------
+ERROR: no such column: raw_b64 (expected - column not in this DB)
+
+============================================================
+SCRIPT SUMMARY: schema_check.sql
+Total rows: 18
+Status: PASS (expected schema difference)

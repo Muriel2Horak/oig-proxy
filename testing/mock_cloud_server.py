@@ -18,7 +18,8 @@ import logging
 import os
 import re
 import sys
-from typing import Optional
+from typing import Optional, Dict, Any
+from aiohttp import web, WSMsgType
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -58,6 +59,7 @@ class MockCloudServer:
         self.connection_count = 0
         self.frames_received = []
         self.running = True
+        self.pending_setting: Optional[Dict[str, Any]] = None
 
     async def handle_connection(
         self,
@@ -140,16 +142,27 @@ class MockCloudServer:
 
     async def start(self):
         """Spustí mock cloud server."""
-        server = await asyncio.start_server(
+        tcp_server = await asyncio.start_server(
             self.handle_connection, self.host, self.port
         )
+        
+        app = web.Application()
+        app.router.add_post('/api/queue-setting', self.handle_queue_setting)
+        app.router.add_get('/api/pending', self.handle_get_pending)
+        
+        http_port = self.port + 1
+        runner = web.AppRunner(app)
+        await runner.setup()
+        http_site = web.TCPSite(runner, self.host, http_port)
+        await http_site.start()
 
-        addr = server.sockets[0].getsockname()
-        logger.info(f"🟢 Mock Cloud Server listening on {addr}")
+        tcp_addr = tcp_server.sockets[0].getsockname()
+        logger.info(f"🟢 Mock Cloud Server listening on {tcp_addr}")
+        logger.info(f"🔗 HTTP API available on http://{self.host}:{http_port}")
         logger.info("   Ready to receive frames from proxy")
 
-        async with server:
-            await server.serve_forever()
+        async with tcp_server:
+            await tcp_server.serve_forever()
 
     def get_stats(self) -> dict:
         """Vrátí statistiky."""
@@ -171,6 +184,92 @@ class MockCloudServer:
         with open(filename, "w") as f:
             json.dump(stats, f, indent=2, ensure_ascii=False)
         logger.info(f"📝 Frames saved to {filename}")
+
+    def queue_setting(self, tbl_name: str, tbl_item: str, new_value: str) -> dict:
+        if not all([tbl_name, tbl_item, new_value]):
+            return {
+                "status": "error",
+                "message": "Missing required fields: tbl_name, tbl_item, new_value"
+            }
+        
+        self.pending_setting = {
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": new_value,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        logger.info(f"API: Queued setting {tbl_name}/{tbl_item}={new_value}")
+        
+        return {
+            "status": "queued",
+            "pending": self.pending_setting
+        }
+
+    def get_pending_setting(self) -> dict:
+        if self.pending_setting:
+            return {
+                "status": "has_pending",
+                "pending_setting": self.pending_setting
+            }
+        else:
+            return {
+                "status": "no_pending",
+                "pending_setting": None
+            }
+
+    async def handle_queue_setting(self, request: web.Request) -> web.Response:
+        try:
+            if not request.content_type or 'application/json' not in request.content_type:
+                return web.json_response(
+                    {"status": "error", "message": "Content-Type must be application/json"},
+                    status=400
+                )
+            
+            data = await request.json()
+            
+            required_fields = ['tbl_name', 'tbl_item', 'new_value']
+            missing_fields = [field for field in required_fields if field not in data]
+            
+            if missing_fields:
+                return web.json_response(
+                    {
+                        "status": "error",
+                        "message": f"Missing required fields: {', '.join(missing_fields)}"
+                    },
+                    status=400
+                )
+            
+            result = self.queue_setting(
+                tbl_name=data['tbl_name'],
+                tbl_item=data['tbl_item'],
+                new_value=data['new_value']
+            )
+            
+            return web.json_response(result)
+            
+        except json.JSONDecodeError:
+            return web.json_response(
+                {"status": "error", "message": "Invalid JSON"},
+                status=400
+            )
+        except Exception as e:
+            logger.error(f"API Error in /api/queue-setting: {e}")
+            return web.json_response(
+                {"status": "error", "message": str(e)},
+                status=500
+            )
+
+    async def handle_get_pending(self, request: web.Request) -> web.Response:
+        try:
+            result = self.get_pending_setting()
+            return web.json_response(result)
+        except Exception as e:
+            logger.error(f"API Error in /api/pending: {e}")
+            return web.json_response(
+                {"status": "error", "message": str(e)},
+                status=500
+            )
 
 
 async def main():

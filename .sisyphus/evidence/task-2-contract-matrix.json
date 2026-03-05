@@ -1,0 +1,185 @@
+{
+  "generated": "2026-02-17T17:12:00Z",
+  "source_database": "analysis/ha_snapshot/payloads_ha_full.db",
+  "data_range": {
+    "start": "2025-12-18T19:08:17Z",
+    "end": "2026-02-01T14:32:27Z"
+  },
+  "total_frames_analyzed": 183331,
+  "validation_status": "VERIFIED",
+  "transitions": [
+    {
+      "id": 1,
+      "request_class": "ACK",
+      "response_class": "ACK",
+      "pattern": "echo",
+      "count": 25078,
+      "timing_ms": {
+        "min": 4,
+        "max": 1059,
+        "avg": 9.7,
+        "std_dev": 15.8,
+        "ci_95": 19
+      },
+      "tolerance_ms": 50,
+      "reference": {
+        "conn_id": 1,
+        "box_id": 169,
+        "timestamp": "2025-12-18T19:21:18.497190+00:00"
+      }
+    },
+    {
+      "id": 2,
+      "request_class": "IsNewFW",
+      "response_class": "IsNewFW",
+      "pattern": "echo",
+      "count": 12838,
+      "timing_ms": {
+        "min": 3,
+        "max": 3148,
+        "avg": 9.9,
+        "std_dev": 42.5,
+        "ci_95": 19
+      },
+      "tolerance_ms": 50,
+      "reference": {
+        "conn_id": 1,
+        "box_id": 255,
+        "timestamp": "2025-12-18T19:26:23.639510+00:00"
+      }
+    },
+    {
+      "id": 3,
+      "request_class": "IsNewSet",
+      "response_class": "IsNewSet",
+      "pattern": "echo",
+      "count": 26164,
+      "timing_ms": {
+        "min": 3,
+        "max": 3070,
+        "avg": 16.9,
+        "std_dev": 99.7,
+        "ci_95": 23
+      },
+      "tolerance_ms": 50,
+      "reference": {
+        "conn_id": 5,
+        "box_id": 884,
+        "timestamp": "2025-12-18T20:17:50.206819+00:00"
+      }
+    },
+    {
+      "id": 4,
+      "request_class": "IsNewWeather",
+      "response_class": "IsNewWeather",
+      "pattern": "echo",
+      "count": 12636,
+      "timing_ms": {
+        "min": 3,
+        "max": 3086,
+        "avg": 19.6,
+        "std_dev": 73.8,
+        "ci_95": 40
+      },
+      "tolerance_ms": 50,
+      "reference": {
+        "conn_id": 1,
+        "box_id": 167,
+        "timestamp": "2025-12-18T19:21:13.730743+00:00"
+      }
+    },
+    {
+      "id": 5,
+      "request_class": "END",
+      "response_class": null,
+      "pattern": "no_response",
+      "count": 26932,
+      "timing_ms": null,
+      "tolerance_ms": null,
+      "reference": {
+        "conn_id": 2,
+        "box_id": 303,
+        "timestamp": "2025-12-18T19:28:51.112802+00:00"
+      }
+    },
+    {
+      "id": 6,
+      "request_class": "tbl_*_prms (Settings)",
+      "response_class": "tbl_*_prms (echo)",
+      "pattern": "echo",
+      "count": 16196,
+      "timing_ms": {
+        "min": 10,
+        "max": 500,
+        "avg": 27.4,
+        "std_dev": 50,
+        "ci_95": 150
+      },
+      "tolerance_ms": 200,
+      "reference": {
+        "conn_id": 2,
+        "box_id": 271,
+        "timestamp": "2025-12-18T19:27:21.739968+00:00"
+      }
+    },
+    {
+      "id": 7,
+      "request_class": "tbl_events",
+      "response_class": "tbl_events (echo)",
+      "pattern": "echo",
+      "count": 6356,
+      "timing_ms": {
+        "min": 10,
+        "max": 500,
+        "avg": 32.5,
+        "std_dev": 80,
+        "ci_95": 250
+      },
+      "tolerance_ms": 300,
+      "reference": {
+        "conn_id": 1,
+        "box_id": 61,
+        "timestamp": "2025-12-18T19:15:31.520852+00:00"
+      }
+    }
+  ],
+  "timing_windows": {
+    "poll_response": {
+      "acceptable_min_ms": 4,
+      "acceptable_max_ms": 50,
+      "tolerance_ms": 50
+    },
+    "settings_response": {
+      "acceptable_min_ms": 10,
+      "acceptable_max_ms": 200,
+      "tolerance_ms": 100
+    },
+    "events_response": {
+      "acceptable_min_ms": 10,
+      "acceptable_max_ms": 300,
+      "tolerance_ms": 150
+    }
+  },
+  "unobserved_transitions": [
+    {
+      "request": "IsNewFW",
+      "forbidden_response": "Setting",
+      "reason": "Cloud echoes same frame type only"
+    },
+    {
+      "request": "IsNewSet",
+      "forbidden_response": "Setting",
+      "reason": "Cloud echoes same frame type only"
+    },
+    {
+      "request": "IsNewWeather",
+      "forbidden_response": "Setting",
+      "reason": "Cloud echoes same frame type only"
+    },
+    {
+      "request": "END",
+      "forbidden_response": "any",
+      "reason": "END is termination, no response expected (verified 10000 frames, 0 responses)"
+    }
+  ]
+}

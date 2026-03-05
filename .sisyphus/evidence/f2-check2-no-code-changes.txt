@@ -1,0 +1,30 @@
+CHECK 2: No proxy code changes in addon/oig-proxy/ directory
+===========================================================
+
+STATUS: FAILED - Proxy code changes detected
+
+Modified Files Found:
+- addon/oig-proxy/control_settings.py (49 changes: +47, -8)
+- addon/oig-proxy/proxy.py (6 changes: +6, -0)
+
+Details of Changes:
+
+1. control_settings.py:
+   - Enhanced ACK handling logic with improved timeout checks
+   - Added detailed logging for ACK/NACK detection
+   - Added connection ID tracking in log messages
+   - Improved error handling and debugging information
+   - Modified timeout logic to check for sent_at timestamp
+
+2. proxy.py:
+   - Added debug logging for post-Setting BOX frames
+   - Includes connection ID and table name in logs
+
+Commit Context:
+- Last commit: 7af92c3 fix: resolve IsNewSet interception by always overriding table_name from Result
+- Changes are uncommitted and in working directory
+
+VERDICT: FAIL - Proxy code changes detected in addon/oig-proxy/ directory
+This violates the scope requirement: "No live debugging or proxy code changes"
+
+Timestamp: 2026-02-17 08:12:10

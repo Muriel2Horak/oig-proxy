@@ -11,27 +11,33 @@ from unittest.mock import patch
 from control_api import ControlAPIServer, _Handler
 
 
-class DummyProxy:
-    def __init__(self) -> None:
-        self.last_setting = None
+class _DummyCS:
+    def __init__(self, proxy):
+        self._proxy = proxy
 
-    def get_control_api_health(self):
+    def get_health(self):
         return {"ok": True, "status": "ready"}
 
-    def control_api_send_setting(
+    def send_setting(
             self,
             *,
             tbl_name,
             tbl_item,
             new_value,
             confirm):
-        self.last_setting = {
+        self._proxy.last_setting = {
             "tbl_name": tbl_name,
             "tbl_item": tbl_item,
             "new_value": new_value,
             "confirm": confirm,
         }
         return {"ok": True, "tbl_name": tbl_name, "tbl_item": tbl_item}
+
+
+class DummyProxy:
+    def __init__(self) -> None:
+        self.last_setting = None
+        self._cs = _DummyCS(self)
 
 
 class _TestHandler(_Handler):

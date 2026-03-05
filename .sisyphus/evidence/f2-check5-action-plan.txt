@@ -1,0 +1,48 @@
+CHECK 5: Action plan present with 3+ steps in report_cz.md
+=============================================================
+
+STATUS: PASS - Action plan section exists with 4 detailed steps
+
+Action Plan Section Verification:
+- ✅ Section "## Akční plán" exists (line 85 in report)
+- ✅ Contains 4 steps (exceeds minimum requirement of 3)
+- ✅ All steps follow "Krok X" naming pattern
+- ✅ Each step has comprehensive details including specific actions, descriptions, and priorities
+
+Step-by-Step Analysis:
+
+### Krok 1: Opravit capture proxy
+- **Konkrétní akce:** Konfigurovat capture proxy pro zachytávání VŠECH směrů komunikace
+- **Popis:** Ujistit se, že proxy zachytává box_to_proxy, proxy_to_box, proxy_to_cloud a cloud_to_proxy
+- **Priorita:** Vysoká (bez toho nelze analyzovat kompletní sekvence)
+- **Status:** Complete step with clear technical requirements
+
+### Krok 2: Najít nebo vytvořit kompletní databázi
+- **Konkrétní akce:** Vyhledat databázi obsahující BOTH Settings AND jejich odpovídající ACKs
+- **Popis:** Provést kompletní capture po dobu alespoň 24 hodin pro získání kompletních dat
+- **Priorita:** Vysoká (nutné pro validaci hypotéz H1 a H3)
+- **Status:** Complete step with specific data requirements
+
+### Krok 3: Reimplementovat analýzu H1 a H3
+- **Konkrétní akce:** Spustit analýzu GetActual interference (H1) a Connection lifecycle (H3) na kompletních datech
+- **Popis:** Dokončení analýz, které selhaly z důvodu timeoutu na komplementárních databázích
+- **Priorita:** Střední (potřebné pro kompletní pochopení problému)
+- **Status:** Complete step addressing analysis gaps
+
+### BONUS: Fallback: Pokud kroky 1-3 nezaberou
+- **Alternativní řešení:** Sestavit data z obou databází na základě časových značek a ID zařízení
+- **Popis:** I když nepřesné, může poskytnout přibližný pohled na sekvence Setting→ACK
+- **Priorita:** Nízká (poslední možnost)
+- **Status:** Additional fallback step (exceeds requirements)
+
+Quality Assessment:
+- All steps are actionable and specific
+- Clear prioritization (Vysoká/Střední/Nízká)
+- Technical precision in descriptions
+- Logical progression from data collection → analysis → fallback
+- Czech language maintained throughout
+- Addresses the core issues identified in the analysis
+
+VERDICT: PASS - Action plan exceeds requirements with 4 comprehensive steps, each containing specific actions, detailed descriptions, and clear priorities. The plan provides a clear path forward for resolving the identified communication capture issues.
+
+Timestamp: 2026-02-17 08:14:30

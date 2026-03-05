@@ -1,0 +1,14 @@
+============================================================
+Task 6: Negative Test - Mismatch Detection
+============================================================
+
+{
+  "injected_at_sequence": 1,
+  "original_expected": "IsNewSet",
+  "injected_expected": "WRONG_RESPONSE",
+  "mismatch_detected": true,
+  "test_status": "PASS"
+}
+
+RESULT: Suite correctly detected injected mismatch.
+STATUS: PASS

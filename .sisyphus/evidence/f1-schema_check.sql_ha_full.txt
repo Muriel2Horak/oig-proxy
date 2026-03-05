@@ -1,0 +1,9 @@
+SQL Script: schema_check.sql
+Database: analysis/ha_snapshot/payloads_ha_full.db
+============================================================
+
+STMT 1: 1 rows
+STMT 2: 1 rows
+STMT 3: 1 rows
+STMT 4: 3 rows
+STMT 5: 10 rows

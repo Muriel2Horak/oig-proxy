@@ -1,0 +1,465 @@
+{
+  "task": "T7",
+  "title": "Hybrid failure injection study",
+  "generated": "2026-02-17T17:58:20Z",
+  "safety_logging": "ENABLED (throughout all scenarios)",
+  "scenarios": [
+    {
+      "scenario": "failure_injection_intermittent",
+      "verdict": "PASS",
+      "details": "Failure injection: 6 plánovaných výpadků, 12 přechodů (max očekávaných: 14). Žádná oscilace. Cloud resets: 6, timeouts: 18. Konečný stav: online.",
+      "duration_ticks": 900,
+      "simulated_seconds": 900.0,
+      "simulated_minutes": 15.0,
+      "final_state": "online",
+      "final_fail_count": 0,
+      "cloud_resets": 6,
+      "cloud_timeouts": 18,
+      "max_consecutive_failures": 3,
+      "oscillation_count": 0,
+      "transition_count": 12,
+      "state_durations_s": {
+        "online": 540.0,
+        "offline": 360.0
+      },
+      "transition_map": [
+        {
+          "tick": 32,
+          "elapsed_s": 32.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 92,
+          "elapsed_s": 92.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 118,
+          "elapsed_s": 118.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 178,
+          "elapsed_s": 178.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 221,
+          "elapsed_s": 221.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 281,
+          "elapsed_s": 281.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 340,
+          "elapsed_s": 340.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 400,
+          "elapsed_s": 400.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 455,
+          "elapsed_s": 455.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 515,
+          "elapsed_s": 515.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 574,
+          "elapsed_s": 574.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 3
+        },
+        {
+          "tick": 634,
+          "elapsed_s": 634.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        }
+      ],
+      "failure_schedule": [
+        {
+          "start_tick": 30,
+          "duration_ticks": 25,
+          "failure_type": "timeout"
+        },
+        {
+          "start_tick": 116,
+          "duration_ticks": 28,
+          "failure_type": "connection_refused"
+        },
+        {
+          "start_tick": 219,
+          "duration_ticks": 12,
+          "failure_type": "timeout"
+        },
+        {
+          "start_tick": 338,
+          "duration_ticks": 8,
+          "failure_type": "eof"
+        },
+        {
+          "start_tick": 453,
+          "duration_ticks": 22,
+          "failure_type": "timeout"
+        },
+        {
+          "start_tick": 572,
+          "duration_ticks": 18,
+          "failure_type": "timeout"
+        }
+      ]
+    },
+    {
+      "scenario": "oscillation_stress_threshold1",
+      "verdict": "PASS",
+      "details": "Stresový oscilační test: threshold=1, retry_interval=30s. Přechodů: 35 (max očekávaných: 44). Žádná nekontrolovaná oscilace (retry_interval chrání).",
+      "duration_ticks": 600,
+      "simulated_seconds": 600.0,
+      "simulated_minutes": 10.0,
+      "final_state": "offline",
+      "final_fail_count": 1,
+      "cloud_resets": 17,
+      "cloud_timeouts": 35,
+      "max_consecutive_failures": 2,
+      "oscillation_count": 0,
+      "transition_count": 35,
+      "state_durations_s": {
+        "online": 68.0,
+        "offline": 532.0
+      },
+      "transition_map": [
+        {
+          "tick": 0,
+          "elapsed_s": 0.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 31,
+          "elapsed_s": 31.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 35,
+          "elapsed_s": 35.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 66,
+          "elapsed_s": 66.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 70,
+          "elapsed_s": 70.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 101,
+          "elapsed_s": 101.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 105,
+          "elapsed_s": 105.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 136,
+          "elapsed_s": 136.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 140,
+          "elapsed_s": 140.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 171,
+          "elapsed_s": 171.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 175,
+          "elapsed_s": 175.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 206,
+          "elapsed_s": 206.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 210,
+          "elapsed_s": 210.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 241,
+          "elapsed_s": 241.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 245,
+          "elapsed_s": 245.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 276,
+          "elapsed_s": 276.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 280,
+          "elapsed_s": 280.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 311,
+          "elapsed_s": 311.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 315,
+          "elapsed_s": 315.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 346,
+          "elapsed_s": 346.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 350,
+          "elapsed_s": 350.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 381,
+          "elapsed_s": 381.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 385,
+          "elapsed_s": 385.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 416,
+          "elapsed_s": 416.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 420,
+          "elapsed_s": 420.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 451,
+          "elapsed_s": 451.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 455,
+          "elapsed_s": 455.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 486,
+          "elapsed_s": 486.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 490,
+          "elapsed_s": 490.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 521,
+          "elapsed_s": 521.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 525,
+          "elapsed_s": 525.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 556,
+          "elapsed_s": 556.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 560,
+          "elapsed_s": 560.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        },
+        {
+          "tick": 591,
+          "elapsed_s": 591.0,
+          "from": "offline",
+          "to": "online",
+          "reason": "cloud_recovered",
+          "fail_count": 0
+        },
+        {
+          "tick": 595,
+          "elapsed_s": 595.0,
+          "from": "online",
+          "to": "offline",
+          "reason": "cloud_failure",
+          "fail_count": 1
+        }
+      ]
+    }
+  ],
+  "overall_verdict": "PASS",
+  "summary": "Failure injection (6 výpadků, 900 ticků/15 min) a oscilační stres (threshold=1, 600 ticků/10 min) potvrzují prediktabilní přechody. retry_interval chrání proti nekontrolované oscilaci i při threshold=1.",
+  "transition_analysis": {
+    "cloud_disconnect_correlates_with_session_transitions": true,
+    "no_local_fallback_side_effects": true,
+    "explanation": "Cloud disconnecty (timeouts, connection_refused, eof) korelují přímo s přechody hybrid stavu (online→offline). Lokální fallback (local ACK) nemá vedlejší efekty na state machine – pouze record_failure() inkrementuje fail_count a po dosažení thresholdu přepne do offline. record_success() resetuje fail_count a vrací do online."
+  }
+}

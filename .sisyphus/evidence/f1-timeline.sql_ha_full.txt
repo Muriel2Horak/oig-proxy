@@ -1,0 +1,238 @@
+SQL Script: timeline.sql
+Database: analysis/ha_snapshot/payloads_ha_full.db
+============================================================
+
+STATEMENT 1: ATTACH DATABASE '/tmp/payloads_test.db' AS db1
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 2: CREATE TABLE IF NOT EXISTS cloud_settings_db1 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db1' as d...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 3: CREATE TABLE IF NOT EXISTS box_setting_acks_db1 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db1' as...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 4: CREATE TABLE IF NOT EXISTS tbl_events_db1 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db1' as datab...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 5: CREATE TABLE IF NOT EXISTS isnewset_frames_db1 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db1' as ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 6: ATTACH DATABASE '/tmp/payloads_ha_full_test.db' AS db2
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 7: CREATE TABLE IF NOT EXISTS cloud_settings_db2 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db2' as d...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 8: CREATE TABLE IF NOT EXISTS box_setting_acks_db2 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db2' as...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 9: CREATE TABLE IF NOT EXISTS tbl_events_db2 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db2' as datab...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 10: CREATE TABLE IF NOT EXISTS isnewset_frames_db2 AS
+SELECT 
+    id,
+    ts as timestamp,
+    'db2' as ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 11: CREATE TABLE IF NOT EXISTS all_setting_events AS
+SELECT * FROM cloud_settings_db1
+UNION ALL
+SELECT *...
+--------------------------------------------------
+ERROR: SELECTs to the left and right of UNION ALL do not have the same number of result columns
+
+STATEMENT 12: CREATE TABLE IF NOT EXISTS matched_setting_ack_pairs AS
+WITH 
+all_cloud_settings AS (
+    SELECT * F...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 13: CREATE TABLE IF NOT EXISTS ghost_acks AS
+WITH 
+all_cloud_settings AS (
+    SELECT * FROM cloud_setti...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 14: CREATE TABLE IF NOT EXISTS orphan_settings AS
+WITH 
+all_cloud_settings AS (
+    SELECT * FROM cloud_...
+--------------------------------------------------
+ERROR: no such column: parsed_preview
+
+STATEMENT 15: CREATE TABLE IF NOT EXISTS daily_event_counts AS
+WITH 
+db1_counts AS (
+    SELECT 
+        'db1' as ...
+--------------------------------------------------
+ERROR: no such table: all_setting_events
+
+STATEMENT 16: CREATE TABLE IF NOT EXISTS delta_time_statistics AS
+SELECT 
+    COUNT(*) as total_matched_pairs,
+   ...
+--------------------------------------------------
+ERROR: no such column: database_name
+
+STATEMENT 17: CREATE TABLE IF NOT EXISTS ghost_acks_daily_analysis AS
+SELECT 
+    DATE(box_ack_time) as ghost_ack_...
+--------------------------------------------------
+ERROR: no such column: database_name
+
+STATEMENT 18: SELECT 'TOTAL EVENTS' as metric, COUNT(*) as count FROM all_setting_events
+UNION ALL
+SELECT 'CLOUD S...
+--------------------------------------------------
+ERROR: no such table: orphan_settings
+
+STATEMENT 19: SELECT box_ack_time, box_ack_db, SUBSTR(content, 1, 100) as content_preview 
+FROM ghost_acks 
+LIMIT ...
+--------------------------------------------------
+Rows returned: 0
+Columns: box_ack_time, box_ack_db, content_preview
+
+STATEMENT 20: SELECT cloud_setting_time, cloud_setting_db, SUBSTR(parsed_preview, 1, 100) as setting_preview 
+FROM...
+--------------------------------------------------
+ERROR: no such table: orphan_settings
+
+STATEMENT 21: SELECT * FROM delta_time_statistics
+--------------------------------------------------
+ERROR: no such table: delta_time_statistics
+
+STATEMENT 22: SELECT * FROM ghost_acks_daily_analysis ORDER BY ghost_ack_count DESC
+--------------------------------------------------
+ERROR: no such table: ghost_acks_daily_analysis
+
+STATEMENT 23: SELECT 
+    COUNT(*) as jan_23_ghost_acks,
+    database_name
+FROM ghost_acks 
+WHERE DATE(box_ack_tim...
+--------------------------------------------------
+ERROR: no such column: database_name
+
+STATEMENT 24: SELECT 
+    timestamp,
+    database_name,
+    parsed_preview
+FROM (
+    SELECT * FROM cloud_settings...
+--------------------------------------------------
+Rows returned: 0
+Columns: timestamp, database_name, parsed_preview
+
+STATEMENT 25: /*
+DROP TABLE IF EXISTS cloud_settings_db1
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 26: DROP TABLE IF EXISTS box_setting_acks_db1
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 27: DROP TABLE IF EXISTS tbl_events_db1
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 28: DROP TABLE IF EXISTS isnewset_frames_db1
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 29: DROP TABLE IF EXISTS cloud_settings_db2
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 30: DROP TABLE IF EXISTS box_setting_acks_db2
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 31: DROP TABLE IF EXISTS tbl_events_db2
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 32: DROP TABLE IF EXISTS isnewset_frames_db2
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 33: DROP TABLE IF EXISTS all_setting_events
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 34: DROP TABLE IF EXISTS matched_setting_ack_pairs
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 35: DROP TABLE IF EXISTS ghost_acks
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 36: DROP TABLE IF EXISTS orphan_settings
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 37: DROP TABLE IF EXISTS daily_event_counts
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 38: DROP TABLE IF EXISTS delta_time_statistics
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 39: DROP TABLE IF EXISTS ghost_acks_daily_analysis
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 40: */
+--------------------------------------------------
+ERROR: near "*": syntax error
+
+============================================================
+SCRIPT SUMMARY: timeline.sql
+Total rows: 0
+Status: FAIL - SQL error

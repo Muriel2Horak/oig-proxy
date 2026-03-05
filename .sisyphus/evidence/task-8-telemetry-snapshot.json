@@ -1,0 +1,524 @@
+{
+  "snapshot_metadata": {
+    "generated_at": "2026-02-19T22:35:13.845306Z",
+    "device_id": "test-device-123",
+    "mode": "mock",
+    "source": "synthetic_telemetry_snapshotter",
+    "telemetry_messages_count": 5,
+    "event_messages_count": 3
+  },
+  "telemetry_messages": [
+    {
+      "timestamp": "2026-02-19T22:10:13.844725Z",
+      "topic": "oig/telemetry/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:10:13.844725Z",
+        "interval_s": 300,
+        "uptime_s": 87900,
+        "mode": "online",
+        "configured_mode": "hybrid",
+        "box_connected": true,
+        "box_peer": "192.168.1.100:54321",
+        "frames_received": 100,
+        "frames_forwarded": 95,
+        "cloud_connects": 5,
+        "cloud_disconnects": 4,
+        "cloud_timeouts": 0,
+        "cloud_errors": 1,
+        "cloud_online": true,
+        "mqtt_ok": true,
+        "mqtt_queue": 0,
+        "set_commands": [],
+        "window_metrics": {
+          "box_sessions": [
+            {
+              "timestamp": "2026-02-19T22:10:13.844725Z",
+              "connected_at": "2026-02-19T21:10:13.844725Z",
+              "disconnected_at": "2026-02-19T22:10:13.844725Z",
+              "duration_s": 3600,
+              "peer": "192.168.1.100:54321",
+              "reason": "normal_close"
+            }
+          ],
+          "cloud_sessions": [
+            {
+              "timestamp": "2026-02-19T22:10:13.844725Z",
+              "connected_at": "2026-02-19T20:10:13.844725Z",
+              "disconnected_at": "2026-02-19T22:10:13.844725Z",
+              "duration_s": 7200,
+              "reason": "eof"
+            }
+          ],
+          "hybrid_sessions": [
+            {
+              "timestamp": "2026-02-19T22:10:13.844725Z",
+              "state": "online",
+              "started_at": "2026-02-19T21:40:13.844725Z",
+              "ended_at": "2026-02-19T22:10:13.844725Z",
+              "duration_s": 1800,
+              "reason": null,
+              "mode": "hybrid"
+            }
+          ],
+          "offline_events": [],
+          "tbl_events": [
+            {
+              "timestamp": "2026-02-19T22:10:13.844725Z",
+              "event_time": "2026-02-19T22:10:13.844725Z",
+              "type": "INFO",
+              "confirm": "0",
+              "content": "System initialized",
+              "device_id": "test-device-123"
+            }
+          ],
+          "error_context": [],
+          "stats": [
+            {
+              "timestamp": "2026-02-19T22:10:13.844725Z",
+              "table": "tbl_box",
+              "mode": "online",
+              "response_source": "cloud",
+              "req_count": 10,
+              "resp_ack": 8,
+              "resp_end": 1,
+              "resp_weather": 1,
+              "resp_nack": 0,
+              "resp_ack_getall": 0,
+              "resp_ack_getactual": 0,
+              "resp_other": 0
+            }
+          ],
+          "logs": [
+            {
+              "timestamp": "2026-02-19T22:09:13.844725Z",
+              "level": "INFO",
+              "message": "Telemetry snapshot 1",
+              "source": "oig.telemetry"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "timestamp": "2026-02-19T22:15:13.844725Z",
+      "topic": "oig/telemetry/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:15:13.844725Z",
+        "interval_s": 300,
+        "uptime_s": 87600,
+        "mode": "online",
+        "configured_mode": "hybrid",
+        "box_connected": true,
+        "box_peer": "192.168.1.100:54321",
+        "frames_received": 110,
+        "frames_forwarded": 105,
+        "cloud_connects": 5,
+        "cloud_disconnects": 4,
+        "cloud_timeouts": 0,
+        "cloud_errors": 1,
+        "cloud_online": true,
+        "mqtt_ok": true,
+        "mqtt_queue": 0,
+        "set_commands": [],
+        "window_metrics": {
+          "box_sessions": [
+            {
+              "timestamp": "2026-02-19T22:15:13.844725Z",
+              "connected_at": "2026-02-19T21:15:13.844725Z",
+              "disconnected_at": "2026-02-19T22:15:13.844725Z",
+              "duration_s": 3600,
+              "peer": "192.168.1.100:54321",
+              "reason": "normal_close"
+            }
+          ],
+          "cloud_sessions": [
+            {
+              "timestamp": "2026-02-19T22:15:13.844725Z",
+              "connected_at": "2026-02-19T20:15:13.844725Z",
+              "disconnected_at": "2026-02-19T22:15:13.844725Z",
+              "duration_s": 7200,
+              "reason": "eof"
+            }
+          ],
+          "hybrid_sessions": [
+            {
+              "timestamp": "2026-02-19T22:15:13.844725Z",
+              "state": "online",
+              "started_at": "2026-02-19T21:45:13.844725Z",
+              "ended_at": "2026-02-19T22:15:13.844725Z",
+              "duration_s": 1800,
+              "reason": null,
+              "mode": "hybrid"
+            }
+          ],
+          "offline_events": [],
+          "tbl_events": [
+            {
+              "timestamp": "2026-02-19T22:15:13.844725Z",
+              "event_time": "2026-02-19T22:15:13.844725Z",
+              "type": "INFO",
+              "confirm": "0",
+              "content": "System initialized",
+              "device_id": "test-device-123"
+            }
+          ],
+          "error_context": [],
+          "stats": [
+            {
+              "timestamp": "2026-02-19T22:15:13.844725Z",
+              "table": "tbl_box",
+              "mode": "online",
+              "response_source": "cloud",
+              "req_count": 10,
+              "resp_ack": 8,
+              "resp_end": 1,
+              "resp_weather": 1,
+              "resp_nack": 0,
+              "resp_ack_getall": 0,
+              "resp_ack_getactual": 0,
+              "resp_other": 0
+            }
+          ],
+          "logs": [
+            {
+              "timestamp": "2026-02-19T22:14:13.844725Z",
+              "level": "INFO",
+              "message": "Telemetry snapshot 2",
+              "source": "oig.telemetry"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "timestamp": "2026-02-19T22:20:13.844725Z",
+      "topic": "oig/telemetry/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:20:13.844725Z",
+        "interval_s": 300,
+        "uptime_s": 87300,
+        "mode": "online",
+        "configured_mode": "hybrid",
+        "box_connected": true,
+        "box_peer": "192.168.1.100:54321",
+        "frames_received": 120,
+        "frames_forwarded": 115,
+        "cloud_connects": 5,
+        "cloud_disconnects": 4,
+        "cloud_timeouts": 0,
+        "cloud_errors": 1,
+        "cloud_online": true,
+        "mqtt_ok": true,
+        "mqtt_queue": 0,
+        "set_commands": [],
+        "window_metrics": {
+          "box_sessions": [
+            {
+              "timestamp": "2026-02-19T22:20:13.844725Z",
+              "connected_at": "2026-02-19T21:20:13.844725Z",
+              "disconnected_at": "2026-02-19T22:20:13.844725Z",
+              "duration_s": 3600,
+              "peer": "192.168.1.100:54321",
+              "reason": "normal_close"
+            }
+          ],
+          "cloud_sessions": [
+            {
+              "timestamp": "2026-02-19T22:20:13.844725Z",
+              "connected_at": "2026-02-19T20:20:13.844725Z",
+              "disconnected_at": "2026-02-19T22:20:13.844725Z",
+              "duration_s": 7200,
+              "reason": "eof"
+            }
+          ],
+          "hybrid_sessions": [
+            {
+              "timestamp": "2026-02-19T22:20:13.844725Z",
+              "state": "online",
+              "started_at": "2026-02-19T21:50:13.844725Z",
+              "ended_at": "2026-02-19T22:20:13.844725Z",
+              "duration_s": 1800,
+              "reason": null,
+              "mode": "hybrid"
+            }
+          ],
+          "offline_events": [],
+          "tbl_events": [
+            {
+              "timestamp": "2026-02-19T22:20:13.844725Z",
+              "event_time": "2026-02-19T22:20:13.844725Z",
+              "type": "INFO",
+              "confirm": "0",
+              "content": "System initialized",
+              "device_id": "test-device-123"
+            }
+          ],
+          "error_context": [],
+          "stats": [
+            {
+              "timestamp": "2026-02-19T22:20:13.844725Z",
+              "table": "tbl_box",
+              "mode": "online",
+              "response_source": "cloud",
+              "req_count": 10,
+              "resp_ack": 8,
+              "resp_end": 1,
+              "resp_weather": 1,
+              "resp_nack": 0,
+              "resp_ack_getall": 0,
+              "resp_ack_getactual": 0,
+              "resp_other": 0
+            }
+          ],
+          "logs": [
+            {
+              "timestamp": "2026-02-19T22:19:13.844725Z",
+              "level": "INFO",
+              "message": "Telemetry snapshot 3",
+              "source": "oig.telemetry"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "timestamp": "2026-02-19T22:25:13.844725Z",
+      "topic": "oig/telemetry/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:25:13.844725Z",
+        "interval_s": 300,
+        "uptime_s": 87000,
+        "mode": "online",
+        "configured_mode": "hybrid",
+        "box_connected": true,
+        "box_peer": "192.168.1.100:54321",
+        "frames_received": 130,
+        "frames_forwarded": 125,
+        "cloud_connects": 5,
+        "cloud_disconnects": 4,
+        "cloud_timeouts": 0,
+        "cloud_errors": 1,
+        "cloud_online": true,
+        "mqtt_ok": true,
+        "mqtt_queue": 0,
+        "set_commands": [],
+        "window_metrics": {
+          "box_sessions": [
+            {
+              "timestamp": "2026-02-19T22:25:13.844725Z",
+              "connected_at": "2026-02-19T21:25:13.844725Z",
+              "disconnected_at": "2026-02-19T22:25:13.844725Z",
+              "duration_s": 3600,
+              "peer": "192.168.1.100:54321",
+              "reason": "normal_close"
+            }
+          ],
+          "cloud_sessions": [
+            {
+              "timestamp": "2026-02-19T22:25:13.844725Z",
+              "connected_at": "2026-02-19T20:25:13.844725Z",
+              "disconnected_at": "2026-02-19T22:25:13.844725Z",
+              "duration_s": 7200,
+              "reason": "eof"
+            }
+          ],
+          "hybrid_sessions": [
+            {
+              "timestamp": "2026-02-19T22:25:13.844725Z",
+              "state": "online",
+              "started_at": "2026-02-19T21:55:13.844725Z",
+              "ended_at": "2026-02-19T22:25:13.844725Z",
+              "duration_s": 1800,
+              "reason": null,
+              "mode": "hybrid"
+            }
+          ],
+          "offline_events": [],
+          "tbl_events": [
+            {
+              "timestamp": "2026-02-19T22:25:13.844725Z",
+              "event_time": "2026-02-19T22:25:13.844725Z",
+              "type": "INFO",
+              "confirm": "0",
+              "content": "System initialized",
+              "device_id": "test-device-123"
+            }
+          ],
+          "error_context": [],
+          "stats": [
+            {
+              "timestamp": "2026-02-19T22:25:13.844725Z",
+              "table": "tbl_box",
+              "mode": "online",
+              "response_source": "cloud",
+              "req_count": 10,
+              "resp_ack": 8,
+              "resp_end": 1,
+              "resp_weather": 1,
+              "resp_nack": 0,
+              "resp_ack_getall": 0,
+              "resp_ack_getactual": 0,
+              "resp_other": 0
+            }
+          ],
+          "logs": [
+            {
+              "timestamp": "2026-02-19T22:24:13.844725Z",
+              "level": "INFO",
+              "message": "Telemetry snapshot 4",
+              "source": "oig.telemetry"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "timestamp": "2026-02-19T22:30:13.844725Z",
+      "topic": "oig/telemetry/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:30:13.844725Z",
+        "interval_s": 300,
+        "uptime_s": 86700,
+        "mode": "online",
+        "configured_mode": "hybrid",
+        "box_connected": true,
+        "box_peer": "192.168.1.100:54321",
+        "frames_received": 140,
+        "frames_forwarded": 135,
+        "cloud_connects": 5,
+        "cloud_disconnects": 4,
+        "cloud_timeouts": 0,
+        "cloud_errors": 1,
+        "cloud_online": true,
+        "mqtt_ok": true,
+        "mqtt_queue": 0,
+        "set_commands": [],
+        "window_metrics": {
+          "box_sessions": [
+            {
+              "timestamp": "2026-02-19T22:30:13.844725Z",
+              "connected_at": "2026-02-19T21:30:13.844725Z",
+              "disconnected_at": "2026-02-19T22:30:13.844725Z",
+              "duration_s": 3600,
+              "peer": "192.168.1.100:54321",
+              "reason": "normal_close"
+            }
+          ],
+          "cloud_sessions": [
+            {
+              "timestamp": "2026-02-19T22:30:13.844725Z",
+              "connected_at": "2026-02-19T20:30:13.844725Z",
+              "disconnected_at": "2026-02-19T22:30:13.844725Z",
+              "duration_s": 7200,
+              "reason": "eof"
+            }
+          ],
+          "hybrid_sessions": [
+            {
+              "timestamp": "2026-02-19T22:30:13.844725Z",
+              "state": "online",
+              "started_at": "2026-02-19T22:00:13.844725Z",
+              "ended_at": "2026-02-19T22:30:13.844725Z",
+              "duration_s": 1800,
+              "reason": null,
+              "mode": "hybrid"
+            }
+          ],
+          "offline_events": [],
+          "tbl_events": [
+            {
+              "timestamp": "2026-02-19T22:30:13.844725Z",
+              "event_time": "2026-02-19T22:30:13.844725Z",
+              "type": "INFO",
+              "confirm": "0",
+              "content": "System initialized",
+              "device_id": "test-device-123"
+            }
+          ],
+          "error_context": [],
+          "stats": [
+            {
+              "timestamp": "2026-02-19T22:30:13.844725Z",
+              "table": "tbl_box",
+              "mode": "online",
+              "response_source": "cloud",
+              "req_count": 10,
+              "resp_ack": 8,
+              "resp_end": 1,
+              "resp_weather": 1,
+              "resp_nack": 0,
+              "resp_ack_getall": 0,
+              "resp_ack_getactual": 0,
+              "resp_other": 0
+            }
+          ],
+          "logs": [
+            {
+              "timestamp": "2026-02-19T22:29:13.844725Z",
+              "level": "INFO",
+              "message": "Telemetry snapshot 5",
+              "source": "oig.telemetry"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "event_messages": [
+    {
+      "timestamp": "2026-02-19T22:05:13.845293Z",
+      "topic": "oig/events/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:05:13.845293Z",
+        "event_type": "startup",
+        "details": {
+          "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+        }
+      }
+    },
+    {
+      "timestamp": "2026-02-19T22:15:13.845293Z",
+      "topic": "oig/events/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:15:13.845293Z",
+        "event_type": "box_reconnect",
+        "details": {
+          "box_peer": "192.168.1.100:54321"
+        }
+      }
+    },
+    {
+      "timestamp": "2026-02-19T22:25:13.845293Z",
+      "topic": "oig/events/test-device-123",
+      "payload": {
+        "device_id": "test-device-123",
+        "instance_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "version": "1.0.0",
+        "timestamp": "2026-02-19T22:25:13.845293Z",
+        "event_type": "cloud_reconnect",
+        "details": {}
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "capture_payloads": false,
+  "capture_raw_bytes": false,
+  "capture_retention_days": 7,
+  "proxy_mode": "hybrid",
+  "telemetry_enabled": false,
+  "telemetry_broker": "telemetry.muriel-cz.cz:1883"
+}

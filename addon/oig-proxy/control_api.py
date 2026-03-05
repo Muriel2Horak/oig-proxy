@@ -38,45 +38,13 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
         """Zpracuje GET requesty Control API."""
         if self.path.rstrip("/") == "/api/health":
             proxy = self.server.proxy  # type: ignore[attr-defined]
-            payload = proxy.get_control_api_health()
+            payload = proxy._cs.get_health()  # pylint: disable=protected-access
             self._send_json(200, payload)
             return
 
         self._send_json(404, {"error": "not_found"})
 
-    def _parse_xml_fallback(self, text: str) -> dict[str, Any]:
-        """Parsuje XML snippet jako fallback."""
-        def _tag(name: str) -> str | None:
-            m = re.search(rf"<{name}>([^<]+)</{name}>", text)
-            return m.group(1) if m else None
-
-        tbl_name = _tag("TblName")
-        tbl_item = _tag("TblItem")
-        new_value = _tag("NewValue")
-        if not tbl_name or not tbl_item or new_value is None:
-            return {}
-        return {
-            "TblName": tbl_name,
-            "TblItem": tbl_item,
-            "NewValue": new_value,
-            "Confirm": _tag("Confirm") or "New",
-        }
-
-    def _extract_post_data(self, text: str) -> dict[str, Any]:
-        """Extrahuje POST data - JSON nebo XML fallback."""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            data = self._parse_xml_fallback(text)
-            return data
-        except json.JSONDecodeError:
-            data = self._parse_xml_fallback(text)
-            return data
-        except json.JSONDecodeError:
-            data = self._parse_xml_fallback(text)
-        return data
-
-    def do_POST(self) -> None:  # noqa: C901 - reduced complexity from 16 to 8
+    def do_POST(self) -> None:  # pylint: disable=invalid-name
         """Zpracuje POST /api/setting pro odeslání Setting do BOXu."""
         if self.path.rstrip("/") != "/api/setting":
             self._send_json(404, {"error": "not_found"})
@@ -84,29 +52,42 @@ class _Handler(BaseHTTPRequestHandler):  # pylint: disable=invalid-name
 
         length = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(length) if length > 0 else b""
-        data = self._extract_post_data(body.decode("utf-8") if body else {}
+
+        # JSON preferred, but allow minimal XML snippet containing just the
+        # tags.
+        try:
+            data = json.loads(body.decode("utf-8") if body else "{}")
+        except json.JSONDecodeError:
+            text = body.decode("utf-8", errors="ignore")
+
+            def _tag(name: str) -> str | None:
+                m = re.search(rf"<{name}>([^<]+)</{name}>", text)
+                return m.group(1) if m else None
+
+            data = {
+                "TblName": _tag("TblName"),
+                "TblItem": _tag("TblItem"),
+                "NewValue": _tag("NewValue"),
+                "Confirm": _tag("Confirm") or "New",
+            }
 
         tbl_name = data.get("tbl_name") or data.get("TblName")
         tbl_item = data.get("tbl_item") or data.get("TblItem")
         new_value = data.get("new_value") or data.get("NewValue")
+        confirm = data.get("confirm") or data.get("Confirm") or "New"
 
         if not tbl_name or not tbl_item or new_value is None:
-            self._send_json(400, {
-                "error": "missing_fields",
-                "required": ["tbl_name", "tbl_item", "new_value"],
-            })
+            self._send_json(
+                400,
+                {
+                    "error": "missing_fields",
+                    "required": ["tbl_name", "tbl_item", "new_value"],
+                },
+            )
             return
 
-        confirm = data.get("confirm") or data.get("Confirm") or "New"
-        payload = {
-            "TblName": tbl_name,
-            "TblItem": tbl_item,
-            "NewValue": new_value,
-            "Confirm": confirm,
-        }
-
-        proxy = self.server.proxy
-        res = proxy.control_api_send_setting(
+        proxy = self.server.proxy  # type: ignore[attr-defined]
+        res = proxy._cs.send_setting(  # pylint: disable=protected-access
             tbl_name=str(tbl_name),
             tbl_item=str(tbl_item),
             new_value=str(new_value),

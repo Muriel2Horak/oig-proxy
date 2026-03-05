@@ -1,0 +1,41 @@
+Task 3: Simplified on_ack() with TWIN_CLOUD_ALIGNED flag - Cloud-Aligned Mode Test
+================================================================================
+
+Test Date: 2026-03-04
+Test Mode: Cloud-Aligned (TWIN_CLOUD_ALIGNED=True)
+
+=== Test Results ===
+
+✓ Setting queued: accepted
+✓ Inflight started: tx-cloud-456
+✓ Setting delivered on conn_id=1
+✓ ACK on same conn_id succeeded: box_ack
+✓ _pending_simple dict updated: {
+    'tx_id': 'tx-cloud-456',
+    'conn_id': 1,
+    'tbl_name': 'Settings',
+    'tbl_item': 'PowerLimit',
+    'status': 'ack_received',
+    'timestamp': '2026-03-04T17:24:14.153099Z'
+}
+✓ ACK on wrong conn_id correctly returned None
+
+=== Implementation Details ===
+
+1. Method: _on_ack_cloud_aligned()
+   - Uses simplified conn_id validation (like ControlSettings)
+   - No INV-1/2/3 validation
+   - Updates _pending_simple dict for state tracking
+   - Logs conn_id mismatches but returns None (doesn't raise)
+
+2. Features:
+   - Basic conn_id comparison: delivered_conn_id vs incoming conn_id
+   - Fallback to original conn_id if delivered_conn_id is None
+   - Updates _pending_simple with transaction state
+   - Returns TransactionResultDTO on success, None on mismatch
+
+=== Verification ===
+Syntax check: PASSED (python3 -m py_compile)
+Functional test: PASSED
+
+=== Cloud-Aligned Mode Test PASSED ===

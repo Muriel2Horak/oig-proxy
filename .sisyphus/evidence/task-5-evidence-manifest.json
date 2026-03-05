@@ -1,0 +1,295 @@
+{
+  "generated": "2026-02-19T00:00:00Z",
+  "plan_source": ".sisyphus/plans/oig-protocol-3day-passive-analysis.md",
+  "total_tasks": 24,
+  "total_artifacts": 40,
+  "artifacts": [
+    {
+      "filename": "task-1-baseline.json",
+      "description": "QA evidence for scenario: Baseline snapshot happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-1-missing-config-error.log",
+      "description": "QA evidence for scenario: Missing config failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-2-capture-audit.json",
+      "description": "QA evidence for scenario: Capture audit happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-2-missing-frames-error.log",
+      "description": "QA evidence for scenario: Missing frames table failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-3-signal-taxonomy.json",
+      "description": "QA evidence for scenario: Taxonomy generation happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-3-taxonomy-duplicate-error.log",
+      "description": "QA evidence for scenario: Duplicate canonical key failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-4-pairing-sample.json",
+      "description": "QA evidence for scenario: Pairing engine happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-4-pairing-ordering-error.log",
+      "description": "QA evidence for scenario: Corrupted ordering failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-5-evidence-manifest.json",
+      "description": "QA evidence for scenario: Manifest generation happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-5-duplicate-manifest-error.log",
+      "description": "QA evidence for scenario: Duplicate evidence name failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-6-preflight-check.json",
+      "description": "QA evidence for scenario: Passive preflight happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-6-preflight-error.log",
+      "description": "QA evidence for scenario: Forbidden probe flag failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-7-day1-frames.json",
+      "description": "QA evidence for scenario: Day-slice extraction happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-7-invalid-range-error.log",
+      "description": "QA evidence for scenario: Invalid date range failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-8-telemetry-snapshot.json",
+      "description": "QA evidence for scenario: Telemetry snapshot happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-8-broker-unavailable-error.log",
+      "description": "QA evidence for scenario: Broker unavailable failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-9-signal-timeline.json",
+      "description": "QA evidence for scenario: Signal timeline happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-9-unknown-signal-error.log",
+      "description": "QA evidence for scenario: Unknown signal class failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-10-mode-cloud-transitions.json",
+      "description": "QA evidence for scenario: Transition extraction happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-10-missing-timestamp-error.log",
+      "description": "QA evidence for scenario: Missing timestamp failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-11-edge-cases.json",
+      "description": "QA evidence for scenario: Edge-case detection happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-11-invalid-telemetry-error.log",
+      "description": "QA evidence for scenario: Corrupted telemetry input failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-12-daily-validation.json",
+      "description": "QA evidence for scenario: Daily validation happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-12-threshold-fail.log",
+      "description": "QA evidence for scenario: Threshold breach failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-13-standard-request-matrix.json",
+      "description": "QA evidence for scenario: Standard matrix happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-13-empty-input-error.log",
+      "description": "QA evidence for scenario: Empty pairing input failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-14-signal-reaction-matrix.json",
+      "description": "QA evidence for scenario: Signal reaction matrix happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-14-missing-transitions-error.log",
+      "description": "QA evidence for scenario: Missing transition data failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-15-confidence-score.json",
+      "description": "QA evidence for scenario: Confidence scoring happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-15-missing-prereq-error.log",
+      "description": "QA evidence for scenario: Missing prerequisite evidence failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-16-drift-anomaly-report.json",
+      "description": "QA evidence for scenario: Drift report happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-16-window-alignment-error.log",
+      "description": "QA evidence for scenario: Non-overlapping day windows failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-17-adjustment-backlog.md",
+      "description": "QA evidence for scenario: Backlog synthesis happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-17-missing-evidence-error.log",
+      "description": "QA evidence for scenario: Missing evidence dependency failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-18-tool-validation-matrix.json",
+      "description": "QA evidence for scenario: Full tooling validation happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-18-fault-injection-fail.log",
+      "description": "QA evidence for scenario: Intentional broken tool failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-19-analysis-package-index.json",
+      "description": "QA evidence for scenario: Final packaging happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-19-missing-artifact-error.log",
+      "description": "QA evidence for scenario: Missing upstream artifact failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-20-handoff-checklist.md",
+      "description": "QA evidence for scenario: Handoff checklist happy path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    },
+    {
+      "filename": "task-20-missing-rollback-error.log",
+      "description": "QA evidence for scenario: Missing rollback section failure path",
+      "required": true,
+      "naming_valid": true,
+      "exists": null
+    }
+  ],
+  "summary": {
+    "unique_artifacts": 40,
+    "duplicate_filenames": [],
+    "naming_violations": 0,
+    "existing_files": 0,
+    "missing_files": 0
+  }
+}

@@ -1,0 +1,289 @@
+SQL Script: timeline_simplified.sql
+Database: analysis/ha_snapshot/payloads.db
+============================================================
+
+STATEMENT 1: CREATE TEMP TABLE IF NOT EXISTS cloud_settings AS
+SELECT 
+    id,
+    ts as timestamp,
+    'current_...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 2: CREATE TEMP TABLE IF NOT EXISTS box_setting_acks AS
+SELECT 
+    id,
+    ts as timestamp,
+    'curren...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 3: CREATE TEMP TABLE IF NOT EXISTS tbl_events AS
+SELECT 
+    id,
+    ts as timestamp,
+    'current_db' ...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 4: CREATE TEMP TABLE IF NOT EXISTS isnewset_frames AS
+SELECT 
+    id,
+    ts as timestamp,
+    'current...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 5: SELECT '=== ANALÝZA PRO VERZI: ' || sqlite_version() || ' ===' as info
+--------------------------------------------------
+Rows returned: 1
+Columns: info
+
+Data:
+  1: ('=== ANALÝZA PRO VERZI: 3.51.2 ===',)
+
+STATEMENT 6: SELECT '=== ZÁKLADNÍ STATISTIKY ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== ZÁKLADNÍ STATISTIKY ===',)
+
+STATEMENT 7: SELECT 
+    'CLOUD SETTINGS' as event_type,
+    COUNT(*) as count
+FROM cloud_settings
+UNION ALL
+SELE...
+--------------------------------------------------
+Rows returned: 4
+Columns: event_type, count
+
+Data:
+  1: ('CLOUD SETTINGS', 209)
+  2: ('SETTING ACKS', 0)
+  3: ('TBL_EVENTS (Setting)', 0)
+  4: ('ISNEWSET FRAMES', 0)
+
+STATEMENT 8: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 9: PRINT '=== MATCHED SETTING→ACK PAIRS (±30s) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 10: CREATE TEMP TABLE IF NOT EXISTS matched_pairs AS
+SELECT 
+    cs.id as cloud_setting_id,
+    cs.times...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 11: SELECT 
+    COUNT(*) as matched_pairs_count,
+    AVG(delta_seconds) as avg_delta_seconds,
+    MIN(de...
+--------------------------------------------------
+Rows returned: 1
+Columns: matched_pairs_count, avg_delta_seconds, min_delta_seconds, max_delta_seconds
+
+Data:
+  1: (0, None, None, None)
+
+STATEMENT 12: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 13: PRINT '=== GHOST ACKS (ACKs bez odpovídajícího Setting v ±30s) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 14: CREATE TEMP TABLE IF NOT EXISTS ghost_acks AS
+SELECT 
+    ba.id as box_ack_id,
+    ba.timestamp as b...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 15: SELECT 
+    COUNT(*) as ghost_acks_count,
+    MIN(timestamp) as first_ghost_ack,
+    MAX(timestamp) ...
+--------------------------------------------------
+ERROR: no such column: timestamp
+
+STATEMENT 16: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 17: PRINT '=== ORPHAN SETTINGS (Settings bez odpovídajícího ACK v ±30s) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 18: CREATE TEMP TABLE IF NOT EXISTS orphan_settings AS
+SELECT 
+    cs.id as cloud_setting_id,
+    cs.tim...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 19: SELECT 
+    COUNT(*) as orphan_settings_count,
+    MIN(timestamp) as first_orphan_setting,
+    MAX(t...
+--------------------------------------------------
+ERROR: no such column: timestamp
+
+STATEMENT 20: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 21: PRINT '=== DENNÍ SOUHRNY UDÁLOSTÍ ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 22: CREATE TEMP TABLE IF NOT EXISTS daily_counts AS
+SELECT 
+    DATE(timestamp) as event_date,
+    COUNT...
+--------------------------------------------------
+ERROR: SELECTs to the left and right of UNION ALL do not have the same number of result columns
+
+STATEMENT 23: SELECT * FROM daily_counts
+--------------------------------------------------
+ERROR: no such table: daily_counts
+
+STATEMENT 24: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 25: PRINT '=== GHOST ACKS PODLE DNŮ ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 26: CREATE TEMP TABLE IF NOT EXISTS ghost_acks_daily AS
+SELECT 
+    DATE(timestamp) as ghost_ack_date,
+ ...
+--------------------------------------------------
+ERROR: no such column: timestamp
+
+STATEMENT 27: SELECT * FROM ghost_acks_daily
+--------------------------------------------------
+ERROR: no such table: ghost_acks_daily
+
+STATEMENT 28: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 29: PRINT '=== PŘÍKLADY GHOST ACKS (prvních 5) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 30: SELECT 
+    timestamp,
+    SUBSTR(content, 1, 100) as content_preview
+FROM ghost_acks
+LIMIT 5
+--------------------------------------------------
+ERROR: no such column: timestamp
+
+STATEMENT 31: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 32: PRINT '=== PŘÍKLADY ORPHAN SETTINGS (prvních 5) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 33: SELECT 
+    timestamp,
+    SUBSTR(parsed_preview, 1, 100) as setting_preview
+FROM orphan_settings
+LI...
+--------------------------------------------------
+ERROR: no such column: timestamp
+
+STATEMENT 34: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 35: PRINT '=== KONTROLA: 23. LEDNA 2026 (očekáváno 7 ghost ACKs) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 36: SELECT 
+    COUNT(*) as jan_23_ghost_acks
+FROM ghost_acks 
+WHERE DATE(timestamp) = '2026-01-23'
+--------------------------------------------------
+ERROR: no such column: timestamp
+
+STATEMENT 37: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 38: PRINT '=== KONTROLA: POSLEDNÍ CLOUD SETTING (očekáváno 4.1.2026 17:37:40) ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 39: SELECT 
+    timestamp,
+    parsed_preview
+FROM cloud_settings
+WHERE timestamp LIKE '2026-01-04%'
+ORD...
+--------------------------------------------------
+Rows returned: 0
+Columns: timestamp, parsed_preview
+
+STATEMENT 40: PRINT ''
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 41: PRINT '=== ANALÝZA DOKONČENA ==='
+--------------------------------------------------
+ERROR: near "PRINT": syntax error
+
+STATEMENT 42: DROP TABLE IF EXISTS cloud_settings
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 43: DROP TABLE IF EXISTS box_setting_acks
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 44: DROP TABLE IF EXISTS tbl_events
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 45: DROP TABLE IF EXISTS isnewset_frames
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 46: DROP TABLE IF EXISTS matched_pairs
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 47: DROP TABLE IF EXISTS ghost_acks
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 48: DROP TABLE IF EXISTS orphan_settings
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 49: DROP TABLE IF EXISTS daily_counts
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 50: DROP TABLE IF EXISTS ghost_acks_daily
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+============================================================
+SCRIPT SUMMARY: timeline_simplified.sql
+Total rows: 7
+Status: FAIL - SQL error

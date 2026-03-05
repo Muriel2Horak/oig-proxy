@@ -1,0 +1,127 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/martinhorak/Projects/oig-proxy
+configfile: pytest.ini
+plugins: mock-3.15.1, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 10 items / 8 deselected / 2 selected
+
+../../tests/test_proxy_main_loop.py::test_disconnect_cleanup_without_reconnect FAILED [ 50%]
+../../tests/test_proxy_main_loop.py::test_disconnect_cancels_inflight_timeout_tasks FAILED [100%]
+
+=================================== FAILURES ===================================
+__________________ test_disconnect_cleanup_without_reconnect ___________________
+
+    @pytest.mark.asyncio
+    async def test_disconnect_cleanup_without_reconnect():
+        """
+        RED TEST: Demonstrates that disconnect without reconnect does NOT clean up pending state.
+    
+        Scenario:
+        1. Set up pending setting on conn_id=1
+        2. Simulate disconnect (no reconnect)
+        3. Assert: pending state is cleaned up, no orphan state remains
+    
+        Expected: FAIL - pending and pending_frame are NOT cleaned up,
+        leaving orphan state that could affect future connections.
+        """
+        proxy = _make_proxy_with_real_control_settings()
+    
+        # Simulate conn_id=1 connecting
+        proxy._conn_seq = 1
+        writer1 = DummyWriter()
+        proxy._active_box_writer = writer1
+        proxy.box_connected = True
+    
+        # Queue a pending setting on conn_id=1 (simulating send_to_box behavior)
+        proxy._cs.pending = {
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "MODE",
+            "new_value": "2",
+            "id": 11111,
+            "id_set": 22222,
+            "tx_id": "test-tx-2",
+        }
+        proxy._cs.pending_frame = b"<Setting>...</Setting>\r\n"
+    
+        # Store reference to verify it's the same state
+        original_pending = proxy._cs.pending
+        original_frame = proxy._cs.pending_frame
+    
+        # Simulate disconnect (no reconnect)
+        proxy._active_box_writer = None
+        proxy.box_connected = False
+    
+        # RED: This assertion should FAIL because pending state is NOT cleaned up
+>       assert proxy._cs.pending is None, (
+            "FAIL: Orphan pending dict exists after disconnect without reconnect. "
+            "Expected: pending=None. "
+            f"Actual: pending={proxy._cs.pending} (same object: {proxy._cs.pending is original_pending})"
+        )
+E       AssertionError: FAIL: Orphan pending dict exists after disconnect without reconnect. Expected: pending=None. Actual: pending={'tbl_name': 'tbl_box_prms', 'tbl_item': 'MODE', 'new_value': '2', 'id': 11111, 'id_set': 22222, 'tx_id': 'test-tx-2'} (same object: True)
+E       assert {'id': 11111, 'id_set': 22222, 'new_value': '2', 'tbl_item': 'MODE', ...} is None
+E        +  where {'id': 11111, 'id_set': 22222, 'new_value': '2', 'tbl_item': 'MODE', ...} = <control_settings.ControlSettings object at 0x107698590>.pending
+E        +    where <control_settings.ControlSettings object at 0x107698590> = <proxy.OIGProxy object at 0x106f41fd0>._cs
+
+../../tests/test_proxy_main_loop.py:336: AssertionError
+________________ test_disconnect_cancels_inflight_timeout_tasks ________________
+
+    @pytest.mark.asyncio
+    async def test_disconnect_cancels_inflight_timeout_tasks():
+        """
+        RED TEST: Demonstrates that timeout tasks are NOT properly cancelled on disconnect.
+    
+        Scenario:
+        1. Set up inflight command with active ack_task timeout
+        2. Simulate disconnect
+        3. Assert: timeout task is cancelled
+    
+        Expected: FAIL - ack_task may not be cancelled on disconnect,
+        allowing stale timeout callbacks to fire.
+        """
+        proxy = _make_proxy_with_real_control_settings()
+    
+        # Set up inflight command
+        proxy._ctrl.inflight = {
+            "tx_id": "test-tx-3",
+            "tbl_name": "tbl_box_prms",
+            "tbl_item": "MODE",
+            "new_value": "3",
+            "stage": "sent_to_box",
+            "_attempts": 1,
+        }
+    
+        # Create an ack_task that would fire after disconnect
+        async def _mock_ack_timeout():
+            await asyncio.sleep(0.1)
+            # This would modify state after disconnect - BAD!
+    
+        proxy._ctrl.ack_task = asyncio.create_task(_mock_ack_timeout())
+    
+        # Simulate disconnect
+        proxy.box_connected = False
+    
+        # Give event loop a chance to process
+        await asyncio.sleep(0)
+    
+        # RED: This assertion should FAIL because ack_task is NOT cancelled
+>       assert proxy._ctrl.ack_task is None or proxy._ctrl.ack_task.done(), (
+            "FAIL: ack_task still exists and is not done after disconnect. "
+            "Expected: ack_task=None or ack_task.done()=True. "
+            f"Actual: ack_task.done()={proxy._ctrl.ack_task.done() if proxy._ctrl.ack_task else 'N/A'}"
+        )
+E       AssertionError: FAIL: ack_task still exists and is not done after disconnect. Expected: ack_task=None or ack_task.done()=True. Actual: ack_task.done()=False
+E       assert (<Task pending name='Task-5' coro=<test_disconnect_cancels_inflight_timeout_tasks.<locals>._mock_ack_timeout() running at /Users/martinhorak/Projects/oig-proxy/tests/test_proxy_main_loop.py:377> wait_for=<Future pending cb=[Task.task_wakeup()]>> is None or False)
+E        +  where <Task pending name='Task-5' coro=<test_disconnect_cancels_inflight_timeout_tasks.<locals>._mock_ack_timeout() running at /Users/martinhorak/Projects/oig-proxy/tests/test_proxy_main_loop.py:377> wait_for=<Future pending cb=[Task.task_wakeup()]>> = <control_pipeline.ControlPipeline object at 0x10769a7b0>.ack_task
+E        +    where <control_pipeline.ControlPipeline object at 0x10769a7b0> = <proxy.OIGProxy object at 0x106f423c0>._ctrl
+E        +  and   False = <built-in method done of _asyncio.Task object at 0x106d1e6d0>()
+E        +    where <built-in method done of _asyncio.Task object at 0x106d1e6d0> = <Task pending name='Task-5' coro=<test_disconnect_cancels_inflight_timeout_tasks.<locals>._mock_ack_timeout() running at /Users/martinhorak/Projects/oig-proxy/tests/test_proxy_main_loop.py:377> wait_for=<Future pending cb=[Task.task_wakeup()]>>.done
+E        +      where <Task pending name='Task-5' coro=<test_disconnect_cancels_inflight_timeout_tasks.<locals>._mock_ack_timeout() running at /Users/martinhorak/Projects/oig-proxy/tests/test_proxy_main_loop.py:377> wait_for=<Future pending cb=[Task.task_wakeup()]>> = <control_pipeline.ControlPipeline object at 0x10769a7b0>.ack_task
+E        +        where <control_pipeline.ControlPipeline object at 0x10769a7b0> = <proxy.OIGProxy object at 0x106f423c0>._ctrl
+
+../../tests/test_proxy_main_loop.py:389: AssertionError
+=========================== short test summary info ============================
+FAILED ../../tests/test_proxy_main_loop.py::test_disconnect_cleanup_without_reconnect
+FAILED ../../tests/test_proxy_main_loop.py::test_disconnect_cancels_inflight_timeout_tasks
+======================= 2 failed, 8 deselected in 0.07s ========================

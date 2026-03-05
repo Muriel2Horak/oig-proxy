@@ -1,0 +1,597 @@
+{
+  "generated_at": "2026-02-19T22:54:04.982169+00:00",
+  "task": "task-13-standard-request-matrix",
+  "version": "1.0",
+  "source": {
+    "pairing_file": "task-4-pairing-sample.json",
+    "total_pairs_in_source": 1922,
+    "standard_table_pairs": 1555
+  },
+  "summary": {
+    "total_standard_requests": 1555,
+    "request_classes_analyzed": 12,
+    "response_classes_observed": 3,
+    "matrix_rows": 33,
+    "excluded_pairs": {
+      "signal_classes": 259,
+      "control_classes": 108,
+      "other": 0
+    }
+  },
+  "request_class_summary": {
+    "tbl_ac_in": {
+      "total_requests": 72,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 65.28
+    },
+    "tbl_ac_out": {
+      "total_requests": 72,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 69.44
+    },
+    "tbl_actual": {
+      "total_requests": 847,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 92.44
+    },
+    "tbl_batt": {
+      "total_requests": 72,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 68.06
+    },
+    "tbl_batt_prms": {
+      "total_requests": 143,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 58.04
+    },
+    "tbl_boiler": {
+      "total_requests": 77,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 64.94
+    },
+    "tbl_box": {
+      "total_requests": 81,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 62.96
+    },
+    "tbl_box_prms": {
+      "total_requests": 2,
+      "response_variations": 1,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 100.0
+    },
+    "tbl_dc_in": {
+      "total_requests": 76,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 65.79
+    },
+    "tbl_events": {
+      "total_requests": 92,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 86.96
+    },
+    "tbl_invertor_prm1": {
+      "total_requests": 5,
+      "response_variations": 2,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 60.0
+    },
+    "tbl_invertor_prms": {
+      "total_requests": 16,
+      "response_variations": 3,
+      "dominant_response": "ACK:GetActual",
+      "dominant_rate_pct": 81.25
+    }
+  },
+  "response_class_summary": {
+    "ACK:GetActual": 1261,
+    "ACK": 264,
+    "null": 30
+  },
+  "matrix": [
+    {
+      "request_class": "tbl_ac_in",
+      "response_class": null,
+      "count": 4,
+      "rate_pct": 5.56,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 4
+      },
+      "low_confidence_count": 4,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_ac_in",
+      "response_class": "ACK",
+      "count": 21,
+      "rate_pct": 29.17,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 12,
+        "medium": 0,
+        "low": 8,
+        "very_low": 1
+      },
+      "low_confidence_count": 9,
+      "ambiguous_count": 9
+    },
+    {
+      "request_class": "tbl_ac_in",
+      "response_class": "ACK:GetActual",
+      "count": 47,
+      "rate_pct": 65.28,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 16,
+        "medium": 1,
+        "low": 18,
+        "very_low": 12
+      },
+      "low_confidence_count": 30,
+      "ambiguous_count": 24
+    },
+    {
+      "request_class": "tbl_ac_out",
+      "response_class": null,
+      "count": 2,
+      "rate_pct": 2.78,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 2
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_ac_out",
+      "response_class": "ACK",
+      "count": 20,
+      "rate_pct": 27.78,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 11,
+        "medium": 0,
+        "low": 9,
+        "very_low": 0
+      },
+      "low_confidence_count": 9,
+      "ambiguous_count": 9
+    },
+    {
+      "request_class": "tbl_ac_out",
+      "response_class": "ACK:GetActual",
+      "count": 50,
+      "rate_pct": 69.44,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 17,
+        "medium": 1,
+        "low": 23,
+        "very_low": 9
+      },
+      "low_confidence_count": 32,
+      "ambiguous_count": 21
+    },
+    {
+      "request_class": "tbl_actual",
+      "response_class": null,
+      "count": 6,
+      "rate_pct": 0.71,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 6
+      },
+      "low_confidence_count": 6,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_actual",
+      "response_class": "ACK",
+      "count": 58,
+      "rate_pct": 6.85,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 16,
+        "medium": 0,
+        "low": 34,
+        "very_low": 8
+      },
+      "low_confidence_count": 42,
+      "ambiguous_count": 42
+    },
+    {
+      "request_class": "tbl_actual",
+      "response_class": "ACK:GetActual",
+      "count": 783,
+      "rate_pct": 92.44,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 213,
+        "medium": 7,
+        "low": 520,
+        "very_low": 43
+      },
+      "low_confidence_count": 563,
+      "ambiguous_count": 538
+    },
+    {
+      "request_class": "tbl_batt",
+      "response_class": null,
+      "count": 2,
+      "rate_pct": 2.78,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 2
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_batt",
+      "response_class": "ACK",
+      "count": 21,
+      "rate_pct": 29.17,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 11,
+        "medium": 0,
+        "low": 9,
+        "very_low": 1
+      },
+      "low_confidence_count": 10,
+      "ambiguous_count": 10
+    },
+    {
+      "request_class": "tbl_batt",
+      "response_class": "ACK:GetActual",
+      "count": 49,
+      "rate_pct": 68.06,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 12,
+        "medium": 1,
+        "low": 27,
+        "very_low": 9
+      },
+      "low_confidence_count": 36,
+      "ambiguous_count": 31
+    },
+    {
+      "request_class": "tbl_batt_prms",
+      "response_class": null,
+      "count": 1,
+      "rate_pct": 0.7,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 1
+      },
+      "low_confidence_count": 1,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_batt_prms",
+      "response_class": "ACK",
+      "count": 59,
+      "rate_pct": 41.26,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 36,
+        "medium": 0,
+        "low": 19,
+        "very_low": 4
+      },
+      "low_confidence_count": 23,
+      "ambiguous_count": 23
+    },
+    {
+      "request_class": "tbl_batt_prms",
+      "response_class": "ACK:GetActual",
+      "count": 83,
+      "rate_pct": 58.04,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 30,
+        "medium": 2,
+        "low": 41,
+        "very_low": 10
+      },
+      "low_confidence_count": 51,
+      "ambiguous_count": 44
+    },
+    {
+      "request_class": "tbl_boiler",
+      "response_class": null,
+      "count": 4,
+      "rate_pct": 5.19,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 4
+      },
+      "low_confidence_count": 4,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_boiler",
+      "response_class": "ACK",
+      "count": 23,
+      "rate_pct": 29.87,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 12,
+        "medium": 0,
+        "low": 11,
+        "very_low": 0
+      },
+      "low_confidence_count": 11,
+      "ambiguous_count": 11
+    },
+    {
+      "request_class": "tbl_boiler",
+      "response_class": "ACK:GetActual",
+      "count": 50,
+      "rate_pct": 64.94,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 20,
+        "medium": 1,
+        "low": 19,
+        "very_low": 10
+      },
+      "low_confidence_count": 29,
+      "ambiguous_count": 21
+    },
+    {
+      "request_class": "tbl_box",
+      "response_class": null,
+      "count": 5,
+      "rate_pct": 6.17,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 5
+      },
+      "low_confidence_count": 5,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_box",
+      "response_class": "ACK",
+      "count": 25,
+      "rate_pct": 30.86,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 15,
+        "medium": 0,
+        "low": 9,
+        "very_low": 1
+      },
+      "low_confidence_count": 10,
+      "ambiguous_count": 10
+    },
+    {
+      "request_class": "tbl_box",
+      "response_class": "ACK:GetActual",
+      "count": 51,
+      "rate_pct": 62.96,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 18,
+        "medium": 2,
+        "low": 22,
+        "very_low": 9
+      },
+      "low_confidence_count": 31,
+      "ambiguous_count": 23
+    },
+    {
+      "request_class": "tbl_box_prms",
+      "response_class": "ACK:GetActual",
+      "count": 2,
+      "rate_pct": 100.0,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 2,
+        "very_low": 0
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 2
+    },
+    {
+      "request_class": "tbl_dc_in",
+      "response_class": null,
+      "count": 3,
+      "rate_pct": 3.95,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 3
+      },
+      "low_confidence_count": 3,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_dc_in",
+      "response_class": "ACK",
+      "count": 23,
+      "rate_pct": 30.26,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 10,
+        "medium": 0,
+        "low": 11,
+        "very_low": 2
+      },
+      "low_confidence_count": 13,
+      "ambiguous_count": 13
+    },
+    {
+      "request_class": "tbl_dc_in",
+      "response_class": "ACK:GetActual",
+      "count": 50,
+      "rate_pct": 65.79,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 15,
+        "medium": 5,
+        "low": 19,
+        "very_low": 11
+      },
+      "low_confidence_count": 30,
+      "ambiguous_count": 25
+    },
+    {
+      "request_class": "tbl_events",
+      "response_class": null,
+      "count": 2,
+      "rate_pct": 2.17,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 2
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_events",
+      "response_class": "ACK",
+      "count": 10,
+      "rate_pct": 10.87,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 5,
+        "medium": 0,
+        "low": 4,
+        "very_low": 1
+      },
+      "low_confidence_count": 5,
+      "ambiguous_count": 5
+    },
+    {
+      "request_class": "tbl_events",
+      "response_class": "ACK:GetActual",
+      "count": 80,
+      "rate_pct": 86.96,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 44,
+        "medium": 1,
+        "low": 30,
+        "very_low": 5
+      },
+      "low_confidence_count": 35,
+      "ambiguous_count": 29
+    },
+    {
+      "request_class": "tbl_invertor_prm1",
+      "response_class": "ACK",
+      "count": 2,
+      "rate_pct": 40.0,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 2,
+        "very_low": 0
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 2
+    },
+    {
+      "request_class": "tbl_invertor_prm1",
+      "response_class": "ACK:GetActual",
+      "count": 3,
+      "rate_pct": 60.0,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 1,
+        "medium": 0,
+        "low": 1,
+        "very_low": 1
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 1
+    },
+    {
+      "request_class": "tbl_invertor_prms",
+      "response_class": null,
+      "count": 1,
+      "rate_pct": 6.25,
+      "confidence_bucket": "very_low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "very_low": 1
+      },
+      "low_confidence_count": 1,
+      "ambiguous_count": 0
+    },
+    {
+      "request_class": "tbl_invertor_prms",
+      "response_class": "ACK",
+      "count": 2,
+      "rate_pct": 12.5,
+      "confidence_bucket": "low",
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 2,
+        "very_low": 0
+      },
+      "low_confidence_count": 2,
+      "ambiguous_count": 2
+    },
+    {
+      "request_class": "tbl_invertor_prms",
+      "response_class": "ACK:GetActual",
+      "count": 13,
+      "rate_pct": 81.25,
+      "confidence_bucket": "high",
+      "confidence_distribution": {
+        "high": 8,
+        "medium": 1,
+        "low": 2,
+        "very_low": 2
+      },
+      "low_confidence_count": 4,
+      "ambiguous_count": 3
+    }
+  ]
+}

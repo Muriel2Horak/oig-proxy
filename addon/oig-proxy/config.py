@@ -47,6 +47,34 @@ def _get_float_env(name: str, default: float) -> float:
         return default
 
 
+def _get_bool_env(name: str, default: bool) -> bool:
+    """Vrátí bool z env proměnné s bezpečným fallbackem."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if raw == "" or raw.lower() == "null":
+        return default
+    if raw.lower() in ("true", "1", "yes", "on"):
+        return True
+    if raw.lower() in ("false", "0", "no", "off"):
+        return False
+    return default
+
+
+def _get_str_env(name: str, default: str, valid_values: list[str] | None = None) -> str:
+    """Vrátí string z env proměnné s bezpečným fallbackem a validací."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if raw == "" or raw.lower() == "null":
+        return default
+    if valid_values and raw not in valid_values:
+        return default
+    return raw
+
+
 # ============================================================================
 # MQTT Configuration
 # ============================================================================
@@ -63,7 +91,7 @@ PROXY_STATUS_ATTRS_TOPIC = os.getenv(
 LOCAL_GETACTUAL_ENABLED = os.getenv(
     "LOCAL_GETACTUAL_ENABLED",
     "false").lower() == "true"
-LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
+LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 30.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 
 # ============================================================================
@@ -86,8 +114,8 @@ HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
 # ============================================================================
 TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
-# Fixed ACK timeout (no config override)
-CLOUD_ACK_TIMEOUT = 1800.0
+# ACK timeout — how long to wait for cloud ACK before treating cloud as down
+CLOUD_ACK_TIMEOUT = _get_float_env("CLOUD_ACK_TIMEOUT", 1800.0)
 
 # ============================================================================
 # Proxy Configuration
@@ -204,9 +232,48 @@ TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
 # MQTT Publisher Configuration
 # ============================================================================
 MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
-MQTT_CONNECT_TIMEOUT = int(os.getenv("MQTT_CONNECT_TIMEOUT", "10"))
-MQTT_HEALTH_CHECK_INTERVAL = int(os.getenv("MQTT_HEALTH_CHECK_INTERVAL", "30"))
-MQTT_PUBLISH_LOG_EVERY = int(os.getenv("MQTT_PUBLISH_LOG_EVERY", "100"))
+
+# ============================================================================
+# Twin Configuration
+# ============================================================================
+TWIN_ENABLED = _get_bool_env("TWIN_ENABLED", False)
+TWIN_KILL_SWITCH = _get_bool_env("TWIN_KILL_SWITCH", False)
+TWIN_ACK_DEADLINE_SECONDS = _get_float_env("TWIN_ACK_DEADLINE_SECONDS", 30.0)
+TWIN_APPLIED_DEADLINE_SECONDS = _get_float_env("TWIN_APPLIED_DEADLINE_SECONDS", 60.0)
+TWIN_VERBOSE_LOGGING = _get_bool_env("TWIN_VERBOSE_LOGGING", False)
+LOCAL_CONTROL_ROUTING = _get_str_env(
+    "LOCAL_CONTROL_ROUTING", 
+    "auto", 
+    ["auto", "force_twin", "force_cloud"]
+)
+
+# Twin Cloud Alignment: when enabled, Twin uses cloud endpoint directly
+# instead of local MQTT-based sync. Default False for backward compatibility.
+TWIN_CLOUD_ALIGNED = _get_bool_env("TWIN_CLOUD_ALIGNED", False)
+
+
+def validate_startup_guards() -> None:
+    errors: list[str] = []
+
+    if TWIN_ACK_DEADLINE_SECONDS <= 0:
+        errors.append("TWIN_ACK_DEADLINE_SECONDS must be > 0")
+
+    if TWIN_APPLIED_DEADLINE_SECONDS <= 0:
+        errors.append("TWIN_APPLIED_DEADLINE_SECONDS must be > 0")
+
+    if TWIN_APPLIED_DEADLINE_SECONDS < TWIN_ACK_DEADLINE_SECONDS:
+        errors.append(
+            "TWIN_APPLIED_DEADLINE_SECONDS must be >= TWIN_ACK_DEADLINE_SECONDS"
+        )
+
+    if LOCAL_CONTROL_ROUTING == "force_twin" and (not TWIN_ENABLED or TWIN_KILL_SWITCH):
+        errors.append(
+            "LOCAL_CONTROL_ROUTING=force_twin requires TWIN_ENABLED=true and "
+            "TWIN_KILL_SWITCH=false"
+        )
+
+    if errors:
+        raise ValueError("; ".join(errors))
 
 # ============================================================================
 # Device Names (for MQTT discovery)

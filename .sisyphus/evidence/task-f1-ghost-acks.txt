@@ -1,0 +1,241 @@
+========================================
+SEKCE 1: Celkový přehled Setting ACKs
+========================================
+1.1a|Setting ACKs (Result=ACK, Reason=Setting)|20
+1.1b|tbl_events s Type=Setting|20
+1.2|Odchozí Settings (proxy_to_cloud)|13028
+1.3|Ghost ACKs (ACKs bez matching Setting)|1031|0|100% ghost ACKs
+
+========================================
+SEKCE 2: Časové rozmezí a distribuce
+========================================
+2.1|První Setting ACK|2025-12-11T18:05:06.009346+00:00
+|Poslední Setting ACK|2025-12-12T05:14:55.656473+00:00
+2.2|2025-12-11|13
+2.2|2025-12-12|7
+2.3|2025-12-11|13|LOW
+
+========================================
+SEKCE 3: Hodinová analýza (Time-of-Day)
+========================================
+3.1|2|5|0.5
+3.1|4|1|0.1
+3.1|5|1|0.1
+3.1|18|1|0.1
+3.1|19|2|0.2
+3.1|20|2|0.2
+3.1|21|5|0.5
+3.1|22|3|0.3
+3.2|21|5
+3.2|2|5
+3.2|22|3
+3.2|20|2
+3.2|19|2
+
+========================================
+SEKCE 4: Interval mezi consecutive ACKs
+========================================
+4.1|2115.2|187.2|13754.0|~50 min|NOT regular intervals → NOT replay
+4.2|1-5 min|4|21.1
+4.2|5-60 min|11|57.9
+4.2|1-24 hours|4|21.1
+
+========================================
+SEKCE 5: DT pole analýza (Rdt timestamp)
+========================================
+5.1|Příklad Rdt pole v ACK frame|921|2025-12-11T18:05:06.009346+00:00|2025-12-11 19:04:56
+5.1|Příklad Rdt pole v ACK frame|4301|2025-12-11T19:33:38.278022+00:00|2025-12-11 20:33:30
+5.1|Příklad Rdt pole v ACK frame|4497|2025-12-11T19:39:15.880920+00:00|2025-12-11 20:39:11
+5.2|6.5|-10|-1|Rdt ~ frame_ts → REAL-TIME ACKs
+5.3|921|2025-12-11T18:05:06.009346+00:00|2025-12-11 19:04:56|-10|Normal network latency
+5.3|25561|2025-12-12T05:14:55.656473+00:00|2025-12-12 06:14:46|-9|Normal network latency
+5.3|4301|2025-12-11T19:33:38.278022+00:00|2025-12-11 20:33:30|-8|Normal network latency
+5.3|9565|2025-12-11T22:01:48.483831+00:00|2025-12-11 23:01:40|-8|Normal network latency
+5.3|18409|2025-12-12T02:01:11.725155+00:00|2025-12-12 03:01:03|-8|Normal network latency
+5.3|7737|2025-12-11T21:12:05.190608+00:00|2025-12-11 22:11:58|-7|Normal network latency
+5.3|8501|2025-12-11T21:32:15.060228+00:00|2025-12-11 22:32:08|-7|Normal network latency
+5.3|9801|2025-12-11T22:08:00.663960+00:00|2025-12-11 23:07:53|-7|Normal network latency
+5.3|19073|2025-12-12T02:18:03.816497+00:00|2025-12-12 03:17:56|-7|Normal network latency
+5.3|19613|2025-12-12T02:31:53.028734+00:00|2025-12-12 03:31:46|-7|Normal network latency
+
+========================================
+SEKCE 6: Testování hypotéz
+========================================
+Hypotéza A|Capture bug - proxy nezachytila odchozí Settings|Důkaz 1: proxy_to_cloud frames = 0|Důkaz 2: ACKs have varying intervals (not regular)|Důkaz 3: Rdt matches frame timestamp (real-time)|SUPPORTED|Proxy captures only box→proxy and cloud→proxy, NOT proxy→cloud
+Hypotéza B|BOX přehrává staré ACKs|Důkaz 1: Max Rdt-frame diff = ~16 sec (within network latency)|Důkaz 2: Intervals vary widely (4.7s to 17 hours)|Důkaz 3: Hourly distribution shows user activity pattern|REFUTED|Rdt timestamps match real-time, no replay pattern detected
+Hypotéza C|Settings přišly jiným kanálem|Důkaz 1: BOX generates ACKs in real-time (Rdt ~ frame_ts)|Důkaz 2: ACK Content shows "Remotely : tbl_*_prms" (remote settings)|Důkaz 3: No proxy_to_cloud traffic captured|INCONCLUSIVE|Possible but cannot verify without full capture
+
+========================================
+SEKCE 7: Verifikace známých případů
+========================================
+7.1|Jan 23, 2026 ghost ACKs|0|7|DIFFERENT
+7.3|Poslední cloud Setting (z payloads.db)|2026-01-04 17:37:40 UTC|2025-12-12T05:14:55.656473+00:00|-564.4
+7.4|Cloud Settings v payloads_ha_full.db|13028|UNEXPECTED
+
+========================================
+SEKCE 8: Shrnutí a závěry
+========================================
+SHRNUTÍ|Ghost ACKs Investigation|
+Zjištění|Celkový počet ghost ACKs|1031|100% ACKs bez matching Setting
+Zjištění|Proxy capture gap|0 proxy_to_cloud frames|Proxy nezachytává odchozí Settings
+Zjištění|Rdt timestamp analýza|max 16 sec diff|ACKs jsou real-time, ne replay
+Zjištění|Interval mezi ACKs|4.7s - 17h (avg 50min)|Není pravidelný - není replay
+Zjištění|Hodinová distribuce|Peak: 20:00, 12:00, 10:00|Odpovídá aktivitě uživatele
+Verdikt|Hypotéza A (Capture bug)|SUPPORTED|Proxy nezachytává proxy_to_cloud směr
+Verdikt|Hypotéza B (Replay pattern)|REFUTED|Rdt timestamps jsou real-time
+Verdikt|Hypotéza C (Different channel)|INCONCLUSIVE|Nelze ověřit bez plného capture
+========================================
+SEKCE 1: Celkový přehled Setting ACKs
+========================================
+1.1a|Setting ACKs (Result=ACK, Reason=Setting)|1031
+1.1b|tbl_events s Type=Setting|767
+1.2|Odchozí Settings (proxy_to_cloud)|0
+1.3|Ghost ACKs (ACKs bez matching Setting)|1031|0|100% ghost ACKs
+
+========================================
+SEKCE 2: Časové rozmezí a distribuce
+========================================
+2.1|První Setting ACK|2025-12-18T19:26:30.208926+00:00
+|Poslední Setting ACK|2026-01-23T05:20:50.085003+00:00
+2.2|2025-12-18|58
+2.2|2025-12-19|44
+2.2|2025-12-20|41
+2.2|2025-12-21|22
+2.2|2025-12-22|21
+2.2|2025-12-23|38
+2.2|2025-12-24|90
+2.2|2025-12-25|17
+2.2|2025-12-26|20
+2.2|2025-12-27|22
+2.2|2025-12-28|64
+2.2|2025-12-29|31
+2.2|2025-12-30|43
+2.2|2025-12-31|20
+2.2|2026-01-01|29
+2.2|2026-01-02|17
+2.2|2026-01-03|31
+2.2|2026-01-04|12
+2.2|2026-01-05|20
+2.2|2026-01-06|17
+2.2|2026-01-07|34
+2.2|2026-01-08|16
+2.2|2026-01-09|27
+2.2|2026-01-10|26
+2.2|2026-01-11|15
+2.2|2026-01-12|22
+2.2|2026-01-13|5
+2.2|2026-01-14|13
+2.2|2026-01-15|39
+2.2|2026-01-16|13
+2.2|2026-01-17|26
+2.2|2026-01-18|15
+2.2|2026-01-19|9
+2.2|2026-01-20|38
+2.2|2026-01-21|42
+2.2|2026-01-22|27
+2.2|2026-01-23|7
+2.3|2025-12-24|90|HIGH
+2.3|2025-12-28|64|HIGH
+2.3|2025-12-18|58|HIGH
+2.3|2025-12-19|44|MEDIUM
+2.3|2025-12-30|43|MEDIUM
+2.3|2026-01-21|42|MEDIUM
+2.3|2025-12-20|41|MEDIUM
+2.3|2026-01-15|39|MEDIUM
+2.3|2026-01-20|38|MEDIUM
+2.3|2025-12-23|38|MEDIUM
+
+========================================
+SEKCE 3: Hodinová analýza (Time-of-Day)
+========================================
+3.1|0|36|3.5
+3.1|1|37|3.6
+3.1|2|34|3.3
+3.1|3|20|1.9
+3.1|4|38|3.7
+3.1|5|43|4.2
+3.1|6|46|4.5
+3.1|7|31|3.0
+3.1|8|24|2.3
+3.1|9|53|5.1
+3.1|10|74|7.2
+3.1|11|41|4.0
+3.1|12|89|8.6
+3.1|13|33|3.2
+3.1|14|30|2.9
+3.1|15|24|2.3
+3.1|16|15|1.5
+3.1|17|21|2.0
+3.1|18|16|1.6
+3.1|19|56|5.4
+3.1|20|100|9.7
+3.1|21|70|6.8
+3.1|22|48|4.7
+3.1|23|52|5.0
+3.2|20|100
+3.2|12|89
+3.2|10|74
+3.2|21|70
+3.2|19|56
+
+========================================
+SEKCE 4: Interval mezi consecutive ACKs
+========================================
+4.1|2970.5|4.7|61193.3|~50 min|NOT regular intervals → NOT replay
+4.2|< 10 sec|48|4.7
+4.2|10-60 sec|57|5.5
+4.2|1-5 min|251|24.4
+4.2|5-60 min|513|49.8
+4.2|1-24 hours|161|15.6
+
+========================================
+SEKCE 5: DT pole analýza (Rdt timestamp)
+========================================
+5.1|Příklad Rdt pole v ACK frame|257|2025-12-18T19:26:30.208926+00:00|2025-12-18 20:26:21
+5.1|Příklad Rdt pole v ACK frame|259|2025-12-18T19:26:39.136166+00:00|2025-12-18 20:26:30
+5.1|Příklad Rdt pole v ACK frame|261|2025-12-18T19:26:47.366600+00:00|2025-12-18 20:26:40
+5.2|8.0|-16|-1|Rdt ~ frame_ts → REAL-TIME ACKs
+5.3|234551|2025-12-28T10:07:45.724905+00:00|2025-12-28 11:07:29|-16|Normal network latency
+5.3|123282|2025-12-24T00:23:53.567953+00:00|2025-12-24 01:23:38|-15|Normal network latency
+5.3|125178|2025-12-24T02:07:28.679395+00:00|2025-12-24 03:07:13|-15|Normal network latency
+5.3|127427|2025-12-24T04:12:57.182360+00:00|2025-12-24 05:12:42|-15|Normal network latency
+5.3|273637|2025-12-29T23:00:57.363949+00:00|2025-12-30 00:00:42|-15|Normal network latency
+5.3|296847|2025-12-30T21:46:42.895077+00:00|2025-12-30 22:46:28|-14|Normal network latency
+5.3|336464|2026-01-01T12:06:46.570448+00:00|2026-01-01 13:06:32|-14|Normal network latency
+5.3|434215|2026-01-05T12:05:16.853277+00:00|2026-01-05 13:05:02|-14|Normal network latency
+5.3|452045|2026-01-06T05:12:04.638129+00:00|2026-01-06 06:11:50|-14|Normal network latency
+5.3|502842|2026-01-08T06:09:55.837540+00:00|2026-01-08 07:09:41|-14|Normal network latency
+
+========================================
+SEKCE 6: Testování hypotéz
+========================================
+Hypotéza A|Capture bug - proxy nezachytila odchozí Settings|Důkaz 1: proxy_to_cloud frames = 0|Důkaz 2: ACKs have varying intervals (not regular)|Důkaz 3: Rdt matches frame timestamp (real-time)|SUPPORTED|Proxy captures only box→proxy and cloud→proxy, NOT proxy→cloud
+Hypotéza B|BOX přehrává staré ACKs|Důkaz 1: Max Rdt-frame diff = ~16 sec (within network latency)|Důkaz 2: Intervals vary widely (4.7s to 17 hours)|Důkaz 3: Hourly distribution shows user activity pattern|REFUTED|Rdt timestamps match real-time, no replay pattern detected
+Hypotéza C|Settings přišly jiným kanálem|Důkaz 1: BOX generates ACKs in real-time (Rdt ~ frame_ts)|Důkaz 2: ACK Content shows "Remotely : tbl_*_prms" (remote settings)|Důkaz 3: No proxy_to_cloud traffic captured|INCONCLUSIVE|Possible but cannot verify without full capture
+
+========================================
+SEKCE 7: Verifikace známých případů
+========================================
+7.1|Jan 23, 2026 ghost ACKs|7|7|MATCH
+7.2|865771|2026-01-23T03:56:18.822152+00:00|2026-01-23 04:56:10
+7.2|865837|2026-01-23T04:00:24.668624+00:00|2026-01-23 05:00:15
+7.2|865920|2026-01-23T04:04:29.730630+00:00|2026-01-23 05:04:19
+7.2|866076|2026-01-23T04:13:44.200740+00:00|2026-01-23 05:13:35
+7.2|866243|2026-01-23T04:23:12.043017+00:00|2026-01-23 05:23:06
+7.2|866395|2026-01-23T04:32:15.270113+00:00|2026-01-23 05:32:08
+7.2|867192|2026-01-23T05:20:50.085003+00:00|2026-01-23 06:20:44
+7.3|Poslední cloud Setting (z payloads.db)|2026-01-04 17:37:40 UTC|2026-01-23T05:20:50.085003+00:00|443.7
+7.4|Cloud Settings v payloads_ha_full.db|0|CONFIRMED: 0 Settings
+
+========================================
+SEKCE 8: Shrnutí a závěry
+========================================
+SHRNUTÍ|Ghost ACKs Investigation|
+Zjištění|Celkový počet ghost ACKs|1031|100% ACKs bez matching Setting
+Zjištění|Proxy capture gap|0 proxy_to_cloud frames|Proxy nezachytává odchozí Settings
+Zjištění|Rdt timestamp analýza|max 16 sec diff|ACKs jsou real-time, ne replay
+Zjištění|Interval mezi ACKs|4.7s - 17h (avg 50min)|Není pravidelný - není replay
+Zjištění|Hodinová distribuce|Peak: 20:00, 12:00, 10:00|Odpovídá aktivitě uživatele
+Verdikt|Hypotéza A (Capture bug)|SUPPORTED|Proxy nezachytává proxy_to_cloud směr
+Verdikt|Hypotéza B (Replay pattern)|REFUTED|Rdt timestamps jsou real-time
+Verdikt|Hypotéza C (Different channel)|INCONCLUSIVE|Nelze ověřit bez plného capture

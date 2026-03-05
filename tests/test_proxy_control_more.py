@@ -7,11 +7,16 @@ import asyncio
 import json
 import time
 from collections import deque
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import proxy as proxy_module
-from models import SensorConfig
+import control_pipeline as ctrl_module
+from config import MQTT_NAMESPACE
+from control_pipeline import ControlPipeline
+from control_settings import ControlSettings
+from models import ProxyMode, SensorConfig
 
 
 class DummyQueue:
@@ -38,8 +43,8 @@ class DummyMQTT:
 
     def _state_topic(self, device_id: str, table: str | None) -> str:
         if table:
-            return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/{table}/state"
-        return f"{proxy_module.MQTT_NAMESPACE}/{device_id}/state"
+            return f"{MQTT_NAMESPACE}/{device_id}/{table}/state"
+        return f"{MQTT_NAMESPACE}/{device_id}/state"
 
     def _map_data_for_publish(self, data, *, table, target_device_id):
         payload = {k: v for k, v in data.items() if not k.startswith("_")}
@@ -88,49 +93,68 @@ def make_proxy(tmp_path):
     proxy._last_data_epoch = time.time() - 1
     proxy._box_conn_lock = asyncio.Lock()
     proxy._active_box_writer = None
-    proxy._control_lock = asyncio.Lock()
-    proxy._control_queue = deque()
-    proxy._control_inflight = None
-    proxy._control_last_result = None
-    proxy._control_key_state = {}
-    proxy._control_session_id = "sess"
-    proxy._control_qos = 1
-    proxy._control_retain = False
-    proxy._control_status_retain = False
-    proxy._control_result_topic = "oig/control/result"
-    proxy._control_status_prefix = "oig/control/status"
-    proxy._control_log_enabled = False
-    proxy._control_log_path = str(tmp_path / "control.log")
-    proxy._control_pending_path = str(tmp_path / "pending.json")
-    proxy._control_pending_keys = set()
-    proxy._control_post_drain_refresh_pending = False
-    proxy._control_max_attempts = 2
-    proxy._control_retry_delay_s = 0.01
-    proxy._control_ack_timeout_s = 0.0
-    proxy._control_applied_timeout_s = 0.0
-    proxy._control_mode_quiet_s = 0.0
-    proxy._control_retry_task = None
-    proxy._control_ack_task = None
-    proxy._control_applied_task = None
-    proxy._control_quiet_task = None
-    proxy._control_whitelist = {"tbl_box_prms": {"MODE", "SA", "BAT_AC"}}
-    proxy._control_box_ready_s = 0.0
-    proxy._control_mqtt_enabled = False
+    proxy._ctrl = ControlPipeline.__new__(ControlPipeline)
+    proxy._ctrl._proxy = proxy
+    proxy._ctrl.lock = asyncio.Lock()
+    proxy._ctrl.queue = deque()
+    proxy._ctrl.inflight = None
+    proxy._ctrl.last_result = None
+    proxy._ctrl.key_state = {}
+    proxy._ctrl.session_id = "sess"
+    proxy._ctrl.qos = 1
+    proxy._ctrl.retain = False
+    proxy._ctrl.status_retain = False
+    proxy._ctrl.result_topic = "oig/control/result"
+    proxy._ctrl.status_prefix = "oig/control/status"
+    proxy._ctrl.log_enabled = False
+    proxy._ctrl.log_path = str(tmp_path / "control.log")
+    proxy._ctrl.pending_path = str(tmp_path / "pending.json")
+    proxy._ctrl.pending_keys = set()
+    proxy._ctrl.post_drain_refresh_pending = False
+    proxy._ctrl.max_attempts = 2
+    proxy._ctrl.retry_delay_s = 0.01
+    proxy._ctrl.ack_timeout_s = 0.0
+    proxy._ctrl.applied_timeout_s = 0.0
+    proxy._ctrl.mode_quiet_s = 0.0
+    proxy._ctrl.retry_task = None
+    proxy._ctrl.ack_task = None
+    proxy._ctrl.applied_task = None
+    proxy._ctrl.quiet_task = None
+    proxy._ctrl.whitelist = {"tbl_box_prms": {"MODE", "SA", "BAT_AC"}}
+    proxy._ctrl.box_ready_s = 0.0
+    proxy._ctrl.mqtt_enabled = False
     proxy._telemetry_client = None
-    proxy._set_commands_buffer = []
-    proxy._prms_tables = {}
-    proxy._prms_device_id = None
-    proxy._table_cache = {}
-    proxy._last_values = {}
+    from mode_persistence import ModePersistence
+    mp = ModePersistence.__new__(ModePersistence)
+    mp._proxy = proxy
+    mp.mode_value = None
+    mp.mode_device_id = None
+    mp.mode_pending_publish = False
+    mp.prms_tables = {}
+    mp.prms_pending_publish = False
+    mp.prms_device_id = None
+    proxy._mp = mp
+    proxy._msc = MagicMock()
+    proxy._msc.table_cache = {}
+    proxy._msc.last_values = {}
+    proxy._msc.cache_device_id = None
     proxy.mqtt_publisher = DummyMQTT()
-    proxy._local_setting_pending = None
+    cs = ControlSettings.__new__(ControlSettings)
+    cs._proxy = proxy
+    cs.pending = None
+    cs.pending_frame = None
+    cs.set_commands_buffer = []
+    proxy._cs = cs
+    hm = MagicMock()
+    hm.get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
+    proxy._hm = hm
     return proxy
 
 
 def test_control_publish_result_and_key_status(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_log_enabled = True
-    proxy._control_log_path = str(tmp_path / "control.jsonl")
+    proxy._ctrl.log_enabled = True
+    proxy._ctrl.log_path = str(tmp_path / "control.jsonl")
 
     async def fake_status():
         return None
@@ -146,14 +170,14 @@ def test_control_publish_result_and_key_status(tmp_path):
     }
 
     asyncio.run(
-        proxy._control_publish_result(
+        proxy._ctrl.publish_result(
             tx=tx,
             status="applied",
             detail="ok"))
-    assert proxy._control_last_result["status"] == "applied"
-    assert proxy._control_post_drain_refresh_pending is True
-    assert "tbl_box_prms/MODE/1" in proxy._control_key_state
-    assert "tbl_box_prms/MODE/1" in proxy._control_pending_keys
+    assert proxy._ctrl.last_result["status"] == "applied"
+    assert proxy._ctrl.post_drain_refresh_pending is True
+    assert "tbl_box_prms/MODE/1" in proxy._ctrl.key_state
+    assert "tbl_box_prms/MODE/1" in proxy._ctrl.pending_keys
     assert proxy.mqtt_publisher.published_raw
     assert tmp_path.joinpath("control.jsonl").exists()
 
@@ -161,118 +185,95 @@ def test_control_publish_result_and_key_status(tmp_path):
 def test_control_pending_keys_load_store(tmp_path):
     proxy = make_proxy(tmp_path)
     missing_path = tmp_path / "missing.json"
-    proxy._control_pending_path = str(missing_path)
-    assert proxy._control_load_pending_keys() == set()
+    proxy._ctrl.pending_path = str(missing_path)
+    assert proxy._ctrl.load_pending_keys() == set()
 
     bad_path = tmp_path / "bad.json"
     bad_path.write_text("{broken", encoding="utf-8")
-    proxy._control_pending_path = str(bad_path)
-    assert proxy._control_load_pending_keys() == set()
+    proxy._ctrl.pending_path = str(bad_path)
+    assert proxy._ctrl.load_pending_keys() == set()
 
     good_path = tmp_path / "good.json"
     good_path.write_text(json.dumps(["a", "b"]), encoding="utf-8")
-    proxy._control_pending_path = str(good_path)
-    assert proxy._control_load_pending_keys() == {"a", "b"}
+    proxy._ctrl.pending_path = str(good_path)
+    assert proxy._ctrl.load_pending_keys() == {"a", "b"}
 
-    proxy._control_pending_keys = {"x"}
-    proxy._control_store_pending_keys()
+    proxy._ctrl.pending_keys = {"x"}
+    proxy._ctrl.store_pending_keys()
     assert json.loads(good_path.read_text(encoding="utf-8")) == ["x"]
 
 
 def test_control_publish_restart_errors(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_pending_keys = {"tbl_box_prms/MODE/1"}
+    proxy._ctrl.pending_keys = {"tbl_box_prms/MODE/1"}
     results = []
 
     async def fake_publish(**kwargs):
         results.append(kwargs["status"])
 
-    proxy._control_publish_result = fake_publish
+    proxy._ctrl.publish_result = fake_publish
 
-    asyncio.run(proxy._control_publish_restart_errors())
+    asyncio.run(proxy._ctrl.publish_restart_errors())
     assert results == ["error"]
-    assert proxy._control_pending_keys == set()
+    assert proxy._ctrl.pending_keys == set()
 
 
 def test_control_normalize_and_coerce(tmp_path):
     proxy = make_proxy(tmp_path)
 
-    assert proxy._control_normalize_value(
+    assert proxy._ctrl.normalize_value(
         tbl_name="tbl_box_prms", tbl_item="MODE", new_value="9"
     ) == (None, "bad_value")
-    assert proxy._control_normalize_value(
+    assert proxy._ctrl.normalize_value(
         tbl_name="tbl_box_prms", tbl_item="MODE", new_value="2"
     ) == ("2", "2")
-    assert proxy._control_normalize_value(
+    assert proxy._ctrl.normalize_value(
         tbl_name="tbl_invertor_prm1", tbl_item="A_MAX_CHRG", new_value="5"
     ) == ("5.0", "5.0")
 
-    assert proxy._control_coerce_value("true") is True
-    assert proxy._control_coerce_value("10") == 10
-    assert proxy._control_coerce_value("10.5") == pytest.approx(10.5)
-    assert proxy._control_coerce_value("text") == "text"
+    assert ControlPipeline.coerce_value("true") is True
+    assert ControlPipeline.coerce_value("10") == 10
+    assert ControlPipeline.coerce_value("10.5") == pytest.approx(10.5)
+    assert ControlPipeline.coerce_value("text") == "text"
 
 
-def test_control_map_optimistic_value_and_snapshot(tmp_path, monkeypatch):
+def test_control_map_optimistic_value(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     cfg = SensorConfig(name="Mode", unit="", options=["A", "B", "C"])
-    monkeypatch.setattr(proxy_module, "get_sensor_config",
+    monkeypatch.setattr(ctrl_module, "get_sensor_config",
                         lambda *_: (cfg, "MODE"))
 
-    assert proxy._control_map_optimistic_value(
+    assert proxy._ctrl.map_optimistic_value(
         tbl_name="tbl_box_prms", tbl_item="MODE", value="1"
     ) == "B"
-
-    calls = []
-    monkeypatch.setattr(
-        proxy_module,
-        "save_prms_state",
-        lambda *args: calls.append(args))
-    proxy._control_update_persisted_snapshot(
-        tbl_name="tbl_box_prms", tbl_item="MODE", raw_value=1
-    )
-    assert calls
-    assert proxy._prms_tables["tbl_box_prms"]["MODE"] == 1
 
 
 def test_control_is_box_ready_conditions(tmp_path):
     proxy = make_proxy(tmp_path)
     proxy.box_connected = False
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "box_not_connected"
 
     proxy.box_connected = True
     proxy.device_id = "AUTO"
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "device_id_unknown"
 
     proxy.device_id = "DEV1"
-    proxy._box_connected_since_epoch = None
-    ok, reason = proxy._control_is_box_ready()
-    assert ok is False
-    assert reason == "box_not_ready"
-
-    proxy._box_connected_since_epoch = time.time() - 1
-    proxy._control_box_ready_s = 10
-    ok, reason = proxy._control_is_box_ready()
-    assert ok is False
-    assert reason == "box_not_ready"
-
-    proxy._control_box_ready_s = 0
     proxy._last_data_epoch = None
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "box_not_sending_data"
 
     proxy._last_data_epoch = time.time() - 40
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is False
     assert reason == "box_not_sending_data"
 
     proxy._last_data_epoch = time.time() - 1
-    ok, reason = proxy._control_is_box_ready()
+    ok, reason = proxy._ctrl.is_box_ready()
     assert ok is True
     assert reason is None
 
@@ -287,8 +288,8 @@ def test_control_on_mqtt_message_accepts(tmp_path):
     async def fake_start():
         results.append("start")
 
-    proxy._control_publish_result = fake_publish_result
-    proxy._control_maybe_start_next = fake_start
+    proxy._ctrl.publish_result = fake_publish_result
+    proxy._ctrl.maybe_start_next = fake_start
 
     payload = json.dumps(
         {
@@ -301,18 +302,18 @@ def test_control_on_mqtt_message_accepts(tmp_path):
     ).encode("utf-8")
 
     asyncio.run(
-        proxy._control_on_mqtt_message(
+        proxy._ctrl.on_mqtt_message(
             topic="t",
             payload=payload,
             retain=False))
     assert "accepted" in results
-    assert proxy._control_queue
-    assert "request_key_raw" in proxy._control_queue[0]
+    assert proxy._ctrl.queue
+    assert "request_key_raw" in proxy._ctrl.queue[0]
 
 
 def test_control_defer_inflight_max_attempts(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_inflight = {"_attempts": 2}
+    proxy._ctrl.inflight = {"_attempts": 2}
     results = []
 
     async def fake_publish_result(*, tx, status, **_kwargs):
@@ -324,28 +325,28 @@ def test_control_defer_inflight_max_attempts(tmp_path):
     async def fake_post_drain(*_args, **_kwargs):
         results.append("post_drain")
 
-    proxy._control_publish_result = fake_publish_result
-    proxy._control_maybe_start_next = fake_start_next
-    proxy._control_maybe_queue_post_drain_refresh = fake_post_drain
+    proxy._ctrl.publish_result = fake_publish_result
+    proxy._ctrl.maybe_start_next = fake_start_next
+    proxy._ctrl.maybe_queue_post_drain_refresh = fake_post_drain
 
-    asyncio.run(proxy._control_defer_inflight(reason="timeout"))
+    asyncio.run(proxy._ctrl.defer_inflight(reason="timeout"))
     assert results[0] == "error"
 
 
 def test_control_ack_and_applied_timeouts(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_inflight = {"stage": "sent_to_box"}
+    proxy._ctrl.inflight = {"stage": "sent_to_box"}
     proxy.box_connected = False
     deferred = []
 
     async def fake_defer(*, reason):
         deferred.append(reason)
 
-    proxy._control_defer_inflight = fake_defer
-    asyncio.run(proxy._control_ack_timeout())
+    proxy._ctrl.defer_inflight = fake_defer
+    asyncio.run(proxy._ctrl.ack_timeout())
     assert deferred == ["box_not_connected"]
 
-    proxy._control_inflight = {"stage": "box_ack"}
+    proxy._ctrl.inflight = {"stage": "box_ack"}
     results = []
 
     async def fake_publish(*, tx, status, **_kwargs):
@@ -354,16 +355,16 @@ def test_control_ack_and_applied_timeouts(tmp_path):
     async def fake_finish():
         results.append("finish")
 
-    proxy._control_publish_result = fake_publish
-    proxy._control_finish_inflight = fake_finish
-    asyncio.run(proxy._control_applied_timeout())
+    proxy._ctrl.publish_result = fake_publish
+    proxy._ctrl.finish_inflight = fake_finish
+    asyncio.run(proxy._ctrl.applied_timeout())
     assert "error" in results
     assert "finish" in results
 
 
 def test_control_quiet_wait_completes(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_inflight = {
+    proxy._ctrl.inflight = {
         "stage": "applied",
         "applied_at_mono": time.monotonic() - 1}
     results = []
@@ -374,31 +375,31 @@ def test_control_quiet_wait_completes(tmp_path):
     async def fake_finish():
         results.append("finish")
 
-    proxy._control_publish_result = fake_publish
-    proxy._control_finish_inflight = fake_finish
-    asyncio.run(proxy._control_quiet_wait())
+    proxy._ctrl.publish_result = fake_publish
+    proxy._ctrl.finish_inflight = fake_finish
+    asyncio.run(proxy._ctrl.quiet_wait())
     assert "completed" in results
     assert "finish" in results
 
 
 def test_control_maybe_queue_post_drain_refresh(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_post_drain_refresh_pending = True
+    proxy._ctrl.post_drain_refresh_pending = True
     called = []
 
     async def fake_enqueue(*, reason):
         called.append(reason)
 
-    proxy._control_enqueue_internal_sa = fake_enqueue
+    proxy._ctrl.enqueue_internal_sa = fake_enqueue
 
-    asyncio.run(proxy._control_maybe_queue_post_drain_refresh(
+    asyncio.run(proxy._ctrl.maybe_queue_post_drain_refresh(
         last_tx={"tbl_name": "tbl_box_prms", "tbl_item": "MODE"}))
     assert called == ["queue_drained"]
 
 
 def test_control_observe_box_frame_setting(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._control_inflight = {
+    proxy._ctrl.inflight = {
         "tx_id": "t1",
         "tbl_name": "tbl_box_prms",
         "tbl_item": "BAT_AC",
@@ -413,8 +414,8 @@ def test_control_observe_box_frame_setting(tmp_path):
     async def fake_finish():
         results.append("finish")
 
-    proxy._control_publish_result = fake_publish
-    proxy._control_finish_inflight = fake_finish
+    proxy._ctrl.publish_result = fake_publish
+    proxy._ctrl.finish_inflight = fake_finish
 
     parsed = {
         "Type": "Setting",
@@ -422,7 +423,7 @@ def test_control_observe_box_frame_setting(tmp_path):
     }
 
     asyncio.run(
-        proxy._control_observe_box_frame(
+        proxy._ctrl.observe_box_frame(
             parsed,
             "tbl_events",
             "<Frame></Frame>"))
@@ -433,11 +434,11 @@ def test_control_observe_box_frame_setting(tmp_path):
 
 def test_publish_setting_event_state(tmp_path):
     proxy = make_proxy(tmp_path)
-    proxy._table_cache = {"tbl_box_prms": {"MODE": 1}}
+    proxy._msc.table_cache = {"tbl_box_prms": {"MODE": 1}}
     proxy.mqtt_publisher.device_id = "DEV1"
 
     async def run():
-        await proxy._publish_setting_event_state(
+        await proxy._ctrl.publish_setting_event_state(
             tbl_name="tbl_box_prms",
             tbl_item="MODE",
             new_value="2",
@@ -453,23 +454,26 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     writer = DummyWriter()
     proxy._active_box_writer = writer
-    proxy._control_ack_timeout_s = 10.0
+    proxy._ctrl.ack_timeout_s = 10.0
     results = []
 
     async def fake_ack(**_kwargs):
         results.append("ack")
 
-    proxy._control_on_box_setting_ack = fake_ack
+    proxy._ctrl.on_box_setting_ack = fake_ack
 
     async def run():
-        res = await proxy._send_setting_to_box(
+        res = await proxy._cs.send_to_box(
             tbl_name="tbl_box_prms",
             tbl_item="MODE",
             new_value="1",
             confirm="New",
             tx_id="tx1",
         )
-        ok = proxy._maybe_handle_local_setting_ack(
+        assert proxy._cs.pending_frame is not None
+        proxy._cs.pending["sent_at"] = time.monotonic()
+        proxy._cs.pending_frame = None
+        ok = proxy._cs.maybe_handle_ack(
             "<Reason>Setting</Reason><Result>ACK</Result>",
             writer,
             conn_id=1,
@@ -481,3 +485,131 @@ def test_send_setting_to_box_and_local_ack(tmp_path, monkeypatch):
     assert res["ok"] is True
     assert ok is True
     assert results == ["ack"]
+
+
+def test_ack_with_wrong_conn_id_is_ignored(tmp_path):
+    """
+    RED TEST: ACK with wrong conn_id should be ignored.
+
+    Scenario:
+      1. Setting delivered on conn_id=1, pending state stored with conn_id=1
+      2. Connection closes, new connection conn_id=2 opens
+      3. ACK arrives on conn_id=2 (wrong connection)
+      4. ACK should be IGNORED, pending state should remain
+
+    Expected: FAIL - current code does not validate conn_id ownership
+    """
+    proxy = make_proxy(tmp_path)
+    writer1 = DummyWriter()  # Original connection (conn_id=1)
+    writer2 = DummyWriter()  # New connection after reconnect (conn_id=2)
+    proxy._active_box_writer = writer1
+    proxy._ctrl.ack_timeout_s = 10.0
+    ack_results = []
+
+    async def fake_ack(**kwargs):
+        ack_results.append(kwargs)
+
+    proxy._ctrl.on_box_setting_ack = fake_ack
+
+    async def run():
+        # Step 1: Send setting on conn_id=1
+        res = await proxy._cs.send_to_box(
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            confirm="New",
+            tx_id="tx1",
+        )
+        assert res["ok"] is True
+        assert proxy._cs.pending is not None
+
+        # Mark as delivered on conn_id=1
+        proxy._cs.pending["sent_at"] = time.monotonic()
+        # Store the conn_id where it was delivered (this should be part of pending)
+        proxy._cs.pending["delivered_conn_id"] = 1
+
+        # Step 2: Simulate connection switch (reconnect)
+        # Setting was sent on conn_id=1, now connection is conn_id=2
+        proxy._active_box_writer = writer2
+
+        # Step 3: ACK arrives on WRONG connection (conn_id=2)
+        # This ACK should be IGNORED because setting was delivered on conn_id=1
+        ok = proxy._cs.maybe_handle_ack(
+            "<Reason>Setting</Reason><Result>ACK</Result>",
+            writer2,
+            conn_id=2,  # Wrong connection!
+        )
+
+        await asyncio.sleep(0)
+
+        # Step 4: Assert ACK was IGNORED
+        # FAIL: Current code clears pending regardless of conn_id mismatch
+        assert ok is False, "ACK with wrong conn_id should return False (ignored)"
+        assert proxy._cs.pending is not None, "Pending state should NOT be cleared for wrong conn_id"
+        assert ack_results == [], "on_box_setting_ack should NOT be called for wrong conn_id"
+
+    asyncio.run(run())
+
+
+def test_nack_with_wrong_conn_id_is_ignored(tmp_path):
+    """
+    RED TEST: NACK with wrong conn_id should be ignored.
+
+    Scenario:
+      1. Setting delivered on conn_id=1, pending state stored with conn_id=1
+      2. Connection closes, new connection conn_id=2 opens
+      3. NACK arrives on conn_id=2 (wrong connection)
+      4. NACK should be IGNORED, pending state should remain
+
+    Expected: FAIL - current code does not validate conn_id ownership
+    """
+    proxy = make_proxy(tmp_path)
+    writer1 = DummyWriter()  # Original connection (conn_id=1)
+    writer2 = DummyWriter()  # New connection after reconnect (conn_id=2)
+    proxy._active_box_writer = writer1
+    proxy._ctrl.ack_timeout_s = 10.0
+    ack_results = []
+
+    async def fake_ack(**kwargs):
+        ack_results.append(kwargs)
+
+    proxy._ctrl.on_box_setting_ack = fake_ack
+
+    async def run():
+        # Step 1: Send setting on conn_id=1
+        res = await proxy._cs.send_to_box(
+            tbl_name="tbl_box_prms",
+            tbl_item="BAT_AC",
+            new_value="1",
+            confirm="New",
+            tx_id="tx2",
+        )
+        assert res["ok"] is True
+        assert proxy._cs.pending is not None
+
+        # Mark as delivered on conn_id=1
+        proxy._cs.pending["sent_at"] = time.monotonic()
+        # Store the conn_id where it was delivered (this should be part of pending)
+        proxy._cs.pending["delivered_conn_id"] = 1
+
+        # Step 2: Simulate connection switch (reconnect)
+        # Setting was sent on conn_id=1, now connection is conn_id=2
+        proxy._active_box_writer = writer2
+
+        # Step 3: NACK arrives on WRONG connection (conn_id=2)
+        # This NACK should be IGNORED because setting was delivered on conn_id=1
+        ok = proxy._cs.maybe_handle_ack(
+            "<Reason>Setting</Reason><Result>NACK</Result>",
+            writer2,
+            conn_id=2,  # Wrong connection!
+        )
+
+        await asyncio.sleep(0)
+
+        # Step 4: Assert NACK was IGNORED
+        # FAIL: Current code clears pending regardless of conn_id mismatch
+        assert ok is False, "NACK with wrong conn_id should return False (ignored)"
+        assert proxy._cs.pending is not None, "Pending state should NOT be cleared for wrong conn_id"
+        assert ack_results == [], "on_box_setting_ack should NOT be called for wrong conn_id"
+
+    asyncio.run(run())

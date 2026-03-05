@@ -1,0 +1,30 @@
+Task 3: Simplified on_ack() with TWIN_CLOUD_ALIGNED flag - Legacy Mode Test
+=============================================================================
+
+Test Date: 2026-03-04
+Test Mode: Legacy (TWIN_CLOUD_ALIGNED=False, default)
+
+=== Test Results ===
+
+✓ Setting queued: accepted
+✓ Inflight started: tx-123
+✓ Setting delivered on conn_id=1
+✓ ACK on same conn_id succeeded: box_ack
+
+=== Implementation Details ===
+
+1. Method: _on_ack_legacy()
+   - Preserves existing INV-1/2/3 validation
+   - Raises InvariantViolationError on invariant violations
+   - Maintains backward compatibility
+
+2. Invariants Validated:
+   - INV-1: Connection Ownership (delivered_conn_id matching)
+   - INV-2: Session Transaction (session_id matching)
+   - INV-3: Timeout Task Ownership (handled in timeout handlers)
+
+=== Verification ===
+Syntax check: PASSED (python3 -m py_compile)
+Functional test: PASSED
+
+=== Legacy Mode Test PASSED ===

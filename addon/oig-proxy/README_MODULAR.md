@@ -1,121 +1,109 @@
 # OIG Proxy - Modular Architecture
 
-Nová modulární implementace s podporou ONLINE/OFFLINE/REPLAY režimů.
+Modulární implementace OIG Proxy s podporou ONLINE/HYBRID/OFFLINE režimů.
 
 ## Struktura modulů
 
 ```
 addon/oig-proxy/
-├── main.py              # Entry point
-├── config.py            # Konfigurace a env vars (95 lines)
-├── models.py            # Data modely a enums (75 lines)
-├── utils.py             # Helper funkce (291 lines)
-├── parser.py            # XML frame parser (100 lines)
-├── cloud_manager.py     # CloudQueue, CloudHealthChecker (360 lines)
-├── mqtt_publisher.py    # MQTTPublisher s frontou (568 lines)
-└── proxy.py             # OIGProxy orchestrace (300 lines)
+├── main.py                # Entry point
+├── config.py              # Konfigurace a env vars
+├── models.py              # Data modely a enums
+├── utils.py               # Helper funkce, sensor map, HA integrace
+├── parser.py              # XML frame parser
+├── oig_frame.py           # CRC výpočet, frame utilities (RESULT_ACK/END)
+├── proxy.py               # OIGProxy orchestrace (~660 lines)
+├── hybrid_mode.py         # HybridModeManager - HYBRID režim, fail threshold, retry
+├── telemetry_collector.py # TelemetryCollector - sběr a odesílání telemetrie
+├── telemetry_client.py    # TelemetryClient - MQTT klient pro telemetrii
+├── control_pipeline.py    # ControlPipeline - zpracování SET příkazů z HA
+├── control_settings.py    # ControlSettings - validace a sestavení control frames
+├── mqtt_state_cache.py    # MqttStateCache - cache MQTT stavu tabulek
+├── cloud_forwarder.py     # CloudForwarder - TCP spojení s cloudem
+├── mode_persistence.py    # ModePersistence - perzistence režimu přes restart
+├── proxy_status.py        # ProxyStatusReporter - MQTT status senzory
+├── mqtt_publisher.py      # MQTTPublisher - lokální MQTT broker klient
+├── control_api.py         # HTTP API pro ovládání z HA
+├── Dockerfile             # Alpine kontejner pro HA addon
+└── run                    # Entrypoint skript
 ```
-
-**Celkem:** ~1869 lines (vs. original 1601 lines)
-- Přidáno: +268 lines nové funkcionality (SQLite queues, REPLAY mode, callbacks)
-- Struktura: 8 samostatných modulů místo monolitu
 
 ## Proxy režimy
 
-### 🟢 ONLINE
-- Cloud dostupný + fronta prázdná
+### ONLINE
+- Cloud dostupný
 - Transparentní forward: BOX ↔ Proxy ↔ Cloud
 - ACK od cloudu
-- Lokální ACK/END fallback s fixním CRC
+- Lokální ACK/END fallback s fixním CRC při timeout
 
-### 🔴 OFFLINE  
-- Cloud nedostupný
-- Lokální ACK generování (fixní ACK/END s CRC)
-- Frames do CloudQueue (SQLite)
-- MQTT data do MQTTQueue pokud broker offline
+### HYBRID
+- Konfigurovaný režim s automatickým fallbackem
+- Při dosažení fail threshold → přepne na lokální ACK (in_offline)
+- Periodicky zkouší cloud (retry interval)
+- Po úspěšném cloudu → reset fail counteru
 
-### 🟡 REPLAY
-- Cloud se vrátil + fronta neprázdná
-- Replay fronty (1 frame/s)
-- Nové live frames → append na konec fronty (FIFO zachováno)
-- Po vyprázdnění → automatický přechod na ONLINE
+### OFFLINE
+- Vždy lokální ACK generování (fixní ACK/END s CRC)
+- Žádná komunikace s cloudem
+
+## Architektura
+
+```
+BOX ←TCP→ OIGProxy ←TCP→ Cloud (oigservis.cz)
+               │
+               ├── HybridModeManager (_hm) - správa režimů
+               ├── CloudForwarder (_cf) - TCP session s cloudem
+               ├── TelemetryCollector (_tc) - sběr metrik
+               ├── ControlPipeline (_ctrl) - SET příkazy z HA
+               ├── ControlSettings (_cs) - validace parametrů
+               ├── MqttStateCache (_msc) - cache MQTT stavu
+               ├── ModePersistence (_mp) - perzistence režimu
+               ├── ProxyStatusReporter (_ps) - MQTT status
+               └── MQTTPublisher - lokální MQTT broker
+```
+
+DNS override (dnsmasq): `oigservis.cz → HA IP` → BOX se připojí k proxy místo cloudu.
 
 ## Persistence
 
-### CloudQueue (`/data/cloud_queue.db`)
-- Max 10,000 frames
-- FIFO pořadí
-- Přežije restart proxy
-
-### MQTTQueue (`/data/mqtt_queue.db`)
-- Max 5,000 messages
-- Replay po reconnectu (10 msg/s)
-- Přežije restart proxy
-
 ### TableState (`/data/prms_state.json`)
-- Snapshot posledních známých hodnot tabulek (typicky pomalé/konfigurační `tbl_*`)
-- Po startu a MQTT reconnectu se znovu publikuje do MQTT (aby senzory nebyly `unknown`)
-
-### PayloadsDB (`/data/payloads.db`)
-- Debug capture všech frames
-- BOX rx/tx, Cloud rx/tx
+- Snapshot posledních známých hodnot tabulek
+- Po startu a MQTT reconnectu se znovu publikuje (aby senzory nebyly `unknown`)
 
 ## Testování
 
-### Import test
 ```bash
-cd /Users/martinhorak/Projects/oig-proxy/addon/oig-proxy
-python3 -c "
-import config, models, utils, parser, cloud_manager, mqtt_publisher, proxy
-print('✅ OK')
-"
-```
+# Unit testy
+cd /Users/martinhorak/Projects/oig-proxy
+PYTHONPATH=addon/oig-proxy:tests python3 -m pytest tests/ -x -q
 
-### Použití testing infrastructure
-```bash
-cd /Users/martinhorak/Projects/oig-proxy/testing
+# Pylint (CI flags)
+PYTHONPATH=addon/oig-proxy:tests python3 -m pylint addon/oig-proxy/*.py tests/*.py \
+  --disable=import-outside-toplevel,unused-import,reimported,redefined-outer-name \
+  --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself,unused-argument,wrong-import-order
 
-# 1. Extrahuj real data z DB
-python3 test_data/extract_frames.py
-
-# 2. Smoke test - ONLINE režim
-./test_online_mode.sh
-
-# 3. Critical test - REPLAY režim
-./test_replay_mode.sh
+# Mypy
+MYPYPATH=addon/oig-proxy python3 -m mypy addon/oig-proxy/*.py --ignore-missing-imports
 ```
 
 ## Environment variables
 
-Nové/změněné:
-- `DEVICE_ID` - volitelné (pokud není, detekuje se z BOX komunikace)
+Klíčové proměnné:
+- `DEVICE_ID` - volitelné, `AUTO` = detekce z BOX komunikace
 - `PROXY_LISTEN_HOST` - default `0.0.0.0`
 - `PROXY_LISTEN_PORT` - default `5710`
-- `PROXY_DEVICE_ID` - default `oig_proxy` (proxy/status/event senzory jdou sem)
-- `CLOUD_ACK_TIMEOUT` - Fixed: `1800.0` (s) (max čekání na ACK z cloudu v ONLINE)
-- `CLOUD_REPLAY_RATE` - Default: `1.0` (frames/s)
-- `MQTT_REPLAY_RATE` - Default: `10.0` (msg/s)
-- `CLOUD_QUEUE_MAX_SIZE` - Default: `10000`
-- `MQTT_QUEUE_MAX_SIZE` - Default: `5000`
-- `CLOUD_QUEUE_ENABLED` - Default: `false` (pokud `false`, neukládá offline frames a nespouští replay)
-- `CLEAR_CLOUD_QUEUE_ON_START` - Default: `false` (vymaže cloud frontu při startu)
+- `PROXY_MODE` - `online` / `hybrid` / `offline`
+- `CLOUD_ACK_TIMEOUT` - default `1800.0` (s) - max čekání na ACK z cloudu
+- `HYBRID_FAIL_THRESHOLD` - default `3` - počet selhání před fallbackem
+- `HYBRID_RETRY_INTERVAL` - default `60` (s)
+- `HYBRID_CONNECT_TIMEOUT` - default `5` (s)
 
 Více viz `config.py`.
 
-## Klíčové změny oproti original
+## Klíčové změny oproti monolitu
 
-1. **3 režimy** místo 2 (přidán REPLAY)
-2. **SQLite persistence** místo in-memory
-3. **Automatické transitions** (cloud down/recovered)
-4. **FIFO garantováno** během REPLAY
-5. **Callback systém** pro mode changes
-6. **Rate limiting** na replay (1 frame/s cloud, 10 msg/s MQTT)
-7. **Modulární** (8 souborů místo 1)
-
-## Next Steps
-
-- [ ] Integration test s mock servery
-- [ ] Production deployment test
-- [ ] Mode transitions logging/metrics
-- [ ] Queue age monitoring
-- [ ] Grafana dashboard pro režimy
+1. **Modulární** - 16+ souborů místo jednoho ~3850 řádků monolitu
+2. **3 režimy** - ONLINE / HYBRID / OFFLINE (HYBRID nahradil REPLAY)
+3. **Telemetrie** - anonymní usage metrics přes MQTT
+4. **Control API** - HTTP API pro ovládání z Home Assistant
+5. **Type checking** - mypy v CI, pylint 10.00/10

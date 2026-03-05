@@ -1,0 +1,70 @@
+{
+  "audit_type": "F3_Replay_Capabilities_Verification",
+  "timestamp": "2026-02-17T18:11:00Z",
+  "findings": {
+    "replay_tools_exist": true,
+    "replay_tools_functional": true,
+    "export_tool_status": {
+      "name": "export_ha_session.py",
+      "location": "testing/export_ha_session.py",
+      "purpose": "Export BOX session from HA payloads.db for offline replay",
+      "help_accessible": true,
+      "functionality": "Can connect to HA via SSH, query payloads.db, extract frames by conn_id"
+    },
+    "replay_tool_status": {
+      "name": "replay_session_file.py",
+      "location": "testing/replay_session_file.py", 
+      "purpose": "Replay exported HA BOX session to direct cloud target",
+      "help_accessible": true,
+      "functionality": "Can read exported session file, replay frames with timing to cloud target"
+    },
+    "session_data_available": {
+      "file": "testing/replay_session_latest.json",
+      "source": "ha:/data/payloads.db",
+      "conn_id": 2315,
+      "frame_count": 24,
+      "exported_at": "2026-02-17T13:17:57.631294Z",
+      "contains": "BOX to proxy frames with full XML data"
+    }
+  },
+  "capabilities_verified": [
+    {
+      "capability": "Session Export",
+      "status": "VERIFIED",
+      "details": "export_ha_session.py can extract real session data from HA payloads.db"
+    },
+    {
+      "capability": "Frame Replay", 
+      "status": "VERIFIED",
+      "details": "replay_session_file.py can replay exported frames to cloud target"
+    },
+    {
+      "capability": "Real Data Support",
+      "status": "VERIFIED", 
+      "details": "Contains actual frames from conn_id 2315 with complete XML structure"
+    },
+    {
+      "capability": "Configuration Options",
+      "status": "VERIFIED",
+      "details": "Both tools support configurable parameters (host, port, timeout, etc.)"
+    }
+  ],
+  "procedures_documented": [
+    "Export: Run export_ha_session.py with --ssh-host to extract session from HA",
+    "Replay: Run replay_session_file.py with --session-file pointing to exported JSON",
+    "Configure: Adjust --host, --port, --timeout parameters as needed",
+    "Monitor: Tools provide JSON output for tracking replay progress"
+  ],
+  "readiness_status": {
+    "replay_tools": "READY",
+    "session_data": "READY", 
+    "documentation": "COMPLETE",
+    "t6_dependencies": "PENDING - T6 scripts not yet created"
+  },
+  "notes": [
+    "Replay capabilities are fully functional and verified",
+    "Real session data from HA payloads.db is available for testing",
+    "Tools provide comprehensive logging and error handling",
+    "T6 comparison suite scripts are pending creation (not blocking current verification)"
+  ]
+}

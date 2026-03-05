@@ -1,0 +1,3 @@
+Default value test for TWIN_CLOUD_ALIGNED:
+$ cd addon/oig-proxy && python3 -c "from config import TWIN_CLOUD_ALIGNED; print(TWIN_CLOUD_ALIGNED)"
+Output: False

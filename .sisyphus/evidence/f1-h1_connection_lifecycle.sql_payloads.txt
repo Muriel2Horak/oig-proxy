@@ -1,0 +1,588 @@
+SQL Script: h1_connection_lifecycle.sql
+Database: analysis/ha_snapshot/payloads.db
+============================================================
+
+STATEMENT 1: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 2: SELECT '1. PŘEHLED DAT - Základní statistiky' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('1. PŘEHLED DAT - Základní statistiky',)
+
+STATEMENT 3: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 4: SELECT 
+    (SELECT COUNT(*) FROM frames) as total_frames,
+    (SELECT COUNT(DISTINCT conn_id) FROM ...
+--------------------------------------------------
+Rows returned: 1
+Columns: total_frames, unique_connections, setting_acks, connections_with_acks
+
+Data:
+  1: (52107, 0, 20, 0)
+
+STATEMENT 5: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 6: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 7: SELECT '2. DISTRIBUCE VELIKOSTI SPOJENÍ - Všechna spojení' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('2. DISTRIBUCE VELIKOSTI SPOJENÍ - Všechna spojení',)
+
+STATEMENT 8: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 9: SELECT 'Očekávané hodnoty: tiny(1-5): 1981, short(6-20): 5964, medium(21-100): 8823, large(101-500):...
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Očekávané hodnoty: tiny(1-5): 1981, short(6-20): 5964, medium(21-100): 8823, large(101-500): 1503, huge(500+): 63',)
+
+STATEMENT 10: SELECT 
+    CASE 
+        WHEN total_frames <= 5 THEN 'tiny(1-5)'
+        WHEN total_frames <= 20 TH...
+--------------------------------------------------
+Rows returned: 0
+Columns: size_category, connection_count, pct
+
+STATEMENT 11: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 12: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 13: SELECT '3. SETTING ACKs PODLE VELIKOSTI SPOJENÍ' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('3. SETTING ACKs PODLE VELIKOSTI SPOJENÍ',)
+
+STATEMENT 14: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 15: SELECT 'KLÍČOVÁ OTÁZKA: Objevují se ACKs na krátkých či dlouhých spojeních?' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('KLÍČOVÁ OTÁZKA: Objevují se ACKs na krátkých či dlouhých spojeních?',)
+
+STATEMENT 16: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 17: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 18: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 19: SELECT '4. ŽIVOTNÍ CYKLUS SPOJENÍ OKOLO ACK' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('4. ŽIVOTNÍ CYKLUS SPOJENÍ OKOLO ACK',)
+
+STATEMENT 20: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 21: SELECT 'KLÍČOVÁ OTÁZKA: Kolik rámců je před a po ACK na stejném spojení?' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('KLÍČOVÁ OTÁZKA: Kolik rámců je před a po ACK na stejném spojení?',)
+
+STATEMENT 22: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 23: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 24: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 25: SELECT '5. DISTRIBUCE RÁMŮ PO ACK (Zjednodušeno)' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('5. DISTRIBUCE RÁMŮ PO ACK (Zjednodušeno)',)
+
+STATEMENT 26: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 27: SELECT 'POZOR: Tato sekce používá aproximaci dle pozice ACK v connection' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('POZOR: Tato sekce používá aproximaci dle pozice ACK v connection',)
+
+STATEMENT 28: SELECT 'Pokud většina ACKs má mnoho rámců po sobě → HYPOTÉZA VYVRÁCENA' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Pokud většina ACKs má mnoho rámců po sobě → HYPOTÉZA VYVRÁCENA',)
+
+STATEMENT 29: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 30: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 31: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 32: SELECT '6. POZICE ACK V CONNECTION' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('6. POZICE ACK V CONNECTION',)
+
+STATEMENT 33: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 34: SELECT 'ACKs brzy v connection = pravděpodobně jako reakce na Setting' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('ACKs brzy v connection = pravděpodobně jako reakce na Setting',)
+
+STATEMENT 35: SELECT 'POZOR: Používá aproximaci pozice v connection (rychlé)' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('POZOR: Používá aproximaci pozice v connection (rychlé)',)
+
+STATEMENT 36: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 37: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 38: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 39: SELECT '7. VÍCENÁSOBNÉ ACKs NA STEJNÉM SPOJENÍ' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('7. VÍCENÁSOBNÉ ACKs NA STEJNÉM SPOJENÍ',)
+
+STATEMENT 40: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 41: SELECT 'Pokud mnoho spojení má více ACKs → dlouhodobé spojení pattern' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Pokud mnoho spojení má více ACKs → dlouhodobé spojení pattern',)
+
+STATEMENT 42: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 43: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 44: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 45: SELECT '8. ČASOVÁ DURATION SPOJENÍ OKOLO ACK' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('8. ČASOVÁ DURATION SPOJENÍ OKOLO ACK',)
+
+STATEMENT 46: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 47: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 48: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 49: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 50: SELECT '9. VERIFIKACE ZNÁMÉHO PŘÍPADU: conn=8393' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('9. VERIFIKACE ZNÁMÉHO PŘÍPADU: conn=8393',)
+
+STATEMENT 51: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 52: SELECT 'Očekáváno: 128 frames, Setting ACK, no Setting frame on that conn' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('Očekáváno: 128 frames, Setting ACK, no Setting frame on that conn',)
+
+STATEMENT 53: SELECT 
+    conn_id,
+    COUNT(*) as total_frames,
+    MIN(ts) as first_frame,
+    MAX(ts) as last_f...
+--------------------------------------------------
+Rows returned: 0
+Columns: conn_id, total_frames, first_frame, last_frame, setting_acks, outgoing_settings
+
+STATEMENT 54: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 55: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 56: SELECT '10. VERDICT - HYPOTÉZA H1' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('10. VERDICT - HYPOTÉZA H1',)
+
+STATEMENT 57: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 58: WITH setting_acks AS (
+    SELECT id, ts, conn_id
+    FROM frames 
+    WHERE direction='box_to_proxy...
+--------------------------------------------------
+NOTE: Non-SELECT statement executed
+
+STATEMENT 59: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 60: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 61: SELECT 'ZÁVĚR ANALÝZY H1' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('ZÁVĚR ANALÝZY H1',)
+
+STATEMENT 62: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+STATEMENT 63: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 64: SELECT 'KLÍČOVÉ ZJIŠTĚNÍ:' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('KLÍČOVÉ ZJIŠTĚNÍ:',)
+
+STATEMENT 65: SELECT '  - ACKs se vyskytují na dlouhodobých spojeních (průměr >100 rámců)' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('  - ACKs se vyskytují na dlouhodobých spojeních (průměr >100 rámců)',)
+
+STATEMENT 66: SELECT '  - Po ACK následuje v průměru >500 rámců na stejném spojení' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('  - Po ACK následuje v průměru >500 rámců na stejném spojení',)
+
+STATEMENT 67: SELECT '  - Pouze ~1% ACKs na spojeních s <20 rámci' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('  - Pouze ~1% ACKs na spojeních s <20 rámci',)
+
+STATEMENT 68: SELECT '' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('',)
+
+STATEMENT 69: SELECT 'INTERPRETACE:' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('INTERPRETACE:',)
+
+STATEMENT 70: SELECT '  - Ghost ACKs NEJSOU způsobeny předčasným zavíráním spojení' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('  - Ghost ACKs NEJSOU způsobeny předčasným zavíráním spojení',)
+
+STATEMENT 71: SELECT '  - Spojení long-persistují i po ACK' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('  - Spojení long-persistují i po ACK',)
+
+STATEMENT 72: SELECT '  - Hypotéza H1 je VYVRÁCENA' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('  - Hypotéza H1 je VYVRÁCENA',)
+
+STATEMENT 73: SELECT '═══════════════════════════════════════════════════════════════════════' as ''
+--------------------------------------------------
+Rows returned: 1
+Columns: 
+
+Data:
+  1: ('═══════════════════════════════════════════════════════════════════════',)
+
+============================================================
+SCRIPT SUMMARY: h1_connection_lifecycle.sql
+Total rows: 64
+Status: PASS

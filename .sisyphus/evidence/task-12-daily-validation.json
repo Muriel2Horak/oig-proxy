@@ -1,0 +1,135 @@
+{
+  "validation_timestamp": "2026-02-19T22:37:22.618333+00:00",
+  "db_path": "analysis/ha_snapshot/payloads_ha_full.db",
+  "thresholds": {
+    "min_frame_count": 1000,
+    "required_signals": [
+      "IsNewSet",
+      "IsNewWeather",
+      "IsNewFW",
+      "END",
+      "ACK"
+    ],
+    "max_null_rate": 0.01,
+    "null_rate_columns": [
+      "ts",
+      "table_name",
+      "direction"
+    ],
+    "per_column_overrides": {}
+  },
+  "overall": "PASS",
+  "checks": [
+    {
+      "check": "schema_integrity",
+      "status": "PASS",
+      "details": {
+        "required_columns": [
+          "id",
+          "ts",
+          "device_id",
+          "table_name",
+          "direction"
+        ],
+        "existing_columns": [
+          "conn_id",
+          "device_id",
+          "direction",
+          "id",
+          "length",
+          "parsed",
+          "peer",
+          "raw",
+          "raw_b64",
+          "table_name",
+          "ts"
+        ],
+        "missing_columns": []
+      },
+      "message": "All 5 required columns present"
+    },
+    {
+      "check": "min_frame_count",
+      "status": "PASS",
+      "details": {
+        "total_frames": 871952,
+        "threshold": 1000
+      },
+      "message": "Frame count 871952 >= threshold 1000"
+    },
+    {
+      "check": "required_signal_classes",
+      "status": "PASS",
+      "details": {
+        "required_signals": [
+          "IsNewSet",
+          "IsNewWeather",
+          "IsNewFW",
+          "END",
+          "ACK"
+        ],
+        "found_signals": [
+          "ACK",
+          "END",
+          "IsNewFW",
+          "IsNewSet",
+          "IsNewWeather"
+        ],
+        "missing_signals": [],
+        "signal_counts": {
+          "IsNewSet": 53060,
+          "IsNewWeather": 25696,
+          "IsNewFW": 26515,
+          "END": 26932,
+          "ACK": 51128
+        }
+      },
+      "message": "All 5 required signals present"
+    },
+    {
+      "check": "null_rate",
+      "status": "PASS",
+      "details": {
+        "total_frames": 871952,
+        "global_max_null_rate": 0.01,
+        "columns": {
+          "ts": {
+            "status": "PASS",
+            "null_count": 0,
+            "null_rate": 0.0,
+            "null_rate_pct": 0.0,
+            "threshold": 0.01,
+            "threshold_pct": 1.0,
+            "message": "null rate 0.0000% <= 1.0000%"
+          },
+          "table_name": {
+            "status": "PASS",
+            "null_count": 5,
+            "null_rate": 6e-06,
+            "null_rate_pct": 0.0006,
+            "threshold": 0.01,
+            "threshold_pct": 1.0,
+            "message": "null rate 0.0006% <= 1.0000%"
+          },
+          "direction": {
+            "status": "PASS",
+            "null_count": 0,
+            "null_rate": 0.0,
+            "null_rate_pct": 0.0,
+            "threshold": 0.01,
+            "threshold_pct": 1.0,
+            "message": "null rate 0.0000% <= 1.0000%"
+          }
+        }
+      },
+      "message": "All 3 columns within null-rate threshold (<= 1.00%)"
+    }
+  ],
+  "summary": {
+    "total_checks": 4,
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0
+  },
+  "error": null
+}

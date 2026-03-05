@@ -1,0 +1,2163 @@
+{
+  "metadata": {
+    "generated_at": "2026-02-19T22:52:36.241381+00:00",
+    "task": "task-16-drift-report",
+    "version": "1.0",
+    "source_db": "analysis/ha_snapshot/payloads_ha_full.db",
+    "evidence_base": ".sisyphus/evidence",
+    "total_days_in_db": 38,
+    "stable_days_count": 37,
+    "partial_days": [
+      "2026-02-01"
+    ],
+    "data_range": {
+      "first_day": "2025-12-18",
+      "last_day": "2026-02-01"
+    }
+  },
+  "daily_summaries": [
+    {
+      "day": "2025-12-18",
+      "frame_count": 4458,
+      "conn_count": 17,
+      "avg_frame_length": 250.87,
+      "cloud_response_ratio": 0.9937,
+      "signal_shares": {
+        "ACK": {
+          "count": 325,
+          "pct_of_day": 7.29
+        },
+        "ISNEWSET": {
+          "count": 192,
+          "pct_of_day": 4.31
+        },
+        "ISNEWWEATHER": {
+          "count": 20,
+          "pct_of_day": 0.45
+        },
+        "ISNEWFW": {
+          "count": 22,
+          "pct_of_day": 0.49
+        },
+        "END": {
+          "count": 8,
+          "pct_of_day": 0.18
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 2236,
+          "pct_of_day": 50.16
+        },
+        "cloud_frames": {
+          "count": 2222,
+          "pct_of_day": 49.84
+        },
+        "proxy_frames": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "flags": [
+        "low_activity"
+      ]
+    },
+    {
+      "day": "2025-12-19",
+      "frame_count": 21528,
+      "conn_count": 113,
+      "avg_frame_length": 287.58,
+      "cloud_response_ratio": 0.9902,
+      "signal_shares": {
+        "ACK": {
+          "count": 6395,
+          "pct_of_day": 29.71
+        },
+        "ISNEWSET": {
+          "count": 1117,
+          "pct_of_day": 5.19
+        },
+        "ISNEWWEATHER": {
+          "count": 396,
+          "pct_of_day": 1.84
+        },
+        "ISNEWFW": {
+          "count": 272,
+          "pct_of_day": 1.26
+        },
+        "END": {
+          "count": 72,
+          "pct_of_day": 0.33
+        },
+        "NACK": {
+          "count": 2,
+          "pct_of_day": 0.01
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 10817,
+          "pct_of_day": 50.25
+        },
+        "cloud_frames": {
+          "count": 10711,
+          "pct_of_day": 49.75
+        },
+        "proxy_frames": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-20",
+      "frame_count": 21352,
+      "conn_count": 508,
+      "avg_frame_length": 274.54,
+      "cloud_response_ratio": 0.7909,
+      "signal_shares": {
+        "ACK": {
+          "count": 8355,
+          "pct_of_day": 39.13
+        },
+        "ISNEWSET": {
+          "count": 671,
+          "pct_of_day": 3.14
+        },
+        "ISNEWWEATHER": {
+          "count": 524,
+          "pct_of_day": 2.45
+        },
+        "ISNEWFW": {
+          "count": 435,
+          "pct_of_day": 2.04
+        },
+        "END": {
+          "count": 339,
+          "pct_of_day": 1.59
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9574,
+          "pct_of_day": 44.84
+        },
+        "cloud_frames": {
+          "count": 7572,
+          "pct_of_day": 35.46
+        },
+        "proxy_frames": {
+          "count": 4206,
+          "pct_of_day": 19.7
+        }
+      },
+      "flags": [
+        "low_cloud_response_ratio"
+      ]
+    },
+    {
+      "day": "2025-12-21",
+      "frame_count": 25875,
+      "conn_count": 553,
+      "avg_frame_length": 183.58,
+      "cloud_response_ratio": 0.6446,
+      "signal_shares": {
+        "ACK": {
+          "count": 458,
+          "pct_of_day": 1.77
+        },
+        "ISNEWSET": {
+          "count": 2221,
+          "pct_of_day": 8.58
+        },
+        "ISNEWWEATHER": {
+          "count": 354,
+          "pct_of_day": 1.37
+        },
+        "ISNEWFW": {
+          "count": 780,
+          "pct_of_day": 3.01
+        },
+        "END": {
+          "count": 576,
+          "pct_of_day": 2.23
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9557,
+          "pct_of_day": 36.94
+        },
+        "cloud_frames": {
+          "count": 6160,
+          "pct_of_day": 23.81
+        },
+        "proxy_frames": {
+          "count": 10158,
+          "pct_of_day": 39.26
+        }
+      },
+      "flags": [
+        "low_cloud_response_ratio"
+      ]
+    },
+    {
+      "day": "2025-12-22",
+      "frame_count": 24592,
+      "conn_count": 1093,
+      "avg_frame_length": 185.24,
+      "cloud_response_ratio": 0.9035,
+      "signal_shares": {
+        "ACK": {
+          "count": 1093,
+          "pct_of_day": 4.44
+        },
+        "ISNEWSET": {
+          "count": 1572,
+          "pct_of_day": 6.39
+        },
+        "ISNEWWEATHER": {
+          "count": 759,
+          "pct_of_day": 3.09
+        },
+        "ISNEWFW": {
+          "count": 804,
+          "pct_of_day": 3.27
+        },
+        "END": {
+          "count": 771,
+          "pct_of_day": 3.14
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8702,
+          "pct_of_day": 35.39
+        },
+        "cloud_frames": {
+          "count": 7862,
+          "pct_of_day": 31.97
+        },
+        "proxy_frames": {
+          "count": 8028,
+          "pct_of_day": 32.64
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-23",
+      "frame_count": 25032,
+      "conn_count": 1621,
+      "avg_frame_length": 188.46,
+      "cloud_response_ratio": 0.9041,
+      "signal_shares": {
+        "ACK": {
+          "count": 996,
+          "pct_of_day": 3.98
+        },
+        "ISNEWSET": {
+          "count": 1400,
+          "pct_of_day": 5.59
+        },
+        "ISNEWWEATHER": {
+          "count": 694,
+          "pct_of_day": 2.77
+        },
+        "ISNEWFW": {
+          "count": 729,
+          "pct_of_day": 2.91
+        },
+        "END": {
+          "count": 758,
+          "pct_of_day": 3.03
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8882,
+          "pct_of_day": 35.48
+        },
+        "cloud_frames": {
+          "count": 8030,
+          "pct_of_day": 32.08
+        },
+        "proxy_frames": {
+          "count": 8120,
+          "pct_of_day": 32.44
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-24",
+      "frame_count": 25357,
+      "conn_count": 1132,
+      "avg_frame_length": 188.66,
+      "cloud_response_ratio": 0.906,
+      "signal_shares": {
+        "ACK": {
+          "count": 1045,
+          "pct_of_day": 4.12
+        },
+        "ISNEWSET": {
+          "count": 1302,
+          "pct_of_day": 5.13
+        },
+        "ISNEWWEATHER": {
+          "count": 667,
+          "pct_of_day": 2.63
+        },
+        "ISNEWFW": {
+          "count": 740,
+          "pct_of_day": 2.92
+        },
+        "END": {
+          "count": 726,
+          "pct_of_day": 2.86
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9028,
+          "pct_of_day": 35.6
+        },
+        "cloud_frames": {
+          "count": 8179,
+          "pct_of_day": 32.26
+        },
+        "proxy_frames": {
+          "count": 8150,
+          "pct_of_day": 32.14
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-25",
+      "frame_count": 24695,
+      "conn_count": 1470,
+      "avg_frame_length": 187.41,
+      "cloud_response_ratio": 0.8991,
+      "signal_shares": {
+        "ACK": {
+          "count": 1022,
+          "pct_of_day": 4.14
+        },
+        "ISNEWSET": {
+          "count": 1405,
+          "pct_of_day": 5.69
+        },
+        "ISNEWWEATHER": {
+          "count": 727,
+          "pct_of_day": 2.94
+        },
+        "ISNEWFW": {
+          "count": 727,
+          "pct_of_day": 2.94
+        },
+        "END": {
+          "count": 829,
+          "pct_of_day": 3.36
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8730,
+          "pct_of_day": 35.35
+        },
+        "cloud_frames": {
+          "count": 7849,
+          "pct_of_day": 31.78
+        },
+        "proxy_frames": {
+          "count": 8116,
+          "pct_of_day": 32.86
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-26",
+      "frame_count": 25474,
+      "conn_count": 1576,
+      "avg_frame_length": 189.29,
+      "cloud_response_ratio": 0.9143,
+      "signal_shares": {
+        "ACK": {
+          "count": 922,
+          "pct_of_day": 3.62
+        },
+        "ISNEWSET": {
+          "count": 1580,
+          "pct_of_day": 6.2
+        },
+        "ISNEWWEATHER": {
+          "count": 634,
+          "pct_of_day": 2.49
+        },
+        "ISNEWFW": {
+          "count": 695,
+          "pct_of_day": 2.73
+        },
+        "END": {
+          "count": 717,
+          "pct_of_day": 2.81
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9028,
+          "pct_of_day": 35.44
+        },
+        "cloud_frames": {
+          "count": 8254,
+          "pct_of_day": 32.4
+        },
+        "proxy_frames": {
+          "count": 8192,
+          "pct_of_day": 32.16
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-27",
+      "frame_count": 25476,
+      "conn_count": 810,
+      "avg_frame_length": 187.47,
+      "cloud_response_ratio": 0.9215,
+      "signal_shares": {
+        "ACK": {
+          "count": 822,
+          "pct_of_day": 3.23
+        },
+        "ISNEWSET": {
+          "count": 1986,
+          "pct_of_day": 7.8
+        },
+        "ISNEWWEATHER": {
+          "count": 586,
+          "pct_of_day": 2.3
+        },
+        "ISNEWFW": {
+          "count": 612,
+          "pct_of_day": 2.4
+        },
+        "END": {
+          "count": 673,
+          "pct_of_day": 2.64
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9016,
+          "pct_of_day": 35.39
+        },
+        "cloud_frames": {
+          "count": 8308,
+          "pct_of_day": 32.61
+        },
+        "proxy_frames": {
+          "count": 8152,
+          "pct_of_day": 32.0
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-28",
+      "frame_count": 26279,
+      "conn_count": 1007,
+      "avg_frame_length": 188.92,
+      "cloud_response_ratio": 0.9329,
+      "signal_shares": {
+        "ACK": {
+          "count": 807,
+          "pct_of_day": 3.07
+        },
+        "ISNEWSET": {
+          "count": 2173,
+          "pct_of_day": 8.27
+        },
+        "ISNEWWEATHER": {
+          "count": 503,
+          "pct_of_day": 1.91
+        },
+        "ISNEWFW": {
+          "count": 567,
+          "pct_of_day": 2.16
+        },
+        "END": {
+          "count": 558,
+          "pct_of_day": 2.12
+        },
+        "NACK": {
+          "count": 2,
+          "pct_of_day": 0.01
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9339,
+          "pct_of_day": 35.54
+        },
+        "cloud_frames": {
+          "count": 8712,
+          "pct_of_day": 33.15
+        },
+        "proxy_frames": {
+          "count": 8228,
+          "pct_of_day": 31.31
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-29",
+      "frame_count": 24536,
+      "conn_count": 1788,
+      "avg_frame_length": 187.66,
+      "cloud_response_ratio": 0.9048,
+      "signal_shares": {
+        "ACK": {
+          "count": 1165,
+          "pct_of_day": 4.75
+        },
+        "ISNEWSET": {
+          "count": 1500,
+          "pct_of_day": 6.11
+        },
+        "ISNEWWEATHER": {
+          "count": 671,
+          "pct_of_day": 2.73
+        },
+        "ISNEWFW": {
+          "count": 740,
+          "pct_of_day": 3.02
+        },
+        "END": {
+          "count": 746,
+          "pct_of_day": 3.04
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8663,
+          "pct_of_day": 35.31
+        },
+        "cloud_frames": {
+          "count": 7838,
+          "pct_of_day": 31.94
+        },
+        "proxy_frames": {
+          "count": 8035,
+          "pct_of_day": 32.75
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-30",
+      "frame_count": 24502,
+      "conn_count": 1798,
+      "avg_frame_length": 189.74,
+      "cloud_response_ratio": 0.9047,
+      "signal_shares": {
+        "ACK": {
+          "count": 1130,
+          "pct_of_day": 4.61
+        },
+        "ISNEWSET": {
+          "count": 1096,
+          "pct_of_day": 4.47
+        },
+        "ISNEWWEATHER": {
+          "count": 752,
+          "pct_of_day": 3.07
+        },
+        "ISNEWFW": {
+          "count": 780,
+          "pct_of_day": 3.18
+        },
+        "END": {
+          "count": 776,
+          "pct_of_day": 3.17
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8642,
+          "pct_of_day": 35.27
+        },
+        "cloud_frames": {
+          "count": 7818,
+          "pct_of_day": 31.91
+        },
+        "proxy_frames": {
+          "count": 8042,
+          "pct_of_day": 32.82
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2025-12-31",
+      "frame_count": 24637,
+      "conn_count": 1859,
+      "avg_frame_length": 185.37,
+      "cloud_response_ratio": 0.898,
+      "signal_shares": {
+        "ACK": {
+          "count": 1040,
+          "pct_of_day": 4.22
+        },
+        "ISNEWSET": {
+          "count": 1599,
+          "pct_of_day": 6.49
+        },
+        "ISNEWWEATHER": {
+          "count": 750,
+          "pct_of_day": 3.04
+        },
+        "ISNEWFW": {
+          "count": 795,
+          "pct_of_day": 3.23
+        },
+        "END": {
+          "count": 838,
+          "pct_of_day": 3.4
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8719,
+          "pct_of_day": 35.39
+        },
+        "cloud_frames": {
+          "count": 7830,
+          "pct_of_day": 31.78
+        },
+        "proxy_frames": {
+          "count": 8088,
+          "pct_of_day": 32.83
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-01",
+      "frame_count": 25181,
+      "conn_count": 1822,
+      "avg_frame_length": 187.54,
+      "cloud_response_ratio": 0.9037,
+      "signal_shares": {
+        "ACK": {
+          "count": 1067,
+          "pct_of_day": 4.24
+        },
+        "ISNEWSET": {
+          "count": 1454,
+          "pct_of_day": 5.77
+        },
+        "ISNEWWEATHER": {
+          "count": 762,
+          "pct_of_day": 3.03
+        },
+        "ISNEWFW": {
+          "count": 742,
+          "pct_of_day": 2.95
+        },
+        "END": {
+          "count": 816,
+          "pct_of_day": 3.24
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8921,
+          "pct_of_day": 35.43
+        },
+        "cloud_frames": {
+          "count": 8062,
+          "pct_of_day": 32.02
+        },
+        "proxy_frames": {
+          "count": 8198,
+          "pct_of_day": 32.56
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-02",
+      "frame_count": 23753,
+      "conn_count": 1504,
+      "avg_frame_length": 187.47,
+      "cloud_response_ratio": 0.9041,
+      "signal_shares": {
+        "ACK": {
+          "count": 971,
+          "pct_of_day": 4.09
+        },
+        "ISNEWSET": {
+          "count": 1471,
+          "pct_of_day": 6.19
+        },
+        "ISNEWWEATHER": {
+          "count": 690,
+          "pct_of_day": 2.9
+        },
+        "ISNEWFW": {
+          "count": 689,
+          "pct_of_day": 2.9
+        },
+        "END": {
+          "count": 749,
+          "pct_of_day": 3.15
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8418,
+          "pct_of_day": 35.44
+        },
+        "cloud_frames": {
+          "count": 7611,
+          "pct_of_day": 32.04
+        },
+        "proxy_frames": {
+          "count": 7724,
+          "pct_of_day": 32.52
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-03",
+      "frame_count": 24418,
+      "conn_count": 976,
+      "avg_frame_length": 187.23,
+      "cloud_response_ratio": 0.9065,
+      "signal_shares": {
+        "ACK": {
+          "count": 1055,
+          "pct_of_day": 4.32
+        },
+        "ISNEWSET": {
+          "count": 1547,
+          "pct_of_day": 6.34
+        },
+        "ISNEWWEATHER": {
+          "count": 712,
+          "pct_of_day": 2.92
+        },
+        "ISNEWFW": {
+          "count": 754,
+          "pct_of_day": 3.09
+        },
+        "END": {
+          "count": 765,
+          "pct_of_day": 3.13
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8705,
+          "pct_of_day": 35.65
+        },
+        "cloud_frames": {
+          "count": 7891,
+          "pct_of_day": 32.32
+        },
+        "proxy_frames": {
+          "count": 7822,
+          "pct_of_day": 32.03
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-04",
+      "frame_count": 24674,
+      "conn_count": 1255,
+      "avg_frame_length": 186.04,
+      "cloud_response_ratio": 0.8989,
+      "signal_shares": {
+        "ACK": {
+          "count": 1116,
+          "pct_of_day": 4.52
+        },
+        "ISNEWSET": {
+          "count": 1717,
+          "pct_of_day": 6.96
+        },
+        "ISNEWWEATHER": {
+          "count": 794,
+          "pct_of_day": 3.22
+        },
+        "ISNEWFW": {
+          "count": 742,
+          "pct_of_day": 3.01
+        },
+        "END": {
+          "count": 839,
+          "pct_of_day": 3.4
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8736,
+          "pct_of_day": 35.41
+        },
+        "cloud_frames": {
+          "count": 7853,
+          "pct_of_day": 31.83
+        },
+        "proxy_frames": {
+          "count": 8085,
+          "pct_of_day": 32.77
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-05",
+      "frame_count": 24887,
+      "conn_count": 1827,
+      "avg_frame_length": 185.46,
+      "cloud_response_ratio": 0.8964,
+      "signal_shares": {
+        "ACK": {
+          "count": 954,
+          "pct_of_day": 3.83
+        },
+        "ISNEWSET": {
+          "count": 1737,
+          "pct_of_day": 6.98
+        },
+        "ISNEWWEATHER": {
+          "count": 692,
+          "pct_of_day": 2.78
+        },
+        "ISNEWFW": {
+          "count": 786,
+          "pct_of_day": 3.16
+        },
+        "END": {
+          "count": 823,
+          "pct_of_day": 3.31
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8850,
+          "pct_of_day": 35.56
+        },
+        "cloud_frames": {
+          "count": 7933,
+          "pct_of_day": 31.88
+        },
+        "proxy_frames": {
+          "count": 8104,
+          "pct_of_day": 32.56
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-06",
+      "frame_count": 24860,
+      "conn_count": 1821,
+      "avg_frame_length": 186.6,
+      "cloud_response_ratio": 0.9033,
+      "signal_shares": {
+        "ACK": {
+          "count": 1115,
+          "pct_of_day": 4.49
+        },
+        "ISNEWSET": {
+          "count": 1635,
+          "pct_of_day": 6.58
+        },
+        "ISNEWWEATHER": {
+          "count": 740,
+          "pct_of_day": 2.98
+        },
+        "ISNEWFW": {
+          "count": 777,
+          "pct_of_day": 3.13
+        },
+        "END": {
+          "count": 797,
+          "pct_of_day": 3.21
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8788,
+          "pct_of_day": 35.35
+        },
+        "cloud_frames": {
+          "count": 7938,
+          "pct_of_day": 31.93
+        },
+        "proxy_frames": {
+          "count": 8134,
+          "pct_of_day": 32.72
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-07",
+      "frame_count": 25003,
+      "conn_count": 1830,
+      "avg_frame_length": 186.97,
+      "cloud_response_ratio": 0.9029,
+      "signal_shares": {
+        "ACK": {
+          "count": 1217,
+          "pct_of_day": 4.87
+        },
+        "ISNEWSET": {
+          "count": 1647,
+          "pct_of_day": 6.59
+        },
+        "ISNEWWEATHER": {
+          "count": 778,
+          "pct_of_day": 3.11
+        },
+        "ISNEWFW": {
+          "count": 770,
+          "pct_of_day": 3.08
+        },
+        "END": {
+          "count": 801,
+          "pct_of_day": 3.2
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8849,
+          "pct_of_day": 35.39
+        },
+        "cloud_frames": {
+          "count": 7990,
+          "pct_of_day": 31.96
+        },
+        "proxy_frames": {
+          "count": 8164,
+          "pct_of_day": 32.65
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-08",
+      "frame_count": 24797,
+      "conn_count": 1883,
+      "avg_frame_length": 187.65,
+      "cloud_response_ratio": 0.9038,
+      "signal_shares": {
+        "ACK": {
+          "count": 1128,
+          "pct_of_day": 4.55
+        },
+        "ISNEWSET": {
+          "count": 1493,
+          "pct_of_day": 6.02
+        },
+        "ISNEWWEATHER": {
+          "count": 774,
+          "pct_of_day": 3.12
+        },
+        "ISNEWFW": {
+          "count": 766,
+          "pct_of_day": 3.09
+        },
+        "END": {
+          "count": 803,
+          "pct_of_day": 3.24
+        },
+        "NACK": {
+          "count": 3,
+          "pct_of_day": 0.01
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8760,
+          "pct_of_day": 35.33
+        },
+        "cloud_frames": {
+          "count": 7917,
+          "pct_of_day": 31.93
+        },
+        "proxy_frames": {
+          "count": 8120,
+          "pct_of_day": 32.75
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-09",
+      "frame_count": 25303,
+      "conn_count": 1776,
+      "avg_frame_length": 188.91,
+      "cloud_response_ratio": 0.9024,
+      "signal_shares": {
+        "ACK": {
+          "count": 1200,
+          "pct_of_day": 4.74
+        },
+        "ISNEWSET": {
+          "count": 1609,
+          "pct_of_day": 6.36
+        },
+        "ISNEWWEATHER": {
+          "count": 757,
+          "pct_of_day": 2.99
+        },
+        "ISNEWFW": {
+          "count": 705,
+          "pct_of_day": 2.79
+        },
+        "END": {
+          "count": 785,
+          "pct_of_day": 3.1
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 9000,
+          "pct_of_day": 35.57
+        },
+        "cloud_frames": {
+          "count": 8122,
+          "pct_of_day": 32.1
+        },
+        "proxy_frames": {
+          "count": 8181,
+          "pct_of_day": 32.33
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-10",
+      "frame_count": 23180,
+      "conn_count": 1640,
+      "avg_frame_length": 187.84,
+      "cloud_response_ratio": 0.901,
+      "signal_shares": {
+        "ACK": {
+          "count": 1086,
+          "pct_of_day": 4.69
+        },
+        "ISNEWSET": {
+          "count": 1448,
+          "pct_of_day": 6.25
+        },
+        "ISNEWWEATHER": {
+          "count": 751,
+          "pct_of_day": 3.24
+        },
+        "ISNEWFW": {
+          "count": 709,
+          "pct_of_day": 3.06
+        },
+        "END": {
+          "count": 760,
+          "pct_of_day": 3.28
+        },
+        "NACK": {
+          "count": 2,
+          "pct_of_day": 0.01
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8231,
+          "pct_of_day": 35.51
+        },
+        "cloud_frames": {
+          "count": 7416,
+          "pct_of_day": 31.99
+        },
+        "proxy_frames": {
+          "count": 7533,
+          "pct_of_day": 32.5
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-11",
+      "frame_count": 24675,
+      "conn_count": 1899,
+      "avg_frame_length": 185.76,
+      "cloud_response_ratio": 0.8996,
+      "signal_shares": {
+        "ACK": {
+          "count": 1167,
+          "pct_of_day": 4.73
+        },
+        "ISNEWSET": {
+          "count": 1855,
+          "pct_of_day": 7.52
+        },
+        "ISNEWWEATHER": {
+          "count": 767,
+          "pct_of_day": 3.11
+        },
+        "ISNEWFW": {
+          "count": 779,
+          "pct_of_day": 3.16
+        },
+        "END": {
+          "count": 824,
+          "pct_of_day": 3.34
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8736,
+          "pct_of_day": 35.4
+        },
+        "cloud_frames": {
+          "count": 7859,
+          "pct_of_day": 31.85
+        },
+        "proxy_frames": {
+          "count": 8080,
+          "pct_of_day": 32.75
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-12",
+      "frame_count": 24572,
+      "conn_count": 1863,
+      "avg_frame_length": 186.7,
+      "cloud_response_ratio": 0.9072,
+      "signal_shares": {
+        "ACK": {
+          "count": 1184,
+          "pct_of_day": 4.82
+        },
+        "ISNEWSET": {
+          "count": 1780,
+          "pct_of_day": 7.24
+        },
+        "ISNEWWEATHER": {
+          "count": 772,
+          "pct_of_day": 3.14
+        },
+        "ISNEWFW": {
+          "count": 774,
+          "pct_of_day": 3.15
+        },
+        "END": {
+          "count": 755,
+          "pct_of_day": 3.07
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8703,
+          "pct_of_day": 35.42
+        },
+        "cloud_frames": {
+          "count": 7895,
+          "pct_of_day": 32.13
+        },
+        "proxy_frames": {
+          "count": 7974,
+          "pct_of_day": 32.45
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-13",
+      "frame_count": 24932,
+      "conn_count": 1823,
+      "avg_frame_length": 185.79,
+      "cloud_response_ratio": 0.904,
+      "signal_shares": {
+        "ACK": {
+          "count": 1151,
+          "pct_of_day": 4.62
+        },
+        "ISNEWSET": {
+          "count": 1796,
+          "pct_of_day": 7.2
+        },
+        "ISNEWWEATHER": {
+          "count": 789,
+          "pct_of_day": 3.16
+        },
+        "ISNEWFW": {
+          "count": 790,
+          "pct_of_day": 3.17
+        },
+        "END": {
+          "count": 810,
+          "pct_of_day": 3.25
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8816,
+          "pct_of_day": 35.36
+        },
+        "cloud_frames": {
+          "count": 7970,
+          "pct_of_day": 31.97
+        },
+        "proxy_frames": {
+          "count": 8146,
+          "pct_of_day": 32.67
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-14",
+      "frame_count": 24959,
+      "conn_count": 1876,
+      "avg_frame_length": 186.58,
+      "cloud_response_ratio": 0.9049,
+      "signal_shares": {
+        "ACK": {
+          "count": 1167,
+          "pct_of_day": 4.68
+        },
+        "ISNEWSET": {
+          "count": 1739,
+          "pct_of_day": 6.97
+        },
+        "ISNEWWEATHER": {
+          "count": 779,
+          "pct_of_day": 3.12
+        },
+        "ISNEWFW": {
+          "count": 769,
+          "pct_of_day": 3.08
+        },
+        "END": {
+          "count": 793,
+          "pct_of_day": 3.18
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8834,
+          "pct_of_day": 35.39
+        },
+        "cloud_frames": {
+          "count": 7994,
+          "pct_of_day": 32.03
+        },
+        "proxy_frames": {
+          "count": 8131,
+          "pct_of_day": 32.58
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-15",
+      "frame_count": 24948,
+      "conn_count": 1822,
+      "avg_frame_length": 185.72,
+      "cloud_response_ratio": 0.9024,
+      "signal_shares": {
+        "ACK": {
+          "count": 985,
+          "pct_of_day": 3.95
+        },
+        "ISNEWSET": {
+          "count": 1718,
+          "pct_of_day": 6.89
+        },
+        "ISNEWWEATHER": {
+          "count": 723,
+          "pct_of_day": 2.9
+        },
+        "ISNEWFW": {
+          "count": 735,
+          "pct_of_day": 2.95
+        },
+        "END": {
+          "count": 803,
+          "pct_of_day": 3.22
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8839,
+          "pct_of_day": 35.43
+        },
+        "cloud_frames": {
+          "count": 7976,
+          "pct_of_day": 31.97
+        },
+        "proxy_frames": {
+          "count": 8133,
+          "pct_of_day": 32.6
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-16",
+      "frame_count": 24508,
+      "conn_count": 1966,
+      "avg_frame_length": 188.18,
+      "cloud_response_ratio": 0.8905,
+      "signal_shares": {
+        "ACK": {
+          "count": 1229,
+          "pct_of_day": 5.01
+        },
+        "ISNEWSET": {
+          "count": 1221,
+          "pct_of_day": 4.98
+        },
+        "ISNEWWEATHER": {
+          "count": 830,
+          "pct_of_day": 3.39
+        },
+        "ISNEWFW": {
+          "count": 862,
+          "pct_of_day": 3.52
+        },
+        "END": {
+          "count": 922,
+          "pct_of_day": 3.76
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8700,
+          "pct_of_day": 35.5
+        },
+        "cloud_frames": {
+          "count": 7747,
+          "pct_of_day": 31.61
+        },
+        "proxy_frames": {
+          "count": 8061,
+          "pct_of_day": 32.89
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-17",
+      "frame_count": 24483,
+      "conn_count": 1960,
+      "avg_frame_length": 188.23,
+      "cloud_response_ratio": 0.8915,
+      "signal_shares": {
+        "ACK": {
+          "count": 1174,
+          "pct_of_day": 4.8
+        },
+        "ISNEWSET": {
+          "count": 1251,
+          "pct_of_day": 5.11
+        },
+        "ISNEWWEATHER": {
+          "count": 802,
+          "pct_of_day": 3.28
+        },
+        "ISNEWFW": {
+          "count": 870,
+          "pct_of_day": 3.55
+        },
+        "END": {
+          "count": 868,
+          "pct_of_day": 3.55
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8686,
+          "pct_of_day": 35.48
+        },
+        "cloud_frames": {
+          "count": 7744,
+          "pct_of_day": 31.63
+        },
+        "proxy_frames": {
+          "count": 8053,
+          "pct_of_day": 32.89
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-18",
+      "frame_count": 24764,
+      "conn_count": 1171,
+      "avg_frame_length": 184.76,
+      "cloud_response_ratio": 0.9144,
+      "signal_shares": {
+        "ACK": {
+          "count": 869,
+          "pct_of_day": 3.51
+        },
+        "ISNEWSET": {
+          "count": 2154,
+          "pct_of_day": 8.7
+        },
+        "ISNEWWEATHER": {
+          "count": 723,
+          "pct_of_day": 2.92
+        },
+        "ISNEWFW": {
+          "count": 667,
+          "pct_of_day": 2.69
+        },
+        "END": {
+          "count": 666,
+          "pct_of_day": 2.69
+        },
+        "NACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8759,
+          "pct_of_day": 35.37
+        },
+        "cloud_frames": {
+          "count": 8009,
+          "pct_of_day": 32.34
+        },
+        "proxy_frames": {
+          "count": 7996,
+          "pct_of_day": 32.29
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-19",
+      "frame_count": 22914,
+      "conn_count": 1673,
+      "avg_frame_length": 182.76,
+      "cloud_response_ratio": 0.8711,
+      "signal_shares": {
+        "ACK": {
+          "count": 1039,
+          "pct_of_day": 4.53
+        },
+        "ISNEWSET": {
+          "count": 908,
+          "pct_of_day": 3.96
+        },
+        "ISNEWWEATHER": {
+          "count": 954,
+          "pct_of_day": 4.16
+        },
+        "ISNEWFW": {
+          "count": 964,
+          "pct_of_day": 4.21
+        },
+        "END": {
+          "count": 934,
+          "pct_of_day": 4.08
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8101,
+          "pct_of_day": 35.35
+        },
+        "cloud_frames": {
+          "count": 7057,
+          "pct_of_day": 30.8
+        },
+        "proxy_frames": {
+          "count": 7756,
+          "pct_of_day": 33.85
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-20",
+      "frame_count": 23885,
+      "conn_count": 2103,
+      "avg_frame_length": 190.09,
+      "cloud_response_ratio": 0.8788,
+      "signal_shares": {
+        "ACK": {
+          "count": 1540,
+          "pct_of_day": 6.45
+        },
+        "ISNEWSET": {
+          "count": 867,
+          "pct_of_day": 3.63
+        },
+        "ISNEWWEATHER": {
+          "count": 937,
+          "pct_of_day": 3.92
+        },
+        "ISNEWFW": {
+          "count": 916,
+          "pct_of_day": 3.84
+        },
+        "END": {
+          "count": 962,
+          "pct_of_day": 4.03
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8467,
+          "pct_of_day": 35.45
+        },
+        "cloud_frames": {
+          "count": 7441,
+          "pct_of_day": 31.15
+        },
+        "proxy_frames": {
+          "count": 7977,
+          "pct_of_day": 33.4
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-21",
+      "frame_count": 24000,
+      "conn_count": 2057,
+      "avg_frame_length": 190.23,
+      "cloud_response_ratio": 0.8653,
+      "signal_shares": {
+        "ACK": {
+          "count": 1260,
+          "pct_of_day": 5.25
+        },
+        "ISNEWSET": {
+          "count": 783,
+          "pct_of_day": 3.26
+        },
+        "ISNEWWEATHER": {
+          "count": 869,
+          "pct_of_day": 3.62
+        },
+        "ISNEWFW": {
+          "count": 926,
+          "pct_of_day": 3.86
+        },
+        "END": {
+          "count": 933,
+          "pct_of_day": 3.89
+        },
+        "NACK": {
+          "count": 6,
+          "pct_of_day": 0.03
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8562,
+          "pct_of_day": 35.67
+        },
+        "cloud_frames": {
+          "count": 7409,
+          "pct_of_day": 30.87
+        },
+        "proxy_frames": {
+          "count": 8029,
+          "pct_of_day": 33.45
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-22",
+      "frame_count": 23468,
+      "conn_count": 2156,
+      "avg_frame_length": 187.2,
+      "cloud_response_ratio": 0.8801,
+      "signal_shares": {
+        "ACK": {
+          "count": 1298,
+          "pct_of_day": 5.53
+        },
+        "ISNEWSET": {
+          "count": 967,
+          "pct_of_day": 4.12
+        },
+        "ISNEWWEATHER": {
+          "count": 856,
+          "pct_of_day": 3.65
+        },
+        "ISNEWFW": {
+          "count": 948,
+          "pct_of_day": 4.04
+        },
+        "END": {
+          "count": 925,
+          "pct_of_day": 3.94
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 8291,
+          "pct_of_day": 35.33
+        },
+        "cloud_frames": {
+          "count": 7297,
+          "pct_of_day": 31.09
+        },
+        "proxy_frames": {
+          "count": 7880,
+          "pct_of_day": 33.58
+        }
+      },
+      "flags": []
+    },
+    {
+      "day": "2026-01-23",
+      "frame_count": 9993,
+      "conn_count": 967,
+      "avg_frame_length": 186.62,
+      "cloud_response_ratio": 0.8722,
+      "signal_shares": {
+        "ACK": {
+          "count": 581,
+          "pct_of_day": 5.81
+        },
+        "ISNEWSET": {
+          "count": 449,
+          "pct_of_day": 4.49
+        },
+        "ISNEWWEATHER": {
+          "count": 408,
+          "pct_of_day": 4.08
+        },
+        "ISNEWFW": {
+          "count": 377,
+          "pct_of_day": 3.77
+        },
+        "END": {
+          "count": 412,
+          "pct_of_day": 4.12
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 0.01
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 3520,
+          "pct_of_day": 35.22
+        },
+        "cloud_frames": {
+          "count": 3070,
+          "pct_of_day": 30.72
+        },
+        "proxy_frames": {
+          "count": 3403,
+          "pct_of_day": 34.05
+        }
+      },
+      "flags": [
+        "low_activity"
+      ]
+    },
+    {
+      "day": "2026-02-01",
+      "frame_count": 2,
+      "conn_count": 1,
+      "avg_frame_length": 104.0,
+      "cloud_response_ratio": 1.0,
+      "signal_shares": {
+        "ACK": {
+          "count": 0,
+          "pct_of_day": 0.0
+        },
+        "ISNEWSET": {
+          "count": 0,
+          "pct_of_day": 0.0
+        },
+        "ISNEWWEATHER": {
+          "count": 0,
+          "pct_of_day": 0.0
+        },
+        "ISNEWFW": {
+          "count": 0,
+          "pct_of_day": 0.0
+        },
+        "END": {
+          "count": 0,
+          "pct_of_day": 0.0
+        },
+        "NACK": {
+          "count": 1,
+          "pct_of_day": 50.0
+        }
+      },
+      "direction_shares": {
+        "box_frames": {
+          "count": 1,
+          "pct_of_day": 50.0
+        },
+        "cloud_frames": {
+          "count": 1,
+          "pct_of_day": 50.0
+        },
+        "proxy_frames": {
+          "count": 0,
+          "pct_of_day": 0.0
+        }
+      },
+      "flags": [
+        "stub_or_partial_day"
+      ]
+    }
+  ],
+  "overall_statistics": {
+    "frame_count": {
+      "min": 4458,
+      "max": 26279,
+      "mean": 23566.2,
+      "median": 24674,
+      "stdev": 4135.3
+    },
+    "conn_count": {
+      "min": 17,
+      "max": 2156,
+      "mean": 1486.9,
+      "median": 1776,
+      "stdev": 551.1
+    },
+    "signal_class_totals": {
+      "ISNEWSET": {
+        "count": 53060,
+        "pct": 6.09
+      },
+      "ACK": {
+        "count": 51128,
+        "pct": 5.86
+      },
+      "END": {
+        "count": 26932,
+        "pct": 3.09
+      },
+      "ISNEWFW": {
+        "count": 26515,
+        "pct": 3.04
+      },
+      "ISNEWWEATHER": {
+        "count": 25696,
+        "pct": 2.95
+      },
+      "NACK": {
+        "count": 27,
+        "pct": 0.0
+      }
+    }
+  },
+  "three_day_comparison": [
+    {
+      "label": "early",
+      "day": "2025-12-18",
+      "frame_count": 4458,
+      "conn_count": 17,
+      "cloud_response_ratio": 0.9937,
+      "signal_pcts": {
+        "ACK": 7.29,
+        "ISNEWSET": 4.31,
+        "ISNEWWEATHER": 0.45,
+        "ISNEWFW": 0.49,
+        "END": 0.18,
+        "NACK": 0.0
+      }
+    },
+    {
+      "label": "mid",
+      "day": "2026-01-05",
+      "frame_count": 24887,
+      "conn_count": 1827,
+      "cloud_response_ratio": 0.8964,
+      "signal_pcts": {
+        "ACK": 3.83,
+        "ISNEWSET": 6.98,
+        "ISNEWWEATHER": 2.78,
+        "ISNEWFW": 3.16,
+        "END": 3.31,
+        "NACK": 0.0
+      }
+    },
+    {
+      "label": "late",
+      "day": "2026-01-23",
+      "frame_count": 9993,
+      "conn_count": 967,
+      "cloud_response_ratio": 0.8722,
+      "signal_pcts": {
+        "ACK": 5.81,
+        "ISNEWSET": 4.49,
+        "ISNEWWEATHER": 4.08,
+        "ISNEWFW": 3.77,
+        "END": 4.12,
+        "NACK": 0.01
+      }
+    }
+  ],
+  "drift_indicators": [
+    {
+      "series": "frame_count",
+      "week_from": "2025-W51",
+      "week_to": "2025-W52",
+      "mean_from": 18303.25,
+      "mean_to": 25272.14,
+      "pct_change": 38.07,
+      "direction": "increasing"
+    },
+    {
+      "series": "conn_count",
+      "week_from": "2025-W51",
+      "week_to": "2025-W52",
+      "mean_from": 297.75,
+      "mean_to": 1244.14,
+      "pct_change": 317.85,
+      "direction": "increasing"
+    },
+    {
+      "series": "conn_count",
+      "week_from": "2025-W52",
+      "week_to": "2026-W01",
+      "mean_from": 1244.14,
+      "mean_to": 1571.71,
+      "pct_change": 26.33,
+      "direction": "increasing"
+    },
+    {
+      "series": "isnewset_pct",
+      "week_from": "2026-W03",
+      "week_to": "2026-W04",
+      "mean_from": 6.73,
+      "mean_to": 3.89,
+      "pct_change": -42.14,
+      "direction": "decreasing"
+    },
+    {
+      "series": "ack_pct",
+      "week_from": "2025-W51",
+      "week_to": "2025-W52",
+      "mean_from": 19.48,
+      "mean_to": 3.8,
+      "pct_change": -80.49,
+      "direction": "decreasing"
+    }
+  ],
+  "anomalies": [
+    {
+      "day": "2025-12-18",
+      "series": "frame_count",
+      "value": 4458,
+      "mean": 23566.22,
+      "std": 4135.3325,
+      "zscore": -4.621,
+      "direction": "low"
+    },
+    {
+      "day": "2025-12-18",
+      "series": "conn_count",
+      "value": 17,
+      "mean": 1486.89,
+      "std": 551.1338,
+      "zscore": -2.667,
+      "direction": "low"
+    },
+    {
+      "day": "2025-12-19",
+      "series": "ack_pct",
+      "value": 29.71,
+      "mean": 6.11,
+      "std": 7.01,
+      "zscore": 3.366,
+      "direction": "high"
+    },
+    {
+      "day": "2025-12-20",
+      "series": "ack_pct",
+      "value": 39.13,
+      "mean": 6.11,
+      "std": 7.01,
+      "zscore": 4.71,
+      "direction": "high"
+    },
+    {
+      "day": "2025-12-21",
+      "series": "cloud_response_ratio",
+      "value": 0.6446,
+      "mean": 0.89,
+      "std": 0.0525,
+      "zscore": -4.769,
+      "direction": "low"
+    },
+    {
+      "day": "2026-01-23",
+      "series": "frame_count",
+      "value": 9993,
+      "mean": 23566.22,
+      "std": 4135.3325,
+      "zscore": -3.282,
+      "direction": "low"
+    }
+  ],
+  "patterns": [
+    {
+      "name": "proxy_to_box_activation",
+      "description": "proxy_to_box direction absent early in capture (days: ['2025-12-18', '2025-12-19']...), present from 2025-12-20 onwards. Indicates proxy-originating ACK (OFFLINE/REPLAY mode) was not yet active.",
+      "days_without": [
+        "2025-12-18",
+        "2025-12-19"
+      ],
+      "first_day_with": "2025-12-20",
+      "stable": true
+    },
+    {
+      "name": "isnewset_variability",
+      "description": "IsNewSet signal share has coefficient of variation 23.7% across stable days, indicating moderate natural variability (driven by how often device settings change).",
+      "cv_pct": 23.75,
+      "stable": true
+    },
+    {
+      "name": "daily_frame_count_stability",
+      "description": "Daily frame count for stable days: mean 23566, CV 17.5%. High variability - investigate.",
+      "mean": 23566.2,
+      "cv_pct": 17.55,
+      "stable": false
+    }
+  ],
+  "evidence_enrichment": {
+    "task_10_transitions": {
+      "total_transitions": 18598,
+      "by_to_state": {
+        "online": 9831,
+        "offline": 166,
+        "hybrid": 7065,
+        "hybrid_offline": 1531,
+        "cloud_connected": 5
+      },
+      "offline_events": 166,
+      "avg_offline_duration_s": 5244.5,
+      "max_offline_duration_s": 793247.0,
+      "validation_issues": 0
+    },
+    "task_11_edge_cases": {
+      "total_edge_cases": 18361,
+      "categories": {
+        "cloud_timeout": 0,
+        "cloud_eof": 0,
+        "cloud_error": 0,
+        "box_disconnect": 18334,
+        "nack": 27
+      },
+      "nack_count": 27,
+      "box_disconnect_count": 18334,
+      "cloud_timeout_count": 0
+    },
+    "task_9_signal_timeline": {
+      "total_signal_events": 3445,
+      "signal_classes": {
+        "IsNewFW": 14,
+        "ACK": 2914,
+        "IsNewSet": 238,
+        "NACK": 0,
+        "IsNewWeather": 17,
+        "END": 262,
+        "unknown": 0
+      },
+      "pair_confidence": {
+        "high": 130,
+        "medium": 196,
+        "low": 31
+      },
+      "connections_observed": 1,
+      "dates_observed": 11
+    }
+  },
+  "recommendations": [
+    {
+      "id": "REC-01",
+      "category": "monitoring_threshold",
+      "priority": "high",
+      "recommendation": "Set daily frame count alert range to [18000, 30000] frames/day. Values outside this window (excluding known partial capture days) warrant investigation.",
+      "basis": "Based on 37 stable days: mean=23566.2, stdev=4135.3."
+    },
+    {
+      "id": "REC-02",
+      "category": "monitoring_threshold",
+      "priority": "high",
+      "recommendation": "Alert when cloud_response_ratio drops below 0.85. This ratio (cloud_to_proxy / box_to_proxy) below threshold indicates cloud not acknowledging box frames - likely offline/hybrid state.",
+      "basis": "Observed ratio consistently 0.85-1.05 on healthy days."
+    },
+    {
+      "id": "REC-03",
+      "category": "data_quality",
+      "priority": "medium",
+      "recommendation": "Exclude first partial day (2025-12-18, 4458 frames) and last stub day (2026-02-01, 2 frames) from trending baselines. These boundary days skew aggregate statistics.",
+      "basis": "Both days are clearly incomplete captures at start/end of dataset."
+    },
+    {
+      "id": "REC-04",
+      "category": "protocol_drift",
+      "priority": "medium",
+      "recommendation": "IsNewSet signal share shows week-over-week drift. Monitor setting-change frequency; a significant drop may indicate device stopped sending setting updates (firmware change or stuck state).",
+      "basis": "Drift detected in weekly IsNewSet percentage."
+    },
+    {
+      "id": "REC-05",
+      "category": "anomaly_detection",
+      "priority": "medium",
+      "recommendation": "Use z-score > 2.5 on daily frame_count, conn_count, and cloud_response_ratio as real-time anomaly triggers. Current dataset provides sufficient baseline for z-score normalization.",
+      "basis": "Based on 37 stable days of data."
+    },
+    {
+      "id": "REC-06",
+      "category": "operational",
+      "priority": "low",
+      "recommendation": "Track proxy_to_box frame ratio. When it exceeds cloud_to_proxy on a sustained basis, proxy is generating most ACKs locally (offline mode). This is expected during cloud outages but should recover.",
+      "basis": "proxy_to_box frames absent in first ~2 days, stable ~33% thereafter."
+    }
+  ]
+}

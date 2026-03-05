@@ -1,0 +1,21 @@
+{
+  "test_scenario": "Golden extraction complete (happy path)",
+  "test_date": "2026-02-18T19:38:00.000000Z",
+  "preconditions": "HA DB reachable read-only",
+  "steps_executed": [
+    "1. Ran extraction script for UTC date window 2026-02-18",
+    "2. Verified output contains 1 complete window",
+    "3. Asserted window has mode_id, ack_id, end_id fields populated"
+  ],
+  "expected_result": "Curated golden fixture passes structural checks",
+  "actual_result": "SUCCESS - Golden fixture created with all required fields",
+  "evidence_captured": "golden-setting-sequence-1-2026-02-18.json",
+  "validation_fields_present": {
+    "setting_id": 28220,
+    "ack_id": 28221,
+    "end_id": 28271
+  },
+  "structural_validation": "PASSED - All sequence frames present with raw data",
+  "timing_validation": "PASSED - Setting→ACK 5.597s within expected range",
+  "metadata_complete": "PASSED - Source timestamp and extraction query included"
+}

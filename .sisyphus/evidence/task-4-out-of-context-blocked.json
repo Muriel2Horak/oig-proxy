@@ -1,0 +1,75 @@
+{
+  "task": "T4 - Mock poll/session state machine alignment",
+  "scenario": "negative - out-of-context setting trigger",
+  "timestamp": "2026-02-17T17:27:00+01:00",
+  "status": "VERIFIED",
+  "summary": "Mock server correctly blocks Setting delivery in invalid contexts.",
+  "test_cases": [
+    {
+      "case": "no_pending_setting",
+      "description": "Setting should NOT be delivered when no pending setting exists",
+      "mock_behavior": "pending_setting=None → is_poll returns END, not Setting",
+      "implementation": "Lines 638-644 in server.py check pending_setting is not None",
+      "result": "BLOCKED"
+    },
+    {
+      "case": "isnewset_mode_on_non_isnewset_frame",
+      "description": "In 'isnewset' mode, Setting should NOT be delivered on IsNewFW/IsNewWeather",
+      "mock_behavior": "is_isnewset=False for IsNewFW → should_deliver_setting=False",
+      "implementation": "Line 642: elif self._setting_delivery_mode == 'isnewset': should_deliver_setting = is_isnewset",
+      "result": "BLOCKED"
+    },
+    {
+      "case": "poll_mode_on_data_frame",
+      "description": "In 'poll' mode, Setting should NOT be delivered on data frames (tbl_*_prms, tbl_events)",
+      "mock_behavior": "is_poll=False for data frames → should_deliver_setting=False",
+      "implementation": "Line 644: else: should_deliver_setting = is_poll",
+      "result": "BLOCKED"
+    }
+  ],
+  "forbidden_transitions_verified": [
+    {
+      "request": "IsNewFW",
+      "forbidden_response": "Setting (when no pending)",
+      "contract_reference": "Cloud only sends Setting when server queued one",
+      "mock_behavior": "Returns bare END when pending_setting is None",
+      "result": "PASS"
+    },
+    {
+      "request": "IsNewSet",
+      "forbidden_response": "Setting (when no pending)",
+      "contract_reference": "Cloud only sends Setting when server queued one",
+      "mock_behavior": "Returns END+Time+UTCTime when pending_setting is None",
+      "result": "PASS"
+    },
+    {
+      "request": "tbl_*_prms",
+      "forbidden_response": "Setting (in poll mode)",
+      "contract_reference": "Settings only delivered on poll frames",
+      "mock_behavior": "is_poll=False → should_deliver_setting=False",
+      "result": "PASS"
+    },
+    {
+      "request": "tbl_events",
+      "forbidden_response": "Setting",
+      "contract_reference": "Settings only delivered on poll frames",
+      "mock_behavior": "is_poll=False → should_deliver_setting=False",
+      "result": "PASS"
+    }
+  ],
+  "context_gate_logic": {
+    "code_reference": "server.py lines 636-644",
+    "logic": [
+      "IF pending_setting IS None → should_deliver_setting = False (regardless of mode)",
+      "IF mode == 'poll' AND is_poll == False → should_deliver_setting = False",
+      "IF mode == 'isnewset' AND is_isnewset == False → should_deliver_setting = False",
+      "IF mode == 'immediate' → should_deliver_setting = True (testing only)"
+    ],
+    "validation": "All invalid contexts correctly block Setting delivery"
+  },
+  "conclusion": {
+    "summary": "Mock correctly blocks Setting emission in all out-of-context scenarios.",
+    "acceptance_criteria_met": true,
+    "no_invalid_setting_emission": true
+  }
+}

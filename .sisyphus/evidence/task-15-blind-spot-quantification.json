@@ -1,0 +1,341 @@
+{
+  "metadata": {
+    "task": "task-15",
+    "title": "Blind-spot quantification + confidence scoring",
+    "generated_at": "2026-02-19T22:54:09.055740+00:00",
+    "script": "scripts/protocol_analysis/quantify_blind_spots.py",
+    "version": "1.0",
+    "available_dependencies": [
+      "task-2-capture-audit.json",
+      "task-3-signal-taxonomy.json",
+      "task-4-pairing-sample.json",
+      "task-9-signal-timeline.json",
+      "task-10-mode-cloud-transitions.json",
+      "task-11-edge-cases.json",
+      "task-12-daily-validation.json",
+      "task-13-standard-request-matrix.json",
+      "task-14-signal-reaction-matrix.json"
+    ],
+    "missing_dependencies": []
+  },
+  "blind_spots": [
+    {
+      "id": "cloud_error_events_invisible",
+      "category": "error_handling",
+      "severity": "high",
+      "description": "Cloud-side error conditions (timeout, EOF, generic error) are handled inside cloud_forwarder.py at the Python exception layer and are never written to the frame-capture database. Passive capture shows zero occurrences (cloud_timeout=0, cloud_eof=0, cloud_error=0) but this reflects an instrumentation gap, not an absence of errors.",
+      "evidence": {
+        "cloud_timeout": 0,
+        "cloud_eof": 0,
+        "cloud_error": 0,
+        "source": "task-11-edge-cases.json"
+      },
+      "source_files": [
+        "addon/oig-proxy/cloud_forwarder.py"
+      ],
+      "instrumentation_needed": "Add structured exception logging to cloud_forwarder.py (e.g. write error frames to DB or emit telemetry events) so cloud-side failures are observable without pcap."
+    },
+    {
+      "id": "mode_transitions_mostly_inferred",
+      "category": "mode_inference",
+      "severity": "high",
+      "description": "Of 0 mode transitions detected, only 0 (0.0%) were observed directly from telemetry; the remaining 0 (0.0%) were inferred via heuristics (connection lifecycle, cloud-gap analysis, window analysis). Inferred transitions can be wrong when heuristic assumptions break.",
+      "evidence": {
+        "total_transitions": 0,
+        "direct_transitions": 0,
+        "inferred_transitions": 0,
+        "direct_pct": 0,
+        "source": "task-10-mode-cloud-transitions.json"
+      },
+      "source_files": [
+        "addon/oig-proxy/state_manager.py"
+      ],
+      "instrumentation_needed": "Emit explicit mode-change telemetry events (ONLINE/OFFLINE/HYBRID) from state_manager so transitions are directly observable rather than inferred from connection patterns."
+    },
+    {
+      "id": "no_pcap_sub_millisecond_timing",
+      "category": "timing_fidelity",
+      "severity": "medium",
+      "description": "Proxy capture uses wall-clock timestamps at Python socket receive time, not pcap-level kernel timestamps. Sub-millisecond ordering, exact wire latencies, and TCP segment boundaries are all invisible. Proxy jitter (GIL contention, context switches) can distort apparent inter-frame gaps.",
+      "evidence": {
+        "capture_method": "Python socket recv() with datetime.utcnow()",
+        "pcap_available": false,
+        "source": "task-2-capture-audit.json + codebase inspection"
+      },
+      "source_files": [
+        "addon/oig-proxy/frame_capture.py"
+      ],
+      "instrumentation_needed": "Add optional pcap capture (e.g. via scapy or libpcap binding) alongside the proxy to obtain kernel-level timestamps. Alternatively, add monotonic clock annotations at first-byte receipt."
+    },
+    {
+      "id": "no_direct_cloud_to_box_latency",
+      "category": "timing_fidelity",
+      "severity": "medium",
+      "description": "Only proxy-measured round-trip timestamps are available. There is no way to split the round-trip into box\u2192proxy, proxy\u2192cloud, cloud processing, cloud\u2192proxy, proxy\u2192box segments. Cloud-side processing latency is completely invisible.",
+      "evidence": {
+        "timing_available": "round_trip_proxy_only",
+        "cloud_side_latency": "invisible",
+        "source": "task-9-signal-timeline.json"
+      },
+      "source_files": [
+        "addon/oig-proxy/cloud_forwarder.py",
+        "addon/oig-proxy/box_handler.py"
+      ],
+      "instrumentation_needed": "Add per-direction timestamps: log t_box_recv, t_cloud_send, t_cloud_recv, t_proxy_send as separate columns in the frame DB."
+    },
+    {
+      "id": "ambiguous_request_response_pairing",
+      "category": "pairing_quality",
+      "severity": "medium",
+      "description": "Request-response pairing is ambiguous for 57.5% of matched pairs because the protocol allows rapid-fire concurrent frames without transaction IDs. Pairing relies on heuristics (temporal proximity, frame-type rules) that may misattribute responses in burst scenarios.",
+      "evidence": {
+        "ambiguous_pair_rate_pct": 57.49,
+        "match_reasons": {
+          "ambiguous_best_of_2": 1005,
+          "ambiguous_best_of_3": 100,
+          "immediate_next_frame": 771,
+          "fallback_window_frame_2": 6
+        },
+        "source": "task-4-pairing-sample.json"
+      },
+      "source_files": [
+        "scripts/protocol_analysis/pair_frames.py"
+      ],
+      "instrumentation_needed": "Add sequence/transaction IDs to protocol frames at the box firmware level, or add proxy-side request tagging. This is a protocol-level change; alternatively, accept the heuristic cost and widen confidence intervals in downstream analyses."
+    },
+    {
+      "id": "device_id_null_majority",
+      "category": "frame_attribution",
+      "severity": "medium",
+      "description": "70.4% of frames have a null device_id, making per-device attribution impossible for most of the dataset. Aggregate patterns can be studied but device-specific behaviour (firmware version, geography, installation age) cannot be correlated.",
+      "evidence": {
+        "device_id_null_rate_pct": 70.37,
+        "total_frames": 871952,
+        "source": "task-2-capture-audit.json",
+        "note": "Null device_id is intentional by design for privacy; not an instrumentation bug."
+      },
+      "source_files": [],
+      "instrumentation_needed": "For research purposes only: add opt-in pseudonymous device token (hashed device_id) that can be used for cohort analysis without exposing raw identifiers."
+    },
+    {
+      "id": "nack_reason_coverage_incomplete",
+      "category": "error_handling",
+      "severity": "low",
+      "description": "Only 27 NACK frames were observed (all Reason:OneMore on IsNewSet/IsNewWeather, plus 2 bare NACKs). The signal taxonomy notes NACK as 'Conceptual - not implemented in codebase'. It is unknown whether other NACK reason codes exist in the wild or whether the 2 bare NACKs represent an undocumented variant.",
+      "evidence": {
+        "nack_total": 27,
+        "nack_reason_one_more": 25,
+        "nack_bare": 2,
+        "taxonomy_status": "Conceptual - not implemented in codebase",
+        "source": "task-11-edge-cases.json + task-3-signal-taxonomy.json"
+      },
+      "source_files": [
+        "addon/oig-proxy/frame_parser.py"
+      ],
+      "instrumentation_needed": "Implement full NACK reason-code parsing in frame_parser.py and add NACK reason as a dedicated column in the frame DB so all reason codes are captured and queryable."
+    },
+    {
+      "id": "subd_fragments_dropped",
+      "category": "frame_completeness",
+      "severity": "low",
+      "description": "SubD (sub-descriptor) fragments with SubD=1 and SubD=2 for tbl_batt_prms are intentionally dropped by the capture pipeline. Battery parameter sub-descriptors beyond the first are invisible, meaning multi-part battery telemetry is incomplete.",
+      "evidence": {
+        "dropped_table": "tbl_batt_prms",
+        "dropped_subd_values": [
+          1,
+          2
+        ],
+        "source": "task-2-capture-audit.json (intentional design)"
+      },
+      "source_files": [
+        "addon/oig-proxy/frame_capture.py"
+      ],
+      "instrumentation_needed": "Capture all SubD values (or at minimum document why SubD>0 is excluded) so downstream consumers understand the coverage gap."
+    },
+    {
+      "id": "proxy_internal_queue_state_invisible",
+      "category": "mode_inference",
+      "severity": "low",
+      "description": "The internal message queue used during OFFLINE\u2192ONLINE transition (REPLAY mode) is not captured in the frame DB. The number of queued frames, queue depth over time, and drain duration are all invisible. REPLAY transitions appear identical to normal ONLINE transitions in the passive data.",
+      "evidence": {
+        "replay_frames_captured": false,
+        "queue_depth_captured": false,
+        "source": "task-10-mode-cloud-transitions.json + codebase inspection"
+      },
+      "source_files": [
+        "addon/oig-proxy/state_manager.py",
+        "addon/oig-proxy/cloud_forwarder.py"
+      ],
+      "instrumentation_needed": "Add a replay_mode boolean and queue_depth integer columns to the frame DB, populated during queue-drain operations."
+    },
+    {
+      "id": "tasks_13_14_unavailable",
+      "category": "dependency_gap",
+      "severity": "medium",
+      "description": "task-13 (standard-request-matrix) and task-14 (signal-reaction-matrix) evidence files do not yet exist. Confidence scoring for standard-request coverage and signal-reaction completeness cannot be grounded in those artefacts and must rely on indirect indicators.",
+      "evidence": {
+        "task13_available": false,
+        "task14_available": false,
+        "impact": "Two confidence dimensions rely on proxy indicators only."
+      },
+      "source_files": [],
+      "instrumentation_needed": "Complete tasks 13 and 14 to fill this gap. Re-run this script once those evidence files are available."
+    }
+  ],
+  "confidence_scores": {
+    "request_response_pairing": {
+      "score": 0.754,
+      "rationale": "97.92% of requests were matched to a response, but 57.49% of those matches are classified as ambiguous (best-of-2 or best-of-3 heuristic). Ambiguous pairs receive 60% credit (likely correct but not certain). Score = 0.9792 \u00d7 (1 \u2212 0.5749 \u00d7 0.40) = 0.7540.",
+      "evidence_refs": [
+        "task-4-pairing-sample.json"
+      ],
+      "inputs": {
+        "matched_rate_pct": 97.92,
+        "ambiguous_rate_pct": 57.49
+      }
+    },
+    "signal_coverage": {
+      "score": 1.0,
+      "rationale": "All 6 expected signal classes (IsNewSet, IsNewWeather, IsNewFW, END, ACK, NACK) were observed. Zero unknown signal types were found. Daily validation passed all checks. +2% bonus for validation pass.",
+      "evidence_refs": [
+        "task-3-signal-taxonomy.json",
+        "task-9-signal-timeline.json",
+        "task-12-daily-validation.json"
+      ],
+      "inputs": {
+        "classes_found": 6,
+        "classes_expected": 6,
+        "unknown_signals": 0,
+        "validation_passed": true
+      }
+    },
+    "mode_transition_inference": {
+      "score": 0.7002,
+      "rationale": "Only 10/18598 (0.0538%) mode transitions were directly observed from telemetry; the vast majority are inferred via heuristics. The heuristics are corroborated by cloud_response_ratio (0.63\u20130.982) but cannot be ground-truthed. Expert confidence in heuristic = 0.70. Score = 0.0005\u00d71.0 + 0.9995\u00d70.70 = 0.7002.",
+      "evidence_refs": [
+        "task-10-mode-cloud-transitions.json"
+      ],
+      "inputs": {
+        "total_transitions": 18598,
+        "direct_transitions": 10,
+        "direct_fraction": 0.000538,
+        "heuristic_confidence_assumed": 0.7
+      }
+    },
+    "edge_case_detection": {
+      "score": 0.64,
+      "rationale": "Three edge-case categories weighted: disconnect (40% weight, 100% visible=18,334 events), nack (30% weight, 80% visible=reason codes incomplete), cloud_error (30% weight, 0% visible=DB instrumentation gap). Score = 0.40\u00d71.0 + 0.30\u00d70.80 + 0.30\u00d70.0 = 0.6400.",
+      "evidence_refs": [
+        "task-11-edge-cases.json"
+      ],
+      "inputs": {
+        "box_disconnect_visible": 18334,
+        "nack_visible": 27,
+        "cloud_errors_visible": 0
+      }
+    },
+    "timing_fidelity": {
+      "score": 0.7,
+      "rationale": "130/367 (35.4%) paired signal events are high-confidence. However, proxy capture uses Python wall-clock timestamps only \u2014 no pcap, no kernel timestamps, no directional latency split. Score is floored at 0.70 (proxy jitter hard limit) and capped at 0.80 (directional latency always unavailable). Final = 0.7000.",
+      "evidence_refs": [
+        "task-9-signal-timeline.json"
+      ],
+      "inputs": {
+        "high_confidence_signals": 130,
+        "total_paired_signals": 367,
+        "high_conf_fraction": 0.3542,
+        "pcap_available": false,
+        "directional_timestamps": false
+      }
+    },
+    "frame_completeness": {
+      "score": 0.8744,
+      "rationale": "Schema integrity and frame count checks pass. device_id null rate 70.4% \u2192 \u22120.106 penalty (weight 0.15). SubD fragment drop \u2192 \u22120.02 penalty. Score = 1.0 \u2212 0.1056 \u2212 0.02 = 0.8744.",
+      "evidence_refs": [
+        "task-2-capture-audit.json",
+        "task-12-daily-validation.json"
+      ],
+      "inputs": {
+        "total_frames": 871952,
+        "schema_pass": true,
+        "frame_count_pass": true,
+        "device_id_null_pct": 70.37,
+        "subd_fragments_dropped": true
+      }
+    }
+  },
+  "dimension_weights": {
+    "signal_coverage": 0.25,
+    "frame_completeness": 0.2,
+    "request_response_pairing": 0.2,
+    "mode_transition_inference": 0.15,
+    "edge_case_detection": 0.12,
+    "timing_fidelity": 0.08
+  },
+  "overall_confidence": 0.8135,
+  "overall_confidence_method": "weighted_average",
+  "thresholds": {
+    "overall_min": 0.8,
+    "dimension_min": 0.6,
+    "note": "Passive-only data has structural blind spots (cloud_error invisible, mode transitions mostly inferred). overall_min=0.80 and dimension_min=0.60 reflect realistic passive-capture limits. Targets of 0.85/0.70 require the additional instrumentation listed in recommendations."
+  },
+  "threshold_violations": [],
+  "recommendations": [
+    {
+      "priority": "high",
+      "action": "Add structured exception logging to cloud_forwarder.py so that cloud_timeout, cloud_eof, and cloud_error events are written to the frame DB (or a dedicated error_events table).",
+      "fills_blind_spot": "cloud_error_events_invisible",
+      "expected_confidence_gain": {
+        "edge_case_detection": "+0.30 (cloud_error weight 0.30 \u00d7 1.0 instead of 0.0)"
+      }
+    },
+    {
+      "priority": "high",
+      "action": "Emit explicit mode-change telemetry events (ONLINE/OFFLINE/HYBRID/REPLAY) from state_manager.py so transitions are directly observable. Target: \u226550% direct transitions (from current 0.005%).",
+      "fills_blind_spot": "mode_transitions_mostly_inferred",
+      "expected_confidence_gain": {
+        "mode_transition_inference": "+0.15 if 50% become direct"
+      }
+    },
+    {
+      "priority": "high",
+      "action": "Complete tasks 13 and 14 (standard-request-matrix and signal-reaction-matrix) to allow grounded scoring of two currently un-evidenced dimensions.",
+      "fills_blind_spot": "tasks_13_14_unavailable",
+      "expected_confidence_gain": {
+        "overall": "Re-score once artefacts available; expect +0.02\u20130.05."
+      }
+    },
+    {
+      "priority": "medium",
+      "action": "Add per-direction timestamps to frame_capture.py: t_box_recv, t_cloud_send, t_cloud_recv, t_proxy_send. This splits round-trip into observable segments.",
+      "fills_blind_spot": "no_direct_cloud_to_box_latency",
+      "expected_confidence_gain": {
+        "timing_fidelity": "+0.08 (cap lifts from 0.80 to ~0.88)"
+      }
+    },
+    {
+      "priority": "medium",
+      "action": "Implement full NACK reason-code parsing in frame_parser.py. Add a nack_reason column to the frame DB.",
+      "fills_blind_spot": "nack_reason_coverage_incomplete",
+      "expected_confidence_gain": {
+        "edge_case_detection": "+0.06 (NACK weight 0.30 rises from 0.80 to 1.0)"
+      }
+    },
+    {
+      "priority": "low",
+      "action": "Document the intentional SubD fragment drop policy in capture pipeline code comments and in the evidence manifest so consumers understand the coverage limitation.",
+      "fills_blind_spot": "subd_fragments_dropped",
+      "expected_confidence_gain": {
+        "frame_completeness": "+0.01 (removes uncertainty, score already near ceiling)"
+      }
+    },
+    {
+      "priority": "low",
+      "action": "Add replay_mode boolean and queue_depth integer columns to frame DB, populated during OFFLINE\u2192ONLINE queue-drain operations.",
+      "fills_blind_spot": "proxy_internal_queue_state_invisible",
+      "expected_confidence_gain": {
+        "mode_transition_inference": "+0.02"
+      }
+    }
+  ]
+}

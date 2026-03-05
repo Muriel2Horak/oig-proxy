@@ -1,0 +1,88 @@
+# OIG Proxy Database Schema Discovery
+# Task 1: DB Schema Discovery
+# Date: 2026-03-03
+
+## Database Files Found in OIG Proxy Addon:
+1. `/data/payloads.db` (118MB) - Main frame capture database
+2. `/data/mqtt_queue.db` (32KB) - MQTT message queue database
+3. `/data/telemetry_buffer.db` (16KB) - Telemetry buffer database
+4. `/data/capture.db` (0 bytes) - Empty capture database
+
+## Schema for /data/payloads.db:
+
+CREATE TABLE frames (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    device_id TEXT,
+    table_name TEXT,
+    raw TEXT,
+    raw_b64 TEXT,
+    parsed TEXT,
+    direction TEXT,
+    conn_id INTEGER,
+    peer TEXT,
+    length INTEGER
+);
+CREATE TABLE sqlite_sequence(name,seq);
+
+## Schema for /data/mqtt_queue.db:
+
+CREATE TABLE queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp REAL NOT NULL,
+    topic TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    retain INTEGER NOT NULL DEFAULT 0,
+    queued_at TEXT NOT NULL
+);
+CREATE TABLE sqlite_sequence(name,seq);
+CREATE INDEX idx_timestamp ON queue(timestamp);
+
+## Schema for /data/telemetry_buffer.db:
+
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    timestamp REAL NOT NULL,
+    retries INTEGER DEFAULT 0
+);
+CREATE TABLE sqlite_sequence(name,seq);
+CREATE INDEX idx_timestamp ON messages(timestamp);
+
+## Schema for /data/capture.db:
+(Empty database - 0 bytes, no schema)
+
+## Key Tables for OIG Proxy Analysis:
+1. **frames** (payloads.db) - Main table storing captured OIG frames with:
+   - ts: Timestamp of frame capture
+   - device_id: OIG device identifier
+   - table_name: OIG table name (e.g., tbl_*)
+   - raw: Raw XML frame data
+   - raw_b64: Base64 encoded raw bytes
+   - parsed: Parsed JSON representation
+   - direction: Communication direction (in/out)
+   - conn_id: Connection identifier
+   - peer: Remote peer information
+   - length: Frame length in bytes
+
+2. **queue** (mqtt_queue.db) - MQTT message queue with:
+   - timestamp: Message timestamp
+   - topic: MQTT topic
+   - payload: Message payload
+   - retain: MQTT retain flag
+   - queued_at: When message was queued
+
+3. **messages** (telemetry_buffer.db) - Telemetry buffer with:
+   - topic: MQTT topic
+   - payload: Message payload  
+   - timestamp: Message timestamp
+   - retries: Number of retry attempts
+
+## Database Information:
+- **payloads.db**: Contains all captured OIG frames when `capture_payloads: true` is enabled
+- **mqtt_queue.db**: Persistent queue for MQTT messages when cloud is offline
+- **telemetry_buffer.db**: Buffer for telemetry data during processing
+- All databases use SQLite3 with proper indexing for time-based queries
+- Frames database supports both raw (XML) and parsed (JSON) data formats
+- Queue system provides resilience for cloud connectivity issues

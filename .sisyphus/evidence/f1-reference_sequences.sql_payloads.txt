@@ -1,0 +1,406 @@
+SQL Script: reference_sequences.sql
+Database: analysis/ha_snapshot/payloads.db
+============================================================
+
+STATEMENT 1: SELECT '=== 1.1 SETTINGS V payloads.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.1 SETTINGS V payloads.db ===',)
+
+STATEMENT 2: SELECT 
+    COUNT(*) as total_settings,
+    MIN(ts) as first_setting,
+    MAX(ts) as last_setting
+FR...
+--------------------------------------------------
+Rows returned: 1
+Columns: total_settings, first_setting, last_setting
+
+Data:
+  1: (209, '2025-12-11T15:20:22.031323+00:00', '2025-12-12T18:37:34.177926+00:00')
+
+STATEMENT 3: SELECT '=== 1.2 SETTINGS PODLE TABULKY ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.2 SETTINGS PODLE TABULKY ===',)
+
+STATEMENT 4: SELECT 
+    table_name,
+    COUNT(*) as count,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM fr...
+--------------------------------------------------
+Rows returned: 4
+Columns: table_name, count, percentage
+
+Data:
+  1: ('tbl_batt_prms', 140, 67.0)
+  2: ('tbl_invertor_prms', 52, 24.9)
+  3: ('tbl_box_prms', 15, 7.2)
+  4: ('tbl_boiler_prms', 2, 1.0)
+
+STATEMENT 5: SELECT '=== 1.3 ČASOVÁ DISTRIBUCE SETTINGS ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.3 ČASOVÁ DISTRIBUCE SETTINGS ===',)
+
+STATEMENT 6: SELECT 
+    date(ts) as day,
+    strftime('%H', ts) as hour,
+    COUNT(*) as settings_count
+FROM fra...
+--------------------------------------------------
+Rows returned: 22
+Columns: day, hour, settings_count
+
+Data:
+  1: ('2025-12-11', '15', 2)
+  2: ('2025-12-11', '18', 10)
+  3: ('2025-12-11', '19', 16)
+  4: ('2025-12-11', '20', 14)
+  5: ('2025-12-11', '21', 21)
+  6: ('2025-12-11', '22', 16)
+  7: ('2025-12-11', '23', 11)
+  8: ('2025-12-12', '00', 13)
+  9: ('2025-12-12', '01', 2)
+  10: ('2025-12-12', '02', 17)
+  ... and 12 more rows
+
+STATEMENT 7: SELECT '=== 1.4 PRVNÍCH 5 SETTINGS ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.4 PRVNÍCH 5 SETTINGS ===',)
+
+STATEMENT 8: SELECT 
+    id,
+    datetime(ts) as timestamp,
+    direction,
+    table_name,
+    length,
+    substr...
+--------------------------------------------------
+Rows returned: 5
+Columns: id, timestamp, direction, table_name, length, parsed_preview
+
+Data:
+  1: (42, '2025-12-11 15:20:22', 'proxy_to_cloud', 'tbl_invertor_prms', 637, '{"_table": "tbl_invertor_prms", "_device_id": "2206237016", "_dt": "2025-12-11 16:10:00", "ERR_PV": 4, "ERR_BATT": 0, "ERR_GRID": 0, "ERR_AC": 0, "ERR_ELSE": 0, "T_INN": 29.0, "PRRTY": 1, "CHARGE": 1,')
+  2: (106, '2025-12-11 15:21:59', 'proxy_to_cloud', 'tbl_invertor_prms', 638, '{"_table": "tbl_invertor_prms", "_device_id": "2206237016", "_dt": "2025-12-11 16:20:00", "ERR_PV": 12, "ERR_BATT": 0, "ERR_GRID": 0, "ERR_AC": 0, "ERR_ELSE": 0, "T_INN": 29.0, "PRRTY": 1, "CHARGE": 1')
+  3: (958, '2025-12-11 18:05:58', 'proxy_to_cloud', 'tbl_batt_prms', 577, '{"_table": "tbl_batt_prms", "_device_id": "2206237016", "_dt": "2025-12-11 19:05:00", "BAT_N": 3, "BAT_CI": 240.0, "BAT_CU": 56.5, "FMT_ON": 0, "FMT_PROGRESS": 93.548, "BAT_HDO": 0, "BAT_AA": 0, "BAT_')
+  4: (962, '2025-12-11 18:06:03', 'proxy_to_cloud', 'tbl_invertor_prms', 638, '{"_table": "tbl_invertor_prms", "_device_id": "2206237016", "_dt": "2025-12-11 19:05:00", "ERR_PV": 12, "ERR_BATT": 0, "ERR_GRID": 0, "ERR_AC": 0, "ERR_ELSE": 0, "T_INN": 28.0, "PRRTY": 1, "CHARGE": 1')
+  5: (966, '2025-12-11 18:06:10', 'proxy_to_cloud', 'tbl_box_prms', 990, '{"_table": "tbl_box_prms", "_device_id": "2206237016", "_dt": "2025-12-11 19:05:00", "ISON": 1, "FAIN": 0, "FAOUT": 0, "FAT": 0, "FADC1": 0, "FADC2": 0, "FV1": 0, "FA2": 0, "BYPASS": 0, "COMINVERT": 0')
+
+STATEMENT 9: SELECT '=== 1.5 SEKVENCE KOLEM SETTING id=966 (tbl_box_prms) ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.5 SEKVENCE KOLEM SETTING id=966 (tbl_box_prms) ===',)
+
+STATEMENT 10: SELECT 
+    id,
+    datetime(ts) as timestamp,
+    direction,
+    table_name,
+    length,
+    CASE 
+...
+--------------------------------------------------
+Rows returned: 104
+Columns: id, timestamp, direction, table_name, length, frame_role
+
+Data:
+  1: (921, '2025-12-11 18:05:06', 'box_to_proxy', None, 137, '')
+  2: (922, '2025-12-11 18:05:06', 'proxy_to_cloud', None, 137, '')
+  3: (923, '2025-12-11 18:05:06', 'cloud_to_proxy', None, 145, '')
+  4: (924, '2025-12-11 18:05:06', 'proxy_to_box', None, 145, '')
+  5: (925, '2025-12-11 18:05:13', 'box_to_proxy', 'tbl_events', 291, '')
+  6: (926, '2025-12-11 18:05:13', 'proxy_to_cloud', 'tbl_events', 291, '')
+  7: (927, '2025-12-11 18:05:13', 'cloud_to_proxy', 'tbl_events', 75, '<<< CLOUD ACK')
+  8: (928, '2025-12-11 18:05:13', 'proxy_to_box', 'tbl_events', 75, '')
+  9: (929, '2025-12-11 18:05:17', 'box_to_proxy', 'tbl_events', 332, '')
+  10: (930, '2025-12-11 18:05:17', 'proxy_to_cloud', 'tbl_events', 332, '')
+  ... and 94 more rows
+
+STATEMENT 11: SELECT '=== 1.6 SETTING ACKs V payloads.db (očekáváno: 0) ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.6 SETTING ACKs V payloads.db (očekáváno: 0) ===',)
+
+STATEMENT 12: SELECT COUNT(*) as setting_acks_count
+FROM frames 
+WHERE table_name='tbl_events' 
+AND parsed LIKE '%...
+--------------------------------------------------
+Rows returned: 1
+Columns: setting_acks_count
+
+Data:
+  1: (20,)
+
+STATEMENT 13: SELECT '=== 1.7 GetActual V payloads.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 1.7 GetActual V payloads.db ===',)
+
+STATEMENT 14: SELECT COUNT(*) as getactual_count
+FROM frames 
+WHERE table_name='GetActual'
+--------------------------------------------------
+Rows returned: 1
+Columns: getactual_count
+
+Data:
+  1: (0,)
+
+STATEMENT 15: SELECT '=== 2.1 SETTING ACKs V payloads_ha_full.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.1 SETTING ACKs V payloads_ha_full.db ===',)
+
+STATEMENT 16: SELECT 
+    COUNT(*) as total_acks,
+    MIN(ts) as first_ack,
+    MAX(ts) as last_ack
+FROM frames 
+W...
+--------------------------------------------------
+Rows returned: 1
+Columns: total_acks, first_ack, last_ack
+
+Data:
+  1: (20, '2025-12-11T18:05:13.264187+00:00', '2025-12-12T05:15:03.198401+00:00')
+
+STATEMENT 17: SELECT '=== 2.2 SETTING ACKs PODLE DNE ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.2 SETTING ACKs PODLE DNE ===',)
+
+STATEMENT 18: SELECT 
+    date(ts) as day,
+    COUNT(*) as ack_count
+FROM frames 
+WHERE table_name='tbl_events' 
+A...
+--------------------------------------------------
+Rows returned: 2
+Columns: day, ack_count
+
+Data:
+  1: ('2025-12-11', 13)
+  2: ('2025-12-12', 7)
+
+STATEMENT 19: SELECT '=== 2.3 SETTINGS V payloads_ha_full.db (očekáváno: 0) ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.3 SETTINGS V payloads_ha_full.db (očekáváno: 0) ===',)
+
+STATEMENT 20: SELECT COUNT(*) as settings_count
+FROM frames 
+WHERE direction='proxy_to_cloud' 
+AND table_name LIKE...
+--------------------------------------------------
+Rows returned: 1
+Columns: settings_count
+
+Data:
+  1: (209,)
+
+STATEMENT 21: SELECT '=== 2.4 DETAIL SETTING ACK id=263 ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.4 DETAIL SETTING ACK id=263 ===',)
+
+STATEMENT 22: SELECT 
+    id,
+    datetime(ts) as timestamp,
+    direction,
+    table_name,
+    conn_id,
+    lengt...
+--------------------------------------------------
+Rows returned: 1
+Columns: id, timestamp, direction, table_name, conn_id, length, parsed
+
+Data:
+  1: (263, '2025-12-11 15:26:15', 'cloud_to_proxy', 'tbl_actual', None, 75, '{}')
+
+STATEMENT 23: SELECT '=== 2.5 SEKVENCE KOLEM ACK id=263 (conn_id=2, ±60s) ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.5 SEKVENCE KOLEM ACK id=263 (conn_id=2, ±60s) ===',)
+
+STATEMENT 24: SELECT 
+    id,
+    datetime(ts) as timestamp,
+    direction,
+    table_name,
+    length,
+    CASE 
+...
+--------------------------------------------------
+Rows returned: 0
+Columns: id, timestamp, direction, table_name, length, frame_role
+
+STATEMENT 25: SELECT '=== 2.6 GetActual V payloads_ha_full.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.6 GetActual V payloads_ha_full.db ===',)
+
+STATEMENT 26: SELECT COUNT(*) as getactual_count
+FROM frames 
+WHERE table_name='GetActual'
+--------------------------------------------------
+Rows returned: 1
+Columns: getactual_count
+
+Data:
+  1: (0,)
+
+STATEMENT 27: SELECT '=== 2.7 IsNewSet V payloads_ha_full.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 2.7 IsNewSet V payloads_ha_full.db ===',)
+
+STATEMENT 28: SELECT COUNT(*) as isnewset_count
+FROM frames 
+WHERE table_name='IsNewSet'
+--------------------------------------------------
+Rows returned: 1
+Columns: isnewset_count
+
+Data:
+  1: (0,)
+
+STATEMENT 29: SELECT '=== 3.1 KRITICKÉ ZJIŠTĚNÍ ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 3.1 KRITICKÉ ZJIŠTĚNÍ ===',)
+
+STATEMENT 30: SELECT 'Databáze jsou KOMPLEMENTÁRNÍ, ne překrývající se:' as finding
+--------------------------------------------------
+Rows returned: 1
+Columns: finding
+
+Data:
+  1: ('Databáze jsou KOMPLEMENTÁRNÍ, ne překrývající se:',)
+
+STATEMENT 31: SELECT '- payloads.db: Má Settings (209) ale ŽÁDNÉ ACKs' as db1_summary
+--------------------------------------------------
+Rows returned: 1
+Columns: db1_summary
+
+Data:
+  1: ('- payloads.db: Má Settings (209) ale ŽÁDNÉ ACKs',)
+
+STATEMENT 32: SELECT '- payloads_ha_full.db: Má ACKs (767) ale ŽÁDNÉ Settings' as db2_summary
+--------------------------------------------------
+Rows returned: 1
+Columns: db2_summary
+
+Data:
+  1: ('- payloads_ha_full.db: Má ACKs (767) ale ŽÁDNÉ Settings',)
+
+STATEMENT 33: SELECT 'Kompletní párované sekvence (Setting→ACK) jsou NEMOŽNÉ!' as conclusion
+--------------------------------------------------
+Rows returned: 1
+Columns: conclusion
+
+Data:
+  1: ('Kompletní párované sekvence (Setting→ACK) jsou NEMOŽNÉ!',)
+
+STATEMENT 34: SELECT '=== 3.2 ČASOVÁ MEZERA ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 3.2 ČASOVÁ MEZERA ===',)
+
+STATEMENT 35: SELECT 
+    'Poslední Setting v payloads.db: 2025-12-12 18:37:34 UTC' as last_setting,
+    'První AC...
+--------------------------------------------------
+Rows returned: 1
+Columns: last_setting, first_ack, gap
+
+Data:
+  1: ('Poslední Setting v payloads.db: 2025-12-12 18:37:34 UTC', 'První ACK v payloads_ha_full.db: 2025-12-18 19:26:59 UTC', 'Mezera: ~6 dní')
+
+STATEMENT 36: SELECT '=== 4.1 PROTOKOLOVÁ SEKVENCE V payloads.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 4.1 PROTOKOLOVÁ SEKVENCE V payloads.db ===',)
+
+STATEMENT 37: SELECT 'Setting flow: box_to_proxy -> proxy_to_cloud -> cloud_to_proxy(75B ACK) -> proxy_to_box' as ...
+--------------------------------------------------
+Rows returned: 1
+Columns: protocol
+
+Data:
+  1: ('Setting flow: box_to_proxy -> proxy_to_cloud -> cloud_to_proxy(75B ACK) -> proxy_to_box',)
+
+STATEMENT 38: SELECT '=== 4.2 PROTOKOLOVÁ SEKVENCE V payloads_ha_full.db ===' as section
+--------------------------------------------------
+Rows returned: 1
+Columns: section
+
+Data:
+  1: ('=== 4.2 PROTOKOLOVÁ SEKVENCE V payloads_ha_full.db ===',)
+
+STATEMENT 39: SELECT 'ACK flow: box_to_proxy(tbl_events) -> cloud_to_proxy(53B ACK)' as protocol
+--------------------------------------------------
+Rows returned: 1
+Columns: protocol
+
+Data:
+  1: ('ACK flow: box_to_proxy(tbl_events) -> cloud_to_proxy(53B ACK)',)
+
+============================================================
+SCRIPT SUMMARY: reference_sequences.sql
+Total rows: 170
+Status: PASS

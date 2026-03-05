@@ -1,0 +1,37 @@
+# Task 1: Setting Frame Counts by Direction
+# Date: 2026-03-02
+
+## Total Frame Count: 52,130
+
+## Direction Breakdown (all frames):
+box_to_proxy:   30,060
+cloud_to_proxy: 20,720
+proxy_to_box:    1,350  (ALL are GetActual frames!)
+proxy_to_cloud:      0  (not present)
+
+## Setting Frames (raw LIKE '%Setting%'):
+box_to_proxy:   46  (event records confirming settings were applied)
+cloud_to_proxy: 37  (cloud sending settings to proxy→BOX)
+proxy_to_box:    0  *** ZERO - critical finding ***
+
+## Deeper search (TblItem, TblName in proxy_to_box):
+proxy_to_box with SetNew/NewValue/TblItem/TblName: 0
+
+## proxy_to_box ONLY contains:
+table_name=GetActual: 1,351 frames
+
+## ACK/NACK frames: ALL are for Weather/tbl_actual (from BOX)
+## NO setting-related ACK/NACK found anywhere
+
+## IsNewSet poll interval: ~3-4 minutes
+## (rapid conn_id cycling: each new BOX TCP connection = new conn_id)
+## Recent conn_ids observed: 1221, 1224, 1227, 1235, 1238, 1241, 1245, 1248, 1251, 1255, 1257
+
+## KEY FINDINGS:
+1. Cloud-originated settings DID work (37 cloud_to_proxy + 46 box_to_proxy events = confirmed)
+2. NO locally-originated (proxy_to_box) setting frames EVER captured in 2 days of DB
+3. DB capture of proxy_to_box only records GetActual response frames
+4. This strongly suggests local settings never reached TCP delivery to BOX
+   (or were never attempted via MQTT during this capture window)
+5. conn_id rotates VERY FAST - every ~3 minutes a new BOX TCP connection
+   -> conn_id mismatch (Hypothesis 2) is highly plausible

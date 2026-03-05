@@ -1,0 +1,12 @@
+Baseline Contamination Test - Negative Case
+===========================================
+
+Test: Mixed-window contamination detection
+Description: Validator should flag contamination from unrelated run_id entries
+
+Baseline File: /Users/martinhorak/Projects/oig-proxy/.sisyphus/evidence/mock-setting-parity/baseline/task-3-baseline-happy.json
+Injected Contamination:
+  - {"run_id": "unrelated-123", "timestamp": 10.5, "state": "fake_state"}
+  - {"run_id": "unrelated-456", "timestamp": 25.8, "state": "another_fake_state"}
+
+Expected Result: Validator should reject manifest with contamination
