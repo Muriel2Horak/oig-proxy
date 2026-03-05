@@ -1,0 +1,134 @@
+======================================================================
+OIG PROXY - MESSAGE TIMING & ROUND-TRIP ANALYSIS
+======================================================================
+
+## TIMING STATISTICS
+--------------------------------------------------
+Total message pairs analyzed: 50
+
+Latency (Box -> Proxy -> Cloud):
+  Min:    4.66 ms
+  Max:    32.05 ms
+  Mean:   9.58 ms
+  Median: 6.89 ms
+  StdDev: 6.03 ms
+
+Packet sizes:
+  Box (upstream):   244 - 580 bytes
+  Cloud (response): 53 - 75 bytes
+
+## LATENCY BY TABLE
+--------------------------------------------------
+  tbl_batt_prms:
+    Count: 15, Mean: 9.95 ms, Range: 5.19 - 32.05 ms
+  tbl_dc_in:
+    Count: 5, Mean: 7.07 ms, Range: 4.66 - 13.59 ms
+  tbl_ac_in:
+    Count: 5, Mean: 8.90 ms, Range: 5.87 - 16.68 ms
+  tbl_batt:
+    Count: 5, Mean: 9.45 ms, Range: 6.12 - 14.83 ms
+  tbl_boiler:
+    Count: 5, Mean: 8.62 ms, Range: 5.32 - 18.46 ms
+  tbl_box:
+    Count: 5, Mean: 7.27 ms, Range: 5.40 - 10.06 ms
+  tbl_actual:
+    Count: 5, Mean: 14.45 ms, Range: 6.44 - 28.87 ms
+  tbl_ac_out:
+    Count: 4, Mean: 10.53 ms, Range: 6.17 - 20.02 ms
+  tbl_events:
+    Count: 1, Mean: 8.71 ms, Range: 8.71 - 8.71 ms
+
+## SETTING COMMANDS ANALYSIS
+--------------------------------------------------
+No setting commands found in timeline
+
+Note: The unified_timeline.json contains DB entries (table data)
+and Loki logs. Setting commands typically appear in:
+  1. tbl_events with Type=Setting in XML payload
+  2. ACK frames with Reason=Setting
+These require parsing the actual frame content (not just metadata)
+
+## SESSION STATISTICS (from Loki)
+--------------------------------------------------
+Total sessions: 1
+  Session 207: 2 entries
+    First: 2026-03-03T11:43:05.662985
+    Last:  2026-03-03T11:43:05.663820
+    Containers: addon_d7b5d5b1_oig_proxy
+
+## SAMPLE MESSAGE PAIRS (first 10)
+--------------------------------------------------
+  Pair: box_id=1 -> cloud_id=2
+    Table: tbl_batt_prms, Conn: 1
+    Latency: 32.05 ms
+    Sizes: 572 -> 75 bytes
+    Box TS: 2025-12-18T19:08:17.557413
+    Cloud TS: 2025-12-18T19:08:17.589465
+
+  Pair: box_id=3 -> cloud_id=4
+    Table: tbl_dc_in, Conn: 1
+    Latency: 13.59 ms
+    Sizes: 365 -> 75 bytes
+    Box TS: 2025-12-18T19:08:25.128307
+    Cloud TS: 2025-12-18T19:08:25.141894
+
+  Pair: box_id=5 -> cloud_id=6
+    Table: tbl_ac_in, Conn: 1
+    Latency: 16.68 ms
+    Sizes: 445 -> 75 bytes
+    Box TS: 2025-12-18T19:08:31.126916
+    Cloud TS: 2025-12-18T19:08:31.143593
+
+  Pair: box_id=7 -> cloud_id=8
+    Table: tbl_ac_out, Conn: 1
+    Latency: 20.02 ms
+    Sizes: 518 -> 75 bytes
+    Box TS: 2025-12-18T19:08:38.374962
+    Cloud TS: 2025-12-18T19:08:38.394981
+
+  Pair: box_id=9 -> cloud_id=10
+    Table: tbl_batt, Conn: 1
+    Latency: 12.47 ms
+    Sizes: 428 -> 75 bytes
+    Box TS: 2025-12-18T19:08:46.493756
+    Cloud TS: 2025-12-18T19:08:46.506224
+
+  Pair: box_id=11 -> cloud_id=12
+    Table: tbl_boiler, Conn: 1
+    Latency: 7.29 ms
+    Sizes: 244 -> 75 bytes
+    Box TS: 2025-12-18T19:08:50.652139
+    Cloud TS: 2025-12-18T19:08:50.659424
+
+  Pair: box_id=13 -> cloud_id=14
+    Table: tbl_batt_prms, Conn: 1
+    Latency: 17.57 ms
+    Sizes: 580 -> 75 bytes
+    Box TS: 2025-12-18T19:08:56.636547
+    Cloud TS: 2025-12-18T19:08:56.654121
+
+  Pair: box_id=15 -> cloud_id=16
+    Table: tbl_box, Conn: 1
+    Latency: 8.85 ms
+    Sizes: 292 -> 75 bytes
+    Box TS: 2025-12-18T19:09:00.941988
+    Cloud TS: 2025-12-18T19:09:00.950840
+
+  Pair: box_id=17 -> cloud_id=18
+    Table: tbl_actual, Conn: 1
+    Latency: 28.87 ms
+    Sizes: 455 -> 75 bytes
+    Box TS: 2025-12-18T19:09:04.774021
+    Cloud TS: 2025-12-18T19:09:04.802891
+
+  Pair: box_id=19 -> cloud_id=20
+    Table: tbl_batt_prms, Conn: 1
+    Latency: 5.46 ms
+    Sizes: 572 -> 75 bytes
+    Box TS: 2025-12-18T19:09:12.770703
+    Cloud TS: 2025-12-18T19:09:12.776162
+
+
+======================================================================
+END OF REPORT
+======================================================================
