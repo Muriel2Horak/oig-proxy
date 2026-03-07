@@ -1,0 +1,4 @@
+VERDICT: NO_GO
+REASON: missing required evidence artifacts
+MISSING:
+- .sisyphus/evidence/task-2-topic-dependency-matrix.md
