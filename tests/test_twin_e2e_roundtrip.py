@@ -14,6 +14,8 @@ Verification:
   PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_e2e_roundtrip.py -k timeout --maxfail=1
 """
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable
 
@@ -155,7 +157,7 @@ class TestHappyPathRoundtrip:
         # Queue 3 settings
         tx_ids = ["tx-seq-1", "tx-seq-2", "tx-seq-3"]
         for tx_id in tx_ids:
-            await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+            await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
 
         conn_id = 1
 
@@ -178,7 +180,7 @@ class TestHappyPathRoundtrip:
                 tx_id=expected_tx_id,
                 conn_id=conn_id,
                 tbl_name="tbl_box_prms",
-                tbl_item="MODE",
+                tbl_item="SA",
                 new_value="1",
             )
             event_result = await twin.on_tbl_event(event_dto)
@@ -202,13 +204,13 @@ class TestHappyPathRoundtrip:
         twin = DigitalTwin(session_id="test-session", config=config)
 
         tx_id = "tx-end-test"
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
 
         # Complete full roundtrip
         await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
         await twin.on_ack(make_ack_dto(tx_id=tx_id, conn_id=1))
         await twin.on_tbl_event(
-            make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
+            make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="SA", new_value="1")
         )
         await twin.finish_inflight(tx_id, conn_id=1, success=True)
 
@@ -227,7 +229,7 @@ class TestHappyPathRoundtrip:
         twin = DigitalTwin(session_id="test-session", config=config)
 
         tx_id = "tx-nack-short"
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
 
         # Deliver
         await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
@@ -267,7 +269,7 @@ class TestCrossSessionFailure:
         twin = DigitalTwin(session_id="test-session", config=config)
 
         tx_id = "tx-disconnect-unacked"
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
 
         # Deliver but don't ACK
         await twin.on_poll(tx_id=None, conn_id=5, table_name="IsNewSet")
@@ -300,7 +302,7 @@ class TestCrossSessionFailure:
         twin = DigitalTwin(session_id="test-session", config=config)
 
         tx_id = "tx-wrong-conn"
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
 
         # Deliver on conn_id=5
         await twin.on_poll(tx_id=None, conn_id=5, table_name="IsNewSet")
@@ -787,7 +789,7 @@ class TestFullLifecycleIntegration:
         conn_id = 42
 
         # Stage: ACCEPTED (queue)
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
         assert await twin.get_queue_length() == 1
 
         # Stage: SENT_TO_BOX (delivery)
@@ -806,7 +808,7 @@ class TestFullLifecycleIntegration:
 
         # Stage: APPLIED
         event_result = await twin.on_tbl_event(
-            make_tbl_event_dto(tx_id=tx_id, conn_id=conn_id, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
+            make_tbl_event_dto(tx_id=tx_id, conn_id=conn_id, tbl_name="tbl_box_prms", tbl_item="SA", new_value="1")
         )
         assert event_result.status == "applied"
         pending = await twin.get_inflight()

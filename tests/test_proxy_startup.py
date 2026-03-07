@@ -3,9 +3,9 @@
 # pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
+# pyright: reportMissingImports=false
 import asyncio
 
-import control_pipeline as ctrl_module
 import mqtt_publisher
 import proxy as proxy_module
 
@@ -40,12 +40,6 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
         mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(
             tmp_path / "mqtt.db"))
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
-    monkeypatch.setattr(
-        ctrl_module, "CONTROL_MQTT_PENDING_PATH", str(
-            tmp_path / "pending.json"))
-    monkeypatch.setattr(
-        ctrl_module, "CONTROL_MQTT_LOG_PATH", str(
-            tmp_path / "control.log"))
 
     proxy = proxy_module.OIGProxy("AUTO")
 
@@ -57,14 +51,14 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
     proxy.mqtt_publisher.start_health_check = fake_health_check
     proxy.mqtt_publisher.attach_loop = lambda *_: None
 
-    async def fake_publish():
+    def fake_publish():
         return None
 
     async def fake_proxy_status():
         return None
 
     proxy.publish_proxy_status = fake_proxy_status
-    proxy._ctrl.publish_restart_errors = fake_publish
+    proxy._msc.setup = fake_publish
 
     async def fake_status_loop():
         return None
@@ -120,18 +114,12 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
         return None
 
     proxy.publish_proxy_status = fake_proxy_status
-    proxy._ctrl.publish_restart_errors = fake_publish
 
-    calls = {"control_mqtt": 0, "cache": 0}
-
-    def fake_setup_control():
-        calls["control_mqtt"] += 1
+    calls = {"cache": 0}
 
     def fake_setup_cache():
         calls["cache"] += 1
 
-    proxy._ctrl.mqtt_enabled = True
-    proxy._ctrl.setup_mqtt = fake_setup_control
     proxy._msc.setup = fake_setup_cache
 
     async def fake_status_loop():
@@ -151,5 +139,4 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     asyncio.run(proxy.start())
     assert proxy.device_id == "DEVX"
     assert proxy.mqtt_publisher.device_id == "DEVX"
-    assert calls["control_mqtt"] == 1
-    assert calls["cache"] >= 1
+    assert calls["cache"] >= 2

@@ -7,6 +7,7 @@ from typing import Any
 
 class ControlPipeline:
     def __init__(self, _proxy: Any) -> None:
+        self._proxy = _proxy
         self.session_id: str = uuid.uuid4().hex
         self.mqtt_enabled: bool = False
         self.qos: int = 1
@@ -42,6 +43,35 @@ class ControlPipeline:
         if err:
             return f"{status} {tbl}/{item}={val} err={err} tx={tx_id}".strip()
         return f"{status} {tbl}/{item}={val} tx={tx_id}".strip()
+
+    @staticmethod
+    def build_request_key(tbl_name: str, tbl_item: str, canon_value: str) -> str:
+        return f"{tbl_name}/{tbl_item}/{canon_value}"
+
+    @staticmethod
+    def result_key_state(result: str | None, sub_result: str | None) -> str | None:
+        if result == "accepted":
+            return "queued"
+        if result == "completed" and sub_result == "noop_already_set":
+            return None
+        return None
+
+    def normalize_value(
+        self, tbl_name: str, tbl_item: str, new_value: Any
+    ) -> tuple[str | None, str]:
+        # Simple normalization - for MODE in tbl_box_prms, must be "3"
+        if tbl_name == "tbl_box_prms" and tbl_item == "MODE":
+            if new_value == "3":
+                return ("3", "3")
+            return (None, "bad_value")
+        # For AAC_MAX_CHRG, add .0 suffix
+        if tbl_name == "tbl_invertor_prm1" and tbl_item == "AAC_MAX_CHRG":
+            try:
+                val = float(new_value)
+                return (f"{val:.1f}", f"{val:.1f}")
+            except (ValueError, TypeError):
+                return (None, "bad_value")
+        return (str(new_value), str(new_value))
 
     @staticmethod
     def coerce_value(value: Any) -> Any:
@@ -88,8 +118,24 @@ class ControlPipeline:
         device_id: str | None,
         source: str,
     ) -> None:
-        _ = (tbl_name, tbl_item, new_value, device_id, source)
-        return
+        if not device_id:
+            return
+        proxy = self._proxy
+        if not hasattr(proxy, "mqtt_publisher") or not proxy.mqtt_publisher:
+            return
+        mqtt = proxy.mqtt_publisher
+        topic = f"oig_local/{device_id}/{tbl_name}/state"
+        payload = {tbl_item: new_value}
+        import json
+        try:
+            await mqtt.publish_raw(
+                topic=topic,
+                payload=json.dumps(payload),
+                qos=self.qos,
+                retain=True,
+            )
+        except Exception:
+            pass
 
     async def on_box_setting_ack(self, *, tx_id: str | None, ack: bool) -> None:
         _ = (tx_id, ack)

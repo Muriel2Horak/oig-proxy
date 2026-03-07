@@ -115,3 +115,7 @@
 #QW|- Queue scheduling behavior  
 #PL|- Delegation timing to send_to_box()
 #NY|Essential for debugging control pipeline flow issues.
+#2026-03-07
+- Proxy control tests relied on removed legacy APIs (`proxy._ctrl` behaviors and `ControlSettings.send_to_box` paths); refactored API surface is now centered on `ControlPipeline` lightweight helpers plus `ControlSettings.queue_setting/get_health/handle_setting_event`.
+- Stable migration pattern for tests: assert current public/static helpers (`coerce_value`, `format_tx`, `format_result`, `parse_setting_event`) and async no-op safety hooks (`maybe_start_next`, `observe_box_frame`, `on_box_setting_ack`, `publish_setting_event_state`, `publish_restart_errors`).
+- Importing addon modules in tests can be made robust with `importlib.import_module(...)` to avoid Pylance/LSP unresolved-import noise from test environment path layout.

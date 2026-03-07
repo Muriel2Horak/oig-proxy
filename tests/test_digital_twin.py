@@ -9,15 +9,20 @@ Verification:
   Cloud:  TWIN_CLOUD_ALIGNED=true PYTHONPATH=addon/oig-proxy pytest tests/test_digital_twin.py -v
 """
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable
 
 import asyncio
+import json
 import os
 import time
+from collections.abc import Callable
 
 import pytest
 
+import digital_twin as digital_twin_module
 from config import TWIN_CLOUD_ALIGNED
 from digital_twin import DigitalTwin, DigitalTwinConfig, TransitionError
 from twin_state import (
@@ -1016,6 +1021,544 @@ class TestCloudAlignedMode:
         assert result.status == "box_ack"
 
 
+class _StubMQTTPublisher:
+    def __init__(self):
+        self.handlers: list[tuple[str, Callable[[str, bytes, int, bool], None], int]] = []
+        self.published_data: list[dict] = []
+        self.published_raw: list[tuple[str, str, int, bool]] = []
+        self.fail_publish_data = False
+        self.fail_publish_raw = False
+
+    def add_message_handler(self, topic: str, handler, qos: int) -> None:
+        self.handlers.append((topic, handler, qos))
+
+    async def publish_data(self, payload: dict) -> None:
+        if self.fail_publish_data:
+            raise RuntimeError("publish_data failed")
+        self.published_data.append(payload)
+
+    async def publish_raw(self, topic: str, payload: str, qos: int, retain: bool) -> None:
+        if self.fail_publish_raw:
+            raise RuntimeError("publish_raw failed")
+        self.published_raw.append((topic, payload, qos, retain))
+
+
+@pytest.mark.asyncio
+class TestDigitalTwinAdditionalCoverage:
+    async def test_twin_mqtt_handler_setup_and_message_variants(self, monkeypatch):
+        twin = DigitalTwin(session_id="test-session")
+        publisher = _StubMQTTPublisher()
+        handler = digital_twin_module.TwinMQTTHandler(
+            twin=twin,
+            mqtt_publisher=publisher,
+            qos=2,
+        )
+
+        assert twin._mqtt_publisher is publisher
+        assert handler.set_topic.endswith("/set")
+
+        loop = asyncio.get_running_loop()
+        handler.setup_mqtt(loop)
+        assert publisher.handlers and publisher.handlers[0][2] == 2
+
+        scheduled: list[str] = []
+
+        def fake_run_coroutine_threadsafe(coro, _loop):
+            scheduled.append("ok")
+            coro.close()
+            return None
+
+        monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe)
+        cb = publisher.handlers[0][1]
+        cb(f"{digital_twin_module.MQTT_NAMESPACE}/tbl/item/set", b"{}", 1, False)
+        assert scheduled == ["ok"]
+
+        await handler.on_mqtt_message(topic="bad/topic", payload=b"{}")
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl/item/set",
+            payload=b"{",
+        )
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl/item/set",
+            payload=json.dumps([1, 2]).encode(),
+        )
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl/item/set",
+            payload=json.dumps({"tx_id": "x"}).encode(),
+        )
+
+        monkeypatch.setattr(digital_twin_module, "generate_tx_id", lambda: "generated-tx")
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl_topic/item_topic/set",
+            payload=json.dumps(
+                {
+                    "new_value": 11,
+                    "tbl_name": "",
+                    "tbl_item": "",
+                    "confirm": "",
+                    "request_key": " req ",
+                    "received_at": " ts ",
+                }
+            ).encode(),
+        )
+
+        snapshot = await twin.get_queue_snapshot()
+        assert len(snapshot) == 1
+        assert snapshot[0].tx_id == "generated-tx"
+        assert snapshot[0].tbl_name == "tbl_topic"
+        assert snapshot[0].tbl_item == "item_topic"
+        assert snapshot[0].request_key == "req"
+        assert snapshot[0].received_at == "ts"
+
+        handler._loop = None
+        cb("x/y/z/set", b"{}", 1, False)
+
+    async def test_cloud_availability_forwarding_and_publish_helpers(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        forwarded: list[str] = []
+
+        async def forwarder(frame: str) -> None:
+            forwarded.append(frame)
+
+        twin.attach_cloud_forwarder(forwarder, availability_checker=lambda: True)
+        assert twin._cloud_available() is True
+
+        twin.attach_cloud_forwarder(None, availability_checker=lambda: False)
+        assert twin._cloud_available() is False
+
+        def broken_checker():
+            raise RuntimeError("boom")
+
+        twin.attach_cloud_forwarder(forwarder, availability_checker=broken_checker)
+        assert twin._cloud_available() is False
+
+        twin.attach_cloud_forwarder(None, availability_checker=None)
+        await twin._forward_to_cloud("<Frame>none</Frame>")
+        assert forwarded == []
+
+        twin.attach_cloud_forwarder(forwarder, availability_checker=None)
+        assert twin._cloud_available() is True
+
+        await twin._forward_to_cloud("<Frame>a</Frame>")
+        assert forwarded == ["<Frame>a</Frame>"]
+
+        async def failing_forwarder(_frame: str) -> None:
+            raise RuntimeError("f")
+
+        twin.attach_cloud_forwarder(failing_forwarder)
+        await twin._forward_to_cloud("<Frame>b</Frame>")
+
+        twin2 = DigitalTwin(session_id="test-session-2")
+        await twin2._publish_to_mqtt("<Frame><ID_SubD>1</ID_SubD></Frame>")
+
+        pub = _StubMQTTPublisher()
+        twin.attach_mqtt_publisher(pub)
+        await twin._publish_to_mqtt("<Frame><ID_SubD>1</ID_SubD></Frame>")
+        assert pub.published_data
+
+        twin._parser.parse_xml_frame = lambda _frame: {"x": 1}
+        await twin._publish_to_mqtt("<Frame><TblName>tbl_patch</TblName></Frame>")
+
+        await twin._publish_to_mqtt("<Frame><X>1</X></Frame>")
+
+        pub.fail_publish_data = True
+        await twin._publish_to_mqtt("<Frame><TblName>T</TblName></Frame>")
+
+    async def test_handle_frame_parse_publish_state_and_serialization(self):
+        twin = DigitalTwin(session_id="test-session")
+        pub = _StubMQTTPublisher()
+        twin.attach_mqtt_publisher(pub)
+
+        frames: list[str] = []
+
+        async def cloud_push(frame: str) -> None:
+            frames.append(frame)
+
+        twin.attach_cloud_forwarder(cloud_push, availability_checker=lambda: True)
+
+        response = await twin.handle_frame("<Frame><TblName>IsNewSet</TblName></Frame>", conn_id=7)
+        assert response is not None and response.table_name == "IsNewSet"
+
+        response2 = await twin.handle_frame("<Frame><TblName>tbl_x</TblName></Frame>", conn_id=7)
+        assert response2 is None
+        assert frames
+
+        assert twin._serialize_inflight() is None
+
+        dto = make_queue_dto(tx_id="tx-ser")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-ser", conn_id=7)
+        await twin.deliver_pending_setting("tx-ser", conn_id=7)
+        ser = twin._serialize_inflight()
+        assert ser is not None and ser["tx_id"] == "tx-ser"
+
+        await twin._publish_state()
+        assert pub.published_raw
+        pub.fail_publish_raw = True
+        await twin._publish_state()
+
+    async def test_start_finish_and_prune_edge_cases(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        assert await twin.start_inflight("nope", conn_id=1) is None
+        assert await twin.finish_inflight("nope", conn_id=1, success=True) is None
+
+        dto = make_queue_dto(tx_id="tx-a")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-a", conn_id=1)
+        assert await twin.finish_inflight("other", conn_id=1, success=True) is None
+
+        twin._completed_tx_ids = {f"tx-{i}" for i in range(1201)}
+        twin._prune_completed_tx_ids(max_size=1000)
+        assert len(twin._completed_tx_ids) <= 1000
+
+    async def test_ack_dispatch_and_cloud_aligned_private_helpers(self, monkeypatch):
+        twin = DigitalTwin(session_id="test-session")
+
+        monkeypatch.setattr(digital_twin_module, "TWIN_CLOUD_ALIGNED", True)
+
+        assert await twin.on_ack(make_on_ack_dto("tx-none", conn_id=1, ack=True)) is None
+
+        assert twin._get_matching_inflight_for_ack(make_on_ack_dto("x", 1, True)) is None
+
+        dto = make_queue_dto(tx_id="tx-cloud", conn_id=3)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-cloud", conn_id=3)
+        await twin.deliver_pending_setting("tx-cloud", conn_id=3)
+
+        assert twin._get_matching_inflight_for_ack(make_on_ack_dto("x", 3, True)) is None
+
+        r_none = await twin.on_ack(make_on_ack_dto("tx-cloud", conn_id=99, ack=True))
+        assert r_none is None
+
+        inflight = await twin.get_inflight()
+        assert inflight is not None
+        assert twin._resolve_delivered_conn_id(inflight) == 3
+        twin._log_cloud_aligned_ack_received(make_on_ack_dto("tx-cloud", 3, True), 3)
+        assert twin._is_cloud_aligned_ack_conn_valid(
+            dto=make_on_ack_dto("tx-cloud", 3, True),
+            delivered_conn_id=3,
+            inflight=inflight,
+        )
+        assert not twin._is_cloud_aligned_ack_conn_valid(
+            dto=make_on_ack_dto("tx-cloud", 77, True),
+            delivered_conn_id=3,
+            inflight=inflight,
+        )
+
+        twin._update_pending_simple_after_ack(make_on_ack_dto("tx-cloud", 3, True), inflight)
+        assert twin._pending_simple["status"] == "ack_received"
+        twin._update_pending_simple_after_ack(make_on_ack_dto("tx-cloud", 3, False), inflight)
+        assert twin._pending_simple == {}
+
+        r_ok = await twin.on_ack(make_on_ack_dto("tx-cloud", conn_id=3, ack=True))
+        assert r_ok is not None and r_ok.status == "box_ack"
+
+        if twin._inflight_ctx is not None:
+            twin._schedule_applied_timeout_after_ack()
+            assert twin._ack_task is not None
+            twin._cancel_ack_task()
+
+        twin._inflight = None
+        twin._inflight_ctx = None
+        dto2 = make_queue_dto(tx_id="tx-cloud-nack", conn_id=4)
+        await twin.queue_setting(dto2)
+        await twin.start_inflight("tx-cloud-nack", conn_id=4)
+        await twin.deliver_pending_setting("tx-cloud-nack", conn_id=4)
+        r_nack = await twin.on_ack(make_on_ack_dto("tx-cloud-nack", conn_id=4, ack=False))
+        assert r_nack is not None and r_nack.error == "box_nack"
+
+        monkeypatch.setattr(digital_twin_module, "TWIN_CLOUD_ALIGNED", CLOUD_ALIGNED)
+
+    async def test_legacy_ack_none_paths_and_conn_validation(self, monkeypatch):
+        monkeypatch.setattr(digital_twin_module, "TWIN_CLOUD_ALIGNED", False)
+        twin = DigitalTwin(session_id="test-session")
+
+        assert await twin.on_ack(make_on_ack_dto("missing", conn_id=1, ack=True)) is None
+
+        dto = make_queue_dto(tx_id="tx-leg-none", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-leg-none", conn_id=1)
+        assert await twin.on_ack(make_on_ack_dto("wrong", conn_id=1, ack=True)) is None
+
+        twin._inflight_ctx = None
+        assert await twin.on_ack(make_on_ack_dto("tx-leg-none", conn_id=1, ack=True)) is None
+
+        assert await twin.validate_ack_conn_ownership("x", 1, None) is True
+        assert await twin.validate_ack_conn_ownership("x", 2, 1) is False
+
+        monkeypatch.setattr(digital_twin_module, "TWIN_CLOUD_ALIGNED", CLOUD_ALIGNED)
+
+    async def test_tbl_event_disconnect_poll_and_delivery_edge_paths(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        assert await twin.on_tbl_event(
+            OnTblEventDTO(tx_id=None, conn_id=1, event_type="Info", tbl_name="a", tbl_item="b")
+        ) is None
+
+        dto = make_queue_dto(tx_id="tx-tbl", conn_id=1, tbl_name="tbl_box_prms", tbl_item="MODE")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-tbl", conn_id=1)
+        assert await twin.on_tbl_event(
+            OnTblEventDTO(tx_id="tx-tbl", conn_id=1, event_type="Info", tbl_name="tbl_box_prms", tbl_item="MODE")
+        ) is None
+        assert await twin.on_tbl_event(
+            OnTblEventDTO(tx_id="tx-tbl", conn_id=1, event_type="Setting", tbl_name="x", tbl_item="y")
+        ) is None
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-sa",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="SA",
+            new_value="1",
+            stage=SettingStage.BOX_ACK,
+        )
+        assert twin._build_auto_sa_queue_dto(twin._inflight) is None
+
+        twin._inflight = None
+        with pytest.raises(TransitionError):
+            twin._mark_inflight_applied()
+
+        results = await twin.on_disconnect(OnDisconnectDTO(tx_id=None, conn_id=1, session_id="s"))
+        assert results == []
+        twin._store_disconnect_last_result([])
+        twin._clear_inflight_after_disconnect()
+
+        poll = await twin.on_poll(tx_id="x", conn_id=1, table_name="Other")
+        assert poll.frame_data is None and poll.ack is True
+
+        dto2 = make_queue_dto(tx_id="tx-poll-new", conn_id=1)
+        await twin.queue_setting(dto2)
+        poll2 = await twin._deliver_on_is_new_set(tx_id="tx-poll-new", conn_id=1)
+        assert poll2.frame_data is not None
+
+        twin._inflight = None
+        end_resp = twin._build_delivery_response(conn_id=1)
+        assert end_resp.frame_data is not None
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-invalid-stage",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.BOX_ACK,
+        )
+        end_resp2 = twin._build_delivery_response(conn_id=1)
+        assert end_resp2.frame_data is not None
+
+        twin._inflight = None
+        assert await twin.deliver_pending_setting("none", conn_id=1) is None
+
+        assert await twin.get_pending_state("x", 1) is None
+        twin._inflight = PendingSettingState(
+            tx_id="tx-pending",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+        )
+        assert await twin.get_pending_state("wrong", 1) is None
+        assert await twin.get_pending_state("tx-pending", 1) is not None
+
+    async def test_reconnect_and_replay_branches_and_helpers(self):
+        cfg = DigitalTwinConfig(max_replay_attempts=2)
+        twin = DigitalTwin(session_id="test-session", config=cfg)
+
+        twin._store_reconnect_last_result([])
+
+        completed_dto = make_queue_dto(tx_id="tx-completed", conn_id=1)
+        twin._completed_tx_ids.add("tx-completed")
+        twin._replay_buffer.append(
+            digital_twin_module.ReplayEntry(
+                dto=completed_dto,
+                delivered_at_mono=time.monotonic(),
+                replay_count=0,
+                original_conn_id=1,
+                last_error="disconnect",
+            )
+        )
+
+        exceeded_dto = make_queue_dto(tx_id="tx-exceeded", conn_id=1)
+        twin._replay_buffer.append(
+            digital_twin_module.ReplayEntry(
+                dto=exceeded_dto,
+                delivered_at_mono=time.monotonic(),
+                replay_count=2,
+                original_conn_id=1,
+                last_error="disconnect",
+            )
+        )
+
+        replay_dto = make_queue_dto(tx_id="tx-replay", conn_id=1)
+        twin._replay_buffer.append(
+            digital_twin_module.ReplayEntry(
+                dto=replay_dto,
+                delivered_at_mono=time.monotonic(),
+                replay_count=1,
+                original_conn_id=1,
+                last_error="disconnect",
+            )
+        )
+
+        results = await twin.on_reconnect(conn_id=99)
+        assert any(r.error == "max_replay_exceeded" for r in results)
+        assert await twin.get_queue_length() >= 1
+        assert twin.is_tx_completed("tx-completed") is True
+        assert isinstance(await twin.get_replay_buffer_snapshot(), list)
+        assert isinstance(await twin.get_replay_buffer_length(), int)
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-done",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+            delivered_conn_id=1,
+            delivered_at_mono=time.monotonic(),
+        )
+        twin._completed_tx_ids.add("tx-done")
+        dres = await twin.on_disconnect(OnDisconnectDTO(tx_id=None, conn_id=1, session_id="s"))
+        assert dres and dres[0].error == "disconnect"
+
+    async def test_timeout_handlers_and_cancel_tasks(self):
+        cfg = DigitalTwinConfig(ack_timeout_s=0.0, applied_timeout_s=0.0)
+        twin = DigitalTwin(session_id="test-session", config=cfg)
+
+        ctx_missing = TransactionContext(
+            tx_id="tx-missing",
+            conn_id=1,
+            session_id="test-session",
+            stage_snapshot=SettingStage.SENT_TO_BOX.value,
+        )
+        await twin._ack_timeout_handler(ctx_missing)
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-ack-timeout",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+        )
+        await twin._ack_timeout_handler(
+            TransactionContext(
+                tx_id="tx-ack-timeout",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.SENT_TO_BOX.value,
+            )
+        )
+        assert twin._inflight is not None and twin._inflight.stage == SettingStage.DEFERRED
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-ack-stage-guard",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.BOX_ACK,
+        )
+        await twin._ack_timeout_handler(
+            TransactionContext(
+                tx_id="tx-ack-stage-guard",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.BOX_ACK.value,
+            )
+        )
+        assert twin._inflight.stage == SettingStage.BOX_ACK
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-ack-inv3",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+        )
+        await twin._ack_timeout_handler(
+            TransactionContext(
+                tx_id="tx-other",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.SENT_TO_BOX.value,
+            )
+        )
+        assert twin._inflight.stage == SettingStage.SENT_TO_BOX
+
+        twin._inflight = None
+        await twin._applied_timeout_handler(
+            TransactionContext(
+                tx_id="x",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.BOX_ACK.value,
+            )
+        )
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-applied-timeout",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.BOX_ACK,
+        )
+        await twin._applied_timeout_handler(
+            TransactionContext(
+                tx_id="tx-applied-timeout",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.BOX_ACK.value,
+            )
+        )
+        assert twin._inflight.stage == SettingStage.ERROR
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-terminal",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.APPLIED,
+        )
+        await twin._applied_timeout_handler(
+            TransactionContext(
+                tx_id="tx-terminal",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.APPLIED.value,
+            )
+        )
+        assert twin._inflight.stage == SettingStage.APPLIED
+
+        twin._inflight = PendingSettingState(
+            tx_id="tx-applied-inv3",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.BOX_ACK,
+        )
+        await twin._applied_timeout_handler(
+            TransactionContext(
+                tx_id="tx-other",
+                conn_id=1,
+                session_id="test-session",
+                stage_snapshot=SettingStage.BOX_ACK.value,
+            )
+        )
+        assert twin._inflight.stage == SettingStage.BOX_ACK
+
+        twin._applied_task = asyncio.create_task(asyncio.sleep(1))
+        twin._cancel_timeout_tasks()
+        assert twin._applied_task is None
+
+
 # =============================================================================
 # RED Tests - Expected to FAIL
 # =============================================================================
@@ -1024,7 +1567,6 @@ class TestCloudAlignedMode:
 # =============================================================================
 
 
-@pytest.mark.xfail(reason="RED tests - implementation not complete")
 @pytest.mark.asyncio
 class TestREDExpectedFailures:
     """RED tests that should FAIL until full implementation is complete."""
@@ -1132,6 +1674,7 @@ class TestREDExpectedFailures:
             "RED: on_poll must return frame_data when pending setting exists"
         )
 
+    @pytest.mark.xfail(reason="RED tests - implementation not complete")
     async def test_restore_from_snapshot_rebuilds_state(self):
         """
         RED TEST: restore_from_snapshot must rebuild complete state.

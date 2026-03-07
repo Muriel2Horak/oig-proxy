@@ -1,5 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring
 # pylint: disable=protected-access,unused-argument
+# pyright: reportMissingImports=false
 import json
 import os
 from unittest.mock import patch

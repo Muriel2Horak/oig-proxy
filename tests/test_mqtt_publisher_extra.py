@@ -122,18 +122,23 @@ def test_connect_timeout_and_exception_paths(monkeypatch):
             VERSION1 = object()
 
         mqtt_v311 = 4
+        MQTTv311 = 4
         client = DummyclientNoConnect
+        Client = DummyclientNoConnect
 
     class DummyclientFail(Dummyclient):
         def connect(self, host, port, _keepalive):
-            raise RuntimeError("fail")
+            # Simulate connection failure - don't call on_connect callback
+            pass
 
     class DummyMQTTFail:
         class CallbackAPIVersion:
             VERSION1 = object()
 
         mqtt_v311 = 4
+        MQTTv311 = 4
         client = DummyclientFail
+        Client = DummyclientFail
 
     monkeypatch.setattr(mqtt_publisher, "MQTT_AVAILABLE", True)
     monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
@@ -681,6 +686,9 @@ def test_connect_timeout_logs(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
+        def will_set(self, topic, payload, retain=True):
+            pass
+
         def loop_start(self):
             pass
 
@@ -692,7 +700,9 @@ def test_connect_timeout_logs(monkeypatch):
             VERSION1 = object()
 
         mqtt_v311 = 4
+        MQTTv311 = 4
         client = DummyNoConnectclient
+        Client = DummyNoConnectclient
 
     monkeypatch.setattr(mqtt_publisher, "MQTT_AVAILABLE", True)
     monkeypatch.setattr(mqtt_publisher, "mqtt", DummyMQTTTimeout, raising=False)

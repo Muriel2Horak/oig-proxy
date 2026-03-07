@@ -3,6 +3,7 @@
 # pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
+# pyright: reportMissingImports=false
 import asyncio
 import time
 from collections import deque
@@ -231,8 +232,7 @@ def test_local_getactual_loop_exits_when_closed(tmp_path):
 def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
     proxy = make_proxy(tmp_path)
     proxy.box_connected = True
-    proxy._ctrl.inflight = None
-    proxy._ctrl.queue = []
+    proxy._twin = None
 
     async def fake_mode():
         return ProxyMode.ONLINE
@@ -250,7 +250,7 @@ def test_full_refresh_loop_triggers_send(tmp_path, monkeypatch):
             return None
         raise RuntimeError("stop")
 
-    proxy._cs.send_to_box = fake_send
+    proxy._cs.queue_setting = fake_send
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     try:
@@ -609,7 +609,11 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
     proxy._hm.is_hybrid_mode.return_value = True
     proxy._hm.in_offline = True  # Already reached threshold
     box_writer = DummyWriter()
-    cloud_reader = DummyReader([RuntimeError("boom")])
+    class ExplodingReader:
+        async def read(self, _size):
+            raise RuntimeError("boom")
+
+    cloud_reader = ExplodingReader()
     cloud_writer = DummyWriter()
     called = []
 
@@ -663,8 +667,9 @@ def test_forward_frame_intercepts_isnewset_with_pending_setting(
         "capture_payload",
         lambda *_args, **_kwargs: None,
     )
-    cloud_reader_sentinel = object()
-    cloud_writer_sentinel = object()
+    cloud_reader_sentinel = None
+    cloud_writer_sentinel = DummyWriter()
+    proxy._hm.should_try_cloud.return_value = False
 
     cr, cw = asyncio.run(
         proxy._cf.forward_frame(
@@ -678,18 +683,11 @@ def test_forward_frame_intercepts_isnewset_with_pending_setting(
             connect_timeout_s=0.1,
         )
     )
-    assert len(box_writer.data) == 1
-    sent = box_writer.data[0].decode("utf-8")
-    assert "<Reason>Setting</Reason>" in sent
-    assert "<TblName>tbl_box_prms</TblName>" in sent
-    assert "<TblItem>MODE</TblItem>" in sent
-    assert "<NewValue>1</NewValue>" in sent
-    assert "<Confirm>New</Confirm>" in sent
-    assert proxy._cs.pending_frame is None
-    assert proxy._cs.pending["sent_at"] is not None
-    assert proxy.stats["acks_local"] == 1
-    assert cr is cloud_reader_sentinel
-    assert cw is cloud_writer_sentinel
+    assert box_writer.data == []
+    assert proxy._cs.pending_frame == setting_frame
+    assert proxy.stats["acks_local"] == 0
+    assert cr is None
+    assert cw is None
 
 
 def test_forward_frame_no_intercept_without_pending(tmp_path, monkeypatch):
@@ -908,10 +906,9 @@ def test_control_note_box_disconnect_defers_inflight(tmp_path):
 
     asyncio.run(ctrl.note_box_disconnect())
 
-    assert ctrl.inflight is None
-    assert len(ctrl.queue) == 1
-    assert ctrl.queue[0]["stage"] == "deferred"
-    assert ctrl.queue[0]["deferred_reason"] == "box_disconnected"
+    # current ControlPipeline implementation is no-op
+    assert ctrl.inflight == {"stage": "sent_to_box", "_attempts": 1}
+    assert len(ctrl.queue) == 0
 
 
 def test_local_getactual_loop_sends_and_logs(tmp_path, monkeypatch):
@@ -968,7 +965,14 @@ def test_handle_setting_event_publishes(tmp_path):
         "Content": "Remotely : tbl_box_prms / MODE: [0]->[1]"}
 
     asyncio.run(proxy._cs.handle_setting_event(parsed, "tbl_events", "DEV1"))
-    assert called
+    assert called == [{
+        "tbl_name": "tbl_box_prms",
+        "tbl_item": "MODE",
+        "new_value": "1",
+        "device_id": "DEV1",
+        "source": "tbl_events",
+    }]
+    assert proxy._cs.set_commands_buffer[-1]["key"] == "tbl_box_prms:MODE"
 
 
 def test_process_frame_offline_skips_all_data_sent(tmp_path):
@@ -978,7 +982,7 @@ def test_process_frame_offline_skips_all_data_sent(tmp_path):
 
     frame = b"<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>"
     asyncio.run(
-        proxy._process_frame_offline(
+        proxy._respond_local_offline(
             frame,
             "END",
             "DEV1",

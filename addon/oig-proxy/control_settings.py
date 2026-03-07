@@ -85,6 +85,15 @@ class ControlSettings:
             "source": "tbl_events",
         })
 
+        # Publish the setting event state to MQTT
+        await self._proxy._ctrl.publish_setting_event_state(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=str(new_value),
+            device_id=device_id,
+            source="tbl_events",
+        )
+
     # -----------------------------------------------------------------
     # Control API endpoints
     # -----------------------------------------------------------------

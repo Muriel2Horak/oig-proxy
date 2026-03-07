@@ -1,5 +1,7 @@
 """Tests for box session helpers."""
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
 
@@ -37,6 +39,13 @@ class DummyWriter:
 
     async def wait_closed(self):
         return None
+
+    def get_extra_info(self, name, default=None):
+        if name == "peername":
+            return ("127.0.0.1", 5710)
+        if name == "socket":
+            return None
+        return default
 
 
 def _make_proxy():
@@ -134,6 +143,7 @@ async def test_fallback_offline_from_cloud_issue():
     proxy = _make_proxy()
     proxy._close_writer = AsyncMock()
     proxy._process_frame_offline = AsyncMock()
+    proxy._respond_local_offline = AsyncMock()
 
     cf = CloudForwarder.__new__(CloudForwarder)
     cf._proxy = proxy
@@ -160,4 +170,4 @@ async def test_fallback_offline_from_cloud_issue():
     )
 
     proxy._tc.record_cloud_session_end.assert_called_once()
-    proxy._process_frame_offline.assert_called_once()
+    proxy._respond_local_offline.assert_called_once()

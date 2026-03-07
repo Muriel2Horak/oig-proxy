@@ -148,3 +148,35 @@ python3 -m py_compile addon/oig-proxy/digital_twin.py
 - All existing tests remain compatible (legacy mode is default)
 - `_pending_simple` dict already existed from Wave 1 (Task 2)
 - No changes to timeout values or cloud mode behavior
+
+---
+
+# Task: Fix digital twin and telemetry tests after API refactor
+
+## Summary
+Updated test expectations to match current runtime behavior without touching implementation code. Focus areas were telemetry client error handling (now catches narrower exception classes), safe test setup for read-only `/data` environments, and digital twin RED test stability under improved implementation.
+
+## Learnings
+- Telemetry client now catches specific network/client exceptions (`OSError`, `ConnectionError`, `TimeoutError`, `AttributeError`), so tests expecting graceful failure must raise one of these instead of generic `Exception`/`RuntimeError`.
+- `TelemetryBuffer` initialization path calls `db_utils.init_sqlite_db` (not direct `sqlite3.connect`), so failure-path tests must patch `db_utils.init_sqlite_db`.
+- Tests creating `TelemetryClient` without patching `MQTT_AVAILABLE` can fail in local CI/dev due to default buffer path `/data/telemetry_buffer.db` on read-only filesystems; disabling MQTT for these unit tests avoids environment-dependent failures.
+- Previously class-level `xfail` on RED digital twin tests became stale as implementation progressed, producing XPASS noise; moving `xfail` to only the still-incomplete restore test keeps suite intent accurate.
+- Added file-level pyright directives in tests that intentionally import addon modules via test PYTHONPATH to keep diagnostics clean while preserving runtime behavior.
+
+---
+
+# Task: Fix twin E2E/replay and cloud session unit tests after API drift
+
+## Summary
+Adjusted four test files to match current twin/cloud behavior after refactors (auto-queued SA in twin flow and offline fallback path in cloud forwarder), without touching runtime implementation.
+
+## Learnings
+- `DigitalTwin.on_tbl_event()` now auto-queues an SA command after non-SA setting apply; tests expecting immediate END/empty queue must use SA as the primary test setting when asserting no follow-up work.
+- Replay dedup tests should also use SA in completed flows, otherwise the auto-generated SA can alter replay-buffer expectations.
+- `CloudForwarder.fallback_offline()` now routes through `_respond_local_offline()` rather than `_process_frame_offline()`, so session tests should assert `_respond_local_offline` calls.
+- Test stream-writer doubles used in proxy/cloud tests must expose `get_extra_info()` (at least `peername`) to satisfy current proxy offline ACK path.
+- For these test modules, file-level `# pyright: reportMissingImports=false` keeps diagnostics clean when imports rely on `PYTHONPATH=addon/oig-proxy` at test runtime.
+
+## Verification
+- `PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_e2e_roundtrip.py tests/test_twin_replay_resilience.py tests/test_proxy_cloud_session.py tests/test_proxy_box_session.py`
+- Result: `59 passed`

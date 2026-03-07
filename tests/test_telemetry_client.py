@@ -1,4 +1,5 @@
 """Tests for telemetry_client module."""
+# pyright: reportMissingImports=false
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-many-lines,wrong-import-position,import-outside-toplevel,line-too-long,exec-used,redefined-builtin
 # pylint: disable=unused-argument,invalid-name,too-few-public-methods,unspecified-encoding
@@ -157,7 +158,7 @@ class TestTelemetryBuffer:
 
     def test_init_db_error(self):
         with patch(
-            "telemetry_client.sqlite3.connect",
+            "db_utils.init_sqlite_db",
             side_effect=sqlite3.OperationalError("forced init failure"),
         ):
             buffer = telemetry_client.TelemetryBuffer(Path("buffer.db"))
@@ -306,7 +307,7 @@ class TestTelemetryClientMqtt:
         old = MagicMock()
         old.is_connected.return_value = False
         # reconnect fails → _cleanup_client is called → _client becomes None → _create_client
-        old.reconnect.side_effect = Exception("reconnect failed")
+        old.reconnect.side_effect = OSError("reconnect failed")
         client._client = old
         client._connected = False
         client._create_client = MagicMock(return_value=True)
@@ -661,7 +662,7 @@ class TestEdgeCases:
         mock_config.TELEMETRY_MQTT_BROKER = "test:1883"
 
         with patch('telemetry_client.mqtt') as mock_mqtt:
-            mock_mqtt.Client.side_effect = Exception("Connection error")
+            mock_mqtt.Client.side_effect = OSError("Connection error")
             client = telemetry_client.TelemetryClient("12345", "1.0.0")
             result = client._create_client()
             assert result is False
@@ -713,7 +714,7 @@ class TestEdgeCases:
             with patch('telemetry_client.MQTT_AVAILABLE', True):
                 client = telemetry_client.TelemetryClient("12345", "1.0.0")
                 mock_client = MagicMock()
-                mock_client.publish.side_effect = Exception("Publish error")
+                mock_client.publish.side_effect = OSError("Publish error")
                 client._client = mock_client
                 client._connected = True
 
@@ -731,7 +732,7 @@ class TestEdgeCases:
 
                     # Mock client to fail on publish
                     mock_client = MagicMock()
-                    mock_client.publish.side_effect = Exception(
+                    mock_client.publish.side_effect = OSError(
                         "Publish error")
                     client._client = mock_client
                     client._connected = True
@@ -918,7 +919,9 @@ class TestTelemetryClientCoverage:
     def test_import_error_branch_exec(self, monkeypatch):
         import builtins
 
-        source = Path(telemetry_client.__file__).read_text()
+        module_path = telemetry_client.__file__
+        assert module_path is not None
+        source = Path(module_path).read_text()
         original_import = builtins.__import__
 
         def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -929,8 +932,8 @@ class TestTelemetryClientCoverage:
         monkeypatch.setattr(builtins, "__import__", fake_import)
         globs: dict = {
             "__name__": "telemetry_client_no_mqtt",
-            "__file__": telemetry_client.__file__}
-        exec(compile(source, telemetry_client.__file__, "exec"), globs)
+            "__file__": module_path}
+        exec(compile(source, module_path, "exec"), globs)
         assert globs["MQTT_AVAILABLE"] is False
         assert globs["mqtt"] is None
 
@@ -949,13 +952,13 @@ class TestTelemetryClientCoverage:
 
         class ExplodingConn:
             def execute(self, *_args, **_kwargs):
-                raise RuntimeError("boom")
+                raise sqlite3.OperationalError("boom")
 
             def commit(self):
                 return None
 
             def close(self):
-                raise RuntimeError("boom")
+                raise sqlite3.OperationalError("boom")
 
         buf._conn = ExplodingConn()
         buf._cleanup()

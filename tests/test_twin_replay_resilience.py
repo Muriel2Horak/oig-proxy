@@ -15,6 +15,8 @@ Verification:
   PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_replay_resilience.py -k reconnect --maxfail=1
 """
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable
 
@@ -95,7 +97,7 @@ class TestReplayBuffer:
         twin = DigitalTwin(session_id="test-session", config=config)
 
         tx_id = "tx-replay-1"
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
 
         await twin.on_poll(tx_id=None, conn_id=5, table_name="IsNewSet")
 
@@ -203,13 +205,13 @@ class TestDuplicatePrevention:
         await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
         await twin.on_ack(make_ack_dto(tx_id=tx_id, conn_id=1))
         await twin.on_tbl_event(
-            make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
+            make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="SA", new_value="1")
         )
         await twin.finish_inflight(tx_id, conn_id=1, success=True)
 
         assert twin.is_tx_completed(tx_id)
 
-        await twin.queue_setting(make_queue_dto(tx_id=tx_id))
+        await twin.queue_setting(make_queue_dto(tx_id=tx_id, tbl_item="SA", new_value="1"))
         await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
         await twin.on_disconnect(OnDisconnectDTO(tx_id=None, conn_id=1))
 

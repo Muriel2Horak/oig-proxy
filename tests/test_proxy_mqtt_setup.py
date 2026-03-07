@@ -1,15 +1,17 @@
 """Tests for MQTT setup helpers in proxy.py."""
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
 # pylint: disable=useless-return
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
 import proxy as proxy_module
-from control_pipeline import ControlPipeline
 from models import ProxyMode
 import mqtt_state_cache as msc_module
 from mqtt_state_cache import MqttStateCache
@@ -21,6 +23,8 @@ class DummyLoop:
 
     def call_soon_threadsafe(self, func, *args, **kwargs):
         self.calls.append((func, args, kwargs))
+        if args and asyncio.iscoroutine(args[0]):
+            args[0].close()
 
 
 def _make_proxy():
@@ -92,27 +96,11 @@ def test_setup_mqtt_state_cache_handler_decodes(monkeypatch):
     assert proxy._loop.calls
 
 
-def test_setup_control_mqtt_registers_handler(monkeypatch):
+def test_setup_mqtt_state_cache_is_idempotent(monkeypatch):
+    monkeypatch.setattr(msc_module, "MQTT_NAMESPACE", "oig_local")
     proxy = _make_proxy()
 
-    # Replace MagicMock _ctrl with a real ControlPipeline for setup_mqtt() call
-    ctrl = ControlPipeline.__new__(ControlPipeline)
-    ctrl._proxy = proxy
-    ctrl.set_topic = "oig/control/set"
-    ctrl.result_topic = "oig/control/result"
-    ctrl.qos = 1
-    ctrl.mqtt_enabled = True
-    proxy._ctrl = ctrl
-
-    def fake_run_coroutine_threadsafe(coro, loop):
-        coro.close()
-        return None
-
-    monkeypatch.setattr(proxy_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe)
-
-    proxy._ctrl.setup_mqtt()
+    proxy._msc.setup()
+    proxy._msc.setup()
 
     proxy.mqtt_publisher.add_message_handler.assert_called_once()
-    args, kwargs = proxy.mqtt_publisher.add_message_handler.call_args
-    assert kwargs["topic"] == "oig/control/set"
-    assert kwargs["qos"] == 1
