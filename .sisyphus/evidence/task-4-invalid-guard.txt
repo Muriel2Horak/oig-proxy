@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-activation
+configfile: pytest.ini
+plugins: mock-3.15.1, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 8 items
+
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g1_force_twin_with_twin_disabled PASSED [ 12%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g1_force_twin_with_kill_switch PASSED [ 25%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g2_cloud_aligned_without_twin PASSED [ 37%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g3_cloud_aligned_with_kill_switch PASSED [ 50%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g4_ack_deadline_zero PASSED [ 62%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g5_applied_deadline_negative PASSED [ 75%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_g6_applied_less_than_ack PASSED [ 87%]
+tests/test_twin_activation_guards.py::TestInvalidConfigRejection::test_multiple_errors_collected PASSED [100%]
+
+============================== 8 passed in 0.02s ===============================

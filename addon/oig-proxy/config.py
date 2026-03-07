@@ -5,6 +5,7 @@ Konfigurace OIG Proxy - všechny konstanty a environment variables.
 
 import os
 from importlib.util import find_spec
+from typing import Any
 
 # ============================================================================
 # MQTT Availability Check
@@ -167,14 +168,72 @@ CONTROL_MQTT_APPLIED_TIMEOUT_S = float(
 CONTROL_MQTT_MODE_QUIET_SECONDS = float(
     os.getenv("CONTROL_MQTT_MODE_QUIET_SECONDS", "20"))
 
+CONTROL_WRITE_PARITY_CONTRACT: dict[str, dict[str, str]] = {
+    "tbl_batt_prms": {
+        "FMT_ON": "identity",
+        "BAT_MIN": "identity",
+    },
+    "tbl_boiler_prms": {
+        "ISON": "identity",
+        "MANUAL": "identity",
+        "SSR0": "identity",
+        "SSR1": "identity",
+        "SSR2": "identity",
+        "OFFSET": "identity",
+    },
+    "tbl_box_prms": {
+        "MODE": "mode_0_5",
+        "BAT_AC": "identity",
+        "BAT_FORMAT": "identity",
+        "SA": "identity",
+        "RQRESET": "identity",
+    },
+    "tbl_invertor_prms": {
+        "GRID_PV_ON": "identity",
+        "GRID_PV_OFF": "identity",
+        "TO_GRID": "identity",
+    },
+    "tbl_invertor_prm1": {
+        "AAC_MAX_CHRG": "float_1dp",
+        "A_MAX_CHRG": "identity",
+    },
+}
+
 # Default whitelist (deny-by-default for everything else)
 CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
-    "tbl_batt_prms": {"FMT_ON", "BAT_MIN"},
-    "tbl_boiler_prms": {"ISON", "MANUAL", "SSR0", "SSR1", "SSR2", "OFFSET"},
-    "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA", "RQRESET"},
-    "tbl_invertor_prms": {"GRID_PV_ON", "GRID_PV_OFF", "TO_GRID"},
-    "tbl_invertor_prm1": {"AAC_MAX_CHRG", "A_MAX_CHRG"},
+    tbl_name: set(tbl_items.keys())
+    for tbl_name, tbl_items in CONTROL_WRITE_PARITY_CONTRACT.items()
 }
+
+
+def normalize_control_value(
+    tbl_name: str,
+    tbl_item: str,
+    new_value: Any,
+) -> tuple[str | None, str]:
+    profile = CONTROL_WRITE_PARITY_CONTRACT.get(tbl_name, {}).get(tbl_item)
+    if profile is None:
+        return (str(new_value), str(new_value))
+
+    if profile == "mode_0_5":
+        try:
+            mode_int = int(new_value)
+            if 0 <= mode_int <= 5:
+                canon = str(mode_int)
+                return (canon, canon)
+        except (ValueError, TypeError):
+            pass
+        return (None, "bad_value")
+
+    if profile == "float_1dp":
+        try:
+            val = float(new_value)
+            canon = f"{val:.1f}"
+            return (canon, canon)
+        except (ValueError, TypeError):
+            return (None, "bad_value")
+
+    return (str(new_value), str(new_value))
 
 # ============================================================================
 # Sensor Map Configuration
@@ -253,24 +312,49 @@ TWIN_CLOUD_ALIGNED = _get_bool_env("TWIN_CLOUD_ALIGNED", False)
 
 
 def validate_startup_guards() -> None:
-    """Ověří konzistenci konfigurace a vyhodí ValueError při chybě."""
+    """Ověří konzistenci konfigurace a vyhodí ValueError při chybě.
+
+    Guards (collected, not fail-fast):
+      G1: force_twin requires active twin
+      G2: cloud_aligned requires twin enabled
+      G3: cloud_aligned incompatible with kill switch
+      G4: ACK deadline must be positive
+      G5: Applied deadline must be positive
+      G6: Applied deadline must be >= ACK deadline
+    """
     errors: list[str] = []
 
+    # G4: ACK deadline must be positive
     if TWIN_ACK_DEADLINE_SECONDS <= 0:
         errors.append("TWIN_ACK_DEADLINE_SECONDS must be > 0")
 
+    # G5: Applied deadline must be positive
     if TWIN_APPLIED_DEADLINE_SECONDS <= 0:
         errors.append("TWIN_APPLIED_DEADLINE_SECONDS must be > 0")
 
+    # G6: Applied deadline must be >= ACK deadline
     if TWIN_APPLIED_DEADLINE_SECONDS < TWIN_ACK_DEADLINE_SECONDS:
         errors.append(
             "TWIN_APPLIED_DEADLINE_SECONDS must be >= TWIN_ACK_DEADLINE_SECONDS"
         )
 
+    # G1: force_twin requires active twin
     if LOCAL_CONTROL_ROUTING == "force_twin" and (not TWIN_ENABLED or TWIN_KILL_SWITCH):
         errors.append(
             "LOCAL_CONTROL_ROUTING=force_twin requires TWIN_ENABLED=true and "
             "TWIN_KILL_SWITCH=false"
+        )
+
+    # G2: cloud_aligned requires twin enabled
+    if TWIN_CLOUD_ALIGNED and not TWIN_ENABLED:
+        errors.append(
+            "TWIN_CLOUD_ALIGNED=true requires TWIN_ENABLED=true"
+        )
+
+    # G3: cloud_aligned incompatible with kill switch
+    if TWIN_CLOUD_ALIGNED and TWIN_KILL_SWITCH:
+        errors.append(
+            "TWIN_CLOUD_ALIGNED=true is incompatible with TWIN_KILL_SWITCH=true"
         )
 
     if errors:

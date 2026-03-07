@@ -16,6 +16,7 @@ from config import (
     TARGET_PORT,
     TARGET_SERVER,
     DATA_DIR,
+    validate_startup_guards,
 )
 from utils import load_sensor_map
 from proxy import OIGProxy
@@ -84,6 +85,13 @@ async def main():
 
     # Check requirements
     check_requirements()
+
+    # Validate Twin configuration guards (hard fail on invalid combos)
+    try:
+        validate_startup_guards()
+    except ValueError as exc:
+        logger.error("❌ Fatal: invalid Twin configuration: %s", exc)
+        sys.exit(1)
 
     # Načti sensor mapu (DŮLEŽITÉ pro MQTT entity)
     load_sensor_map()

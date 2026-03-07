@@ -187,4 +187,40 @@ fi
 export CAPTURE_RETENTION_DAYS=$CAPTURE_RETENTION_DAYS
 bashio::log.info "🧹 Capture retention days: $CAPTURE_RETENTION_DAYS"
 
+# Twin Configuration (optional, defaults safe for legacy)
+TWIN_ENABLED_RAW=$(bashio::config 'twin_enabled' 2>/dev/null)
+if [ "$TWIN_ENABLED_RAW" = "true" ] || [ "$TWIN_ENABLED_RAW" = "1" ]; then
+  export TWIN_ENABLED="true"
+  bashio::log.info "🔁 Twin: ENABLED"
+else
+  export TWIN_ENABLED="false"
+fi
+
+TWIN_KILL_SWITCH_RAW=$(bashio::config 'twin_kill_switch' 2>/dev/null)
+if [ "$TWIN_KILL_SWITCH_RAW" = "true" ] || [ "$TWIN_KILL_SWITCH_RAW" = "1" ]; then
+  export TWIN_KILL_SWITCH="true"
+  bashio::log.info "🛑 Twin kill switch: ENABLED"
+else
+  export TWIN_KILL_SWITCH="false"
+fi
+
+TWIN_CLOUD_ALIGNED_RAW=$(bashio::config 'twin_cloud_aligned' 2>/dev/null)
+if [ "$TWIN_CLOUD_ALIGNED_RAW" = "true" ] || [ "$TWIN_CLOUD_ALIGNED_RAW" = "1" ]; then
+  export TWIN_CLOUD_ALIGNED="true"
+  bashio::log.info "☁️ Twin cloud aligned: ENABLED"
+else
+  export TWIN_CLOUD_ALIGNED="false"
+fi
+
+LOCAL_CONTROL_ROUTING_RAW=$(bashio::config 'local_control_routing' 2>/dev/null)
+if [ -z "$LOCAL_CONTROL_ROUTING_RAW" ] || [ "$LOCAL_CONTROL_ROUTING_RAW" = "null" ]; then
+  LOCAL_CONTROL_ROUTING_RAW="auto"
+fi
+export LOCAL_CONTROL_ROUTING=$LOCAL_CONTROL_ROUTING_RAW
+
+TWIN_VERBOSE_LOGGING_RAW=$(bashio::config 'twin_verbose_logging' 2>/dev/null)
+if [ "$TWIN_VERBOSE_LOGGING_RAW" = "true" ] || [ "$TWIN_VERBOSE_LOGGING_RAW" = "1" ]; then
+  export TWIN_VERBOSE_LOGGING="true"
+fi
+
 python -u /app/main.py

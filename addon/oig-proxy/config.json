@@ -32,7 +32,12 @@
     "capture_payloads": false,
     "capture_raw_bytes": false,
     "capture_retention_days": 7,
-    "control_mqtt_enabled": false
+    "control_mqtt_enabled": false,
+    "twin_enabled": false,
+    "twin_kill_switch": false,
+    "twin_cloud_aligned": false,
+    "local_control_routing": "auto",
+    "twin_verbose_logging": false
   },
   "schema": {
     "target_server": "str",
@@ -55,7 +60,12 @@
     "capture_retention_days": "int?",
     "control_mqtt_enabled": "bool?",
     "ha_ip": "str?",
-    "dns_upstream": "str?"
+    "dns_upstream": "str?",
+    "twin_enabled": "bool?",
+    "twin_kill_switch": "bool?",
+    "twin_cloud_aligned": "bool?",
+    "local_control_routing": "list(auto|force_twin|force_cloud)?",
+    "twin_verbose_logging": "bool?"
   },
   "ports": {
     "5710/tcp": 5710,
