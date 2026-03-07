@@ -37,11 +37,11 @@ from config import (
     TELEMETRY_INTERVAL_S,
 )
 from control_api import ControlAPIServer
-from control_pipeline import ControlPipeline
 from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
 from hybrid_mode import HybridModeManager
 from oig_frame import (
+    build_end_time_frame,
     build_getactual_frame,
     build_offline_ack_frame,
     infer_device_id,
@@ -54,15 +54,21 @@ from config import (
     TWIN_KILL_SWITCH,
     LOCAL_CONTROL_ROUTING,
 )
-from digital_twin import DigitalTwin, DigitalTwinConfig
-from twin_state import PollResponseDTO
+from digital_twin import DigitalTwin, DigitalTwinConfig, TwinMQTTHandler
 from mqtt_publisher import MQTTPublisher
 from utils import (
-    box_session_id,
     capture_payload,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _box_session_id(peer: Any) -> str:
+    if isinstance(peer, tuple) and len(peer) >= 2:
+        return f"{peer[0]}:{peer[1]}"
+    if peer is None:
+        return "unknown"
+    return str(peer)
 
 
 class _TelemetryLogHandler(logging.Handler):
@@ -103,9 +109,6 @@ class OIGProxy:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._control_api: ControlAPIServer | None = None
         self._cs = ControlSettings(self)
-
-        # Control over MQTT (production)
-        self._ctrl = ControlPipeline(self)
         self._proxy_status_attrs_topic: str = str(PROXY_STATUS_ATTRS_TOPIC)
         self._ps = ProxyStatusReporter(self)
         self._local_getactual_enabled: bool = bool(LOCAL_GETACTUAL_ENABLED)
@@ -140,6 +143,14 @@ class OIGProxy:
         self._local_control_routing: str = str(LOCAL_CONTROL_ROUTING)
         twin_config = DigitalTwinConfig(device_id=device_id)
         self._twin: DigitalTwin | None = DigitalTwin(config=twin_config) if self._twin_enabled else None
+        self._twin_mqtt_handler: TwinMQTTHandler | None = (
+            TwinMQTTHandler(twin=self._twin, mqtt_publisher=self.mqtt_publisher)
+            if self._twin is not None
+            else None
+        )
+        self._pending_twin_activation: bool = False
+        self._twin_mode_active: bool = False
+        self._install_twin_mqtt_activation_hook()
 
         # Statistiky
         self.stats = {
@@ -187,9 +198,39 @@ class OIGProxy:
                 "MQTT: Initial connect failed, health check will retry reconnect")
             await self.mqtt_publisher.start_health_check()
 
-        if self._ctrl.mqtt_enabled:
-            self._ctrl.setup_mqtt()
+        if self._twin_mqtt_handler is not None and self._loop is not None:
+            self._twin_mqtt_handler.setup_mqtt(self._loop)
         self._msc.setup()
+
+    def _install_twin_mqtt_activation_hook(self) -> None:
+        if self._twin_mqtt_handler is None:
+            return
+
+        original_on_mqtt_message = self._twin_mqtt_handler.on_mqtt_message
+
+        async def _on_mqtt_message_with_activation(
+            *, topic: str, payload: bytes
+        ) -> None:
+            await original_on_mqtt_message(topic=topic, payload=payload)
+
+            if await self._hm.get_current_mode() != ProxyMode.ONLINE:
+                return
+
+            if not await self._queue_has_items():
+                return
+
+            self._pending_twin_activation = True
+            logger.info(
+                "TWIN: Pending session activation armed (ONLINE mode, mqtt topic=%s)",
+                topic,
+            )
+
+        self._twin_mqtt_handler.on_mqtt_message = _on_mqtt_message_with_activation
+
+    async def _queue_has_items(self) -> bool:
+        if self._twin is None:
+            return False
+        return (await self._twin.get_queue_length()) > 0
 
     def _restore_device_id(self) -> None:
         if self.device_id != "AUTO":
@@ -250,7 +291,6 @@ class OIGProxy:
         )
 
         await self.publish_proxy_status()
-        await self._ctrl.publish_restart_errors()
         self._ps.mqtt_was_ready = self.mqtt_publisher.is_ready()
         self._start_background_tasks()
 
@@ -305,11 +345,14 @@ class OIGProxy:
                 continue
             if await self._hm.get_current_mode() != ProxyMode.ONLINE:
                 continue
-            if self._ctrl.inflight or self._ctrl.queue:
-                continue
+            if self._twin is not None:
+                if await self._queue_has_items():
+                    continue
+                if await self._twin.get_inflight() is not None:
+                    continue
             try:
                 logger.info("CONTROL: Full refresh (SA) requested")
-                await self._cs.send_to_box(
+                await self._cs.queue_setting(
                     tbl_name="tbl_box_prms",
                     tbl_item="SA",
                     new_value="1",
@@ -339,7 +382,7 @@ class OIGProxy:
             peer_str = f"{addr[0]}:{addr[1]}" if addr else None
             logger.info(
                 "CTRL_DIAG proxy_box_connect | conn_id=%d box_session=%s peer=%s ts=%.3f",
-                conn_id, box_session_id(addr), peer_str, time.time(),
+                conn_id, _box_session_id(addr), peer_str, time.time(),
             )
             self._active_box_writer = writer
             self._active_box_peer = peer_str
@@ -421,10 +464,14 @@ class OIGProxy:
             self._tc.fire_event(
                 "error_box_disconnect",
                 box_peer=self._active_box_peer or str(addr))
-            if self._ctrl.mqtt_enabled:
-                await self._ctrl.note_box_disconnect()
-            if self._cs:
-                self._cs.clear_pending_on_disconnect()
+
+            if self._pending_twin_activation:
+                pending_queue = await self._queue_has_items()
+                logger.info(
+                    "TWIN: BOX disconnected with pending activation (queue_has_items=%s)",
+                    pending_queue,
+                )
+            self._twin_mode_active = False
             
             # Twin lifecycle: on_disconnect
             if self._twin is not None:
@@ -498,9 +545,6 @@ class OIGProxy:
         device_id = parsed.get("_device_id") if parsed else None
         table_name = parsed.get("_table") if parsed else None
         # IsNewSet/IsNewWeather/IsNewFW polls carry <TblName>tbl_actual</TblName>
-        # but the *logical* table is the Result value.  Always override so that
-        # downstream interception (forward_frame / _process_frame_offline) can
-        # match on "IsNewSet" instead of "tbl_actual".
         if parsed.get("Result") in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             table_name = str(parsed["Result"])
             parsed["_table"] = table_name
@@ -562,15 +606,120 @@ class OIGProxy:
                 self._tc.record_tbl_event(parsed=parsed, device_id=device_id)
             await self._cs.handle_setting_event(parsed, table_name, device_id)
             await self._maybe_handle_twin_event(parsed, table_name, device_id)
-            await self._ctrl.observe_box_frame(parsed, table_name, frame)
             await self._mp.maybe_process_mode(parsed, table_name, device_id)
-            await self._ctrl.maybe_start_next()
             await self.mqtt_publisher.publish_data(parsed)
 
         return device_id, table_name
 
     _infer_table_name = staticmethod(infer_table_name)
     _infer_device_id = staticmethod(infer_device_id)
+
+    async def _process_box_frame_with_guard(
+        self,
+        *,
+        frame_bytes: bytes,
+        frame: str,
+        conn_id: int,
+    ) -> tuple[str | None, str | None] | None:
+        try:
+            return await self._process_box_frame_common(
+                frame_bytes=frame_bytes,
+                frame=frame,
+                conn_id=conn_id,
+            )
+        except Exception:
+            # Nechceme shazovat celé BOX spojení kvůli chybě v publish/discovery/parsing.
+            # Traceback nám pomůže najít přesnou příčinu (např. regex v
+            # některé knihovně).
+            logger.exception(
+                "❌ Frame processing error (conn=%s, peer=%s)",
+                conn_id,
+                self._active_box_peer,
+            )
+            return None
+
+    async def _maybe_handle_local_control_poll(
+        self,
+        *,
+        table_name: str | None,
+        conn_id: int,
+        box_writer: asyncio.StreamWriter,
+    ) -> bool:
+        is_local_control_poll = table_name in (
+            "IsNewSet",
+            "IsNewWeather",
+            "IsNewFW",
+        )
+        if not is_local_control_poll:
+            return False
+
+        routing = self._resolve_local_control_routing()
+        if routing != "twin":
+            return False
+
+        return await self._dispatch_local_control_via_twin(
+            table_name=table_name,
+            conn_id=conn_id,
+            box_writer=box_writer,
+        )
+
+    async def _route_box_frame_by_mode(
+        self,
+        *,
+        frame_bytes: bytes,
+        table_name: str | None,
+        device_id: str | None,
+        conn_id: int,
+        box_writer: asyncio.StreamWriter,
+        cloud_reader: asyncio.StreamReader | None,
+        cloud_writer: asyncio.StreamWriter | None,
+        cloud_connect_timeout_s: float,
+        current_mode: ProxyMode,
+    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, bool]:
+        if current_mode == ProxyMode.OFFLINE:
+            cloud_reader, cloud_writer = await self._handle_frame_local_offline(
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                conn_id=conn_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+            )
+            return cloud_reader, cloud_writer, False
+
+        if current_mode == ProxyMode.HYBRID and not self._hm.should_try_cloud():
+            cloud_reader, cloud_writer = await self._handle_frame_local_offline(
+                frame_bytes=frame_bytes,
+                table_name=table_name,
+                device_id=device_id,
+                conn_id=conn_id,
+                box_writer=box_writer,
+                cloud_writer=cloud_writer,
+            )
+            return cloud_reader, cloud_writer, False
+
+        cloud_reader, cloud_writer = await self._cf.forward_frame(
+            frame_bytes=frame_bytes,
+            table_name=table_name,
+            device_id=device_id,
+            conn_id=conn_id,
+            box_writer=box_writer,
+            cloud_reader=cloud_reader,
+            cloud_writer=cloud_writer,
+            connect_timeout_s=cloud_connect_timeout_s,
+        )
+        if cloud_writer is None and current_mode == ProxyMode.ONLINE:
+            # Cloud selhal v ONLINE módu – BOX nedostal ACK.
+            # Ukončíme BOX session, aby mohl reconnectnout čistě.
+            logger.info(
+                "🔌 Closing BOX session after cloud failure (conn=%s, table=%s)",
+                conn_id,
+                table_name,
+            )
+            self._last_box_disconnect_reason = "cloud_failure"
+            return cloud_reader, cloud_writer, True
+
+        return cloud_reader, cloud_writer, False
 
     async def _handle_box_connection(
         self,
@@ -585,6 +734,18 @@ class OIGProxy:
         cloud_reader: asyncio.StreamReader | None = None
         cloud_writer: asyncio.StreamWriter | None = None
 
+        if self._pending_twin_activation and await self._queue_has_items():
+            self._twin_mode_active = True
+            self._pending_twin_activation = False
+            logger.info("TWIN: Session twin mode activated (conn=%s)", conn_id)
+        elif self._is_twin_routing_available() and self._hm.should_route_settings_via_twin():
+            self._twin_mode_active = True
+            self._pending_twin_activation = False
+            logger.info(
+                "TWIN: Session twin mode activated for offline settings (conn=%s)",
+                conn_id,
+            )
+
         try:
             while True:
                 data = await self._read_box_bytes(
@@ -594,86 +755,29 @@ class OIGProxy:
                     break
 
                 frame = data.decode("utf-8", errors="replace")
-                try:
-                    device_id, table_name = await self._process_box_frame_common(
-                        frame_bytes=data, frame=frame, conn_id=conn_id
-                    )
-                except Exception:
-                    # Nechceme shazovat celé BOX spojení kvůli chybě v publish/discovery/parsing.
-                    # Traceback nám pomůže najít přesnou příčinu (např. regex v
-                    # některé knihovně).
-                    logger.exception(
-                        "❌ Frame processing error (conn=%s, peer=%s)",
-                        conn_id,
-                        self._active_box_peer,
-                    )
+                processed = await self._process_box_frame_with_guard(
+                    frame_bytes=data,
+                    frame=frame,
+                    conn_id=conn_id,
+                )
+                if processed is None:
                     continue
+                device_id, table_name = processed
 
-                if self._cs.pending and self._cs.pending.get("sent_at"):
-                    logger.debug(
-                        "CONTROL: post-Setting BOX frame (conn=%s, "
-                        "table=%s, frame=%.300s)",
-                        conn_id, table_name, frame,
-                    )
-                if self._cs.maybe_handle_ack(
-                    frame, box_writer, conn_id=conn_id
-                ):
-                    continue
                 if await self._maybe_handle_twin_ack(frame, box_writer, conn_id=conn_id):
                     continue
+
                 self._tc.force_logs_this_window = False
                 current_mode = await self._hm.get_current_mode()
-                is_local_control_poll = table_name in (
-                    "IsNewSet",
-                    "IsNewWeather",
-                    "IsNewFW",
-                )
 
-                if is_local_control_poll:
-                    routing = self._resolve_local_control_routing()
-                    if routing == "twin":
-                        twin_handled = await self._dispatch_local_control_via_twin(
-                            table_name=table_name,
-                            conn_id=conn_id,
-                            box_writer=box_writer,
-                        )
-                        if twin_handled:
-                            continue
-
-                        if self._local_control_routing == "force_twin":
-                            await self._process_frame_offline(
-                                data,
-                                table_name,
-                                device_id,
-                                box_writer,
-                                send_ack=True,
-                                conn_id=conn_id,
-                            )
-                            continue
-
-                if current_mode == ProxyMode.OFFLINE:
-                    cloud_reader, cloud_writer = await self._cf.handle_frame_offline_mode(
-                        frame_bytes=data,
-                        table_name=table_name,
-                        device_id=device_id,
-                        conn_id=conn_id,
-                        box_writer=box_writer,
-                        cloud_writer=cloud_writer,
-                    )
+                if await self._maybe_handle_local_control_poll(
+                    table_name=table_name,
+                    conn_id=conn_id,
+                    box_writer=box_writer,
+                ):
                     continue
 
-                if current_mode == ProxyMode.HYBRID and not self._hm.should_try_cloud():
-                    cloud_reader, cloud_writer = await self._cf.handle_frame_offline_mode(
-                        frame_bytes=data,
-                        table_name=table_name,
-                        device_id=device_id,
-                        conn_id=conn_id,
-                        box_writer=box_writer,
-                        cloud_writer=cloud_writer,
-                    )
-                    continue
-
-                cloud_reader, cloud_writer = await self._cf.forward_frame(
+                cloud_reader, cloud_writer, should_break = await self._route_box_frame_by_mode(
                     frame_bytes=data,
                     table_name=table_name,
                     device_id=device_id,
@@ -681,17 +785,10 @@ class OIGProxy:
                     box_writer=box_writer,
                     cloud_reader=cloud_reader,
                     cloud_writer=cloud_writer,
-                    connect_timeout_s=cloud_connect_timeout_s,
+                    cloud_connect_timeout_s=cloud_connect_timeout_s,
+                    current_mode=current_mode,
                 )
-                if cloud_writer is None and current_mode == ProxyMode.ONLINE:
-                    # Cloud selhal v ONLINE módu – BOX nedostal ACK.
-                    # Ukončíme BOX session, aby mohl reconnectnout čistě.
-                    logger.info(
-                        "🔌 Closing BOX session after cloud failure (conn=%s, table=%s)",
-                        conn_id,
-                        table_name,
-                    )
-                    self._last_box_disconnect_reason = "cloud_failure"
+                if should_break:
                     break
 
         except ConnectionResetError:
@@ -715,7 +812,7 @@ class OIGProxy:
             self._cf.session_connected = False
             self._cf.rx_buf.clear()
 
-    async def _process_frame_offline(
+    async def _respond_local_offline(
         self,
         _frame_bytes: bytes,
         table_name: str | None,
@@ -732,47 +829,8 @@ class OIGProxy:
         logger.info(
             "CTRL_DIAG proxy_offline_check | table=%s box_session=%s conn_id=%s ts=%.3f",
             table_name,
-            box_session_id(_peer), conn_id, time.time(),
+            _box_session_id(_peer), conn_id, time.time(),
         )
-
-        # Deliver pending setting via unified pipeline when twin is unavailable
-        # (when twin is available, delivery happens via _dispatch_local_control_via_twin)
-        if table_name == "IsNewSet" and self._twin is None and self._cs.pending_frame is not None:
-            setting_frame = self._cs.pending_frame
-            self._cs.pending_frame = None
-            if self._cs.pending is not None:
-                self._cs.pending["sent_at"] = time.monotonic()
-                self._cs.pending["delivered_conn_id"] = conn_id
-            self._ctrl.note_setting_delivered()
-            if conn_id is not None:
-                self._tc.record_response(
-                    setting_frame.decode("utf-8", errors="replace"),
-                    source="local",
-                    conn_id=conn_id,
-                )
-            logger.info(
-                "CONTROL: Offline delivery (no twin) — delivering Setting "
-                "(%s/%s=%s, frame_len=%d, conn=%s)",
-                self._cs.pending.get("tbl_name") if self._cs.pending else "?",
-                self._cs.pending.get("tbl_item") if self._cs.pending else "?",
-                self._cs.pending.get("new_value") if self._cs.pending else "?",
-                len(setting_frame), conn_id,
-            )
-            capture_payload(
-                None,
-                table_name,
-                setting_frame.decode("utf-8", errors="replace"),
-                setting_frame,
-                {},
-                direction="proxy_to_box",
-                length=len(setting_frame),
-                conn_id=conn_id,
-                peer=self._active_box_peer,
-            )
-            box_writer.write(setting_frame)
-            await box_writer.drain()
-            self.stats["acks_local"] += 1
-            return
 
         ack_response = build_offline_ack_frame(table_name)
         if conn_id is not None:
@@ -784,6 +842,30 @@ class OIGProxy:
         box_writer.write(ack_response)
         await box_writer.drain()
         self.stats["acks_local"] += 1
+
+    async def _handle_frame_local_offline(
+        self,
+        *,
+        frame_bytes: bytes,
+        table_name: str | None,
+        device_id: str | None,
+        conn_id: int,
+        box_writer: asyncio.StreamWriter,
+        cloud_writer: asyncio.StreamWriter | None,
+    ) -> tuple[None, None]:
+        await self._close_writer(cloud_writer)
+        if self._cf.session_connected:
+            self._tc.record_cloud_session_end(reason="manual_offline")
+        self._cf.session_connected = False
+        self._cf.rx_buf.clear()
+        await self._respond_local_offline(
+            frame_bytes,
+            table_name,
+            device_id,
+            box_writer,
+            conn_id=conn_id,
+        )
+        return None, None
 
     def _resolve_local_control_routing(self) -> str:
         """Resolve local control routing target.
@@ -809,22 +891,17 @@ class OIGProxy:
                 return "cloud"
             return "local"
 
-        if TWIN_CLOUD_ALIGNED:
-            if self._is_twin_routing_available():
-                return "twin"
-            return "local"
-
         mode = self._hm.mode
         configured = self._hm.configured_mode
 
-        # In OFFLINE or offline-configured mode, prefer twin if available
-        # This ensures all local control commands use the unified pipeline
-        if configured == "offline" or mode == ProxyMode.OFFLINE:
+        if self._hm.should_route_settings_via_twin() or configured == "offline" or mode == ProxyMode.OFFLINE:
             if self._is_twin_routing_available():
                 return "twin"
             return "local"
 
         if mode == ProxyMode.ONLINE:
+            if self._twin_mode_active and self._is_twin_routing_available():
+                return "twin"
             return "cloud"
 
         if mode == ProxyMode.HYBRID:
@@ -890,6 +967,23 @@ class OIGProxy:
             )
             return True
 
+        if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
+            end_frame = build_end_time_frame().decode("utf-8", errors="strict")
+            box_writer.write(end_frame.encode("utf-8", errors="strict"))
+            await box_writer.drain()
+            self.stats["acks_local"] += 1
+            self._tc.record_response(
+                end_frame,
+                source="twin",
+                conn_id=conn_id,
+            )
+            logger.debug(
+                "TWIN: Poll handled with END (table=%s, conn=%s)",
+                table_name,
+                conn_id,
+            )
+            return True
+
         return False
 
     async def _maybe_handle_twin_ack(
@@ -935,7 +1029,6 @@ class OIGProxy:
         try:
             result = await self._twin.on_ack(dto)
             if result is not None:
-                await self._ctrl.on_twin_result(result)
                 if not has_end:
                     from oig_frame import build_end_time_frame
                     box_writer.write(build_end_time_frame())
@@ -1004,6 +1097,6 @@ class OIGProxy:
         try:
             result = await twin.on_tbl_event(dto)
             if result is not None:
-                await self._ctrl.on_twin_result(result)
+                logger.debug("TWIN: Event handled for tx_id=%s", result.tx_id)
         except Exception as e:
             logger.warning("TWIN: Error handling event: %s", e)
