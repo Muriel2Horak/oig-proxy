@@ -17,6 +17,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from config import CONTROL_WRITE_WHITELIST
+
 logger = logging.getLogger(__name__)
 
 TOKEN_FILE_PATH = "/data/control_api_token"
@@ -113,6 +115,27 @@ class _Handler(BaseHTTPRequestHandler): # pylint: disable=invalid-name
                     "required": ["tbl_name", "tbl_item", "new_value"],
                 },
             )
+            return
+
+        # Whitelist validation (deny-by-default)
+        if tbl_name not in CONTROL_WRITE_WHITELIST:
+            client = self.client_address[0] if self.client_address else "unknown"
+            logger.warning(
+                "Whitelist rejection: tbl_name not in whitelist (client=%s)",
+                client,
+            )
+            self._send_json(400, {"error": "tbl_name not in whitelist"})
+            return
+
+        allowed_items = CONTROL_WRITE_WHITELIST[tbl_name]
+        if tbl_item not in allowed_items:
+            client = self.client_address[0] if self.client_address else "unknown"
+            logger.warning(
+                "Whitelist rejection: tbl_item not in whitelist for tbl_name=%s (client=%s)",
+                tbl_name,
+                client,
+            )
+            self._send_json(400, {"error": "tbl_item not in whitelist"})
             return
 
         proxy = self.server.proxy  # type: ignore[attr-defined]
