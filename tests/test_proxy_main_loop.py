@@ -241,7 +241,7 @@ def test_control_settings_send_setting_routes_legacy_when_flag_off(monkeypatch):
     assert result["ok"] is True
     cs.send_via_event_loop.assert_not_called()
     cs.send_via_event_loop_legacy.assert_called_once()
-    assert cs.set_commands_buffer[-1]["source"] == "legacy"
+    assert cs.set_commands_buffer[-1]["source"] == "legacy_fallback"
 
 
 def test_control_settings_send_setting_falls_back_to_legacy_when_twin_fails(monkeypatch):
@@ -263,7 +263,7 @@ def test_control_settings_send_setting_falls_back_to_legacy_when_twin_fails(monk
     assert result["ok"] is True
     cs.send_via_event_loop.assert_called_once()
     cs.send_via_event_loop_legacy.assert_called_once()
-    assert cs.set_commands_buffer[-1]["source"] == "legacy"
+    assert cs.set_commands_buffer[-1]["source"] == "legacy_fallback"
 
 
 @pytest.mark.asyncio

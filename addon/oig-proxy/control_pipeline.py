@@ -1,7 +1,9 @@
-"""Control Pipeline – control setting flow orchestration.
+"""Control Pipeline.
 
-Manages the control setting pipeline for OIG Box settings, including
-queue management, transaction tracking, and MQTT event publishing.
+This module keeps the historical :class:`ControlPipeline` surface area used by
+the proxy, but the legacy control-orchestration responsibilities are deprecated.
+
+Primary control path is twin-first routing via :class:`digital_twin.DigitalTwin`.
 """
 
 from __future__ import annotations
@@ -12,11 +14,14 @@ import re
 import uuid
 from typing import Any
 
+from config import normalize_control_value
+
 logger = logging.getLogger(__name__)
 
 # pylint: disable=too-many-instance-attributes
 class ControlPipeline:
-    """Manages control setting flow orchestration for OIG Box."""
+    """Manages control setting flow orchestration for OIG Box.
+    """
 
     def __init__(self, _proxy: Any) -> None:
         """Initialize the control pipeline.
@@ -124,24 +129,11 @@ class ControlPipeline:
         Returns:
             Tuple of (normalized_value, state).
         """
-        # Simple normalization - for MODE in tbl_box_prms, accept values 0-5
-        if tbl_name == "tbl_box_prms" and tbl_item == "MODE":
-            try:
-                mode_int = int(new_value)
-                if 0 <= mode_int <= 5:
-                    canon = str(mode_int)
-                    return (canon, canon)
-            except (ValueError, TypeError):
-                pass
-            return (None, "bad_value")
-        # For AAC_MAX_CHRG, add .0 suffix
-        if tbl_name == "tbl_invertor_prm1" and tbl_item == "AAC_MAX_CHRG":
-            try:
-                val = float(new_value)
-                return (f"{val:.1f}", f"{val:.1f}")
-            except (ValueError, TypeError):
-                return (None, "bad_value")
-        return (str(new_value), str(new_value))
+        return normalize_control_value(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=new_value,
+        )
 
     # pylint: disable=too-many-return-statements
     @staticmethod

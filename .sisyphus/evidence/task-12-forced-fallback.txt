@@ -1,0 +1,35 @@
+=== Task-12 Evidence: Forced fallback works ===
+
+--- Scenario A: TWIN_KILL_SWITCH=true ---
+  route: legacy
+  expected: legacy
+  PASS: True
+
+  legacy send result:
+    ok: True
+    route: legacy_fallback
+    writer writes: 1
+    writer drain calls: 1
+    PASS: True
+
+--- Scenario B: CONTROL_TWIN_FIRST_ENABLED=false ---
+  route: legacy
+  expected: legacy
+  PASS: True
+
+--- Scenario C: twin=None (unavailable) ---
+  route: legacy
+  expected: legacy
+  PASS: True
+
+--- LEGACY_PATH_MARKER log entries: 4 ---
+  LEGACY_PATH_MARKER: twin unavailable, forced legacy fallback
+  LEGACY_PATH_MARKER: send_legacy_to_box executed tbl=tbl_box_prms item=MODE value=1
+  LEGACY_PATH_MARKER: twin-first disabled, forced legacy fallback
+  LEGACY_PATH_MARKER: twin unavailable, forced legacy fallback
+
+--- Verdict ---
+All fallback routes resolve to legacy: True
+Legacy send completed: True
+LEGACY_PATH_MARKER emitted: True
+PASS: True

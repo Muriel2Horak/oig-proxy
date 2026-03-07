@@ -1,0 +1,17 @@
+=== Task-12 Evidence: Normal operation avoids legacy ===
+
+CONTROL_TWIN_FIRST_ENABLED: True
+TWIN_ENABLED: True
+TWIN_KILL_SWITCH: False
+
+--- Queued commands (twin path) ---
+  tbl_box_prms/MODE tx_id=tx_50dd543dbfdf44a9
+  tbl_invertor_prm1/AAC_MAX_CHRG tx_id=tx_ef0697dbc51d4395
+  tbl_box_prms/SA tx_id=tx_94ad1d965b5545c9
+
+--- LEGACY_PATH_MARKER hits: 0 ---
+
+--- Verdict ---
+All commands queued via twin handler: True
+Zero unintended legacy hits: True
+PASS: True

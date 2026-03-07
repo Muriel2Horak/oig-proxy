@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""
-Minimal HTTP control API for prototyping "Setting" writes to BOX.
+"""Minimal HTTP control API for prototyping "Setting" writes to BOX.
+
+.. deprecated::
+    The HTTP control API is a **legacy entrypoint**.  The preferred control
+    path is MQTT-driven twin routing via :class:`digital_twin.TwinMQTTHandler`.
+    This API remains available as a fallback but will be removed once MQTT
+    twin-first path is validated in production.
 
 Intentionally:
 - minimal validation (only checks that BOX is connected and sending data)
@@ -22,6 +27,23 @@ from config import CONTROL_WRITE_WHITELIST
 logger = logging.getLogger(__name__)
 
 TOKEN_FILE_PATH = "/data/control_api_token"  # nosec: B105 - this is a file path, not a password
+
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip().lower()
+    if raw in ("true", "1", "yes", "on"):
+        return True
+    if raw in ("false", "0", "no", "off"):
+        return False
+    return default
+
+
+def _control_api_fallback_only_enabled() -> bool:
+    twin_first = _get_bool_env("CONTROL_TWIN_FIRST_ENABLED", False)
+    return _get_bool_env("CONTROL_API_FALLBACK_ONLY", twin_first)
 
 
 class _Handler(BaseHTTPRequestHandler): # pylint: disable=invalid-name
@@ -79,6 +101,16 @@ class _Handler(BaseHTTPRequestHandler): # pylint: disable=invalid-name
 
         if self.path.rstrip("/") != "/api/setting":
             self._send_json(404, {"error": "not_found"})
+            return
+
+        if _get_bool_env("CONTROL_API_KILL_SWITCH", False):
+            self._send_json(
+                410,
+                {
+                    "error": "control_api_killed",
+                    "detail": "CONTROL_API_KILL_SWITCH=true",
+                },
+            )
             return
 
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -139,6 +171,30 @@ class _Handler(BaseHTTPRequestHandler): # pylint: disable=invalid-name
             return
 
         proxy = self.server.proxy  # type: ignore[attr-defined]
+
+        if _control_api_fallback_only_enabled():
+            route: str | None = None
+            try:
+                cs = getattr(proxy, "_cs", None)
+                if cs is not None and hasattr(cs, "resolve_control_route"):
+                    route = cs.resolve_control_route()
+            except Exception:  # pylint: disable=broad-exception-caught
+                route = None
+            if route == "twin":
+                self._send_json(
+                    409,
+                    {
+                        "error": "deprecated_entrypoint_fallback_only",
+                        "detail": "Use MQTT/twin-first control path; HTTP control API is fallback-only",
+                    },
+                )
+                return
+
+        logger.info(
+            "DEPRECATED_ENTRYPOINT_MARKER: control_api HTTP /api/setting tbl=%s item=%s",
+            tbl_name,
+            tbl_item,
+        )
         res = proxy._cs.send_setting(  # pylint: disable=protected-access
             tbl_name=str(tbl_name),
             tbl_item=str(tbl_item),
@@ -148,7 +204,7 @@ class _Handler(BaseHTTPRequestHandler): # pylint: disable=invalid-name
         status = 200 if res.get("ok") else 409
         self._send_json(status, res)
 
-    def log_message(self, _fmt: str, *args: Any) -> None:  # pylint: disable=arguments-differ
+    def log_message(self, format: str, *args: Any) -> None:  # pylint: disable=redefined-builtin,arguments-differ
         """Potlačí výpisy do stdout."""
         # Keep stdout clean; proxy logs are elsewhere.
 

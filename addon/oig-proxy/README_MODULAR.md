@@ -16,8 +16,8 @@ addon/oig-proxy/
 ├── hybrid_mode.py         # HybridModeManager - HYBRID režim, fail threshold, retry
 ├── telemetry_collector.py # TelemetryCollector - sběr a odesílání telemetrie
 ├── telemetry_client.py    # TelemetryClient - MQTT klient pro telemetrii
-├── control_pipeline.py    # ControlPipeline - zpracování SET příkazů z HA
-├── control_settings.py    # ControlSettings - validace a sestavení control frames
+├── control_pipeline.py    # DEPRECATED: ControlPipeline - fallback-only legacy SET flow
+├── control_settings.py    # ControlSettings - twin-first routing + legacy fallback
 ├── mqtt_state_cache.py    # MqttStateCache - cache MQTT stavu tabulek
 ├── cloud_forwarder.py     # CloudForwarder - TCP spojení s cloudem
 ├── mode_persistence.py    # ModePersistence - perzistence režimu přes restart
@@ -100,10 +100,35 @@ Klíčové proměnné:
 
 Více viz `config.py`.
 
+## Legacy Control Path – Deprecation Notice
+
+The legacy control pipeline (`control_pipeline.py`, `control_api.py` HTTP endpoint,
+and `send_legacy_to_box` in `control_settings.py`) is **deprecated and demoted to
+fallback-only** status.
+
+**Primary path**: `DigitalTwin` twin-first routing via MQTT (`digital_twin.py`).
+
+**When legacy fires**:
+- `CONTROL_TWIN_FIRST_ENABLED=false` (twin-first not enabled)
+- Twin unavailable or killed via `TWIN_KILL_SWITCH=true`
+- (Intentionally) legacy is only entered via explicit configuration/kill-switch
+
+**Operator audit**: grep logs for `LEGACY_PATH_MARKER` to detect unintended legacy
+usage.  Under normal twin-first operation, no `LEGACY_PATH_MARKER` entries should
+appear.
+
+**Control API (HTTP) fallback-only**: when `CONTROL_TWIN_FIRST_ENABLED=true`, the
+deprecated `/api/setting` endpoint rejects writes unless the runtime is already
+in legacy fallback mode (you should use MQTT/twin-first control instead).
+
+**Kill-switches**:
+- `TWIN_KILL_SWITCH=true` forces legacy fallback by disabling twin
+- `CONTROL_API_KILL_SWITCH=true` hard-disables the deprecated HTTP control API
+
 ## Klíčové změny oproti monolitu
 
 1. **Modulární** - 16+ souborů místo jednoho ~3850 řádků monolitu
 2. **3 režimy** - ONLINE / HYBRID / OFFLINE (HYBRID nahradil REPLAY)
 3. **Telemetrie** - anonymní usage metrics přes MQTT
-4. **Control API** - HTTP API pro ovládání z Home Assistant
+4. **Control API** - HTTP API pro ovládání z Home Assistant (DEPRECATED, fallback-only)
 5. **Type checking** - mypy v CI, pylint 10.00/10

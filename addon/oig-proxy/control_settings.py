@@ -122,7 +122,7 @@ class ControlSettings:
             new_value: str,
             confirm: str = "New",
     ) -> dict[str, Any]:
-        """Odešle Setting do BOXu přes event loop a vrátí výsledek."""
+        """Route setting through twin-first; legacy is fallback-only."""
         route = self.resolve_control_route()
         logger.info(
             "CONTROL_ROUTE: route=%s tbl=%s item=%s twin_first=%s",
@@ -154,6 +154,29 @@ class ControlSettings:
                 result.get("error"),
             )
 
+        logger.warning(
+            "LEGACY_PATH_MARKER: legacy fallback invoked tbl=%s item=%s route=%s",
+            tbl_name,
+            tbl_item,
+            route,
+        )
+        legacy_result = self._send_via_legacy_fallback(
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=new_value,
+            confirm=confirm,
+        )
+        return legacy_result
+
+    def _send_via_legacy_fallback(
+            self,
+            *,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+            confirm: str,
+    ) -> dict[str, Any]:
+        """Execute legacy TCP send (fallback-only, deprecated)."""
         legacy_result = self.send_via_event_loop_legacy(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
@@ -165,14 +188,23 @@ class ControlSettings:
                 "key": f"{tbl_name}:{tbl_item}",
                 "value": str(new_value),
                 "result": "sent",
-                "source": "legacy",
+                "source": "legacy_fallback",
             })
         return legacy_result
 
     def resolve_control_route(self) -> str:
+        """Resolve control route: twin-first, legacy only as explicit fallback."""
         twin_available = self._proxy._twin is not None and not self._proxy._twin_kill_switch
         if CONTROL_TWIN_FIRST_ENABLED and twin_available:
             return "twin"
+        if not CONTROL_TWIN_FIRST_ENABLED:
+            logger.debug(
+                "LEGACY_PATH_MARKER: twin-first disabled, forced legacy fallback",
+            )
+        elif not twin_available:
+            logger.debug(
+                "LEGACY_PATH_MARKER: twin unavailable, forced legacy fallback",
+            )
         return "legacy"
 
     def validate_loop_ready(self) -> bool:
@@ -204,6 +236,12 @@ class ControlSettings:
             new_value: str,
             confirm: str,
     ) -> dict[str, Any]:
+        """Deprecated: legacy TCP send via event loop. Fallback-only."""
+        logger.warning(
+            "LEGACY_PATH_MARKER: send_via_event_loop_legacy called tbl=%s item=%s",
+            tbl_name,
+            tbl_item,
+        )
         validation = self.validate_parameters(
             tbl_name, tbl_item, new_value
         )
@@ -316,6 +354,7 @@ class ControlSettings:
         new_value: str,
         confirm: str,
     ) -> dict[str, Any]:
+        """Deprecated: direct TCP write to BOX. Fallback-only path."""
         writer = self._proxy._active_box_writer
         if writer is None or writer.is_closing():
             return {"ok": False, "error": "box_not_connected"}
@@ -323,8 +362,8 @@ class ControlSettings:
         frame = self.build_frame(tbl_name, tbl_item, new_value, confirm)
         writer.write(frame)
         await writer.drain()
-        logger.info(
-            "CONTROL: Sent via legacy path %s/%s=%s",
+        logger.warning(
+            "LEGACY_PATH_MARKER: send_legacy_to_box executed tbl=%s item=%s value=%s",
             tbl_name,
             tbl_item,
             new_value,
@@ -332,7 +371,7 @@ class ControlSettings:
         return {
             "ok": True,
             "queued": False,
-            "route": "legacy",
+            "route": "legacy_fallback",
             "tbl_name": tbl_name,
             "tbl_item": tbl_item,
             "new_value": str(new_value),

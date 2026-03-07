@@ -16,7 +16,6 @@ Verification:
 # pylint: disable=too-many-lines
 
 import asyncio
-import hashlib
 import json
 import os
 import time
@@ -1091,10 +1090,10 @@ class TestDigitalTwinAdditionalCoverage:
 
         monkeypatch.setattr(digital_twin_module, "generate_tx_id", lambda: "generated-tx")
         await handler.on_mqtt_message(
-            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl_topic/item_topic/set",
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl_box_prms/MODE/set",
             payload=json.dumps(
                 {
-                    "new_value": 11,
+                    "new_value": 3,
                     "tbl_name": "",
                     "tbl_item": "",
                     "confirm": "",
@@ -1107,34 +1106,18 @@ class TestDigitalTwinAdditionalCoverage:
         snapshot = await twin.get_queue_snapshot()
         assert len(snapshot) == 1
         assert snapshot[0].tx_id == "generated-tx"
-        assert snapshot[0].tbl_name == "tbl_topic"
-        assert snapshot[0].tbl_item == "item_topic"
+        assert snapshot[0].tbl_name == "tbl_box_prms"
+        assert snapshot[0].tbl_item == "MODE"
         assert snapshot[0].request_key == "req"
         assert snapshot[0].received_at == "ts"
 
         handler._loop = None
         cb("x/y/z/set", b"{}", 1, False)
 
-    async def test_twin_legacy_topic_adapter_success_and_error_markers(self, monkeypatch):
+    async def test_twin_mqtt_control_parity_mode_and_aac_max_chrg(self):
         twin = DigitalTwin(session_id="legacy-adapter")
         publisher = _StubMQTTPublisher()
         handler = digital_twin_module.TwinMQTTHandler(twin=twin, mqtt_publisher=publisher)
-
-        generated = iter(["gen-1", "gen-2", "gen-3"])
-        monkeypatch.setattr(digital_twin_module, "generate_tx_id", lambda: next(generated))
-
-        await handler.on_mqtt_message(
-            topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
-            payload=json.dumps(
-                {
-                    "tbl_name": "tbl_box_prms",
-                    "tbl_item": "MODE",
-                }
-            ).encode(),
-        )
-        assert twin._last_result is not None
-        assert twin._last_result["status"] == "error"
-        assert twin._last_result["error"] == "missing_fields"
 
         await handler.on_mqtt_message(
             topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
@@ -1143,20 +1126,20 @@ class TestDigitalTwinAdditionalCoverage:
                     "tbl_name": "tbl_box_prms",
                     "tbl_item": "MODE",
                     "new_value": "3",
+                    "tx_id": "legacy-mode",
                 }
             ).encode(),
         )
 
-        snapshot = await twin.get_queue_snapshot()
-        assert len(snapshot) == 1
-        dto = snapshot[0]
-        expected_request_key = "tbl_box_prms/MODE/3"
-        expected_tx = f"legacy-{hashlib.sha1(expected_request_key.encode('utf-8')).hexdigest()[:16]}"
-        assert dto.tbl_name == "tbl_box_prms"
-        assert dto.tbl_item == "MODE"
-        assert dto.new_value == "3"
-        assert dto.request_key == expected_request_key
-        assert dto.tx_id == expected_tx
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl_box_prms/MODE/set",
+            payload=json.dumps(
+                {
+                    "new_value": "3",
+                    "tx_id": "native-mode",
+                }
+            ).encode(),
+        )
 
         await handler.on_mqtt_message(
             topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
@@ -1165,20 +1148,68 @@ class TestDigitalTwinAdditionalCoverage:
                     "tbl_name": "tbl_invertor_prm1",
                     "tbl_item": "AAC_MAX_CHRG",
                     "new_value": "50",
-                    "tx_id": "legacy-explicit-tx",
-                    "request_key": "legacy-explicit-rk",
+                    "tx_id": "legacy-aac",
+                }
+            ).encode(),
+        )
+
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl_invertor_prm1/AAC_MAX_CHRG/set",
+            payload=json.dumps(
+                {
+                    "new_value": "50",
+                    "tx_id": "native-aac",
                 }
             ).encode(),
         )
 
         snapshot = await twin.get_queue_snapshot()
-        assert len(snapshot) == 2
-        dto2 = snapshot[1]
-        assert dto2.tbl_name == "tbl_invertor_prm1"
-        assert dto2.tbl_item == "AAC_MAX_CHRG"
-        assert dto2.new_value == "50.0"
-        assert dto2.tx_id == "legacy-explicit-tx"
-        assert dto2.request_key == "legacy-explicit-rk"
+        assert len(snapshot) == 4
+
+        legacy_mode = next(x for x in snapshot if x.tx_id == "legacy-mode")
+        native_mode = next(x for x in snapshot if x.tx_id == "native-mode")
+        assert legacy_mode.tbl_name == native_mode.tbl_name == "tbl_box_prms"
+        assert legacy_mode.tbl_item == native_mode.tbl_item == "MODE"
+        assert legacy_mode.new_value == native_mode.new_value == "3"
+
+        legacy_aac = next(x for x in snapshot if x.tx_id == "legacy-aac")
+        native_aac = next(x for x in snapshot if x.tx_id == "native-aac")
+        assert legacy_aac.tbl_name == native_aac.tbl_name == "tbl_invertor_prm1"
+        assert legacy_aac.tbl_item == native_aac.tbl_item == "AAC_MAX_CHRG"
+        assert legacy_aac.new_value == native_aac.new_value == "50.0"
+
+    async def test_twin_mqtt_control_parity_security_rejection(self):
+        twin = DigitalTwin(session_id="legacy-adapter")
+        publisher = _StubMQTTPublisher()
+        handler = digital_twin_module.TwinMQTTHandler(twin=twin, mqtt_publisher=publisher)
+
+        await handler.on_mqtt_message(
+            topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
+            payload=json.dumps(
+                {
+                    "tbl_name": "tbl_box_prms",
+                    "tbl_item": "NOT_ALLOWED",
+                    "new_value": "1",
+                }
+            ).encode(),
+        )
+        assert twin._last_result is not None
+        legacy_error = twin._last_result["error"]
+
+        await handler.on_mqtt_message(
+            topic=f"{digital_twin_module.MQTT_NAMESPACE}/tbl_box_prms/NOT_ALLOWED/set",
+            payload=json.dumps(
+                {
+                    "new_value": "1",
+                }
+            ).encode(),
+        )
+        assert twin._last_result is not None
+        native_error = twin._last_result["error"]
+        assert legacy_error == native_error == "tbl_item_not_whitelisted"
+
+        snapshot = await twin.get_queue_snapshot()
+        assert snapshot == []
 
     async def test_cloud_availability_forwarding_and_publish_helpers(self):
         twin = DigitalTwin(session_id="test-session")
