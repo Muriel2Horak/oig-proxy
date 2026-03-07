@@ -35,6 +35,10 @@ from config import (
     PROXY_STATUS_ATTRS_TOPIC,
     TELEMETRY_ENABLED,
     TELEMETRY_INTERVAL_S,
+    TWIN_CLOUD_ALIGNED,
+    TWIN_ENABLED,
+    TWIN_KILL_SWITCH,
+    LOCAL_CONTROL_ROUTING,
 )
 from control_api import ControlAPIServer
 from mqtt_state_cache import MqttStateCache
@@ -48,12 +52,6 @@ from oig_frame import (
     infer_table_name,
 )
 from models import ProxyMode
-from config import (
-    TWIN_CLOUD_ALIGNED,
-    TWIN_ENABLED,
-    TWIN_KILL_SWITCH,
-    LOCAL_CONTROL_ROUTING,
-)
 from digital_twin import DigitalTwin, DigitalTwinConfig, TwinMQTTHandler
 from mqtt_publisher import MQTTPublisher
 from utils import (
@@ -437,7 +435,7 @@ class OIGProxy:
         self._local_getactual_task = asyncio.create_task(
             self._local_getactual_loop(writer, conn_id=conn_id)
         )
-        
+
         # Twin lifecycle: on_reconnect
         if self._twin is not None:
             from twin_state import OnDisconnectDTO
@@ -472,7 +470,7 @@ class OIGProxy:
                     pending_queue,
                 )
             self._twin_mode_active = False
-            
+
             # Twin lifecycle: on_disconnect
             if self._twin is not None:
                 from twin_state import OnDisconnectDTO
@@ -482,7 +480,7 @@ class OIGProxy:
                 ))
                 for result in results:
                     logger.info("TWIN disconnect result: tx_id=%s, status=%s", result.tx_id, result.status)
-            
+
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
 
@@ -954,6 +952,10 @@ class OIGProxy:
         return (not self._twin_kill_switch) and self._twin_enabled and self._twin is not None
 
     def set_twin_kill_switch(self, enabled: bool) -> None:
+        """Enable or disable the twin kill switch.
+
+        When enabled, twin routing is disabled regardless of other settings.
+        """
         self._twin_kill_switch = bool(enabled)
         if self._twin_kill_switch:
             logger.warning("TWIN: Kill-switch enabled, twin routing disabled")

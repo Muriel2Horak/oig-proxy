@@ -332,6 +332,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         source: str,
         conn_id: int,
     ) -> None:
+        """Zaznamená odpověď a aktualizuje statistiky."""
         table_name, _ = self._get_table_name_from_queue(conn_id)
         mode_value_str = self._resolve_mode_value()
         self._update_response_stats(table_name, source, mode_value_str, response_text)
@@ -546,6 +547,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             logger.debug("Telemetry send failed: %s", exc)
 
     async def loop(self) -> None:
+        """Hlavní asynchroní smyčka pro sběr a odesílání telemetrie."""
         if not self.client:
             return
 
@@ -761,6 +763,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             metrics.update(self._build_device_specific_metrics(device_id))
 
     def collect_metrics(self) -> dict[str, Any]:
+        """Sbírá a agreguje telemetrické metriky z proxy."""
         proxy = self._proxy
         uptime_s = int(time.time() - proxy._start_time)
         set_commands = proxy._cs.set_commands_buffer[:]

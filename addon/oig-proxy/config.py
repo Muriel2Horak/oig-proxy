@@ -253,6 +253,7 @@ TWIN_CLOUD_ALIGNED = _get_bool_env("TWIN_CLOUD_ALIGNED", False)
 
 
 def validate_startup_guards() -> None:
+    """Ověří konzistenci konfigurace a vyhodí ValueError při chybě."""
     errors: list[str] = []
 
     if TWIN_ACK_DEADLINE_SECONDS <= 0:

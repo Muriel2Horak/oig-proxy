@@ -259,7 +259,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         # Health check
         self._health_check_task: asyncio.Task[Any] | None = None
 
-    def _setup_clientCallbacks(self) -> None:
+    def _setup_client_callbacks(self) -> None:
+        """Nastavení callbacků pro MQTT klienta."""
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
         self.client.on_publish = self._on_publish
@@ -295,6 +296,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         return self.connected
 
     def connect(self, timeout: float | None = None) -> bool:
+        """Připojení k MQTT brokeru."""
         if self._main_loop is None:
             try:
                 self._main_loop = asyncio.get_running_loop()
@@ -307,7 +309,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         if self.client is None:
             return False
 
-        self._setup_clientCallbacks()
+        self._setup_client_callbacks()
 
         logger.info(
             "MQTT: Connecting to %s:%s (timeout %ss)",
@@ -857,6 +859,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             return False
 
     async def publish_data(self, data: dict[str, Any]) -> bool:
+        """Publikování dat do MQTT."""
         table = data.get("_table")
         target_device_id = self._determine_target_device_id(table)
 

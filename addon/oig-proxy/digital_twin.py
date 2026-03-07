@@ -99,6 +99,8 @@ class ReplayEntry:
 
 
 class TwinMQTTHandler:
+    """Handler for MQTT-based twin commands."""
+
     def __init__(
         self,
         *,
@@ -114,6 +116,7 @@ class TwinMQTTHandler:
         self.set_topic = f"{MQTT_NAMESPACE}/+/+/set"
 
     def setup_mqtt(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Initialize MQTT handler with event loop."""
         self._loop = loop
 
         def _handler(
@@ -137,6 +140,7 @@ class TwinMQTTHandler:
         logger.info("TWIN_MQTT: MQTT enabled (set=%s)", self.set_topic)
 
     async def on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
+        """Handle incoming MQTT set messages."""
         parts = topic.split("/")
         if len(parts) != 4 or parts[3] != "set":
             logger.error("TWIN_MQTT: Invalid topic format: %s", topic)
@@ -222,10 +226,10 @@ class DigitalTwin:
         self._lock = asyncio.Lock()
         self._ack_task: asyncio.Task[Any] | None = None
         self._applied_task: asyncio.Task[Any] | None = None
-        
+
         # Simplified queue for cloud-aligned mode (single-item dict, like ControlSettings.pending)
         self._pending_simple: dict = {}
-        
+
         self._replay_buffer: deque[ReplayEntry] = deque()
         self._completed_tx_ids: set[str] = set()
         self._replay_tx_counts: dict[str, int] = {}
@@ -238,6 +242,7 @@ class DigitalTwin:
         self._state_topic = f"{MQTT_NAMESPACE}/oig_proxy/twin_state/state"
 
     def attach_mqtt_publisher(self, mqtt_publisher: MQTTPublisher) -> None:
+        """Attach MQTT publisher to the twin."""
         self._mqtt_publisher = mqtt_publisher
 
     def attach_cloud_forwarder(
@@ -246,6 +251,7 @@ class DigitalTwin:
         *,
         availability_checker: Callable[[], bool] | None = None,
     ) -> None:
+        """Attach cloud forwarder and availability checker."""
         self._cloud_forwarder = forwarder
         self._cloud_available_checker = availability_checker
 
@@ -297,6 +303,7 @@ class DigitalTwin:
         frame: str,
         conn_id: int,
     ) -> PollResponseDTO | None:
+        """Process incoming frame and return response."""
         table_name = self._parse_table(frame)
 
         if table_name == "IsNewSet":
@@ -1421,12 +1428,15 @@ class DigitalTwin:
         )
 
     async def get_replay_buffer_length(self) -> int:
+        """Return the length of the replay buffer."""
         return len(self._replay_buffer)
 
     async def get_replay_buffer_snapshot(self) -> Sequence[ReplayEntry]:
+        """Return a snapshot of the replay buffer."""
         return list(self._replay_buffer)
 
     def is_tx_completed(self, tx_id: str) -> bool:
+        """Check if a transaction is completed."""
         return tx_id in self._completed_tx_ids
 
     async def restore_from_snapshot(
@@ -1434,7 +1444,6 @@ class DigitalTwin:
         snapshot: SnapshotDTO,
     ) -> None:
         """Restore state from a snapshot."""
-        pass
 
     # ------------------------------------------------------------------
     # Timeout Handlers with INV-3 Validation

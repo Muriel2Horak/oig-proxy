@@ -81,7 +81,6 @@ class TwinAdapterProtocol(Protocol):
             - tx_id must be unique within the session
             - conn_id tracks which connection initiated the request
         """
-        ...
 
     @abstractmethod
     async def get_queue_length(self) -> int:
@@ -90,7 +89,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             Number of pending commands in the queue
         """
-        ...
 
     @abstractmethod
     async def get_queue_snapshot(self) -> Sequence[QueueSettingDTO]:
@@ -99,7 +97,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             Sequence of QueueSettingDTO for all queued commands
         """
-        ...
 
     # ------------------------------------------------------------------
     # Inflight operations
@@ -112,7 +109,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             PendingSettingState if there's an inflight command, None otherwise
         """
-        ...
 
     @abstractmethod
     async def start_inflight(
@@ -133,7 +129,6 @@ class TwinAdapterProtocol(Protocol):
             - INV-2: tx_id must match the next queued command
             - conn_id must match the current active connection
         """
-        ...
 
     @abstractmethod
     async def finish_inflight(
@@ -159,7 +154,6 @@ class TwinAdapterProtocol(Protocol):
             - INV-2: tx_id must match current inflight
             - INV-3: Must be called by the task that owns the transaction
         """
-        ...
 
     # ------------------------------------------------------------------
     # ACK handling
@@ -182,7 +176,6 @@ class TwinAdapterProtocol(Protocol):
             - INV-1: dto.conn_id must match dto.delivered_conn_id
             - INV-2: tx_id must match current inflight
         """
-        ...
 
     @abstractmethod
     async def validate_ack_conn_ownership(
@@ -201,7 +194,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             True if validation passes, False otherwise
         """
-        ...
 
     # ------------------------------------------------------------------
     # Event handling
@@ -224,7 +216,6 @@ class TwinAdapterProtocol(Protocol):
             - Detecting Setting events (value applied confirmation)
             - Detecting Invertor ACK events
         """
-        ...
 
     @abstractmethod
     async def on_disconnect(
@@ -243,7 +234,6 @@ class TwinAdapterProtocol(Protocol):
             - Clears pending state if setting was delivered but not ACKed
             - Preserves pending state if setting was not yet delivered
         """
-        ...
 
     # ------------------------------------------------------------------
     # Poll operations
@@ -266,7 +256,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             PollResponseDTO with response data
         """
-        ...
 
     @abstractmethod
     async def deliver_pending_setting(
@@ -287,7 +276,6 @@ class TwinAdapterProtocol(Protocol):
             - Sets delivered_conn_id on pending state (for INV-1)
             - Sets sent_at timestamp
         """
-        ...
 
     # ------------------------------------------------------------------
     # State snapshot
@@ -306,7 +294,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             SnapshotDTO with complete state information
         """
-        ...
 
     @abstractmethod
     async def get_pending_state(
@@ -323,7 +310,6 @@ class TwinAdapterProtocol(Protocol):
         Returns:
             PendingSettingState if found, None otherwise
         """
-        ...
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -332,7 +318,6 @@ class TwinAdapterProtocol(Protocol):
     @abstractmethod
     async def clear_all(self) -> None:
         """Clear all state (queue, inflight, pending)."""
-        ...
 
     @abstractmethod
     async def restore_from_snapshot(
@@ -344,7 +329,6 @@ class TwinAdapterProtocol(Protocol):
         Args:
             snapshot: SnapshotDTO with state to restore
         """
-        ...
 
 
 # ------------------------------------------------------------------
