@@ -1,0 +1,24 @@
+Task: T11 Twin-first routing enablement with feature flags
+Scenario: Twin-first ON
+Timestamp: 2026-03-07
+
+Precondition used in verification:
+- CONTROL_TWIN_FIRST_ENABLED=True
+- Twin available (proxy._twin set, kill-switch disabled)
+
+Verification method:
+- Unit test: tests/test_proxy_main_loop.py::test_control_settings_send_setting_routes_twin_when_flag_on
+- Assertion evidence:
+  - ControlSettings.send_setting selects twin path
+  - send_via_event_loop() called exactly once
+  - send_via_event_loop_legacy() not called
+  - set_commands_buffer records source="twin"
+
+Routing visibility evidence implemented:
+- Log marker in control path:
+  CONTROL_ROUTE: route=twin ... twin_first=True
+- Telemetry/metrics visibility:
+  set_commands_buffer entry includes source="twin"
+
+Result:
+- PASS: With flag ON, new commands traverse Twin path first.

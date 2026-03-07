@@ -1,0 +1,28 @@
+Task: T11 Twin-first routing enablement with feature flags
+Scenario: Fallback OFF-path
+Timestamp: 2026-03-07
+
+Precondition used in verification:
+- CONTROL_TWIN_FIRST_ENABLED=False
+
+Verification method:
+- Unit test: tests/test_proxy_main_loop.py::test_control_settings_send_setting_routes_legacy_when_flag_off
+- Assertion evidence:
+  - ControlSettings.send_setting selects legacy path
+  - send_via_event_loop() not called
+  - send_via_event_loop_legacy() called exactly once
+  - set_commands_buffer records source="legacy"
+
+Additional rollback baseline verification:
+- Unit test: tests/test_proxy_main_loop.py::test_control_settings_send_setting_falls_back_to_legacy_when_twin_fails
+- Assertion evidence:
+  - Under twin-first conditions with twin failure, legacy fallback still executes
+
+Routing visibility evidence implemented:
+- Log marker in control path:
+  CONTROL_ROUTE: route=legacy ... twin_first=False
+- Telemetry/metrics visibility:
+  set_commands_buffer entry includes source="legacy"
+
+Result:
+- PASS: With flag OFF, legacy path remains functional (rollback baseline).
