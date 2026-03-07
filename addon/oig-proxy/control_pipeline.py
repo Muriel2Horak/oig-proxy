@@ -124,10 +124,15 @@ class ControlPipeline:
         Returns:
             Tuple of (normalized_value, state).
         """
-        # Simple normalization - for MODE in tbl_box_prms, must be "3"
+        # Simple normalization - for MODE in tbl_box_prms, accept values 0-5
         if tbl_name == "tbl_box_prms" and tbl_item == "MODE":
-            if new_value == "3":
-                return ("3", "3")
+            try:
+                mode_int = int(new_value)
+                if 0 <= mode_int <= 5:
+                    canon = str(mode_int)
+                    return (canon, canon)
+            except (ValueError, TypeError):
+                pass
             return (None, "bad_value")
         # For AAC_MAX_CHRG, add .0 suffix
         if tbl_name == "tbl_invertor_prm1" and tbl_item == "AAC_MAX_CHRG":
@@ -264,5 +269,8 @@ class ControlPipeline:
         """
         if not self.log_path:
             return
-        with open(self.log_path, "a", encoding="utf-8") as f:
-            f.write(entry)
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except OSError:
+            pass

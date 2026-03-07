@@ -57,7 +57,8 @@ class ProxyStatusReporter:
         status = str(result.get("status") or "")
         tbl = str(result.get("tbl_name") or "")
         item = str(result.get("tbl_item") or "")
-        val = str(result.get("new_value") or "")
+        new_value = result.get("new_value")
+        val = "" if new_value is None else str(new_value)
         err = result.get("error")
         tx_id = str(result.get("tx_id") or "")
         if err:
