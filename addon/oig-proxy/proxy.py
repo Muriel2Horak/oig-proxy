@@ -721,6 +721,79 @@ class OIGProxy:
 
         return cloud_reader, cloud_writer, False
 
+    async def _activate_session_twin_mode_if_needed(self, *, conn_id: int) -> None:
+        pending_twin_activation = getattr(self, "_pending_twin_activation", False)
+        if pending_twin_activation and await self._queue_has_items():
+            self._twin_mode_active = True
+            self._pending_twin_activation = False
+            logger.info("TWIN: Session twin mode activated (conn=%s)", conn_id)
+            return
+
+        is_twin_routing_available = getattr(self, "_is_twin_routing_available", None)
+        if not callable(is_twin_routing_available):
+            return
+        try:
+            twin_routing_available = is_twin_routing_available()
+        except AttributeError:
+            return
+        if not twin_routing_available:
+            return
+        if not self._hm.should_route_settings_via_twin():
+            return
+
+        self._twin_mode_active = True
+        self._pending_twin_activation = False
+        logger.info(
+            "TWIN: Session twin mode activated for offline settings (conn=%s)",
+            conn_id,
+        )
+
+    async def _handle_box_frame_iteration(
+        self,
+        *,
+        data: bytes,
+        conn_id: int,
+        box_writer: asyncio.StreamWriter,
+        cloud_reader: asyncio.StreamReader | None,
+        cloud_writer: asyncio.StreamWriter | None,
+        cloud_connect_timeout_s: float,
+    ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, bool]:
+        frame = data.decode("utf-8", errors="replace")
+        processed = await self._process_box_frame_with_guard(
+            frame_bytes=data,
+            frame=frame,
+            conn_id=conn_id,
+        )
+        if processed is None:
+            return cloud_reader, cloud_writer, False
+
+        device_id, table_name = processed
+
+        if await self._maybe_handle_twin_ack(frame, box_writer, conn_id=conn_id):
+            return cloud_reader, cloud_writer, False
+
+        self._tc.force_logs_this_window = False
+        current_mode = await self._hm.get_current_mode()
+
+        if await self._maybe_handle_local_control_poll(
+            table_name=table_name,
+            conn_id=conn_id,
+            box_writer=box_writer,
+        ):
+            return cloud_reader, cloud_writer, False
+
+        return await self._route_box_frame_by_mode(
+            frame_bytes=data,
+            table_name=table_name,
+            device_id=device_id,
+            conn_id=conn_id,
+            box_writer=box_writer,
+            cloud_reader=cloud_reader,
+            cloud_writer=cloud_writer,
+            cloud_connect_timeout_s=cloud_connect_timeout_s,
+            current_mode=current_mode,
+        )
+
     async def _handle_box_connection(
         self,
         box_reader: asyncio.StreamReader,
@@ -734,17 +807,7 @@ class OIGProxy:
         cloud_reader: asyncio.StreamReader | None = None
         cloud_writer: asyncio.StreamWriter | None = None
 
-        if self._pending_twin_activation and await self._queue_has_items():
-            self._twin_mode_active = True
-            self._pending_twin_activation = False
-            logger.info("TWIN: Session twin mode activated (conn=%s)", conn_id)
-        elif self._is_twin_routing_available() and self._hm.should_route_settings_via_twin():
-            self._twin_mode_active = True
-            self._pending_twin_activation = False
-            logger.info(
-                "TWIN: Session twin mode activated for offline settings (conn=%s)",
-                conn_id,
-            )
+        await self._activate_session_twin_mode_if_needed(conn_id=conn_id)
 
         try:
             while True:
@@ -754,39 +817,13 @@ class OIGProxy:
                 if data is None:
                     break
 
-                frame = data.decode("utf-8", errors="replace")
-                processed = await self._process_box_frame_with_guard(
-                    frame_bytes=data,
-                    frame=frame,
-                    conn_id=conn_id,
-                )
-                if processed is None:
-                    continue
-                device_id, table_name = processed
-
-                if await self._maybe_handle_twin_ack(frame, box_writer, conn_id=conn_id):
-                    continue
-
-                self._tc.force_logs_this_window = False
-                current_mode = await self._hm.get_current_mode()
-
-                if await self._maybe_handle_local_control_poll(
-                    table_name=table_name,
-                    conn_id=conn_id,
-                    box_writer=box_writer,
-                ):
-                    continue
-
-                cloud_reader, cloud_writer, should_break = await self._route_box_frame_by_mode(
-                    frame_bytes=data,
-                    table_name=table_name,
-                    device_id=device_id,
+                cloud_reader, cloud_writer, should_break = await self._handle_box_frame_iteration(
+                    data=data,
                     conn_id=conn_id,
                     box_writer=box_writer,
                     cloud_reader=cloud_reader,
                     cloud_writer=cloud_writer,
                     cloud_connect_timeout_s=cloud_connect_timeout_s,
-                    current_mode=current_mode,
                 )
                 if should_break:
                     break

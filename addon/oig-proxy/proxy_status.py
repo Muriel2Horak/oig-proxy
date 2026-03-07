@@ -11,7 +11,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from config import PROXY_STATUS_INTERVAL
-from control_pipeline import ControlPipeline
 
 if TYPE_CHECKING:
     from proxy import OIGProxy
@@ -35,21 +34,52 @@ class ProxyStatusReporter:
 
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _format_tx(tx: Any | None) -> str:
+        if not tx:
+            return ""
+        if hasattr(tx, "tbl_name"):
+            return (
+                f"{getattr(tx, 'tbl_name', '')}/{getattr(tx, 'tbl_item', '')}="
+                f"{getattr(tx, 'new_value', '')}"
+            )
+        if isinstance(tx, dict):
+            return (
+                f"{tx.get('tbl_name', '')}/{tx.get('tbl_item', '')}="
+                f"{tx.get('new_value', '')}"
+            )
+        return str(tx)
+
+    @staticmethod
+    def _format_result(result: dict[str, Any] | None) -> str:
+        if not result:
+            return ""
+        status = str(result.get("status") or "")
+        tbl = str(result.get("tbl_name") or "")
+        item = str(result.get("tbl_item") or "")
+        val = str(result.get("new_value") or "")
+        err = result.get("error")
+        tx_id = str(result.get("tx_id") or "")
+        if err:
+            return f"{status} {tbl}/{item}={val} err={err} tx={tx_id}".strip()
+        return f"{status} {tbl}/{item}={val} tx={tx_id}".strip()
+
     def build_status_payload(self) -> dict[str, Any]:
         """Vytvoří payload pro proxy_status MQTT sensor."""
         p = self._proxy
-        inflight = p._ctrl.inflight
-        inflight_str = ControlPipeline.format_tx(inflight) if inflight else ""
-        last_result_str = ControlPipeline.format_result(p._ctrl.last_result)
-        inflight_key = str(inflight.get("request_key")
-                           or "") if inflight else ""
-        queue_keys = [str(tx.get("request_key") or "")
-                      for tx in p._ctrl.queue]
+        twin = getattr(p, "_twin", None)
+        inflight = getattr(twin, "_inflight", None) if twin is not None else None
+        queue = list(getattr(twin, "_queue", [])) if twin is not None else []
+        last_result = getattr(twin, "_last_result", None) if twin is not None else None
+        inflight_str = self._format_tx(inflight)
+        last_result_str = self._format_result(last_result)
+        inflight_key = str(getattr(inflight, "tx_id", "") or "") if inflight else ""
+        queue_keys = [str(getattr(tx, "tx_id", "") or "") for tx in queue]
         return {
             "status": p._hm.mode.value,
             "mode": p._hm.mode.value,
             "configured_mode": p._hm.configured_mode,
-            "control_session_id": p._ctrl.session_id,
+            "control_session_id": getattr(twin, "session_id", ""),
             "box_device_id": p.device_id if p.device_id != "AUTO" else None,
             "cloud_online": int(not p._hm.in_offline),
             "hybrid_fail_count": p._hm.fail_count,
@@ -72,7 +102,7 @@ class ProxyStatusReporter:
             "isnewset_last_poll": p._isnew_last_poll_iso,
             "isnewset_last_response": p._isnew_last_response,
             "isnewset_last_rtt_ms": p._isnew_last_rtt_ms,
-            "control_queue_len": len(p._ctrl.queue),
+            "control_queue_len": len(queue),
             "control_inflight": inflight_str,
             "control_inflight_key": inflight_key,
             "control_queue_keys": [k for k in queue_keys if k],
@@ -82,14 +112,11 @@ class ProxyStatusReporter:
     def build_status_attrs_payload(self) -> dict[str, Any]:
         """Builds the smaller attrs-only payload."""
         p = self._proxy
-        if p._ctrl.inflight:
-            inflight_key = str(p._ctrl.inflight.get("request_key") or "")
-        else:
-            inflight_key = ""
-        queue_keys = [
-            str(tx.get("request_key") or "")
-            for tx in p._ctrl.queue
-        ]
+        twin = getattr(p, "_twin", None)
+        inflight = getattr(twin, "_inflight", None) if twin is not None else None
+        queue = list(getattr(twin, "_queue", [])) if twin is not None else []
+        inflight_key = str(getattr(inflight, "tx_id", "") or "") if inflight else ""
+        queue_keys = [str(getattr(tx, "tx_id", "") or "") for tx in queue]
         return {
             "control_inflight_key": inflight_key,
             "control_queue_keys": [k for k in queue_keys if k],
@@ -108,7 +135,7 @@ class ProxyStatusReporter:
                 topic=self.status_attrs_topic,
                 payload=json.dumps(
                     self.build_status_attrs_payload(), ensure_ascii=True),
-                qos=p._ctrl.qos,
+                qos=1,
                 retain=True,
             )
         except Exception as e:

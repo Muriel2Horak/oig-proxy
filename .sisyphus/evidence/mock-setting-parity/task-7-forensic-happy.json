@@ -1,0 +1,86 @@
+{
+  "task": "T7 - Implement outbound forensic logging with trace linkage",
+  "scenario": "Outbound logging coverage (happy path)",
+  "timestamp": "2026-02-18T20:13:00+01:00",
+  "result": "PASS",
+  "summary": "All 4 outbound TCP write points in server.py are instrumented with forensic logging. Each outbound frame is captured with full schema-compliant fields before wire transmission.",
+
+  "instrumented_write_points": [
+    {
+      "location": "server.py:~1265",
+      "context": "Banned device error ACK",
+      "frame_type": "error_banned",
+      "fields_captured": ["raw_xml", "crc", "conn_id", "device_id", "request_id", "ts_local", "ts_utc", "trigger.table"]
+    },
+    {
+      "location": "server.py:~1346",
+      "context": "END frame after per-device ACK_SETTING (state machine path)",
+      "frame_type": "end_after_ack_setting",
+      "fields_captured": ["raw_xml", "crc", "conn_id", "device_id", "request_id", "ts_local", "ts_utc", "trigger.table", "trigger.result", "state_before", "state_after"],
+      "state_transition": "DELIVERED -> ACKED -> ENDED -> IDLE"
+    },
+    {
+      "location": "server.py:~1391",
+      "context": "END frame after legacy ACK_SETTING (single-slot fallback)",
+      "frame_type": "end_after_ack_setting_legacy",
+      "fields_captured": ["raw_xml", "crc", "conn_id", "device_id", "request_id", "ts_local", "ts_utc", "trigger.table", "trigger.result", "state_before", "state_after"],
+      "state_transition": "DELIVERED_LEGACY -> IDLE"
+    },
+    {
+      "location": "server.py:~1432",
+      "context": "Normal ACK/response from _generate_ack (covers: ack_getactual, ack_bare, end_time, end_bare, setting_delivery)",
+      "frame_types": ["ack_getactual", "ack_bare", "end_time", "end_bare", "setting_delivery"],
+      "fields_captured": ["raw_xml", "crc", "conn_id", "device_id", "request_id", "ts_local", "ts_utc", "trigger.table", "trigger.result", "state_before"]
+    }
+  ],
+
+  "schema_compliance": {
+    "forensic_schema_ref": "docs/forensic_schema.md",
+    "required_fields_present": true,
+    "fields": {
+      "request_id": "Auto-generated as conn_{conn_id}_{seq} if not supplied",
+      "conn_id": "Integer connection identifier from server connection counter",
+      "direction": "Always 'response' for outbound frames",
+      "raw_xml": "Complete unmodified XML payload including CRC tag and CRLF",
+      "crc": "CRC32 hex of raw_xml (8-char lowercase hex)",
+      "ts_local": "ISO 8601 with timezone (Europe/Prague)",
+      "ts_utc": "ISO 8601 UTC",
+      "state_before": "Populated for setting-related frames with state machine context",
+      "state_after": "Populated for setting completion frames"
+    }
+  },
+
+  "non_blocking_design": {
+    "mechanism": "logging.handlers.MemoryHandler (capacity=64) -> RotatingFileHandler",
+    "hot_path_impact": "Zero synchronous disk I/O on write path; buffer flushes asynchronously or on connection close",
+    "file_rotation": "10 MB x 5 backups",
+    "flush_points": ["Connection close (finally block)", "Buffer capacity reached (64 records)", "WARNING+ level flush"]
+  },
+
+  "trace_linkage": {
+    "inbound_to_outbound": "conn_id + request_id correlate inbound trigger to outbound response",
+    "state_machine_linkage": "state_before/state_after fields capture DELIVERED->ACKED->ENDED->IDLE transitions",
+    "trigger_context": "trigger.table and trigger.result identify which inbound frame caused the outbound response"
+  },
+
+  "output_file": "DATA_DIR/forensic_outbound.log (JSONL format, one record per line)",
+
+  "sample_record": {
+    "seq": 1,
+    "request_id": "conn_1_1",
+    "conn_id": 1,
+    "direction": "response",
+    "frame_type": "ack_getactual",
+    "raw_xml": "<Frame><Result>ACK</Result><ToDo>GetActual</ToDo><CRC>12345</CRC></Frame>\r\n",
+    "crc": "a1b2c3d4",
+    "ts_local": "2026-02-18T20:13:00.123456+01:00",
+    "ts_utc": "2026-02-18T19:13:00.123456+00:00",
+    "device_id": "1234567890",
+    "trigger": {
+      "table": "tbl_batt_prms",
+      "result": null
+    },
+    "state_before": null,
+    "state_after": null
+  }
+}

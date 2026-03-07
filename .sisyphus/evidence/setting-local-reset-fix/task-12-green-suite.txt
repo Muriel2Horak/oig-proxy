@@ -1,0 +1,48 @@
+# Task 12 Evidence: GREEN Test Suite
+## Date: 2026-02-20
+## Status: PASS
+
+### Previously RED Tests (Now GREEN)
+
+#### T3 Tests - test_proxy_control_ack.py (5 tests)
+| Test Name | Status |
+|-----------|--------|
+| test_cross_session_ack_should_not_clear_pending_offline | PASSED |
+| test_cross_session_ack_with_timeout_exceeded_should_not_clear_pending_offline | PASSED |
+| test_cross_session_ack_should_not_clear_pending_hybrid_offline | PASSED |
+| test_cross_session_multiple_reconnects_pending_preserved | PASSED |
+| test_cross_session_nack_should_not_clear_pending_offline | PASSED |
+
+#### T4 Tests - test_proxy_control_more.py (2 tests)
+| Test Name | Status |
+|-----------|--------|
+| test_ack_with_wrong_conn_id_is_ignored | PASSED |
+| test_nack_with_wrong_conn_id_is_ignored | PASSED |
+
+#### T5 Tests - test_proxy_main_loop.py (4 tests)
+| Test Name | Status |
+|-----------|--------|
+| test_disconnect_cancels_stale_pending_timeout | PASSED |
+| test_disconnect_cleanup_without_reconnect | PASSED |
+| test_disconnect_cancels_inflight_timeout_tasks | PASSED |
+| test_stale_pending_affects_new_connection | PASSED |
+
+### Full Test Results
+
+```
+tests/test_proxy_control_ack.py: 11 passed
+tests/test_proxy_control_more.py: 16 passed
+tests/test_proxy_main_loop.py: 10 passed
+─────────────────────────────────────
+TOTAL: 37 passed in 0.15s
+```
+
+### Summary
+All 10 previously RED tests are now GREEN. The conn_id validation in maybe_handle_ack 
+and proper disconnect cleanup ensures pending settings are preserved across reconnects
+and stale timeouts don't affect new connections.
+
+### Root Cause Fix Verified
+1. conn_id validation prevents ACK/NACK from clearing pending on stale connections
+2. disconnect cleanup cancels stale timeout tasks
+3. Scoped state contract: pending_settings belongs to current connection only

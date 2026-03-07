@@ -1,0 +1,1162 @@
+"""Tests for Digital Twin State Machine and Invariants.
+
+These tests verify the state machine transitions and invariants (INV-1, INV-2, INV-3)
+defined in Task 1. Tests work with both TWIN_CLOUD_ALIGNED=True (cloud-aligned mode)
+and TWIN_CLOUD_ALIGNED=False (legacy mode).
+
+Verification:
+  Legacy: TWIN_CLOUD_ALIGNED=false PYTHONPATH=addon/oig-proxy pytest tests/test_digital_twin.py -v
+  Cloud:  TWIN_CLOUD_ALIGNED=true PYTHONPATH=addon/oig-proxy pytest tests/test_digital_twin.py -v
+"""
+
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-few-public-methods,invalid-name,unused-variable
+
+import asyncio
+import os
+import time
+
+import pytest
+
+from config import TWIN_CLOUD_ALIGNED
+from digital_twin import DigitalTwin, DigitalTwinConfig, TransitionError
+from twin_state import (
+    OnAckDTO,
+    OnDisconnectDTO,
+    OnTblEventDTO,
+    PendingSettingState,
+    QueueSettingDTO,
+    SettingStage,
+    TransactionResultDTO,
+)
+from twin_transaction import (
+    InvariantViolationError,
+    TransactionContext,
+    TransactionValidator,
+    generate_session_id,
+    generate_tx_id,
+)
+
+
+# =============================================================================
+# Mode Detection and Fixtures
+# =============================================================================
+
+CLOUD_ALIGNED = TWIN_CLOUD_ALIGNED
+
+
+@pytest.fixture
+def twin_mode():
+    """Return current twin mode for parametrized tests."""
+    return "cloud_aligned" if CLOUD_ALIGNED else "legacy"
+
+
+@pytest.fixture
+def skip_if_cloud_aligned():
+    """Skip test if running in cloud-aligned mode."""
+    if CLOUD_ALIGNED:
+        pytest.skip("Test not applicable in cloud-aligned mode (no INV exceptions)")
+
+
+@pytest.fixture
+def skip_if_legacy():
+    """Skip test if running in legacy mode."""
+    if not CLOUD_ALIGNED:
+        pytest.skip("Test only applicable in cloud-aligned mode")
+
+
+# =============================================================================
+# Test Fixtures
+# =============================================================================
+
+
+def make_queue_dto(
+    tx_id: str | None = None,
+    conn_id: int = 1,
+    tbl_name: str = "tbl_box_prms",
+    tbl_item: str = "MODE",
+    new_value: str = "1",
+) -> QueueSettingDTO:
+    return QueueSettingDTO(
+        tx_id=tx_id or generate_tx_id(),
+        conn_id=conn_id,
+        tbl_name=tbl_name,
+        tbl_item=tbl_item,
+        new_value=new_value,
+    )
+
+
+def make_on_ack_dto(
+    tx_id: str,
+    conn_id: int,
+    ack: bool = True,
+    delivered_conn_id: int | None = None,
+) -> OnAckDTO:
+    return OnAckDTO(
+        tx_id=tx_id,
+        conn_id=conn_id,
+        ack=ack,
+        delivered_conn_id=delivered_conn_id,
+    )
+
+
+# =============================================================================
+# INV-1: Connection Ownership Invariant Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestINV1ConnectionOwnership:
+    """Tests for INV-1: ACK must arrive on same connection where setting was delivered."""
+
+    async def test_ack_on_wrong_connection_raises_invariant_violation(self, skip_if_cloud_aligned):
+        """
+        LEGACY MODE ONLY:
+        GIVEN: Setting delivered on conn_id=1
+        WHEN: ACK arrives on conn_id=2
+        THEN: InvariantViolationError is raised
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-1", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-1", conn_id=1)
+
+        pending = await twin.deliver_pending_setting(tx_id="tx-1", conn_id=1)
+        assert pending is not None
+        assert pending.delivered_conn_id == 1
+
+        ack_dto = make_on_ack_dto(tx_id="tx-1", conn_id=2, ack=True)
+
+        with pytest.raises(InvariantViolationError) as exc_info:
+            await twin.on_ack(ack_dto)
+
+        assert "INV-1" in str(exc_info.value)
+
+    async def test_ack_on_correct_connection_succeeds(self):
+        """
+        GIVEN: Setting delivered on conn_id=1
+        WHEN: ACK arrives on conn_id=1
+        THEN: ACK is processed successfully
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-2", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-2", conn_id=1)
+
+        await twin.deliver_pending_setting(tx_id="tx-2", conn_id=1)
+
+        ack_dto = make_on_ack_dto(tx_id="tx-2", conn_id=1, ack=True)
+
+        result = await twin.on_ack(ack_dto)
+
+        assert result is not None
+        assert result.status == "box_ack"
+
+    async def test_nack_on_wrong_connection_raises_invariant_violation(self, skip_if_cloud_aligned):
+        """
+        LEGACY MODE ONLY:
+        GIVEN: Setting delivered on conn_id=1
+        WHEN: NACK arrives on conn_id=2
+        THEN: InvariantViolationError is raised
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-3", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-3", conn_id=1)
+
+        await twin.deliver_pending_setting(tx_id="tx-3", conn_id=1)
+
+        ack_dto = make_on_ack_dto(tx_id="tx-3", conn_id=2, ack=False)
+
+        with pytest.raises(InvariantViolationError) as exc_info:
+            await twin.on_ack(ack_dto)
+
+        assert "INV-1" in str(exc_info.value)
+
+    async def test_multiple_reconnects_ack_on_original_conn_only(self, skip_if_cloud_aligned):
+        """
+        LEGACY MODE ONLY:
+        GIVEN: Setting delivered on conn_id=1
+        WHEN: Multiple reconnections occur (conn_id changes to 2, 3, 4)
+        THEN: Only ACK on conn_id=1 is accepted
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-4", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-4", conn_id=1)
+
+        await twin.deliver_pending_setting(tx_id="tx-4", conn_id=1)
+
+        for wrong_conn_id in [2, 3, 4]:
+            ack_dto = make_on_ack_dto(tx_id="tx-4", conn_id=wrong_conn_id, ack=True)
+            with pytest.raises(InvariantViolationError):
+                await twin.on_ack(ack_dto)
+
+        pending = await twin.get_inflight()
+        assert pending is not None, "Pending should NOT be cleared by wrong-conn ACKs"
+
+    async def test_ack_on_wrong_connection_returns_none_cloud_aligned(self):
+        """
+        CLOUD-ALIGNED MODE:
+        GIVEN: Setting delivered on conn_id=1
+        WHEN: ACK arrives on conn_id=2
+        THEN: Returns None (no exception raised)
+        """
+        if not CLOUD_ALIGNED:
+            pytest.skip("Test only for cloud-aligned mode")
+
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-wrong-conn", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-wrong-conn", conn_id=1)
+
+        pending = await twin.deliver_pending_setting(tx_id="tx-wrong-conn", conn_id=1)
+        assert pending is not None
+        assert pending.delivered_conn_id == 1
+
+        ack_dto = make_on_ack_dto(tx_id="tx-wrong-conn", conn_id=2, ack=True)
+
+        # In cloud-aligned mode, wrong conn_id returns None instead of raising
+        result = await twin.on_ack(ack_dto)
+        assert result is None
+
+        # Verify pending state is unchanged
+        pending = await twin.get_inflight()
+        assert pending is not None
+        assert pending.tx_id == "tx-wrong-conn"
+
+
+# =============================================================================
+# INV-2: Session Transaction Invariant Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestINV2SessionTransaction:
+    """Tests for INV-2: Transaction must belong to current session."""
+
+    async def test_ack_from_old_session_rejected(self, skip_if_cloud_aligned):
+        """
+        LEGACY MODE ONLY:
+        GIVEN: Transaction created in session_A
+        WHEN: Session changes to session_B
+        THEN: ACK for old transaction is rejected (InvariantViolationError)
+        """
+        twin = DigitalTwin(session_id="session_A")
+
+        dto = make_queue_dto(tx_id="tx-session-test", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-session-test", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-session-test", conn_id=1)
+
+        twin.session_id = "session_B"
+
+        ack_dto = make_on_ack_dto(tx_id="tx-session-test", conn_id=1, ack=True)
+
+        with pytest.raises(InvariantViolationError) as exc_info:
+            await twin.on_ack(ack_dto)
+
+        assert "INV-2" in str(exc_info.value)
+
+    async def test_ack_from_old_session_returns_none_cloud_aligned(self):
+        """
+        CLOUD-ALIGNED MODE:
+        GIVEN: Transaction created in session_A
+        WHEN: Session changes to session_B
+        THEN: ACK still processes (cloud-aligned doesn't validate session)
+        """
+        if not CLOUD_ALIGNED:
+            pytest.skip("Test only for cloud-aligned mode")
+
+        twin = DigitalTwin(session_id="session_A")
+
+        dto = make_queue_dto(tx_id="tx-session-cloud", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-session-cloud", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-session-cloud", conn_id=1)
+
+        twin.session_id = "session_B"
+
+        ack_dto = make_on_ack_dto(tx_id="tx-session-cloud", conn_id=1, ack=True)
+
+        # In cloud-aligned mode, session validation is skipped
+        result = await twin.on_ack(ack_dto)
+        assert result is not None
+        assert result.status == "box_ack"
+
+    async def test_finish_inflight_validates_session(self):
+        """
+        GIVEN: Transaction in old session
+        WHEN: finish_inflight called after session change
+        THEN: ValueError is raised (INV-2 violation)
+        """
+        twin = DigitalTwin(session_id="session_original")
+
+        dto = make_queue_dto(tx_id="tx-finish-test", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-finish-test", conn_id=1)
+
+        twin.session_id = "session_new"
+
+        with pytest.raises(ValueError) as exc_info:
+            await twin.finish_inflight("tx-finish-test", conn_id=1, success=True)
+
+        assert "INV-2" in str(exc_info.value)
+
+
+# =============================================================================
+# INV-3: Timeout Task Ownership Invariant Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestINV3TimeoutTaskOwnership:
+    """Tests for INV-3: Timeout handlers must validate tx_id identity."""
+
+    async def test_ack_timeout_validates_tx_id(self):
+        """
+        GIVEN: TX1 starts with ack_timeout
+        WHEN: TX1 completes and TX2 starts before timeout fires
+        THEN: Old timeout should NOT affect TX2
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto1 = make_queue_dto(tx_id="tx-timeout-1", conn_id=1)
+        await twin.queue_setting(dto1)
+        await twin.start_inflight("tx-timeout-1", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-timeout-1", conn_id=1)
+
+        ctx1 = twin._inflight_ctx
+
+        await twin.finish_inflight("tx-timeout-1", conn_id=1, success=True)
+
+        dto2 = make_queue_dto(tx_id="tx-timeout-2", conn_id=1)
+        await twin.queue_setting(dto2)
+        await twin.start_inflight("tx-timeout-2", conn_id=1)
+
+        await asyncio.sleep(0.1)
+
+        pending = await twin.get_inflight()
+        assert pending is not None
+        assert pending.tx_id == "tx-timeout-2"
+        assert pending.stage not in (SettingStage.ERROR, SettingStage.DEFERRED)
+
+    async def test_applied_timeout_validates_tx_id(self):
+        """
+        GIVEN: TX1 in applied stage with applied_timeout
+        WHEN: TX1 completes and TX2 starts before timeout fires
+        THEN: Old timeout should NOT affect TX2
+        """
+        config = DigitalTwinConfig(applied_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto1 = make_queue_dto(tx_id="tx-applied-1", conn_id=1)
+        await twin.queue_setting(dto1)
+        await twin.start_inflight("tx-applied-1", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-applied-1", conn_id=1)
+
+        await twin.on_ack(make_on_ack_dto(tx_id="tx-applied-1", conn_id=1, ack=True))
+
+        twin._inflight = twin._inflight.mark_applied()
+        ctx1 = twin._inflight_ctx
+
+        await twin.finish_inflight("tx-applied-1", conn_id=1, success=True)
+
+        dto2 = make_queue_dto(tx_id="tx-applied-2", conn_id=1)
+        await twin.queue_setting(dto2)
+        await twin.start_inflight("tx-applied-2", conn_id=1)
+
+        await asyncio.sleep(0.1)
+
+        pending = await twin.get_inflight()
+        assert pending is not None
+        assert pending.tx_id == "tx-applied-2"
+
+
+# =============================================================================
+# State Machine Transition Tests
+# =============================================================================
+
+
+class TestPendingSettingStateTransitions:
+    """Tests for PendingSettingState atomic transitions."""
+
+    def test_valid_transition_accepted_to_sent_to_box(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.ACCEPTED,
+        )
+
+        new_pending = pending.mark_delivered(delivered_conn_id=1)
+
+        assert new_pending.stage == SettingStage.SENT_TO_BOX
+        assert new_pending.delivered_conn_id == 1
+
+    def test_valid_transition_sent_to_box_to_box_ack(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+        )
+
+        new_pending = pending.mark_ack_received(ack=True)
+
+        assert new_pending.stage == SettingStage.BOX_ACK
+
+    def test_valid_transition_sent_to_box_to_error_on_nack(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+        )
+
+        new_pending = pending.mark_ack_received(ack=False)
+
+        assert new_pending.stage == SettingStage.ERROR
+
+    def test_valid_transition_box_ack_to_applied(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.BOX_ACK,
+        )
+
+        new_pending = pending.mark_applied()
+
+        assert new_pending.stage == SettingStage.APPLIED
+
+    def test_valid_transition_applied_to_completed(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.APPLIED,
+        )
+
+        new_pending = pending.mark_completed()
+
+        assert new_pending.stage == SettingStage.COMPLETED
+
+    def test_invalid_transition_raises_error(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.COMPLETED,
+        )
+
+        with pytest.raises(ValueError):
+            pending.transition_to(SettingStage.SENT_TO_BOX, validate_from={SettingStage.ACCEPTED})
+
+    def test_can_transition_to_returns_correct_values(self):
+        pending_accepted = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.ACCEPTED,
+        )
+
+        assert pending_accepted.can_transition_to(SettingStage.SENT_TO_BOX) is True
+        assert pending_accepted.can_transition_to(SettingStage.BOX_ACK) is False
+        assert pending_accepted.can_transition_to(SettingStage.ERROR) is True
+
+    def test_is_terminal_returns_correct_values(self):
+        pending_completed = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.COMPLETED,
+        )
+
+        pending_error = PendingSettingState(
+            tx_id="tx-2",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.ERROR,
+        )
+
+        pending_active = PendingSettingState(
+            tx_id="tx-3",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+        )
+
+        assert pending_completed.is_terminal() is True
+        assert pending_error.is_terminal() is True
+        assert pending_active.is_terminal() is False
+
+    def test_validate_conn_ownership(self):
+        pending = PendingSettingState(
+            tx_id="tx-1",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.SENT_TO_BOX,
+            delivered_conn_id=1,
+        )
+
+        assert pending.validate_conn_ownership(1) is True
+        assert pending.validate_conn_ownership(2) is False
+
+        pending_no_delivery = PendingSettingState(
+            tx_id="tx-2",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            stage=SettingStage.ACCEPTED,
+        )
+
+        assert pending_no_delivery.validate_conn_ownership(1) is True
+        assert pending_no_delivery.validate_conn_ownership(2) is True
+
+
+# =============================================================================
+# TransactionContext Tests
+# =============================================================================
+
+
+class TestTransactionContext:
+    """Tests for TransactionContext invariant validation."""
+
+    def test_validate_conn_ownership_matching(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            delivered_conn_id=1,
+        )
+
+        assert ctx.validate_conn_ownership(1) is True
+        assert ctx.validate_conn_ownership(2) is False
+
+    def test_validate_conn_ownership_not_delivered(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            delivered_conn_id=None,
+        )
+
+        assert ctx.validate_conn_ownership(1) is True
+        assert ctx.validate_conn_ownership(2) is False
+
+    def test_validate_session(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+        )
+
+        assert ctx.validate_session("session-1") is True
+        assert ctx.validate_session("session-2") is False
+
+    def test_validate_timeout_ownership(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            stage_snapshot="sent_to_box",
+        )
+
+        assert ctx.validate_timeout_ownership("tx-1", "sent_to_box") is True
+        assert ctx.validate_timeout_ownership("tx-2", "sent_to_box") is False
+        assert ctx.validate_timeout_ownership("tx-1", "box_ack") is False
+
+    def test_with_delivered_conn(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+        )
+
+        new_ctx = ctx.with_delivered_conn(5)
+
+        assert new_ctx.delivered_conn_id == 5
+        assert ctx.delivered_conn_id is None
+
+    def test_with_stage(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+        )
+
+        new_ctx = ctx.with_stage("sent_to_box")
+
+        assert new_ctx.stage_snapshot == "sent_to_box"
+        assert ctx.stage_snapshot is None
+
+
+class TestTransactionValidator:
+    """Tests for TransactionValidator static methods."""
+
+    def test_validate_inv1_success(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            delivered_conn_id=1,
+        )
+
+        ok, err = TransactionValidator.validate_inv1(ctx, 1)
+
+        assert ok is True
+        assert err is None
+
+    def test_validate_inv1_failure(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            delivered_conn_id=1,
+        )
+
+        ok, err = TransactionValidator.validate_inv1(ctx, 2)
+
+        assert ok is False
+        assert "INV-1" in err
+
+    def test_validate_inv2_success(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+        )
+
+        ok, err = TransactionValidator.validate_inv2(ctx, "session-1")
+
+        assert ok is True
+        assert err is None
+
+    def test_validate_inv2_failure(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+        )
+
+        ok, err = TransactionValidator.validate_inv2(ctx, "session-2")
+
+        assert ok is False
+        assert "INV-2" in err
+
+    def test_validate_inv3_success(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            stage_snapshot="sent_to_box",
+        )
+
+        ok, err = TransactionValidator.validate_inv3(ctx, "tx-1", "sent_to_box")
+
+        assert ok is True
+        assert err is None
+
+    def test_validate_inv3_failure_tx_id(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+        )
+
+        ok, err = TransactionValidator.validate_inv3(ctx, "tx-2")
+
+        assert ok is False
+        assert "INV-3" in err
+
+    def test_validate_all_success(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            delivered_conn_id=1,
+            stage_snapshot="sent_to_box",
+        )
+
+        ok, errors = TransactionValidator.validate_all(
+            ctx,
+            incoming_conn_id=1,
+            current_session_id="session-1",
+            current_tx_id="tx-1",
+            current_stage="sent_to_box",
+        )
+
+        assert ok is True
+        assert len(errors) == 0
+
+    def test_validate_all_multiple_failures(self):
+        ctx = TransactionContext(
+            tx_id="tx-1",
+            conn_id=1,
+            session_id="session-1",
+            delivered_conn_id=1,
+        )
+
+        ok, errors = TransactionValidator.validate_all(
+            ctx,
+            incoming_conn_id=2,
+            current_session_id="session-2",
+            current_tx_id="tx-2",
+        )
+
+        assert ok is False
+        assert len(errors) >= 2
+
+
+# =============================================================================
+# DigitalTwin State Machine Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestDigitalTwinStateMachine:
+    """Tests for DigitalTwin state machine lifecycle."""
+
+    async def test_queue_setting_creates_transaction(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-queue-test")
+        result = await twin.queue_setting(dto)
+
+        assert result.status == "accepted"
+        assert result.tx_id == "tx-queue-test"
+
+        queue_len = await twin.get_queue_length()
+        assert queue_len == 1
+
+    async def test_start_inflight_moves_from_queue(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-inflight-test")
+        await twin.queue_setting(dto)
+
+        pending = await twin.start_inflight("tx-inflight-test", conn_id=1)
+
+        assert pending is not None
+        assert pending.tx_id == "tx-inflight-test"
+        assert pending.stage == SettingStage.ACCEPTED
+
+        queue_len = await twin.get_queue_length()
+        assert queue_len == 0
+
+    async def test_deliver_pending_sets_delivered_conn_id(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-deliver-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-deliver-test", conn_id=1)
+
+        pending = await twin.deliver_pending_setting("tx-deliver-test", conn_id=1)
+
+        assert pending is not None
+        assert pending.delivered_conn_id == 1
+        assert pending.stage == SettingStage.SENT_TO_BOX
+
+    async def test_on_ack_transitions_to_box_ack(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-ack-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-ack-test", conn_id=1)
+        await twin.deliver_pending_setting("tx-ack-test", conn_id=1)
+
+        ack_dto = make_on_ack_dto(tx_id="tx-ack-test", conn_id=1, ack=True)
+        result = await twin.on_ack(ack_dto)
+
+        assert result is not None
+        assert result.status == "box_ack"
+
+        pending = await twin.get_inflight()
+        assert pending is not None
+        assert pending.stage == SettingStage.BOX_ACK
+
+    async def test_on_nack_transitions_to_error(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-nack-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-nack-test", conn_id=1)
+        await twin.deliver_pending_setting("tx-nack-test", conn_id=1)
+
+        ack_dto = make_on_ack_dto(tx_id="tx-nack-test", conn_id=1, ack=False)
+        result = await twin.on_ack(ack_dto)
+
+        assert result is not None
+        assert result.status == "error"
+        assert result.error == "box_nack"
+
+        pending = await twin.get_inflight()
+        assert pending is None
+
+    async def test_on_tbl_event_transitions_to_applied(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-event-test", tbl_name="tbl_box_prms", tbl_item="MODE")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-event-test", conn_id=1)
+        await twin.deliver_pending_setting("tx-event-test", conn_id=1)
+
+        ack_dto = make_on_ack_dto(tx_id="tx-event-test", conn_id=1, ack=True)
+        await twin.on_ack(ack_dto)
+
+        event_dto = OnTblEventDTO(
+            tx_id="tx-event-test",
+            conn_id=1,
+            event_type="Setting",
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+        )
+        result = await twin.on_tbl_event(event_dto)
+
+        assert result is not None
+        assert result.status == "applied"
+
+        pending = await twin.get_inflight()
+        assert pending is not None
+        assert pending.stage == SettingStage.APPLIED
+
+    async def test_finish_inflight_clears_state(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-finish-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-finish-test", conn_id=1)
+
+        result = await twin.finish_inflight("tx-finish-test", conn_id=1, success=True)
+
+        assert result is not None
+        assert result.status == "completed"
+
+        pending = await twin.get_inflight()
+        assert pending is None
+
+    async def test_on_disconnect_clears_delivered_pending(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-disconnect-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-disconnect-test", conn_id=1)
+        await twin.deliver_pending_setting("tx-disconnect-test", conn_id=1)
+
+        disconnect_dto = OnDisconnectDTO(
+            tx_id=None,
+            conn_id=1,
+            session_id="test-session",
+        )
+        results = await twin.on_disconnect(disconnect_dto)
+
+        assert len(results) == 1
+        assert results[0].error == "disconnect"
+
+        pending = await twin.get_inflight()
+        assert pending is None
+
+    async def test_get_snapshot_returns_current_state(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-snapshot-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-snapshot-test", conn_id=1)
+
+        snapshot = await twin.get_snapshot(conn_id=1)
+
+        assert snapshot.session_id == "test-session"
+        assert snapshot.queue_length == 0
+        assert snapshot.has_inflight is True
+        assert snapshot.tx_id == "tx-snapshot-test"
+
+    async def test_clear_all_resets_state(self):
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-clear-test")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-clear-test", conn_id=1)
+
+        await twin.clear_all()
+
+        queue_len = await twin.get_queue_length()
+        assert queue_len == 0
+
+        pending = await twin.get_inflight()
+        assert pending is None
+
+
+# =============================================================================
+# Cloud-Aligned Mode Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestCloudAlignedMode:
+    """Tests specific to cloud-aligned mode behavior."""
+
+    async def test_cloud_aligned_pending_simple_dict_updated(self):
+        """
+        CLOUD-ALIGNED MODE:
+        GIVEN: Setting queued, started, delivered, and ACKed
+        WHEN: ACK is received
+        THEN: _pending_simple dict is updated with transaction state
+        """
+        if not CLOUD_ALIGNED:
+            pytest.skip("Test only for cloud-aligned mode")
+
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-pending-simple", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-pending-simple", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-pending-simple", conn_id=1)
+
+        # Verify _pending_simple is empty before ACK
+        assert twin._pending_simple == {}
+
+        ack_dto = make_on_ack_dto(tx_id="tx-pending-simple", conn_id=1, ack=True)
+        result = await twin.on_ack(ack_dto)
+
+        assert result is not None
+        assert result.status == "box_ack"
+
+        # Verify _pending_simple is populated after ACK
+        assert twin._pending_simple["tx_id"] == "tx-pending-simple"
+        assert twin._pending_simple["conn_id"] == 1
+        assert twin._pending_simple["status"] == "ack_received"
+
+    async def test_cloud_aligned_nack_clears_pending_simple(self):
+        """
+        CLOUD-ALIGNED MODE:
+        GIVEN: Setting queued, started, delivered
+        WHEN: NACK is received
+        THEN: _pending_simple dict is cleared
+        """
+        if not CLOUD_ALIGNED:
+            pytest.skip("Test only for cloud-aligned mode")
+
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-nack-clear", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-nack-clear", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-nack-clear", conn_id=1)
+
+        # Manually populate _pending_simple to simulate prior state
+        twin._pending_simple = {"tx_id": "tx-nack-clear", "status": "test"}
+
+        nack_dto = make_on_ack_dto(tx_id="tx-nack-clear", conn_id=1, ack=False)
+        result = await twin.on_ack(nack_dto)
+
+        assert result is not None
+        assert result.status == "error"
+        assert result.error == "box_nack"
+
+        # Verify _pending_simple is cleared after NACK
+        assert twin._pending_simple == {}
+
+    async def test_cloud_aligned_basic_conn_id_validation(self):
+        """
+        CLOUD-ALIGNED MODE:
+        GIVEN: Setting delivered on conn_id=1
+        WHEN: ACK arrives on different conn_id
+        THEN: Returns None (silently ignored)
+        """
+        if not CLOUD_ALIGNED:
+            pytest.skip("Test only for cloud-aligned mode")
+
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-conn-val", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-conn-val", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-conn-val", conn_id=1)
+
+        # ACK on wrong conn_id returns None
+        ack_dto = make_on_ack_dto(tx_id="tx-conn-val", conn_id=99, ack=True)
+        result = await twin.on_ack(ack_dto)
+        assert result is None
+
+        # ACK on correct conn_id succeeds
+        ack_dto = make_on_ack_dto(tx_id="tx-conn-val", conn_id=1, ack=True)
+        result = await twin.on_ack(ack_dto)
+        assert result is not None
+        assert result.status == "box_ack"
+
+
+# =============================================================================
+# RED Tests - Expected to FAIL
+# =============================================================================
+# These tests verify behaviors that are not yet fully implemented.
+# They will FAIL until the complete integration is done.
+# =============================================================================
+
+
+@pytest.mark.xfail(reason="RED tests - implementation not complete")
+@pytest.mark.asyncio
+class TestREDExpectedFailures:
+    """RED tests that should FAIL until full implementation is complete."""
+
+    async def test_full_lifecycle_with_all_invariants(self):
+        """
+        RED TEST: Full transaction lifecycle with all invariant validations.
+
+        This test exercises the complete state machine flow and should
+        FAIL until all invariants are properly enforced throughout.
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-full-lifecycle")
+        result = await twin.queue_setting(dto)
+        assert result.status == "accepted"
+
+        pending = await twin.start_inflight("tx-full-lifecycle", conn_id=1)
+        assert pending is not None
+
+        delivered = await twin.deliver_pending_setting("tx-full-lifecycle", conn_id=1)
+        assert delivered.delivered_conn_id == 1
+
+        ack_result = await twin.on_ack(
+            make_on_ack_dto(tx_id="tx-full-lifecycle", conn_id=1, ack=True)
+        )
+        assert ack_result.status == "box_ack"
+
+        event_result = await twin.on_tbl_event(
+            OnTblEventDTO(
+                tx_id="tx-full-lifecycle",
+                conn_id=1,
+                event_type="Setting",
+                tbl_name="tbl_box_prms",
+                tbl_item="MODE",
+                new_value="1",
+            )
+        )
+        assert event_result.status == "applied"
+
+        finish_result = await twin.finish_inflight(
+            "tx-full-lifecycle", conn_id=1, success=True
+        )
+
+        assert finish_result.status == "completed"
+
+        pending = await twin.get_inflight()
+        assert pending is None, "RED: Expected pending to be None after completion"
+
+    async def test_concurrent_transactions_isolated(self):
+        """
+        RED TEST: Concurrent transactions should be isolated.
+
+        This test verifies that multiple transactions can be processed
+        without interfering with each other. Should FAIL until proper
+        isolation is implemented.
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto1 = make_queue_dto(tx_id="tx-concurrent-1", conn_id=1)
+        dto2 = make_queue_dto(tx_id="tx-concurrent-2", conn_id=1)
+
+        await twin.queue_setting(dto1)
+        await twin.queue_setting(dto2)
+
+        pending1 = await twin.start_inflight("tx-concurrent-1", conn_id=1)
+        assert pending1 is not None
+
+        pending2 = await twin.start_inflight("tx-concurrent-2", conn_id=1)
+
+        assert pending2 is None, "RED: Second start_inflight should return None when inflight exists"
+
+    async def test_digital_twin_implements_twin_adapter_protocol(self):
+        """
+        RED TEST: DigitalTwin must implement TwinAdapterProtocol.
+
+        This test verifies that DigitalTwin implements all required methods
+        from TwinAdapterProtocol. Should FAIL until all methods are implemented.
+        """
+        from twin_adapter import TwinAdapterProtocol
+
+        twin = DigitalTwin(session_id="test-session")
+
+        assert isinstance(twin, TwinAdapterProtocol), (
+            "RED: DigitalTwin must implement TwinAdapterProtocol"
+        )
+
+    async def test_on_poll_returns_pending_setting_frame(self):
+        """
+        RED TEST: on_poll must return frame data for pending settings.
+
+        This test verifies that on_poll returns the actual frame data
+        when there's a pending setting to deliver. Should FAIL until
+        frame building is integrated.
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-poll-frame")
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-poll-frame", conn_id=1)
+
+        response = await twin.on_poll(tx_id="tx-poll-frame", conn_id=1, table_name="IsNewSet")
+
+        assert response.frame_data is not None, (
+            "RED: on_poll must return frame_data when pending setting exists"
+        )
+
+    async def test_restore_from_snapshot_rebuilds_state(self):
+        """
+        RED TEST: restore_from_snapshot must rebuild complete state.
+
+        This test verifies that state can be restored from a snapshot.
+        Should FAIL until restore_from_snapshot is fully implemented.
+        """
+        from twin_state import SnapshotDTO
+
+        twin1 = DigitalTwin(session_id="test-session-1")
+
+        dto = make_queue_dto(tx_id="tx-restore-test")
+        await twin1.queue_setting(dto)
+        await twin1.start_inflight("tx-restore-test", conn_id=1)
+
+        snapshot = await twin1.get_snapshot()
+
+        twin2 = DigitalTwin(session_id="test-session-2")
+        await twin2.restore_from_snapshot(snapshot)
+
+        restored_snapshot = await twin2.get_snapshot()
+
+        assert restored_snapshot.has_inflight is True, (
+            "RED: restore_from_snapshot must restore inflight state"
+        )
+        assert restored_snapshot.tx_id == "tx-restore-test", (
+            "RED: restore_from_snapshot must restore tx_id"
+        )

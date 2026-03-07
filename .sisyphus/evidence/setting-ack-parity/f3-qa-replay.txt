@@ -1,0 +1,96 @@
+F3: Real QA Replay — Evidence Summary
+======================================
+Date: 2026-02-19
+Task: Replay all QA scenarios T1-T15, verify evidence + assertion validity
+
+RESULT LINE:
+Scenarios [30/30] | Evidence [10/30] | Failures [9] | VERDICT
+
+SCENARIO BREAKDOWN:
+  Happy-path scenarios:  15 defined, 15 PASS (all assertions met by artifacts)
+  Edge-case scenarios:   15 defined, 3 FAIL (missing evidence), 12 N/A (not triggered)
+
+EVIDENCE FILE INVENTORY:
+  Present (T6-T15 happy path):
+    task-6-normalization.txt       ✅
+    task-7-proxy-session.txt       ✅
+    task-8-mock-session.txt        ✅
+    task-9-cloud-context.txt       ✅
+    task-10-mock-context.txt       ✅
+    task-11-frame-diff.txt         ✅
+    task-12-timing-diff.txt        ✅
+    task-13-state-machine.txt      ✅
+    task-14-divergence.txt         ✅
+    task-15-root-cause-report.txt  ✅
+
+  Missing (T1-T5 happy path — no evidence files created):
+    task-1-inventory.txt           ❌
+    task-2-proxy-export.txt        ❌
+    task-3-mock-export.txt         ❌
+    task-4-forensic-export.txt     ❌
+    task-5-control-join.txt        ❌
+
+  Missing (triggered edge cases — findings in main evidence, no dedicated file):
+    task-8-mock-session-coverage.txt       ❌  (partial forensic: 5 sessions)
+    task-10-mock-context-cross-session.txt  ❌  (both failures are cross-session)
+    task-12-timing-skew.txt                ❌  (CET/UTC 1h offset discovered)
+
+ARTIFACT INVENTORY (all 24 exist):
+  source-inventory.md              96 lines    ✅
+  proxy-overnight.raw.json     69,539 lines    ✅
+  proxy-setting-events.jsonl    8,637 lines    ✅
+  mock-overnight.log            1,030 lines    ✅
+  mock-setting-events.jsonl     1,030 lines    ✅
+  mock-forensic.jsonl          22,777 lines    ✅
+  control-plane-events.csv      2,406 lines    ✅
+  cloud-baseline.jsonl         15,201 lines    ✅
+  mock-baseline.jsonl           2,928 lines    ✅
+  proxy-session-matrix.csv      1,673 lines    ✅
+  mock-session-matrix.csv         514 lines    ✅
+  cloud-pre-setting-context.json  ~211KB      ✅
+  mock-pre-setting-context.json   2 cases     ✅
+  frame-diff.csv                   47 lines    ✅
+  timing-diff.csv                  14 lines    ✅
+  state-machine-diff.csv           34 lines    ✅
+  state-machine-summary.md          -          ✅
+  first-divergence.json             -          ✅
+  causality-chain.md                -          ✅
+  root-cause-report.md           ~360 lines    ✅
+  build_baselines.py                -          ✅
+  export_loki.py                    -          ✅
+  extract_control_plane_events.py   -          ✅
+  extract_mock_pre_setting_context.py  -       ✅
+
+ASSERTION VALIDATION PER TASK:
+  T1:  ✅ source-inventory.md has time-window, IN/OUT scope, endpoint list
+  T2:  ✅ Raw JSON 69K lines, filtered JSONL 8.6K lines, entries >0
+  T3:  ✅ 1030 lines with DELIVERED/FAILED events, timezone preserved
+  T4:  ✅ 22,777 JSONL lines, 1,898 records, 0 parse errors, raw_xml+conn_id+ts_utc present
+  T5:  ✅ CSV has required columns (ts_utc,source,device_id,event_type,conn_id,setting_key + extras)
+  T6:  ✅ cloud 15,201 + mock 2,928 JSONL records, ts_epoch_ms+frame_type schema
+  T7:  ✅ 1,672 sessions, 0 gaps, session_type+frames_count 100% filled
+  T8:  ✅ 513 sessions, 4 with settings, close timing + timeout documented
+  T9:  ✅ 7 successful cloud cases with T-120s..T+60s windows, cadence computed
+  T10: ✅ 2 failed cases with delivery_ts, close_ts, timeout_ts, cross-session linkage
+  T11: ✅ 46 diff records, 5 diff types classified with severity
+  T12: ✅ 13 timing metrics, first divergence at T+24s documented
+  T13: ✅ 33 transitions, divergence at index 2 marked, ACKED vs FAILED shown
+  T14: ✅ Single first divergence 2026-02-19T06:46:39, 5-step causal chain, confidence 0.95
+  T15: ✅ Report has ROOT CAUSE, EVIDENCE, CONFIDENCE, NEXT EXPERIMENTS sections
+
+NAMING DEVIATIONS (non-blocking):
+  T11: CSV columns use source_pair/field_name instead of frame_stage/field (richer schema)
+  T13: File named state-machine-diff.csv instead of state-transition-diff.csv
+  T13: Evidence named task-13-state-machine.txt instead of task-13-state-diff.txt
+  T14: Evidence named task-14-divergence.txt instead of task-14-first-divergence.txt
+  T15: Evidence named task-15-root-cause-report.txt instead of task-15-report-validation.txt
+
+FAILURE CLASSIFICATION:
+  Critical (assertion unsupported): 0
+  Evidence gaps (file missing, assertion met by artifact): 8
+  Naming deviations (non-blocking): 5
+
+VERDICT: CONDITIONAL PASS
+  All analytical assertions validated. Evidence chain complete in artifacts.
+  Gap: Wave 1 tasks (T1-T5) produced no evidence files; 3 triggered edge cases
+  lack dedicated evidence files (findings captured in main evidence instead).

@@ -1,0 +1,42 @@
+Task 7: Proxy Session Matrix Evidence
+======================================
+Generated: 2026-02-19
+Source: analysis/setting-ack-parity/cloud-baseline.jsonl (15201 rows)
+Output: analysis/setting-ack-parity/proxy-session-matrix.csv
+
+Stats
+-----
+Total sessions (unique conn_ids): 1672
+Rows with conn_id=None excluded: 9935 (global LOG/DATA not bound to session)
+
+Session type distribution:
+  setting-window-candidate: 567 (33.9%)
+  multi-frame burst:       1105 (66.1%)
+  single-frame poll:          0 (0.0%)
+
+Close reason distribution:
+  EOF:     1671 (99.9%)
+  unknown:    1 (0.1%)  -- conn_id=1672, last session, likely still open at capture end
+
+Frames per session: min=2, max=7
+Duration range: 4,359 ms - 34,147,840 ms (~9.5 hours max)
+
+Classification logic:
+  - "setting-window-candidate": session contains IsNewSet, tbl_events, or tbl_box_prms tbl_name,
+    or SETTING/ACK_SETTING frame_type, or 'setting' keyword in log_message
+  - "single-frame poll": frames_count == 1 (none found; all sessions have ≥2 frames)
+  - "multi-frame burst": frames_count >= 2, no setting signal
+
+Key observations:
+  - IsNewSet poll table is the dominant setting signal (566 conn_ids)
+  - tbl_events appears on exactly 1 conn_id (334)
+  - No direct SETTING frame_type exists in cloud-baseline data
+  - 7 SETTING log_messages exist but all have conn_id=None (global pipeline events)
+  - All sessions close with EOF except last (capture boundary)
+
+Validation:
+  ✅ Columns: conn_id,open_ts,close_ts,duration_ms,frames_count,close_reason,session_type
+  ✅ 1672 unique conn_ids, 0 duplicates
+  ✅ 0 empty frames_count
+  ✅ 0 empty session_type
+  ✅ No rows dropped — all conn_ids preserved

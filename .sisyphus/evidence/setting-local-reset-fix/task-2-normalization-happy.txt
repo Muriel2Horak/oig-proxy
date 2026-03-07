@@ -1,0 +1,83 @@
+TASK 2 EVIDENCE: Unified Timeline Normalization - Happy Path
+============================================================
+Date: 2026-02-20T11:23:00Z
+Status: COMPLETED
+QA Scenario: Happy path normalization
+
+=== STEPS EXECUTED ===
+
+Step 1: Run normalization
+  - Read source evidence: task-13-state-machine.txt, task-14-divergence.txt, task-15-root-cause-report.txt
+  - Read analysis CSVs: state-machine-diff.csv (35 rows), timing-diff.csv (15 rows), frame-diff.csv (48 rows)
+  - Generated: .sisyphus/evidence/setting-local-reset-fix/unified_timeline.json
+
+Step 2: Validate output schema columns
+  - Required columns checked: case_id, source, mode, conn_id, event_type, ts_epoch_ms, ts_iso8601,
+    transition_from, transition_to, transition_index, is_divergence, source_file, source_ref
+  - Result: ALL PRESENT - schema validation PASS
+
+Step 3: Verify source_ref fields present for all rows
+  - source_file present in all 33 records: OK
+  - source_ref (line number) present in all 33 records: OK
+
+=== OUTPUT FILE ===
+
+File: .sisyphus/evidence/setting-local-reset-fix/unified_timeline.json
+
+=== VALIDATION RESULTS ===
+
+Total records:          33
+  Cloud records:        21 (7 cases × 3 transitions)
+  Mock records:         12 (2 cases × 6 transitions)
+
+Cases present:          9 / 9 expected
+  Cloud cases (7):      cloud-setting-1 through cloud-setting-7
+  Mock cases (2):       mock-setting-1, mock-setting-2
+
+Schema columns:         OK (all 12 required columns present in every record)
+source_file:            OK (all 33 records reference analysis/setting-ack-parity/state-machine-diff.csv)
+source_ref:             OK (all 33 records have line number reference, e.g. "line:2")
+
+Divergence marking:
+  is_divergence=true:   2 records (mock-setting-1 and mock-setting-2)
+  Both at index:        transition_index=2 (DELIVERED -> CONN_CLOSED)
+  Divergence ts:
+    mock-setting-1:     2026-02-19T06:46:39.000Z (epoch_ms: 1771483599000, T+24s from delivery)
+    mock-setting-2:     2026-02-19T06:58:03.000Z (epoch_ms: 1771484283000, T+24s from delivery)
+
+Mode mapping:
+  cloud cases:          mode=online
+  mock cases:           mode=offline
+
+Event type mapping:
+  transition INIT->QUEUED/PENDING:    event_type=queued
+  transition QUEUED/PENDING->DELIVERED: event_type=delivery
+  transition DELIVERED->ACKED:         event_type=ack
+  transition DELIVERED->CONN_CLOSED:   event_type=close   [DIVERGENCE POINT]
+  transition CONN_CLOSED->RECONNECTED: event_type=reconnect
+  transition RECONNECTED->TIMEOUT:     event_type=timeout
+  transition TIMEOUT->FAILED:          event_type=timeout (terminal)
+
+=== SOURCE PROVENANCE ===
+
+All records trace back to:
+  - analysis/setting-ack-parity/state-machine-diff.csv (primary, line-by-line)
+  - .sisyphus/evidence/setting-ack-parity/task-13-state-machine.txt (cross-reference)
+  - .sisyphus/evidence/setting-ack-parity/task-14-divergence.txt (divergence timestamp)
+  - .sisyphus/evidence/setting-ack-parity/task-15-root-cause-report.txt (root cause context)
+  - analysis/setting-ack-parity/timing-diff.csv (timing metadata in notes)
+  - analysis/setting-ack-parity/frame-diff.csv (frame-level context)
+
+=== EXPECTED RESULT: MET ===
+
+Normalized file generated with full traceability.
+Schema validated. All 9 cases represented. Divergence explicitly marked.
+Source provenance preserved in source_file + source_ref for every record.
+
+=== NO SEMANTICS ALTERED ===
+
+- All timestamps preserved as-is from source CSVs (epoch_ms and ISO 8601)
+- conn_id values from source CSV notes (e.g. conn_id=96, conn_id=1) preserved
+- QUEUED (cloud) / PENDING (mock) terminological difference preserved in transition_to field
+- Divergence marker is additive metadata only; no original data modified
+- Ambiguous timestamps (cloud "estimated" deliveries) noted in source but not altered

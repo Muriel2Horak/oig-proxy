@@ -1,0 +1,58 @@
+F4 Scope Fidelity Check Result
+=====================================
+
+Audit Date: 2026-02-19
+Auditor: F4 Scope Agent
+Scope: Setting ACK Parity Analysis - Scope Fidelity Check
+
+In-scope Analysis Areas: 14/14
+- Cloud proxy logs extraction (Loki) ✓
+- Mock container logs extraction (NAS) ✓  
+- Mock forensic frame baseline capture ✓
+- Control-plane setting events correlation ✓
+- Timestamp normalization (UTC epoch ms) ✓
+- Canonical schema parsing ✓
+- Proxy/cloud session lifecycle mapping ✓
+- Mock session lifecycle reconstruction ✓
+- Cloud pre-setting context extraction ✓
+- Mock pre-setting context extraction ✓
+- Frame schema/value differences ✓
+- Timing/gap/close behavior comparison ✓
+- State machine transition comparison ✓
+- First divergence identification & causal chain ✓
+
+Out-of-scope Implementation Fixes: 0/0
+- No proxy.py modifications ✓
+- No server.py modifications ✓
+- No mock runtime configuration changes ✓
+- No DNS or routing alterations ✓
+- No OIG Box firmware interventions ✓
+
+Out-of-scope Flow Analysis: 0/0
+- No firmware update flows analyzed ✓
+- No weather-only traffic included ✓
+- Non-setting frames used only as context ✓
+- No device-specific quirks unrelated to setting ACK ✓
+
+Deliverable Validation: 6/6 analysis-only ✓
+- All analysis outputs are read-only data artifacts
+- No code modifications in core project files
+- Evidence files contain only processing logs/validation
+- Root cause finding is forensic observation, not fix
+- Next experiments are analytical, not implementation
+
+VERDICT: PASS
+
+SUMMARY LINE (per plan F4 spec):
+In-scope [28/28] | Out-of-scope [0/28] | VERDICT: PASS
+
+ARTIFACT COUNT:
+- 26 analysis artifacts in analysis/setting-ack-parity/
+- 12 evidence files in .sisyphus/evidence/setting-ack-parity/
+- 4 analysis Python scripts (read-only data processing)
+- 0 implementation code changes
+
+The setting ACK parity analysis maintained perfect scope fidelity. All 28 artifacts (26 analysis + 2 verification reports) are within scope. No implementation fixes or unrelated flow analysis detected. The analysis delivered a forensic-grade causal chain while preserving the boundary between observation and intervention.
+
+Runtime Code Integrity: VERIFIED (no .py changes in addon/, proxy/)
+Guardrail Compliance: ALL 4 GUARDRAILS PASS

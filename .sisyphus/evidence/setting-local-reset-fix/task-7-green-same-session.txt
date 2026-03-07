@@ -1,0 +1,146 @@
+# Task 7: GREEN Same-Session ACK After Refactor (2026-02-20)
+
+## What was done
+Refactored pending-setting model to be connection-scoped by adding `delivered_conn_id` field and validating ownership in `maybe_handle_ack`.
+
+## Files modified
+
+### addon/oig-proxy/control_settings.py
+- Added conn_id ownership validation in `maybe_handle_ack` (lines 318-329)
+- Returns False if `delivered_conn_id` is set and doesn't match incoming `conn_id`
+
+### addon/oig-proxy/proxy.py
+- Added `delivered_conn_id` field when setting is delivered to BOX (line 653)
+- Set in `_process_frame_offline` method alongside `sent_at`
+
+### addon/oig-proxy/cloud_forwarder.py
+- Added `delivered_conn_id` field when setting is delivered to BOX (line 477)
+- Set in `forward_frame` method alongside `sent_at`
+
+### tests/test_proxy_control_ack.py
+- Updated `_setup_pending_setting_on_connection` helper to include `delivered_conn_id`
+- This allows tests to properly simulate delivered settings
+
+### tests/test_proxy_additional.py
+- Fixed incomplete mock setup in `test_control_note_box_disconnect_marks_tx`
+- Added missing `ack_task` and `applied_task` attributes
+
+## Test results (all GREEN)
+
+```
+tests/test_proxy_control_ack.py::test_control_on_box_setting_ack_missing_tx PASSED
+tests/test_proxy_control_ack.py::test_control_on_box_setting_ack_mismatch PASSED
+tests/test_proxy_control_ack.py::test_control_on_box_setting_ack_nack PASSED
+tests/test_proxy_control_ack.py::test_control_on_box_setting_ack_success PASSED
+tests/test_proxy_control_ack.py::test_control_coerce_value PASSED
+tests/test_proxy_control_ack.py::test_control_map_optimistic_value PASSED
+tests/test_proxy_control_ack.py::test_cross_session_ack_should_not_clear_pending_offline PASSED
+tests/test_proxy_control_ack.py::test_cross_session_ack_with_timeout_exceeded_should_not_clear_pending_offline PASSED
+tests/test_proxy_control_ack.py::test_cross_session_ack_should_not_clear_pending_hybrid_offline PASSED
+tests/test_proxy_control_ack.py::test_cross_session_multiple_reconnects_pending_preserved PASSED
+tests/test_proxy_control_ack.py::test_cross_session_nack_should_not_clear_pending_offline PASSED
+tests/test_proxy_control_more.py::test_control_publish_result_and_key_status PASSED
+tests/test_proxy_control_more.py::test_control_pending_keys_load_store PASSED
+tests/test_proxy_control_more.py::test_control_publish_restart_errors PASSED
+tests/test_proxy_control_more.py::test_control_normalize_and_coerce PASSED
+tests/test_proxy_control_more.py::test_control_map_optimistic_value PASSED
+tests/test_proxy_control_more.py::test_control_is_box_ready_conditions PASSED
+tests/test_proxy_control_more.py::test_control_on_mqtt_message_accepts PASSED
+tests/test_proxy_control_more.py::test_control_defer_inflight_max_attempts PASSED
+tests/test_proxy_control_more.py::test_control_ack_and_applied_timeouts PASSED
+tests/test_proxy_control_more.py::test_control_quiet_wait_completes PASSED
+tests/test_proxy_control_more.py::test_control_maybe_queue_post_drain_refresh PASSED
+tests/test_proxy_control_more.py::test_control_observe_box_frame_setting PASSED
+tests/test_proxy_control_more.py::test_publish_setting_event_state PASSED
+tests/test_proxy_control_more.py::test_send_setting_to_box_and_local_ack PASSED
+tests/test_proxy_control_more.py::test_ack_with_wrong_conn_id_is_ignored PASSED
+tests/test_proxy_control_more.py::test_nack_with_wrong_conn_id_is_ignored PASSED
+tests/test_proxy_main_loop.py::test_process_frame_offline_sends_ack PASSED
+tests/test_proxy_main_loop.py::test_handle_frame_offline_mode_closes_cloud PASSED
+tests/test_proxy_main_loop.py::test_handle_box_connection_offline_path PASSED
+tests/test_proxy_main_loop.py::test_handle_box_connection_hybrid_no_cloud PASSED
+tests/test_proxy_main_loop.py::test_handle_box_connection_online_path PASSED
+tests/test_proxy_main_loop.py::test_handle_box_connection_processing_exception PASSED
+tests/test_proxy_main_loop.py::test_disconnect_cancels_stale_pending_timeout PASSED
+tests/test_proxy_main_loop.py::test_disconnect_cleanup_without_reconnect PASSED
+tests/test_proxy_main_loop.py::test_disconnect_cancels_inflight_timeout_tasks PASSED
+tests/test_proxy_main_loop.py::test_stale_pending_affects_new_connection PASSED
+tests/test_proxy_additional.py::test_publish_proxy_status_handles_errors PASSED
+tests/test_proxy_additional.py::test_getactual_frames_and_send PASSED
+tests/test_proxy_additional.py::test_local_getactual_loop_exits_when_closed PASSED
+tests/test_proxy_additional.py::test_full_refresh_loop_triggers_send PASSED
+tests/test_proxy_additional.py::test_proxy_status_loop_disabled PASSED
+tests/test_proxy_additional.py::test_proxy_status_loop_runs_once PASSED
+tests/test_proxy_additional.py::test_read_box_bytes_timeout_and_reset PASSED
+tests/test_proxy_additional.py::test_ensure_cloud_connected_success_and_failure PASSED
+tests/test_proxy_additional.py::test_ensure_cloud_connected_force_offline PASSED
+tests/test_proxy_additional.py::test_forward_frame_online_timeout_end_transparent PASSED
+tests/test_proxy_additional.py::test_forward_frame_hybrid_timeout_end_local_ack PASSED
+tests/test_proxy_additional.py::test_forward_frame_online_timeout_non_end PASSED
+tests/test_proxy_additional.py::test_forward_frame_online_timeout_non_end_online_mode PASSED
+tests/test_proxy_additional.py::test_forward_frame_online_exception PASSED
+tests/test_proxy_additional.py::test_forward_frame_intercepts_isnewset_with_pending_setting PASSED
+tests/test_proxy_additional.py::test_forward_frame_no_intercept_without_pending PASSED
+tests/test_proxy_additional.py::test_tune_socket_sets_options PASSED
+tests/test_proxy_additional.py::test_control_note_box_disconnect_marks_tx PASSED
+tests/test_proxy_additional.py::test_local_getactual_loop_sends_and_logs PASSED
+tests/test_proxy_additional.py::test_force_offline_enabled_property PASSED
+tests/test_proxy_additional.py::test_handle_setting_event_publishes PASSED
+tests/test_proxy_additional.py::test_process_frame_offline_skips_all_data_sent PASSED
+tests/test_proxy_additional.py::test_extract_device_and_table_infers_result PASSED
+tests/test_proxy_additional.py::test_process_box_frame_common_isnew_updates PASSED
+
+======================== 61 passed, 6 skipped in 0.18s =========================
+```
+
+## Key changes
+
+### conn_id ownership validation
+```python
+def maybe_handle_ack(self, frame: str, box_writer: asyncio.StreamWriter, *, conn_id: int) -> bool:
+    pending = self.pending
+    if not pending:
+        return False
+
+    # Validate conn_id ownership - only the connection that delivered the Setting
+    # should process the ACK/NACK response
+    delivered_conn_id = pending.get("delivered_conn_id")
+    if delivered_conn_id is not None and conn_id != delivered_conn_id:
+        logger.debug(
+            "CONTROL: ACK/NACK ignored — conn_id mismatch "
+            "(delivered_conn=%s, current_conn=%s, %s/%s)",
+            delivered_conn_id,
+            conn_id,
+            pending.get("tbl_name"),
+            pending.get("tbl_item"),
+        )
+        return False
+
+    # ... rest of existing logic
+```
+
+### delivered_conn_id tracking
+```python
+# In proxy.py _process_frame_offline and cloud_forwarder.py forward_frame:
+if self._cs.pending is not None:
+    self._cs.pending["sent_at"] = time.monotonic()
+    self._cs.pending["delivered_conn_id"] = conn_id  # NEW
+```
+
+## Previously RED tests now GREEN
+
+| Test Name | Before Fix | After Fix |
+|-----------|------------|-----------|
+| test_cross_session_ack_should_not_clear_pending_offline | FAILED | PASSED |
+| test_cross_session_ack_should_not_clear_pending_hybrid_offline | FAILED | PASSED |
+| test_cross_session_multiple_reconnects_pending_preserved | FAILED | PASSED |
+| test_cross_session_nack_should_not_clear_pending_offline | FAILED | PASSED |
+| test_ack_with_wrong_conn_id_is_ignored | FAILED | PASSED |
+| test_nack_with_wrong_conn_id_is_ignored | FAILED | PASSED |
+
+## Success criteria met
+- ✓ Files modified: `addon/oig-proxy/control_settings.py`
+- ✓ Pending state cannot be read/consumed by a different `conn_id`
+- ✓ Existing ACK success path still works for same-session flow
+- ✓ Evidence file created: `task-7-green-same-session.txt`
+- ✓ All 61 tests pass (6 skipped as before, no new failures)

@@ -1,0 +1,82 @@
+# Task 11: Frame Schema a hodnotovy diff v setting okne
+## Evidence File
+## Generated: 2026-02-19
+
+### Task Objective
+Vytvor `analysis/setting-ack-parity/frame-diff.csv` porovnanim cloud vs mock v zarovnanych kontext oknech.
+
+### Deliverables Completed
+- [x] Vytvoren soubor `analysis/setting-ack-parity/frame-diff.csv`
+- [x] Sloupce: `case_id,source_pair,frame_anchor_ts,diff_type,field_name,cloud_value,mock_value,severity,notes`
+- [x] Diff typy zahrnuji: `field_missing,field_order,value_format,value_semantic,crc_mismatch`
+- [x] Evidence: `.sisyphus/evidence/setting-ack-parity/task-11-frame-diff.txt`
+- [x] Append learnings do `.sisyphus/notepads/setting-ack-parity/learnings.md`
+
+### CSV Summary Statistics
+- Total diff records: 46
+- Diff type breakdown:
+  - field_missing: 32
+  - value_semantic: 7
+  - value_format: 4
+  - crc_mismatch: 2
+  - field_order: 1
+- Severity breakdown:
+  - medium: 32
+  - high: 9
+  - low: 5
+
+### Key Findings
+
+#### 1. Fundamental Architecture Difference (HIGH SEVERITY)
+- **Cloud**: Setting delivery observed indirectly via `tbl_events` DATA frame
+- **Mock**: Explicit SETTING frame with full XML structure
+
+#### 2. Cross-Session Timeout Pattern (HIGH SEVERITY)
+- **Mock**: ACK timeout fires on DIFFERENT connection than delivery (conn_N -> conn_N+1)
+- **Cloud**: Protocol ACK within same TCP session (<1s)
+
+#### 3. Connection Lifecycle Difference (HIGH SEVERITY)
+- **Mock**: Delivery connection closes before timeout fires
+- **Cloud**: Single connection handles complete exchange
+
+#### 4. ACK Timing (HIGH SEVERITY)
+- **Cloud**: Protocol ACK is sub-second (within IsNewSet TCP session)
+- **Mock**: Explicit ACK timeout at ~30-35s (config-based threshold)
+
+#### 5. Setting Frame Fields (MEDIUM SEVERITY)
+Mock Setting frames contain these fields not captured in cloud baseline:
+- ID (frame ID)
+- ID_Device
+- ID_Set
+- ID_SubD
+- DT (datetime in local format)
+- NewValue
+- Confirm
+- TblName
+- TblItem
+- ID_Server
+- mytimediff
+- Reason
+- TSec (timestamp in UTC format)
+- ver (firmware version)
+- CRC
+
+#### 6. Duplicate Tags Note (LOW SEVERITY)
+- Spec notes `Reason` tag can appear multiple times
+- Current mock frames show single Reason
+- Future cases may have duplicates
+
+### Data Sources Used
+1. `analysis/setting-ack-parity/cloud-pre-setting-context.json` - 7 successful cloud cases
+2. `analysis/setting-ack-parity/mock-pre-setting-context.json` - 2 failed mock cases
+3. `analysis/setting-ack-parity/cloud-baseline.jsonl` - Cloud proxy logs
+4. `analysis/setting-ack-parity/mock-baseline.jsonl` - Mock forensic frames
+
+### Output File
+`analysis/setting-ack-parity/frame-diff.csv` - 46 structural comparison records
+
+### Verification
+- CSV generated with correct column structure
+- All diff types covered: field_missing, field_order, value_format, value_semantic, crc_mismatch
+- Severity levels assigned: low, medium, high
+- Notes provide context for each difference

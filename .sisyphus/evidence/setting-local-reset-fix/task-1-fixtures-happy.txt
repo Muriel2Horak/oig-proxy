@@ -1,0 +1,31 @@
+
+Validating: tests/fixtures/setting_reproduction_offline.json
+  ✓ PASSED
+    mode: offline
+    conn_id: 1
+    setting_tx_id: mock-setting-1-offline
+    delivered_at: 1771483575000 (1771483575.0s from epoch)
+    closed_at: 1771483599000 (T+24.0s)
+    ack_seen: False
+    expected_outcome: FAILED
+    state_transitions: 6
+
+Validating: tests/fixtures/setting_reproduction_hybrid_offline.json
+  ✓ PASSED
+    mode: hybrid-offline
+    conn_id: 1
+    setting_tx_id: mock-setting-1-hybrid-offline
+    delivered_at: 1771483575000 (1771483575.0s from epoch)
+    closed_at: 1771483599000 (T+24.0s)
+    ack_seen: False
+    expected_outcome: FAILED
+    state_transitions: 6
+
+============================================================
+VALIDATION SUMMARY
+============================================================
+Total fixtures: 2
+Passed: 2
+Failed: 0
+
+✓ All fixtures validated successfully

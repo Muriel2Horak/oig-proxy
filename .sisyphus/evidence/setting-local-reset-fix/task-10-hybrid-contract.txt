@@ -1,0 +1,59 @@
+Task 10 — Hybrid-Offline Path Contract Compliance
+==================================================
+Date: 2026-02-20
+Status: PASS — no changes required
+
+## Code Path Verified
+File: addon/oig-proxy/cloud_forwarder.py
+Method: CloudForwarder.forward_frame (lines 460–592)
+Hybrid-offline fallback entry: CloudForwarder.fallback_offline → OIGProxy._process_frame_offline
+
+## Contract Analysis
+
+### Path A — Setting intercepted before cloud (lines 472–505)
+When `table_name in ("IsNewSet", "IsNewFW", "IsNewWeather")` AND `pending_frame is not None`:
+  1. `setting_frame = self._proxy._cs.pending_frame`
+  2. `self._proxy._cs.pending_frame = None`                        ← frame consumed
+  3. `self._proxy._cs.pending["sent_at"] = time.monotonic()`       ← delivery timestamp
+  4. `self._proxy._cs.pending["delivered_conn_id"] = conn_id`      ← ✅ OWNER STAMPED
+  5. Frame written to `box_writer`
+  6. Returns early (cloud not involved for this frame)
+
+### Path B — Cloud failure fallback (e.g. connect_failed, eof, timeout, error)
+  All hybrid failure handlers call `fallback_offline(conn_id=conn_id)` which
+  delegates to `OIGProxy._process_frame_offline(conn_id=conn_id)`.
+  Inside `_process_frame_offline`:
+    `self._cs.pending["delivered_conn_id"] = conn_id`              ← ✅ OWNER STAMPED
+
+### Path C — handle_frame_offline_mode (HYBRID detected offline)
+  Called from `proxy.py` when `not self._hm.should_try_cloud()` (lines 590–599).
+  Delegates to `_process_frame_offline(conn_id=conn_id)`.
+    `self._cs.pending["delivered_conn_id"] = conn_id`              ← ✅ OWNER STAMPED
+
+### Key finding
+In ALL hybrid-offline delivery paths, `conn_id` flows end-to-end through the call
+chain and is stamped as `delivered_conn_id` at the moment of actual delivery. No
+path skips this stamping. The `conn_id` parameter is never None in these paths
+(the `if conn_id is not None` guard in `_process_frame_offline` is defensive for
+edge cases only).
+
+### Consistency with offline path
+Both paths (OFFLINE via proxy.py and HYBRID via cloud_forwarder.py) converge on
+the same `_process_frame_offline` function, ensuring identical metadata semantics.
+The early-intercept path in `forward_frame` is an exact mirror of the offline path.
+
+### No global-state coupling
+- `pending` dict is instance-scoped on `ControlSettings` (self._cs)
+- `delivered_conn_id` is always derived from the conn_id passed by the caller,
+  never from a global or shared variable
+- `clear_pending_on_disconnect` (control_settings.py:419) resets state on BOX
+  disconnect, preventing stale pending from leaking across reconnects
+
+## Test Results
+File: tests/test_proxy_additional.py
+- test_forward_frame_intercepts_isnewset_with_pending_setting  PASSED
+- test_forward_frame_no_intercept_without_pending              PASSED
+- test_forward_frame_hybrid_timeout_end_local_ack              PASSED
+- test_forward_frame_online_timeout_non_end                    PASSED
+- test_ensure_cloud_connected_force_offline                    PASSED
+All 30 tests passed, 6 skipped (pre-existing).
