@@ -4,6 +4,7 @@
 
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -197,3 +198,93 @@ async def test_control_settings_queue_setting_requires_twin():
     )
 
     assert result == {"ok": False, "error": "twin_unavailable"}
+
+
+def test_control_settings_send_setting_routes_twin_when_flag_on(monkeypatch):
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy._twin = object()
+    proxy._twin_kill_switch = False
+    cs = cs_module.ControlSettings(proxy)
+    cs.send_via_event_loop = MagicMock(return_value={"ok": True, "tx_id": "tx-1"})
+    cs.send_via_event_loop_legacy = MagicMock(return_value={"ok": True, "route": "legacy"})
+    monkeypatch.setattr(cs_module, "CONTROL_TWIN_FIRST_ENABLED", True)
+
+    result = cs.send_setting(
+        tbl_name="tbl_box_prms",
+        tbl_item="MODE",
+        new_value="3",
+        confirm="New",
+    )
+
+    assert result["ok"] is True
+    cs.send_via_event_loop.assert_called_once()
+    cs.send_via_event_loop_legacy.assert_not_called()
+    assert cs.set_commands_buffer[-1]["source"] == "twin"
+
+
+def test_control_settings_send_setting_routes_legacy_when_flag_off(monkeypatch):
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy._twin = object()
+    proxy._twin_kill_switch = False
+    cs = cs_module.ControlSettings(proxy)
+    cs.send_via_event_loop = MagicMock(return_value={"ok": True, "tx_id": "tx-1"})
+    cs.send_via_event_loop_legacy = MagicMock(return_value={"ok": True, "route": "legacy"})
+    monkeypatch.setattr(cs_module, "CONTROL_TWIN_FIRST_ENABLED", False)
+
+    result = cs.send_setting(
+        tbl_name="tbl_box_prms",
+        tbl_item="MODE",
+        new_value="3",
+        confirm="New",
+    )
+
+    assert result["ok"] is True
+    cs.send_via_event_loop.assert_not_called()
+    cs.send_via_event_loop_legacy.assert_called_once()
+    assert cs.set_commands_buffer[-1]["source"] == "legacy"
+
+
+def test_control_settings_send_setting_falls_back_to_legacy_when_twin_fails(monkeypatch):
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy._twin = object()
+    proxy._twin_kill_switch = False
+    cs = cs_module.ControlSettings(proxy)
+    cs.send_via_event_loop = MagicMock(return_value={"ok": False, "error": "twin_unavailable"})
+    cs.send_via_event_loop_legacy = MagicMock(return_value={"ok": True, "route": "legacy"})
+    monkeypatch.setattr(cs_module, "CONTROL_TWIN_FIRST_ENABLED", True)
+
+    result = cs.send_setting(
+        tbl_name="tbl_box_prms",
+        tbl_item="MODE",
+        new_value="3",
+        confirm="New",
+    )
+
+    assert result["ok"] is True
+    cs.send_via_event_loop.assert_called_once()
+    cs.send_via_event_loop_legacy.assert_called_once()
+    assert cs.set_commands_buffer[-1]["source"] == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_control_settings_queue_setting_arms_twin_session_activation_flags():
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy.device_id = "DEV1"
+    proxy.box_connected = True
+    proxy._pending_twin_activation = False
+    proxy._twin_mode_active = False
+    proxy._twin = SimpleNamespace(
+        queue_setting=AsyncMock(return_value=SimpleNamespace(tx_id="tx-1", status="accepted"))
+    )
+    cs = cs_module.ControlSettings(proxy)
+
+    result = await cs.queue_setting(
+        tbl_name="tbl_box_prms",
+        tbl_item="MODE",
+        new_value="3",
+        confirm="New",
+    )
+
+    assert result["ok"] is True
+    assert proxy._pending_twin_activation is True
+    assert proxy._twin_mode_active is True
