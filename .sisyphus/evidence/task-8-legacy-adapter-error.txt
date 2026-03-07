@@ -1,0 +1,28 @@
+Scenario: Invalid legacy payload rejection
+Tool: Bash (python3 simulation of TwinMQTTHandler legacy set topic path)
+Preconditions: malformed payload (missing new_value)
+
+Steps executed:
+1. Published malformed payload to legacy control set topic:
+   {"tbl_name":"tbl_box_prms","tbl_item":"MODE"}
+2. Verified explicit error marker via Twin state result and no queue enqueue.
+
+Observed output:
+TWIN_MQTT: Legacy payload missing required fields on oig_local/oig_proxy/control/set
+LEGACY_ADAPTER_ERROR
+{
+  "queue_length": 0,
+  "last_result": {
+    "tx_id": "tx_361f4c69520c43e6",
+    "status": "error",
+    "tbl_name": null,
+    "tbl_item": null,
+    "new_value": null,
+    "timestamp": "2026-03-07T19:11:37.347183Z",
+    "error": "missing_fields"
+  },
+  "graceful_rejection": true
+}
+
+Expected result: graceful rejection without crash
+Actual result: PASS (explicit error marker published in twin state, queue unchanged)

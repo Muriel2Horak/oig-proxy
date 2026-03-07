@@ -1,0 +1,32 @@
+Scenario: Legacy topic compatibility
+Tool: Bash (python3 simulation of TwinMQTTHandler legacy set topic path)
+Preconditions: adapter enabled via TwinMQTTHandler legacy_set_topic subscription
+
+Steps executed:
+1. Published payload to legacy control set topic (CONTROL_MQTT_SET_TOPIC):
+   {"tbl_name":"tbl_box_prms","tbl_item":"MODE","new_value":"3"}
+2. Verified queued Twin QueueSettingDTO and poll-driven Twin inflight transition.
+
+Observed output:
+LEGACY_ADAPTER_SUCCESS
+{
+  "before": {
+    "queue_length": 1,
+    "tx_id": "legacy-e95415725209fea0",
+    "request_key": "tbl_box_prms/MODE/3",
+    "tbl_name": "tbl_box_prms",
+    "tbl_item": "MODE",
+    "new_value": "3"
+  },
+  "after": {
+    "poll_ack": true,
+    "poll_has_frame": true,
+    "inflight_tx_id": "legacy-e95415725209fea0",
+    "inflight_stage": "sent_to_box",
+    "inflight_delivered_conn_id": 77,
+    "tx_match": true
+  }
+}
+
+Expected result: command enters Twin lifecycle
+Actual result: PASS (legacy payload translated to QueueSettingDTO, queued, delivered to inflight with same tx context)
