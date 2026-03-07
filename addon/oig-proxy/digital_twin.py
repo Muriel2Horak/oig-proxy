@@ -26,16 +26,19 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from config import TWIN_CLOUD_ALIGNED
+from config import MQTT_NAMESPACE, TWIN_CLOUD_ALIGNED
+from oig_frame import infer_table_name
 from oig_frame import build_end_time_frame, build_frame
+from parser import OIGDataParser
 from twin_state import (
     AckResult,
     OnAckDTO,
@@ -59,6 +62,7 @@ from twin_transaction import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from mqtt_publisher import MQTTPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +96,103 @@ class ReplayEntry:
     replay_count: int = 0  # Number of replay attempts
     original_conn_id: int | None = None  # Original connection ID
     last_error: str | None = None  # Last error reason
+
+
+class TwinMQTTHandler:
+    def __init__(
+        self,
+        *,
+        twin: "DigitalTwin",
+        mqtt_publisher: "MQTTPublisher",
+        qos: int = 1,
+    ) -> None:
+        self._twin = twin
+        self._mqtt_publisher = mqtt_publisher
+        self._twin.attach_mqtt_publisher(mqtt_publisher)
+        self._qos = qos
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.set_topic = f"{MQTT_NAMESPACE}/+/+/set"
+
+    def setup_mqtt(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+
+        def _handler(
+            topic: str,
+            payload: bytes,
+            _qos: int,
+            _retain: bool,
+        ) -> None:
+            if self._loop is None:
+                return
+            asyncio.run_coroutine_threadsafe(
+                self.on_mqtt_message(topic=topic, payload=payload),
+                self._loop,
+            )
+
+        self._mqtt_publisher.add_message_handler(
+            topic=self.set_topic,
+            handler=_handler,
+            qos=self._qos,
+        )
+        logger.info("TWIN_MQTT: MQTT enabled (set=%s)", self.set_topic)
+
+    async def on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
+        parts = topic.split("/")
+        if len(parts) != 4 or parts[3] != "set":
+            logger.error("TWIN_MQTT: Invalid topic format: %s", topic)
+            return
+
+        topic_tbl_name = parts[1].strip()
+        topic_tbl_item = parts[2].strip()
+
+        try:
+            data = json.loads(payload.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            logger.error("TWIN_MQTT: Invalid JSON payload on %s: %s", topic, exc)
+            return
+
+        if not isinstance(data, dict):
+            logger.error("TWIN_MQTT: JSON payload must be object on %s", topic)
+            return
+
+        if "new_value" not in data:
+            logger.error("TWIN_MQTT: Missing new_value field on %s", topic)
+            return
+
+        tx_id_raw = str(data.get("tx_id") or "").strip()
+        tx_id = tx_id_raw or generate_tx_id()
+
+        tbl_name = str(data.get("tbl_name") or topic_tbl_name).strip() or topic_tbl_name
+        tbl_item = str(data.get("tbl_item") or topic_tbl_item).strip() or topic_tbl_item
+
+        dto = QueueSettingDTO(
+            tx_id=tx_id,
+            conn_id=0,
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=str(data.get("new_value")),
+            confirm=str(data.get("confirm") or "New"),
+            request_key=(
+                str(data.get("request_key")).strip()
+                if data.get("request_key") is not None
+                else None
+            ),
+            received_at=(
+                str(data.get("received_at")).strip()
+                if data.get("received_at") is not None
+                else None
+            ),
+        )
+
+        result = await self._twin.queue_setting(dto)
+        logger.info(
+            "TWIN_MQTT: Queued %s/%s=%s tx_id=%s conn_id=%s",
+            dto.tbl_name,
+            dto.tbl_item,
+            dto.new_value,
+            result.tx_id,
+            dto.conn_id,
+        )
 
 
 class DigitalTwin:
@@ -128,6 +229,141 @@ class DigitalTwin:
         self._replay_buffer: deque[ReplayEntry] = deque()
         self._completed_tx_ids: set[str] = set()
         self._replay_tx_counts: dict[str, int] = {}
+        self._mqtt_publisher: MQTTPublisher | None = None
+        self._cloud_forwarder: Callable[[str], Awaitable[None]] | None = None
+        self._cloud_available_checker: Callable[[], bool] | None = None
+        self._parser = OIGDataParser()
+        self._last_result: dict[str, Any] | None = None
+        self._active_conn_id: int | None = None
+        self._state_topic = f"{MQTT_NAMESPACE}/oig_proxy/twin_state/state"
+
+    def attach_mqtt_publisher(self, mqtt_publisher: MQTTPublisher) -> None:
+        self._mqtt_publisher = mqtt_publisher
+
+    def attach_cloud_forwarder(
+        self,
+        forwarder: Callable[[str], Awaitable[None]] | None,
+        *,
+        availability_checker: Callable[[], bool] | None = None,
+    ) -> None:
+        self._cloud_forwarder = forwarder
+        self._cloud_available_checker = availability_checker
+
+    @staticmethod
+    def _parse_table(frame: str) -> str | None:
+        return infer_table_name(frame)
+
+    async def _handle_is_new_set(self, conn_id: int) -> PollResponseDTO:
+        return await self.on_poll(tx_id=None, conn_id=conn_id, table_name="IsNewSet")
+
+    def _cloud_available(self) -> bool:
+        if self._cloud_available_checker is not None:
+            try:
+                return bool(self._cloud_available_checker())
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.debug("TWIN: cloud availability check failed: %s", exc)
+                return False
+        return self._cloud_forwarder is not None
+
+    async def _forward_to_cloud(self, frame: str) -> None:
+        if self._cloud_forwarder is None:
+            return
+        try:
+            await self._cloud_forwarder(frame)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("TWIN: cloud forward failed: %s", exc)
+
+    async def _publish_to_mqtt(self, frame: str) -> None:
+        if self._mqtt_publisher is None:
+            return
+
+        parsed = self._parser.parse_xml_frame(frame)
+        table_name = self._parse_table(frame)
+        if not parsed:
+            parsed = {
+                "_table": table_name or "raw_frame",
+                "raw_frame": frame,
+            }
+        elif table_name and "_table" not in parsed:
+            parsed["_table"] = table_name
+
+        try:
+            await self._mqtt_publisher.publish_data(parsed)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("TWIN: mqtt publish failed: %s", exc)
+
+    async def handle_frame(
+        self,
+        frame: str,
+        conn_id: int,
+    ) -> PollResponseDTO | None:
+        table_name = self._parse_table(frame)
+
+        if table_name == "IsNewSet":
+            return await self._handle_is_new_set(conn_id)
+
+        if self._cloud_available():
+            await self._forward_to_cloud(frame)
+
+        await self._publish_to_mqtt(frame)
+        return None
+
+    def _serialize_inflight(self) -> dict[str, Any] | None:
+        if self._inflight is None:
+            return None
+        return {
+            "tx_id": self._inflight.tx_id,
+            "tbl_name": self._inflight.tbl_name,
+            "tbl_item": self._inflight.tbl_item,
+            "new_value": self._inflight.new_value,
+            "stage": self._inflight.stage.value,
+            "conn_id": (
+                self._inflight.delivered_conn_id
+                if self._inflight.delivered_conn_id is not None
+                else self._inflight.conn_id
+            ),
+            "timestamp": get_timestamp(),
+        }
+
+    def _store_last_result(
+        self,
+        result: TransactionResultDTO,
+        *,
+        tbl_name: str | None,
+        tbl_item: str | None,
+        new_value: str | None,
+    ) -> None:
+        self._last_result = {
+            "tx_id": result.tx_id,
+            "status": result.status,
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": new_value,
+            "timestamp": result.timestamp or get_timestamp(),
+            "error": result.error,
+        }
+
+    async def _publish_state(self) -> None:
+        if self._mqtt_publisher is None:
+            return
+
+        payload = {
+            "queue_length": len(self._queue),
+            "inflight": self._serialize_inflight(),
+            "last_result": self._last_result,
+            "session_active": self._active_conn_id is not None,
+            "mode": "twin",
+        }
+
+        try:
+            await self._mqtt_publisher.publish_raw(
+                topic=self._state_topic,
+                payload=json.dumps(payload),
+                qos=1,
+                retain=True,
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("TWIN: state publish failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Queue Operations
@@ -150,33 +386,53 @@ class DigitalTwin:
         """
         async with self._lock:
             tx_id = dto.tx_id or generate_tx_id()
-
-            pending = PendingSettingState(
-                tx_id=tx_id,
-                conn_id=dto.conn_id,
+            self._create_pending_state_for_queue(tx_id, dto)
+            self._enqueue_setting_dto(dto)
+            self._log_queued_setting(dto, tx_id)
+            result = self._build_accepted_result(tx_id=tx_id, conn_id=dto.conn_id)
+            self._store_last_result(
+                result,
                 tbl_name=dto.tbl_name,
                 tbl_item=dto.tbl_item,
                 new_value=dto.new_value,
-                confirm=dto.confirm,
             )
+            await self._publish_state()
+            return result
 
-            self._queue.append(dto)
+    def _create_pending_state_for_queue(
+        self,
+        tx_id: str,
+        dto: QueueSettingDTO,
+    ) -> PendingSettingState:
+        return PendingSettingState(
+            tx_id=tx_id,
+            conn_id=dto.conn_id,
+            tbl_name=dto.tbl_name,
+            tbl_item=dto.tbl_item,
+            new_value=dto.new_value,
+            confirm=dto.confirm,
+        )
 
-            logger.debug(
-                "TWIN: Queued Setting %s/%s=%s tx_id=%s conn_id=%s",
-                dto.tbl_name,
-                dto.tbl_item,
-                dto.new_value,
-                tx_id,
-                dto.conn_id,
-            )
+    def _enqueue_setting_dto(self, dto: QueueSettingDTO) -> None:
+        self._queue.append(dto)
 
-            return TransactionResultDTO(
-                tx_id=tx_id,
-                conn_id=dto.conn_id,
-                status="accepted",
-                timestamp=get_timestamp(),
-            )
+    def _log_queued_setting(self, dto: QueueSettingDTO, tx_id: str) -> None:
+        logger.debug(
+            "TWIN: Queued Setting %s/%s=%s tx_id=%s conn_id=%s",
+            dto.tbl_name,
+            dto.tbl_item,
+            dto.new_value,
+            tx_id,
+            dto.conn_id,
+        )
+
+    def _build_accepted_result(self, *, tx_id: str, conn_id: int) -> TransactionResultDTO:
+        return TransactionResultDTO(
+            tx_id=tx_id,
+            conn_id=conn_id,
+            status="accepted",
+            timestamp=get_timestamp(),
+        )
 
     async def get_queue_length(self) -> int:
         """Get the current queue length."""
@@ -354,77 +610,133 @@ class DigitalTwin:
             TransactionResultDTO with updated status, None if no matching tx
         """
         async with self._lock:
-            if self._inflight is None:
+            inflight = self._inflight
+            if inflight is None or inflight.tx_id != dto.tx_id:
                 return None
 
-            if self._inflight.tx_id != dto.tx_id:
+            delivered_conn_id = self._resolve_delivered_conn_id(inflight)
+            self._log_cloud_aligned_ack_received(dto, delivered_conn_id)
+
+            if not self._is_cloud_aligned_ack_conn_valid(
+                dto=dto,
+                delivered_conn_id=delivered_conn_id,
+                inflight=inflight,
+            ):
                 return None
 
-            delivered_conn_id = (
-                self._inflight.delivered_conn_id
-                if self._inflight.delivered_conn_id is not None
-                else self._inflight.conn_id
-            )
-
-            logger.debug(
-                "TWIN: ACK received for tx_id=%s conn_id=%s delivered_conn_id=%s ack=%s",
-                dto.tx_id,
-                dto.conn_id,
-                delivered_conn_id,
-                dto.ack,
-            )
-
-            if delivered_conn_id != dto.conn_id:
-                logger.info(
-                    "TWIN: ACK ignored — conn_id mismatch "
-                    "(delivered=%s, ack=%s, %s/%s)",
-                    delivered_conn_id,
-                    dto.conn_id,
-                    self._inflight.tbl_name,
-                    self._inflight.tbl_item,
-                )
-                return None
-
-            new_pending = self._inflight.mark_ack_received(dto.ack)
+            new_pending = inflight.mark_ack_received(dto.ack)
             self._inflight = new_pending
-
-            if dto.ack:
-                self._pending_simple = {
-                    "tx_id": dto.tx_id,
-                    "conn_id": dto.conn_id,
-                    "tbl_name": self._inflight.tbl_name,
-                    "tbl_item": self._inflight.tbl_item,
-                    "status": "ack_received",
-                    "timestamp": get_timestamp(),
-                }
-            else:
-                self._pending_simple.clear()
-
+            self._update_pending_simple_after_ack(dto, new_pending)
             self._cancel_ack_task()
 
             if dto.ack:
-                ctx = self._inflight_ctx
-                if ctx:
-                    self._ack_task = asyncio.create_task(
-                        self._applied_timeout_handler(ctx)
-                    )
-                return TransactionResultDTO(
-                    tx_id=dto.tx_id,
-                    conn_id=dto.conn_id,
-                    status="box_ack",
-                    timestamp=get_timestamp(),
-                )
-            else:
-                result = TransactionResultDTO(
-                    tx_id=dto.tx_id,
-                    conn_id=dto.conn_id,
-                    status="error",
-                    error="box_nack",
-                    timestamp=get_timestamp(),
-                )
-                self._inflight = None
-                self._inflight_ctx = None
-                return result
+                self._schedule_applied_timeout_after_ack()
+                return await self._finalize_cloud_ack_success(dto, new_pending)
+
+            return await self._finalize_cloud_ack_nack(dto, new_pending)
+
+    @staticmethod
+    def _resolve_delivered_conn_id(inflight: PendingSettingState) -> int:
+        return (
+            inflight.delivered_conn_id
+            if inflight.delivered_conn_id is not None
+            else inflight.conn_id
+        )
+
+    def _log_cloud_aligned_ack_received(self, dto: OnAckDTO, delivered_conn_id: int) -> None:
+        logger.debug(
+            "TWIN: ACK received for tx_id=%s conn_id=%s delivered_conn_id=%s ack=%s",
+            dto.tx_id,
+            dto.conn_id,
+            delivered_conn_id,
+            dto.ack,
+        )
+
+    def _is_cloud_aligned_ack_conn_valid(
+        self,
+        *,
+        dto: OnAckDTO,
+        delivered_conn_id: int,
+        inflight: PendingSettingState,
+    ) -> bool:
+        if delivered_conn_id == dto.conn_id:
+            return True
+
+        logger.info(
+            "TWIN: ACK ignored — conn_id mismatch "
+            "(delivered=%s, ack=%s, %s/%s)",
+            delivered_conn_id,
+            dto.conn_id,
+            inflight.tbl_name,
+            inflight.tbl_item,
+        )
+        return False
+
+    def _update_pending_simple_after_ack(
+        self,
+        dto: OnAckDTO,
+        pending: PendingSettingState,
+    ) -> None:
+        if dto.ack:
+            self._pending_simple = {
+                "tx_id": dto.tx_id,
+                "conn_id": dto.conn_id,
+                "tbl_name": pending.tbl_name,
+                "tbl_item": pending.tbl_item,
+                "status": "ack_received",
+                "timestamp": get_timestamp(),
+            }
+            return
+
+        self._pending_simple.clear()
+
+    def _schedule_applied_timeout_after_ack(self) -> None:
+        ctx = self._inflight_ctx
+        if ctx:
+            self._ack_task = asyncio.create_task(self._applied_timeout_handler(ctx))
+
+    async def _finalize_cloud_ack_success(
+        self,
+        dto: OnAckDTO,
+        pending: PendingSettingState,
+    ) -> TransactionResultDTO:
+        result = TransactionResultDTO(
+            tx_id=dto.tx_id,
+            conn_id=dto.conn_id,
+            status="box_ack",
+            timestamp=get_timestamp(),
+        )
+        self._store_last_result(
+            result,
+            tbl_name=pending.tbl_name,
+            tbl_item=pending.tbl_item,
+            new_value=pending.new_value,
+        )
+        await self._publish_state()
+        return result
+
+    async def _finalize_cloud_ack_nack(
+        self,
+        dto: OnAckDTO,
+        pending: PendingSettingState,
+    ) -> TransactionResultDTO:
+        result = TransactionResultDTO(
+            tx_id=dto.tx_id,
+            conn_id=dto.conn_id,
+            status="error",
+            error="box_nack",
+            timestamp=get_timestamp(),
+        )
+        self._inflight = None
+        self._inflight_ctx = None
+        self._store_last_result(
+            result,
+            tbl_name=pending.tbl_name,
+            tbl_item=pending.tbl_item,
+            new_value=pending.new_value,
+        )
+        await self._publish_state()
+        return result
 
     async def _on_ack_legacy(
         self,
@@ -479,12 +791,20 @@ class DigitalTwin:
 
             if dto.ack:
                 self._ack_task = asyncio.create_task(self._applied_timeout_handler(ctx))
-                return TransactionResultDTO(
+                result = TransactionResultDTO(
                     tx_id=dto.tx_id,
                     conn_id=dto.conn_id,
                     status="box_ack",
                     timestamp=get_timestamp(),
                 )
+                self._store_last_result(
+                    result,
+                    tbl_name=new_pending.tbl_name,
+                    tbl_item=new_pending.tbl_item,
+                    new_value=new_pending.new_value,
+                )
+                await self._publish_state()
+                return result
             else:
                 result = TransactionResultDTO(
                     tx_id=dto.tx_id,
@@ -495,6 +815,13 @@ class DigitalTwin:
                 )
                 self._inflight = None
                 self._inflight_ctx = None
+                self._store_last_result(
+                    result,
+                    tbl_name=new_pending.tbl_name,
+                    tbl_item=new_pending.tbl_item,
+                    new_value=new_pending.new_value,
+                )
+                await self._publish_state()
                 return result
 
     async def validate_ack_conn_ownership(
@@ -517,33 +844,84 @@ class DigitalTwin:
         dto: OnTblEventDTO,
     ) -> TransactionResultDTO | None:
         """Handle tbl_events from BOX."""
+        sa_dto: QueueSettingDTO | None = None
         async with self._lock:
-            if self._inflight is None:
+            if not self._matches_inflight_tbl_event(dto):
                 return None
 
-            if not dto.is_setting_event():
-                return None
-
-            if dto.tbl_name != self._inflight.tbl_name:
-                return None
-
-            if dto.tbl_item != self._inflight.tbl_item:
-                return None
-
-            new_pending = self._inflight.mark_applied()
-            self._inflight = new_pending
-
-            if self._inflight_ctx:
-                self._inflight_ctx = self._inflight_ctx.with_stage(
-                    new_pending.stage.value
-                )
-
-            return TransactionResultDTO(
-                tx_id=self._inflight.tx_id,
-                conn_id=self._inflight.conn_id,
-                status="applied",
-                timestamp=get_timestamp(),
+            new_pending = self._mark_inflight_applied()
+            result = self._build_applied_result(new_pending)
+            self._store_last_result(
+                result,
+                tbl_name=new_pending.tbl_name,
+                tbl_item=new_pending.tbl_item,
+                new_value=new_pending.new_value,
             )
+            await self._publish_state()
+
+            sa_dto = self._build_auto_sa_queue_dto(new_pending)
+
+        if sa_dto is not None:
+            await self.queue_setting(sa_dto)
+            logger.info(
+                "TWIN: Auto-queued SA command after applied tx_id=%s source=%s/%s",
+                result.tx_id,
+                dto.tbl_name,
+                dto.tbl_item,
+            )
+
+        return result
+
+    def _matches_inflight_tbl_event(self, dto: OnTblEventDTO) -> bool:
+        if self._inflight is None:
+            return False
+
+        if not dto.is_setting_event():
+            return False
+
+        return (
+            dto.tbl_name == self._inflight.tbl_name
+            and dto.tbl_item == self._inflight.tbl_item
+        )
+
+    def _mark_inflight_applied(self) -> PendingSettingState:
+        if self._inflight is None:
+            raise TransitionError("Cannot apply tbl_event without inflight")
+
+        new_pending = self._inflight.mark_applied()
+        self._inflight = new_pending
+
+        if self._inflight_ctx:
+            self._inflight_ctx = self._inflight_ctx.with_stage(new_pending.stage.value)
+
+        return new_pending
+
+    @staticmethod
+    def _build_applied_result(pending: PendingSettingState) -> TransactionResultDTO:
+        return TransactionResultDTO(
+            tx_id=pending.tx_id,
+            conn_id=pending.conn_id,
+            status="applied",
+            timestamp=get_timestamp(),
+        )
+
+    def _build_auto_sa_queue_dto(
+        self,
+        pending: PendingSettingState,
+    ) -> QueueSettingDTO | None:
+        is_sa_setting = pending.tbl_name == "tbl_box_prms" and pending.tbl_item == "SA"
+        if is_sa_setting:
+            return None
+
+        sa_dto = QueueSettingDTO(
+            tx_id=generate_tx_id(),
+            conn_id=pending.conn_id,
+            tbl_name="tbl_box_prms",
+            tbl_item="SA",
+            new_value="1",
+        )
+        object.__setattr__(sa_dto, "auto_generated", True)
+        return sa_dto
 
     async def on_disconnect(
         self,
@@ -557,53 +935,88 @@ class DigitalTwin:
         results: list[TransactionResultDTO] = []
 
         async with self._lock:
-            if self._inflight is not None:
-                if self._inflight.delivered_conn_id is not None:
-                    tx_id = self._inflight.tx_id
-                    
-                    if tx_id not in self._completed_tx_ids:
-                        dto_entry = QueueSettingDTO(
-                            tx_id=tx_id,
-                            conn_id=self._inflight.conn_id,
-                            tbl_name=self._inflight.tbl_name,
-                            tbl_item=self._inflight.tbl_item,
-                            new_value=self._inflight.new_value,
-                            confirm=self._inflight.confirm,
-                        )
-                        entry = ReplayEntry(
-                            dto=dto_entry,
-                            delivered_at_mono=self._inflight.delivered_at_mono,
-                            replay_count=self._inflight.replay_count,
-                            original_conn_id=self._inflight.delivered_conn_id,
-                            last_error="disconnect",
-                        )
-                        self._replay_buffer.append(entry)
-                        logger.info(
-                            "TWIN: Transaction %s moved to replay buffer (replay_count=%d)",
-                            tx_id,
-                            self._inflight.replay_count,
-                        )
-                    else:
-                        logger.info(
-                            "TWIN: Transaction %s already completed, skipping replay",
-                            tx_id,
-                        )
-
-                    result = TransactionResultDTO(
-                        tx_id=tx_id,
-                        conn_id=dto.conn_id,
-                        status="error",
-                        error="disconnect",
-                        detail="moved_to_replay_buffer",
-                        timestamp=get_timestamp(),
-                    )
-                    results.append(result)
-
-                self._inflight = None
-                self._inflight_ctx = None
-                self._cancel_timeout_tasks()
+            self._active_conn_id = None
+            self._collect_disconnect_results(dto, results)
+            self._clear_inflight_after_disconnect()
+            self._store_disconnect_last_result(results)
+            await self._publish_state()
 
         return results
+
+    def _collect_disconnect_results(
+        self,
+        dto: OnDisconnectDTO,
+        results: list[TransactionResultDTO],
+    ) -> None:
+        inflight = self._inflight
+        if inflight is None or inflight.delivered_conn_id is None:
+            return
+
+        tx_id = inflight.tx_id
+        self._move_inflight_to_replay_if_needed(inflight)
+        results.append(self._build_disconnect_result(tx_id=tx_id, conn_id=dto.conn_id))
+
+    def _move_inflight_to_replay_if_needed(self, inflight: PendingSettingState) -> None:
+        tx_id = inflight.tx_id
+        if tx_id in self._completed_tx_ids:
+            logger.info(
+                "TWIN: Transaction %s already completed, skipping replay",
+                tx_id,
+            )
+            return
+
+        dto_entry = QueueSettingDTO(
+            tx_id=tx_id,
+            conn_id=inflight.conn_id,
+            tbl_name=inflight.tbl_name,
+            tbl_item=inflight.tbl_item,
+            new_value=inflight.new_value,
+            confirm=inflight.confirm,
+        )
+        entry = ReplayEntry(
+            dto=dto_entry,
+            delivered_at_mono=inflight.delivered_at_mono,
+            replay_count=inflight.replay_count,
+            original_conn_id=inflight.delivered_conn_id,
+            last_error="disconnect",
+        )
+        self._replay_buffer.append(entry)
+        logger.info(
+            "TWIN: Transaction %s moved to replay buffer (replay_count=%d)",
+            tx_id,
+            inflight.replay_count,
+        )
+
+    @staticmethod
+    def _build_disconnect_result(*, tx_id: str, conn_id: int) -> TransactionResultDTO:
+        return TransactionResultDTO(
+            tx_id=tx_id,
+            conn_id=conn_id,
+            status="error",
+            error="disconnect",
+            detail="moved_to_replay_buffer",
+            timestamp=get_timestamp(),
+        )
+
+    def _clear_inflight_after_disconnect(self) -> None:
+        if self._inflight is None:
+            return
+
+        self._inflight = None
+        self._inflight_ctx = None
+        self._cancel_timeout_tasks()
+
+    def _store_disconnect_last_result(self, results: list[TransactionResultDTO]) -> None:
+        if not results:
+            return
+
+        latest = results[-1]
+        self._store_last_result(
+            latest,
+            tbl_name=None,
+            tbl_item=None,
+            new_value=None,
+        )
 
     # ------------------------------------------------------------------
     # Poll Operations
@@ -736,6 +1149,9 @@ class DigitalTwin:
 
         frame_data = self._build_setting_frame(self._inflight)
 
+        new_pending = self._inflight.mark_delivered(conn_id)
+        self._inflight = new_pending
+
         logger.debug(
             "TWIN: Building delivery response conn_id=%s tx_id=%s tbl=%s/%s",
             conn_id,
@@ -743,9 +1159,6 @@ class DigitalTwin:
             new_pending.tbl_name,
             new_pending.tbl_item,
         )
-
-        new_pending = self._inflight.mark_delivered(conn_id)
-        self._inflight = new_pending
 
         if self._inflight_ctx:
             self._inflight_ctx = self._inflight_ctx.with_delivered_conn(conn_id)
@@ -891,50 +1304,96 @@ class DigitalTwin:
         results: list[TransactionResultDTO] = []
 
         async with self._lock:
-            self.session_id = generate_session_id()
-            logger.info("TWIN: Regenerated session_id on reconnect: %s", self.session_id)
-            
-            entries_to_queue: list[tuple[QueueSettingDTO, int]] = []
-            
-            while self._replay_buffer:
-                entry = self._replay_buffer.popleft()
-
-                if entry.dto.tx_id in self._completed_tx_ids:
-                    logger.info(
-                        "TWIN: Skipping replay of completed transaction %s",
-                        entry.dto.tx_id,
-                    )
-                    continue
-
-                if entry.replay_count >= self.config.max_replay_attempts:
-                    logger.warning(
-                        "TWIN: Transaction %s exceeded max replay attempts (%d)",
-                        entry.dto.tx_id,
-                        entry.replay_count,
-                    )
-                    result = TransactionResultDTO(
-                        tx_id=entry.dto.tx_id,
-                        conn_id=conn_id,
-                        status="error",
-                        error="max_replay_exceeded",
-                        detail=f"replay_count={entry.replay_count}",
-                        timestamp=get_timestamp(),
-                    )
-                    results.append(result)
-                    continue
-
-                entries_to_queue.append((entry.dto, entry.replay_count + 1))
-
-            for dto, replay_count in entries_to_queue:
-                self._queue.append(dto)
-                self._replay_tx_counts[dto.tx_id] = replay_count
-                logger.info(
-                    "TWIN: Transaction %s queued for replay (attempt %d)",
-                    dto.tx_id,
-                    replay_count,
-                )
+            self._prepare_reconnect_session(conn_id)
+            entries_to_queue = self._collect_reconnect_entries(conn_id, results)
+            self._enqueue_reconnect_entries(entries_to_queue)
+            self._store_reconnect_last_result(results)
+            await self._publish_state()
 
         return results
+
+    def _prepare_reconnect_session(self, conn_id: int) -> None:
+        self._active_conn_id = conn_id
+        self.session_id = generate_session_id()
+        logger.info("TWIN: Regenerated session_id on reconnect: %s", self.session_id)
+
+    def _collect_reconnect_entries(
+        self,
+        conn_id: int,
+        results: list[TransactionResultDTO],
+    ) -> list[tuple[QueueSettingDTO, int]]:
+        entries_to_queue: list[tuple[QueueSettingDTO, int]] = []
+
+        while self._replay_buffer:
+            entry = self._replay_buffer.popleft()
+
+            if self._should_skip_completed_replay(entry):
+                continue
+
+            if self._has_exceeded_replay_attempts(entry):
+                results.append(self._build_max_replay_exceeded_result(entry, conn_id))
+                continue
+
+            entries_to_queue.append((entry.dto, entry.replay_count + 1))
+
+        return entries_to_queue
+
+    def _should_skip_completed_replay(self, entry: ReplayEntry) -> bool:
+        if entry.dto.tx_id not in self._completed_tx_ids:
+            return False
+
+        logger.info(
+            "TWIN: Skipping replay of completed transaction %s",
+            entry.dto.tx_id,
+        )
+        return True
+
+    def _has_exceeded_replay_attempts(self, entry: ReplayEntry) -> bool:
+        if entry.replay_count < self.config.max_replay_attempts:
+            return False
+
+        logger.warning(
+            "TWIN: Transaction %s exceeded max replay attempts (%d)",
+            entry.dto.tx_id,
+            entry.replay_count,
+        )
+        return True
+
+    @staticmethod
+    def _build_max_replay_exceeded_result(
+        entry: ReplayEntry,
+        conn_id: int,
+    ) -> TransactionResultDTO:
+        return TransactionResultDTO(
+            tx_id=entry.dto.tx_id,
+            conn_id=conn_id,
+            status="error",
+            error="max_replay_exceeded",
+            detail=f"replay_count={entry.replay_count}",
+            timestamp=get_timestamp(),
+        )
+
+    def _enqueue_reconnect_entries(self, entries: list[tuple[QueueSettingDTO, int]]) -> None:
+        for dto, replay_count in entries:
+            self._queue.append(dto)
+            self._replay_tx_counts[dto.tx_id] = replay_count
+            logger.info(
+                "TWIN: Transaction %s queued for replay (attempt %d)",
+                dto.tx_id,
+                replay_count,
+            )
+
+    def _store_reconnect_last_result(self, results: list[TransactionResultDTO]) -> None:
+        if not results:
+            return
+
+        latest = results[-1]
+        self._store_last_result(
+            latest,
+            tbl_name=None,
+            tbl_item=None,
+            new_value=None,
+        )
 
     async def get_replay_buffer_length(self) -> int:
         return len(self._replay_buffer)
@@ -1029,6 +1488,7 @@ class DigitalTwin:
 __all__ = [
     "DigitalTwin",
     "DigitalTwinConfig",
+    "TwinMQTTHandler",
     "TransitionError",
     "ReplayEntry",
 ]
