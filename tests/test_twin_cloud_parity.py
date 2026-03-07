@@ -742,8 +742,8 @@ class TestInternalStateDifferences:
         await twin.start_inflight("tx-pending-simple", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-pending-simple", conn_id=1)
 
-        # Before ACK, _pending_simple is empty
-        assert twin._pending_simple == {}
+    # Before ACK, _pending_simple is empty
+    assert not twin._pending_simple
 
         ack_dto = make_on_ack_dto(tx_id="tx-pending-simple", conn_id=1, ack=True)
         await twin.on_ack(ack_dto)
