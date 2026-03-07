@@ -1,0 +1,31 @@
+Task T15 - Negative path: disconnect mid-flight deterministic error
+===============================================================
+Run timestamp window (UTC):
+- start: 2026-03-07T20:12:04.345960Z
+- end:   2026-03-07T20:12:04.346886Z
+
+Scenario:
+- Command sent during active delivery window, then disconnect induced
+- tx_id: disc-20260307T201204
+- request_key: tbl_box_prms/MODE/2
+
+Observed sequence:
+1) set_ingest @ 2026-03-07T20:12:04.346813Z
+   - result.status=accepted
+2) poll_delivery @ 2026-03-07T20:12:04.346863Z
+   - inflight.tx_id=disc-20260307T201204
+   - inflight.stage=sent_to_box
+   - inflight.delivered_conn_id=9
+3) disconnect @ 2026-03-07T20:12:04.346882Z
+   - results[0].status=error
+   - results[0].error=disconnect
+   - results[0].detail=moved_to_replay_buffer
+4) post_check @ 2026-03-07T20:12:04.346885Z
+   - inflight_none=true
+   - replay_buffer_length=1
+
+Determinism checks:
+- Explicit terminal error emitted (disconnect/moved_to_replay_buffer): PASS
+- No ghost inflight after failure (inflight_none=true): PASS
+- Replay buffer retains pending work (length=1): PASS
+- All timestamps belong to this run window: PASS

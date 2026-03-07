@@ -1,0 +1,62 @@
+Task T15 - Offline roundtrip parity validation (MODE + non-MODE)
+===============================================================
+Run timestamp window (UTC):
+- start: 2026-03-07T20:12:04.345960Z
+- end:   2026-03-07T20:12:04.346886Z
+
+Scope:
+- Offline twin lifecycle validation for whitelist control commands
+- MODE command: tbl_box_prms/MODE=2
+- Non-MODE command: tbl_box_prms/SA=1
+
+Correlation keys:
+- MODE tx_id: mode2-20260307T201204
+- MODE request_key: tbl_box_prms/MODE/2
+- SA tx_id: sa1-20260307T201204
+- SA request_key: tbl_box_prms/SA/1
+
+Lifecycle evidence (MODE=2):
+1) set_ingest @ 2026-03-07T20:12:04.346286Z
+   - result.status=accepted
+   - snapshot.queue_length=1, has_inflight=false
+2) poll_delivery @ 2026-03-07T20:12:04.346551Z
+   - frame=true
+   - inflight.tx_id=mode2-20260307T201204
+   - inflight.stage=sent_to_box
+   - inflight.delivered_conn_id=7
+3) ack @ 2026-03-07T20:12:04.346588Z
+   - result.status=box_ack
+   - snapshot.inflight_stage=box_ack
+4) tbl_event_applied @ 2026-03-07T20:12:04.346637Z
+   - result.status=applied
+   - reflected_state=tbl_box_prms/MODE=2
+   - snapshot.inflight_stage=applied
+5) terminal @ 2026-03-07T20:12:04.346652Z
+   - result.status=completed
+   - snapshot.has_inflight=false
+   - snapshot.completed_tx_count=1
+
+Lifecycle evidence (non-MODE SA=1):
+1) set_ingest @ 2026-03-07T20:12:04.346673Z
+   - result.status=accepted
+2) poll_delivery @ 2026-03-07T20:12:04.346737Z
+   - inflight.stage=sent_to_box
+3) ack @ 2026-03-07T20:12:04.346764Z
+   - result.status=box_ack
+4) tbl_event_applied @ 2026-03-07T20:12:04.346782Z
+   - result.status=applied
+   - reflected_state=tbl_box_prms/SA=1
+5) terminal @ 2026-03-07T20:12:04.346795Z
+   - result.status=completed
+   - snapshot.has_inflight=false
+
+Topic mapping to live contract (equivalent lifecycle checkpoints):
+- set ingest: oig_local/oig_proxy/control/+/set
+- status/result: oig_local/oig_proxy/control/+/status and .../result
+- twin state reflection: oig_local/oig_proxy/twin_state/state
+- table reflection: oig_local/<device_id>/tbl_box_prms/state
+
+Acceptance verdict:
+- MODE reached terminal status with matching tx context: PASS
+- Non-MODE reached same lifecycle guarantees: PASS
+- All event timestamps are inside this run window: PASS
