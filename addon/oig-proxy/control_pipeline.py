@@ -52,12 +52,12 @@ class ControlPipeline:
         if re.fullmatch(r"-?\d+", text):
             try:
                 return int(text)
-            except ValueError:
+            except Exception:
                 return value
         if re.fullmatch(r"-?\d+\.\d+", text):
             try:
                 return float(text)
-            except ValueError:
+            except Exception:
                 return value
         return value
 

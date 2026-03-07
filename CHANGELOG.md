@@ -4,17 +4,6 @@
 
 ## [Unreleased]
 
-### Added
-- **Twin Architecture**: Complete refactoring of setting management with unified DigitalTwin
-  - TwinMQTTHandler for MQTT subscription to `oig_local/+/+/set` topics
-  - Automatic SA (Send All) queueing after successful setting completion
-  - MQTT state publishing to `oig_local/oig_proxy/twin_state/state` (retained)
-  - Session-based Twin activation in ONLINE mode
-  - HYBRID/OFFLINE mode support via `should_route_settings_via_twin()`
-  - 5 new HA sensors: twin_queue_length, twin_inflight_tx, twin_last_command_status, twin_session_active, twin_mode
-  - Comprehensive integration tests in `tests/test_twin_integration.py`
-  - Full documentation in `docs/twin_architecture.md`
-
 ### Fixed
 - **Control Settings**: Fixed OFFLINE mode command handling - removed incorrect validation that blocked commands when BOX wasn't sending data continuously. Commands now work in OFFLINE mode as long as TCP connection is active (regression introduced in v1.3.9, commit db9e943)
 - **OFFLINE Mode Setting Delivery**: Fixed protocol-level issue where Setting frames were sent as standalone writes instead of as responses to BOX IsNewSet polls. BOX firmware ignores Setting frames that arrive outside the IsNewSet poll-response context. Setting frames are now queued and delivered when the BOX sends its next IsNewSet poll, matching the cloud protocol flow that BOX firmware expects.
