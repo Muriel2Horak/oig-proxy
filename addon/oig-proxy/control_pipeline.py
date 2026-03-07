@@ -13,6 +13,7 @@ class ControlPipeline:
         self.queue: list[dict[str, Any]] = []
         self.inflight: dict[str, Any] | None = None
         self.last_result: dict[str, Any] | None = None
+        self.log_path: str | None = None
 
     @staticmethod
     def format_tx(tx: dict[str, Any] | None) -> str:
@@ -93,3 +94,9 @@ class ControlPipeline:
     async def on_box_setting_ack(self, *, tx_id: str | None, ack: bool) -> None:
         _ = (tx_id, ack)
         return
+
+    def append_to_log(self, entry: str) -> None:
+        if not self.log_path:
+            return
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(entry)
