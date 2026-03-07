@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from config import CONTROL_TWIN_FIRST_ENABLED
 from oig_frame import build_frame
 from twin_state import QueueSettingDTO
 from twin_transaction import generate_tx_id
@@ -122,15 +123,57 @@ class ControlSettings:
             confirm: str = "New",
     ) -> dict[str, Any]:
         """Odešle Setting do BOXu přes event loop a vrátí výsledek."""
-        if not self.validate_loop_ready():
-            return {"ok": False, "error": "event_loop_not_ready"}
+        route = self.resolve_control_route()
+        logger.info(
+            "CONTROL_ROUTE: route=%s tbl=%s item=%s twin_first=%s",
+            route,
+            tbl_name,
+            tbl_item,
+            CONTROL_TWIN_FIRST_ENABLED,
+        )
 
-        return self.send_via_event_loop(
+        if route == "twin":
+            result = self.send_via_event_loop(
+                tbl_name=tbl_name,
+                tbl_item=tbl_item,
+                new_value=new_value,
+                confirm=confirm,
+            )
+            if result.get("ok"):
+                self.set_commands_buffer.append({
+                    "key": f"{tbl_name}:{tbl_item}",
+                    "value": str(new_value),
+                    "result": "queued",
+                    "source": "twin",
+                })
+                return result
+            logger.warning(
+                "CONTROL_ROUTE: twin path failed, fallback to legacy tbl=%s item=%s error=%s",
+                tbl_name,
+                tbl_item,
+                result.get("error"),
+            )
+
+        legacy_result = self.send_via_event_loop_legacy(
             tbl_name=tbl_name,
             tbl_item=tbl_item,
             new_value=new_value,
             confirm=confirm,
         )
+        if legacy_result.get("ok"):
+            self.set_commands_buffer.append({
+                "key": f"{tbl_name}:{tbl_item}",
+                "value": str(new_value),
+                "result": "sent",
+                "source": "legacy",
+            })
+        return legacy_result
+
+    def resolve_control_route(self) -> str:
+        twin_available = self._proxy._twin is not None and not self._proxy._twin_kill_switch
+        if CONTROL_TWIN_FIRST_ENABLED and twin_available:
+            return "twin"
+        return "legacy"
 
     def validate_loop_ready(self) -> bool:
         """Ověří že event loop je připraven."""
@@ -152,6 +195,39 @@ class ControlSettings:
             return validation
 
         return self.run_coroutine_threadsafe(tbl_name, tbl_item, new_value, confirm)
+
+    def send_via_event_loop_legacy(
+            self,
+            *,
+            tbl_name: str,
+            tbl_item: str,
+            new_value: str,
+            confirm: str,
+    ) -> dict[str, Any]:
+        validation = self.validate_parameters(
+            tbl_name, tbl_item, new_value
+        )
+        if not validation["ok"]:
+            return validation
+
+        proxy = self._proxy
+        loop = proxy._loop
+        if loop is None:
+            return {"ok": False, "error": "event_loop_not_ready"}
+
+        fut = asyncio.run_coroutine_threadsafe(
+            self.send_legacy_to_box(
+                tbl_name=tbl_name,
+                tbl_item=tbl_item,
+                new_value=new_value,
+                confirm=confirm,
+            ),
+            loop,
+        )
+        try:
+            return fut.result(timeout=5.0)
+        except Exception as e:
+            return {"ok": False, "error": f"send_failed:{type(e).__name__}"}
 
     def validate_parameters(
             self,
@@ -232,6 +308,37 @@ class ControlSettings:
         except Exception as e:
             return {"ok": False, "error": f"send_failed:{type(e).__name__}"}
 
+    async def send_legacy_to_box(
+        self,
+        *,
+        tbl_name: str,
+        tbl_item: str,
+        new_value: str,
+        confirm: str,
+    ) -> dict[str, Any]:
+        writer = self._proxy._active_box_writer
+        if writer is None or writer.is_closing():
+            return {"ok": False, "error": "box_not_connected"}
+
+        frame = self.build_frame(tbl_name, tbl_item, new_value, confirm)
+        writer.write(frame)
+        await writer.drain()
+        logger.info(
+            "CONTROL: Sent via legacy path %s/%s=%s",
+            tbl_name,
+            tbl_item,
+            new_value,
+        )
+        return {
+            "ok": True,
+            "queued": False,
+            "route": "legacy",
+            "tbl_name": tbl_name,
+            "tbl_item": tbl_item,
+            "new_value": str(new_value),
+            "device_id": self._proxy.device_id,
+        }
+
     async def queue_setting(
         self,
         *,
@@ -257,6 +364,9 @@ class ControlSettings:
             confirm=confirm,
         )
         result = await twin.queue_setting(dto)
+        self._proxy._pending_twin_activation = True
+        if self._proxy.box_connected:
+            self._proxy._twin_mode_active = True
         logger.info(
             "CONTROL: Queued via Twin %s/%s=%s tx_id=%s",
             tbl_name,

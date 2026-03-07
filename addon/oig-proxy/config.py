@@ -310,6 +310,8 @@ LOCAL_CONTROL_ROUTING = _get_str_env(
 # instead of local MQTT-based sync. Default False for backward compatibility.
 TWIN_CLOUD_ALIGNED = _get_bool_env("TWIN_CLOUD_ALIGNED", False)
 
+CONTROL_TWIN_FIRST_ENABLED = _get_bool_env("CONTROL_TWIN_FIRST_ENABLED", False)
+
 
 def validate_startup_guards() -> None:
     """Ověří konzistenci konfigurace a vyhodí ValueError při chybě.
