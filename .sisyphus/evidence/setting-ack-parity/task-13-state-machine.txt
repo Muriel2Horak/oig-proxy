@@ -1,0 +1,87 @@
+TASK 13: State Machine Transition Comparison
+=============================================
+Date: 2026-02-19
+Status: COMPLETED
+
+OBJECTIVE
+---------
+Compare state machine transition chains between cloud (ONLINE mode) and mock (OFFLINE mode)
+setting delivery flows. Identify first divergence point and characterize failure cascade.
+
+INPUT DATA
+----------
+1. cloud-pre-setting-context.json — 7 cloud setting cases (Feb 18-19 2026 overnight)
+   - All tbl_box_prms/MODE changes (Home 1 <-> Home UPS, automated HDO schedule)
+   - Device: 2206237016, server: oigservis.cz (cases 2-7), telemetry.muriel-cz.cz (case 1)
+
+2. mock-pre-setting-context.json — 2 mock setting cases (Feb 19 2026)
+   - tbl_box_prms/MODE=3 (case 1, conn_id=1) and MODE=2 (case 2, conn_id=17)
+   - Both failed with ACK timeout after cross-session connection loss
+
+3. mock-setting-events.jsonl — 153 structured event lines
+   - Connection lifecycle, delivery, timeout, and failure events
+   - Timestamps in CET (mislabeled as ts_utc — known trap from Task 10)
+
+4. control-plane-events.csv — 540+ rows (Dec 2025 - Jan 2026)
+   - Supplementary context from SQLite capture DBs
+   - Different time window, used for pattern validation only
+
+STATE MODEL
+-----------
+States: INIT, QUEUED/PENDING, DELIVERED, ACKED, CONN_CLOSED, RECONNECTED, TIMEOUT, FAILED
+QUEUED (cloud) ≡ PENDING (mock) — semantic equivalence, different terminology
+
+CLOUD TRANSITION CHAIN (all 7 cases)
+-------------------------------------
+INIT → QUEUED → DELIVERED → ACKED (3 transitions, success)
+
+Timestamps (epoch_ms):
+  case 1: queued=1771448779527, delivered=~1771448780027, acked=1771449823303 (restart anomaly)
+  case 2: queued=1771451666188, delivered=~1771451666688, acked=1771451677131 (10.94s)
+  case 3: queued=1771451991949, delivered=~1771451992449, acked=1771452081564 (89.61s)
+  case 4: queued=1771454669708, delivered=~1771454670208, acked=1771454716767 (47.06s)
+  case 5: queued=1771456513548, delivered=~1771456514048, acked=1771456596122 (82.57s)
+  case 6: queued=1771461912277, delivered=~1771461912777, acked=1771461973889 (61.61s)
+  case 7: queued=1771478097237, delivered=~1771478097737, acked=1771478162982 (65.75s)
+
+Note: "delivered" timestamps are estimated (+500ms from poll). Protocol ACK is <1s in-band.
+poll_to_observation range: 10.94s - 89.61s (avg 59.6s, excludes case 1 restart)
+
+MOCK TRANSITION CHAIN (both cases)
+-----------------------------------
+INIT → PENDING → DELIVERED → CONN_CLOSED → RECONNECTED → TIMEOUT → FAILED (6 transitions, failure)
+
+Timestamps (epoch_ms):
+  case 1: queued=1771483574000, delivered=1771483575000, conn_closed=1771483599000 (+24s),
+          reconnected=1771483605000 (+6s), timeout=1771483609000 (34.0s total), failed=1771483609000
+  case 2: queued=1771484258000, delivered=1771484259000, conn_closed=1771484283000 (+24s),
+          reconnected=1771484289000 (+6s), timeout=1771484294000 (34.9s total), failed=1771484294000
+
+FIRST DIVERGENCE
+----------------
+Transition index: 2
+Cloud: DELIVERED → ACKED (success, via tbl_events observation)
+Mock:  DELIVERED → CONN_CLOSED (BOX closes connection after 24s without ACK)
+
+Root cause: In cloud mode, proxy is passive (transparent forwarding). In mock mode, proxy is 
+the ACK endpoint. BOX closes connection before mock proxy receives ACK, and timeout fires on 
+a different connection (cross-session timeout).
+
+AMBIGUOUS TRANSITIONS
+---------------------
+1. Cloud QUEUED/DELIVERED exact timestamps — estimated from last IsNewSet poll, not directly observable
+2. Cloud case 1 — 1044s gap includes 3 proxy restarts, actual delivery/ACK timing unknown
+3. Mock timeout jitter — 34.0s and 34.9s vs 30s config (check interval adds 4-5s)
+
+OUTPUT ARTIFACTS
+----------------
+1. state-machine-diff.csv — 33 data rows (21 cloud + 12 mock), 9 columns
+2. state-machine-summary.md — Full analysis with state model, divergence, recommendations
+
+VERIFICATION
+------------
+- CSV has required columns: case_id,source,transition_index,from_state,to_state,event,ts_epoch_ms,is_divergence
+- All 9 cases (7 cloud + 2 mock) represented
+- is_divergence=true marked at transition_index=2 for both mock cases
+- No input files modified
+- Timestamps cross-verified against source JSON files

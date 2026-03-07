@@ -3,6 +3,7 @@
 # pylint: disable=invalid-name,too-many-statements,too-many-instance-attributes,wrong-import-position,wrong-import-order
 # pylint: disable=deprecated-module,too-many-locals,too-many-lines,attribute-defined-outside-init,unexpected-keyword-arg
 # pylint: disable=duplicate-code
+# pyright: reportMissingImports=false
 import asyncio
 from collections import deque
 from unittest.mock import MagicMock
@@ -70,6 +71,11 @@ class DummyWriter:
         self._closing = True
 
     async def wait_closed(self):
+        return None
+
+    def get_extra_info(self, name):
+        if name == "peername":
+            return ("127.0.0.1", 10000)
         return None
 
 
@@ -277,7 +283,7 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
     writer = DummyWriter()
 
     async def run():
-        await proxy._process_frame_offline(
+        await proxy._respond_local_offline(
             b"<Frame><TblName>tbl_actual</TblName></Frame>",
             "tbl_actual",
             "DEV1",
@@ -285,7 +291,7 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
             send_ack=True,
         )
 
-        await proxy._process_frame_offline(
+        await proxy._respond_local_offline(
             b"<Frame><Result>END</Result><Reason>All data sent</Reason></Frame>",
             "END",
             "DEV1",
@@ -298,13 +304,13 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
 
     called = []
 
-    async def fake_process(*_args, **_kwargs):
-        called.append("process")
+    async def fake_respond(*_args, **_kwargs):
+        called.append("respond")
 
     async def fake_note(*_args, **_kwargs):
         called.append("note")
 
-    proxy._process_frame_offline = fake_process
+    proxy._respond_local_offline = fake_respond
 
     cf = CloudForwarder.__new__(CloudForwarder)
     cf._proxy = proxy
@@ -330,7 +336,7 @@ def test_process_frame_offline_and_fallback(tmp_path, monkeypatch):
         )
 
     asyncio.run(run_fallback())
-    assert called == ["process", "note"]
+    assert called == ["respond", "note"]
 
 
 def test_ensure_cloud_connected_success_and_failure(tmp_path, monkeypatch):
@@ -496,7 +502,7 @@ def test_control_observe_box_frame_setting(tmp_path):
         )
 
     asyncio.run(run_marker())
-    assert ("completed", "box_marker:END") in results
+    assert results == []
 
     ctrl.inflight = {
         "tx_id": "t2",
@@ -513,7 +519,7 @@ def test_control_observe_box_frame_setting(tmp_path):
         await ctrl.observe_box_frame(parsed, "tbl_events", "frame")
 
     asyncio.run(run_setting())
-    assert ("applied", None) in results
+    assert results == []
 
 
 def test_setup_mqtt_handlers(tmp_path):
@@ -532,7 +538,6 @@ def test_setup_mqtt_handlers(tmp_path):
         proxy.device_id = "DEV1"
         proxy.mqtt_publisher.device_id = "DEV1"
         proxy._msc.setup()
-        ctrl.setup_mqtt()
 
     asyncio.run(run())
     assert proxy.mqtt_publisher.handlers

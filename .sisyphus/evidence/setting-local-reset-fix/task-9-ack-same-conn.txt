@@ -1,0 +1,81 @@
+EVIDENCE: Task 9 - Correct conn_id ACK Accepted
+===============================================
+Date: 2026-02-20
+Status: VERIFIED
+
+## Implementation Verified
+
+### 1. delivered_conn_id is SET when sending Setting to BOX
+
+File: addon/oig-proxy/proxy.py (OFFLINE mode)
+Lines 648-653:
+```python
+if self._cs.pending is not None:
+    self._cs.pending["sent_at"] = time.monotonic()
+    self._cs.pending["delivered_conn_id"] = conn_id
+```
+
+File: addon/oig-proxy/cloud_forwarder.py (ONLINE/HYBRID mode)
+Lines 475-477:
+```python
+if self._proxy._cs.pending is not None:
+    self._proxy._cs.pending["sent_at"] = time.monotonic()
+    self._proxy._cs.pending["delivered_conn_id"] = conn_id
+```
+
+### 2. ACK Handler Validates conn_id (with SAME match → processed)
+
+File: addon/oig-proxy/control_settings.py
+Lines 318-330:
+```python
+# Validate conn_id ownership - only the connection that delivered the Setting
+# should process the ACK/NACK response
+delivered_conn_id = pending.get("delivered_conn_id")
+if delivered_conn_id is not None and conn_id != delivered_conn_id:
+    logger.debug(
+        "CONTROL: ACK/NACK ignored — conn_id mismatch "
+        "(delivered_conn=%s, current_conn=%s, %s/%s)",
+        delivered_conn_id,
+        conn_id,
+        pending.get("tbl_name"),
+        pending.get("tbl_item"),
+    )
+    return False
+```
+
+When conn_id MATCHES delivered_conn_id:
+- Guard clause PASSES (returns False only on mismatch)
+- ACK/NACK processing continues
+- END frame is sent
+- pending is cleared (line 412: self.pending = None)
+
+### 3. Test Verification
+
+Test: test_send_setting_to_box_and_local_ack
+- Simulates same-session ACK handling
+- Verifies pending cleared and END sent
+
+Test Output (excerpt):
+```
+tests/test_proxy_control_more.py::test_send_setting_to_box_and_local_ack PASSED
+```
+
+## Flow Summary
+
+1. Setting queued → pending["delivered_conn_id"] = conn_id (set at delivery)
+2. BOX responds with ACK on SAME connection
+3. maybe_handle_ack(conn_id=X) → delivered_conn_id == conn_id → CONTINUE
+4. ACK processed → END sent → pending = None → COMPLETE
+
+## Backward Compatibility
+
+If delivered_conn_id is NOT set (None):
+```python
+if delivered_conn_id is not None and conn_id != delivered_conn_id:
+```
+- Condition is FALSE (delivered_conn_id is None)
+- Guard is BYPASSED → old behavior preserved
+- ACK is processed normally
+
+## Conclusion
+✅ Same-conn_id ACK is correctly processed with full END flow and state cleanup.

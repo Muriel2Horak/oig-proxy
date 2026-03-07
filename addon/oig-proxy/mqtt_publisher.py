@@ -259,14 +259,46 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         # Health check
         self._health_check_task: asyncio.Task[Any] | None = None
 
-    def connect(self, timeout: float | None = None) -> bool:
-        """Připojí k MQTT brokeru s timeoutem."""
+    def _setup_client_callbacks(self) -> None:
+        """Nastavení callbacků pro MQTT klienta."""
+        if self.client is None:
+            return
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_publish = self._on_publish
+        self.client.on_message = self._on_message
+
+    def _create_client(self) -> mqtt.Client | None:
         if not MQTT_AVAILABLE:
             logger.error("MQTT library paho-mqtt is not installed")
-            return False
+            return None
 
-        # Pokud connect voláme z asyncio kontextu, uložíme si loop pro
-        # thread-safe scheduling.
+        client_kwargs: dict[str, Any] = {
+            "client_id": f"{MQTT_NAMESPACE}_{self.device_id}",
+            "protocol": mqtt.MQTTv311,
+        }
+        callback_api = getattr(mqtt, "CallbackAPIVersion", None)
+        if callback_api is not None:
+            client_kwargs["callback_api_version"] = callback_api.VERSION1
+        client = mqtt.Client(**client_kwargs)  # type: ignore[call-arg]
+        if MQTT_USERNAME:
+            client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
+        availability_topic = (
+            f"{MQTT_NAMESPACE}/{self.device_id}/availability"
+        )
+        client.will_set(availability_topic, "offline", retain=True)
+
+        return client
+
+    def _wait_for_connection(self, timeout: float) -> bool:
+        start = time.time()
+        while not self.connected and (time.time() - start) < timeout:
+            time.sleep(0.1)
+        return self.connected
+
+    def connect(self, timeout: float | None = None) -> bool:
+        """Připojení k MQTT brokeru."""
         if self._main_loop is None:
             try:
                 self._main_loop = asyncio.get_running_loop()
@@ -275,55 +307,28 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
 
         timeout = timeout or self.CONNECT_TIMEOUT
 
-        try:
-            client_kwargs: dict[str, Any] = {
-                "client_id": f"{MQTT_NAMESPACE}_{self.device_id}",
-                "protocol": mqtt.MQTTv311,
-            }
-            callback_api = getattr(mqtt, "CallbackAPIVersion", None)
-            if callback_api is not None:
-                client_kwargs["callback_api_version"] = callback_api.VERSION1
-            self.client = mqtt.Client(**client_kwargs)  # type: ignore[call-arg]
-            if MQTT_USERNAME:
-                self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-
-            availability_topic = (
-                f"{MQTT_NAMESPACE}/{self.device_id}/availability"
-            )
-            self.client.will_set(availability_topic, "offline", retain=True)
-
-            # Callbacks
-            self.client.on_connect = self._on_connect
-            self.client.on_disconnect = self._on_disconnect
-            self.client.on_publish = self._on_publish
-            self.client.on_message = self._on_message
-
-            logger.info(
-                "MQTT: Connecting to %s:%s (timeout %ss)",
-                MQTT_HOST,
-                MQTT_PORT,
-                timeout,
-            )
-
-            self.client.connect(MQTT_HOST, MQTT_PORT, 60)
-            self.client.loop_start()
-
-            # Čekáme na callback
-            start = time.time()
-            while not self.connected and (time.time() - start) < timeout:
-                time.sleep(0.1)
-
-            if self.connected:
-                self.reconnect_attempts = 0
-                return True
-            logger.error("MQTT: ❌ Connection timeout after %ss", timeout)
-            self._cleanup_client()
+        self.client = self._create_client()
+        if self.client is None:
             return False
 
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("MQTT: ❌ Connection failed: %s", e)
-            self._cleanup_client()
-            return False
+        self._setup_client_callbacks()
+
+        logger.info(
+            "MQTT: Connecting to %s:%s (timeout %ss)",
+            MQTT_HOST,
+            MQTT_PORT,
+            timeout,
+        )
+
+        self.client.connect(MQTT_HOST, MQTT_PORT, 60)
+        self.client.loop_start()
+
+        if self._wait_for_connection(timeout):
+            self.reconnect_attempts = 0
+            return True
+        logger.error("MQTT: ❌ Connection timeout after %ss", timeout)
+        self._cleanup_client()
+        return False
 
     def _cleanup_client(self) -> None:
         """Bezpečně uklidí MQTT klienta."""
@@ -644,41 +649,35 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
     def _json_key(sensor_id: str) -> str:
         return sensor_id.split(":", 1)[1] if ":" in sensor_id else sensor_id
 
-    def _build_discovery_payload(  # pylint: disable=too-many-locals
+    def _build_device_info(
         self,
-        *,
-        sensor_id: str,
-        config: SensorConfig,
-        table: str | None,
+        device_type: str,
         device_id: str,
-    ) -> tuple[str, dict[str, Any]]:
-        device_type = config.device_mapping or "inverter"
+    ) -> tuple[str, str]:
         device_name = DEVICE_NAMES.get(device_type, "Střídač")
-
         device_identifier = f"{MQTT_NAMESPACE}_{device_id}_{device_type}"
         full_device_name = f"OIG {device_name} ({device_id})"
+        return device_identifier, full_device_name
 
+    def _build_sensor_ids(
+        self,
+        sensor_id: str,
+        device_id: str,
+        is_binary: bool,
+    ) -> tuple[str, str, str]:
         safe_sensor_id = sensor_id.replace(":", "_").lower()
         unique_id = f"{MQTT_NAMESPACE}_{device_id}_{safe_sensor_id}"
-        availability_topic = f"{MQTT_NAMESPACE}/{device_id}/availability"
-
-        component = "binary_sensor" if config.is_binary else "sensor"
+        component = "binary_sensor" if is_binary else "sensor"
         base_object_id = f"{MQTT_NAMESPACE}_{device_id}_{safe_sensor_id}"
+        return unique_id, component, base_object_id
 
-        payload: dict[str, Any] = {
-            "name": config.name,
-            "unique_id": unique_id,
-            "state_topic": self._state_topic(device_id, table),
-            "value_template": f"{{{{ value_json.{self._json_key(sensor_id)} }}}}",
-            "availability": [{"topic": availability_topic}],
-            "default_entity_id": f"{component}.{base_object_id}",
-            "device": {
-                "identifiers": [device_identifier],
-                "name": full_device_name,
-                "manufacturer": "OIG Power",
-                "model": f"OIG BatteryBox - {device_name}",
-            },
-        }
+    def _apply_json_attributes(
+        self,
+        payload: dict[str, Any],
+        config: SensorConfig,
+        device_id: str,
+        table: str | None,
+    ) -> None:
         if config.json_attributes_topic:
             if config.json_attributes_topic == "state":
                 payload["json_attributes_topic"] = self._state_topic(
@@ -686,11 +685,11 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             else:
                 payload["json_attributes_topic"] = config.json_attributes_topic
 
-        if device_type not in ("inverter", "proxy"):
-            payload["device"]["via_device"] = (
-                f"{MQTT_NAMESPACE}_{self.device_id}_inverter"
-            )
-
+    def _apply_sensor_config(
+        self,
+        payload: dict[str, Any],
+        config: SensorConfig,
+    ) -> None:
         if config.is_binary:
             payload["payload_on"] = "1"
             payload["payload_off"] = "0"
@@ -708,6 +707,47 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             payload["icon"] = config.icon
         if config.entity_category:
             payload["entity_category"] = config.entity_category
+
+    def _build_discovery_payload(
+        self,
+        *,
+        sensor_id: str,
+        config: SensorConfig,
+        table: str | None,
+        device_id: str,
+    ) -> tuple[str, dict[str, Any]]:
+        device_type = config.device_mapping or "inverter"
+        device_identifier, full_device_name = self._build_device_info(
+            device_type, device_id)
+
+        unique_id, component, base_object_id = self._build_sensor_ids(
+            sensor_id, device_id, config.is_binary)
+
+        availability_topic = f"{MQTT_NAMESPACE}/{device_id}/availability"
+
+        payload: dict[str, Any] = {
+            "name": config.name,
+            "unique_id": unique_id,
+            "state_topic": self._state_topic(device_id, table),
+            "value_template": f"{{{{ value_json.{self._json_key(sensor_id)} }}}}",
+            "availability": [{"topic": availability_topic}],
+            "default_entity_id": f"{component}.{base_object_id}",
+            "device": {
+                "identifiers": [device_identifier],
+                "name": full_device_name,
+                "manufacturer": "OIG Power",
+                "model": f"OIG BatteryBox - {DEVICE_NAMES.get(device_type, 'Střídač')}",
+            },
+        }
+
+        self._apply_json_attributes(payload, config, device_id, table)
+
+        if device_type not in ("inverter", "proxy"):
+            payload["device"]["via_device"] = (
+                f"{MQTT_NAMESPACE}_{self.device_id}_inverter"
+            )
+
+        self._apply_sensor_config(payload, config)
 
         topic = f"homeassistant/{component}/{unique_id}/config"
         return topic, payload
@@ -754,41 +794,37 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             result.mid,
         )
 
-    async def publish_data(self, data: dict[str, Any]) -> bool:  # pylint: disable=too-many-locals
-        """Publikuje data na MQTT."""
-        table = data.get("_table")
-        # Proxy a eventy jdou na pevný proxy device_id
-        target_device_id = (
-            self.proxy_device_id
-            if table in ("proxy_status", "tbl_events")
-            else self.device_id
-        )
+    def _determine_target_device_id(self, table: str | None) -> str:
+        if table in ("proxy_status", "tbl_events"):
+            return self.proxy_device_id
+        return self.device_id
 
-        publish_data, mapped_count = self._map_data_for_publish(
-            data, table=str(table) if table else None, target_device_id=target_device_id)
-
-        topic = self._state_topic(
-            target_device_id,
-            str(table) if table else None)
-        payload = json.dumps(publish_data)
-
-        # De-dupe: pokud payload pro topic je stejný jako minule, nepublikuj
-        # ani nequeueuj.
+    def _check_payload_deduplication(self, topic: str, payload: str) -> bool:
         if self._last_payload_by_topic.get(topic) == payload:
             return True
         self._last_payload_by_topic[topic] = payload
+        return False
 
-        # Pokud není připojeno, přidej do fronty
-        if not self.is_ready():
-            await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
-            if self.publish_count % 100 == 0:
-                logger.warning(
-                    "MQTT: Offline - data queued (%s messages)",
-                    self.queue.size(),
-                )
-            self.publish_failed += 1
-            return False
+    async def _handle_offline_queueing(
+        self,
+        topic: str,
+        payload: str,
+    ) -> bool:
+        await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
+        if self.publish_count % 100 == 0:
+            logger.warning(
+                "MQTT: Offline - data queued (%s messages)",
+                self.queue.size(),
+            )
+        self.publish_failed += 1
+        return False
 
+    async def _execute_publish(
+        self,
+        topic: str,
+        payload: str,
+        mapped_count: int,
+    ) -> bool:
         self.publish_count += 1
 
         try:
@@ -802,18 +838,16 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                 topic, payload, qos=MQTT_PUBLISH_QOS, retain=MQTT_STATE_RETAIN
             )
             if result.rc == 0:
-                # Detailní log - topic, keys, mapped count
-                keys_list = sorted(publish_data.keys())
+                keys_list = sorted(json.loads(payload).keys())
                 logger.debug(
                     "MQTT: → %s | %s/%s mapped | keys: %s",
                     topic,
                     mapped_count,
-                    len(publish_data),
+                    len(json.loads(payload)),
                     keys_list,
                 )
                 return True
 
-            # Pokud publish selže, přidej do fronty
             await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
             self.publish_failed += 1
             logger.error("MQTT: Publish failed rc=%s", result.rc)
@@ -825,6 +859,27 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             self.last_error_msg = str(e)
             logger.exception("MQTT: Publish exception")
             return False
+
+    async def publish_data(self, data: dict[str, Any]) -> bool:
+        """Publikování dat do MQTT."""
+        table = data.get("_table")
+        target_device_id = self._determine_target_device_id(table)
+
+        publish_data, mapped_count = self._map_data_for_publish(
+            data, table=str(table) if table else None, target_device_id=target_device_id)
+
+        topic = self._state_topic(
+            target_device_id,
+            str(table) if table else None)
+        payload = json.dumps(publish_data)
+
+        if self._check_payload_deduplication(topic, payload):
+            return True
+
+        if not self.is_ready():
+            return await self._handle_offline_queueing(topic, payload)
+
+        return await self._execute_publish(topic, payload, mapped_count)
 
     def map_data_for_publish(
         self,

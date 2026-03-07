@@ -21,7 +21,7 @@ from config import CONTROL_WRITE_WHITELIST
 
 logger = logging.getLogger(__name__)
 
-TOKEN_FILE_PATH = "/data/control_api_token"
+TOKEN_FILE_PATH = "/data/control_api_token"  # nosec: B105 - this is a file path, not a password
 
 
 class _Handler(BaseHTTPRequestHandler): # pylint: disable=invalid-name

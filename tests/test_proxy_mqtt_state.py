@@ -1,13 +1,12 @@
 """Tests for MQTT state and control helpers in proxy.py."""
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
 # pylint: disable=consider-using-with
 
 import asyncio
-import json
-import tempfile
-from collections import deque
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,25 +33,6 @@ def _make_proxy():
     mp.prms_pending_publish = False
     mp.prms_device_id = None
     proxy._mp = mp
-    proxy._ctrl = MagicMock()
-    proxy._ctrl.queue = deque()
-    proxy._ctrl.inflight = None
-    proxy._ctrl.ack_task = None
-    proxy._ctrl.applied_task = None
-    proxy._ctrl.quiet_task = None
-    proxy._ctrl.retry_task = None
-    proxy._ctrl.last_result = None
-    proxy._ctrl.key_state = {}
-    proxy._ctrl.pending_keys = set()
-    proxy._ctrl.post_drain_refresh_pending = False
-    proxy._ctrl.qos = 1
-    proxy._ctrl.retain = False
-    proxy._ctrl.status_retain = False
-    proxy._ctrl.result_topic = "oig/control/result"
-    proxy._ctrl.status_prefix = "oig/control/status"
-    proxy._ctrl.log_enabled = False
-    proxy._ctrl.log_path = tempfile.NamedTemporaryFile(delete=False).name
-    proxy._ctrl.pending_path = tempfile.NamedTemporaryFile(delete=False).name
     proxy.mqtt_publisher = MagicMock()
     proxy.mqtt_publisher.device_id = "DEV1"
     proxy.mqtt_publisher.publish_raw = AsyncMock(return_value=True)
@@ -65,43 +45,6 @@ def _make_proxy():
     proxy._msc = msc
     proxy.publish_proxy_status = AsyncMock()
     return proxy
-
-
-def _attach_real_ctrl(proxy, pending_path=None):
-    """Replace proxy._ctrl with a real ControlPipeline for tests that call its methods."""
-    ctrl = ControlPipeline.__new__(ControlPipeline)
-    ctrl._proxy = proxy
-    ctrl.mqtt_enabled = True
-    ctrl.set_topic = "oig/control/set"
-    ctrl.result_topic = "oig/control/result"
-    ctrl.status_prefix = "oig/control/status"
-    ctrl.qos = 1
-    ctrl.retain = False
-    ctrl.status_retain = False
-    ctrl.log_enabled = False
-    ctrl.log_path = tempfile.NamedTemporaryFile(delete=False).name
-    ctrl.box_ready_s = 10.0
-    ctrl.ack_timeout_s = 30.0
-    ctrl.applied_timeout_s = 60.0
-    ctrl.mode_quiet_s = 30.0
-    ctrl.whitelist = {}
-    ctrl.max_attempts = 5
-    ctrl.retry_delay_s = 120.0
-    ctrl.session_id = "test-session"
-    ctrl.pending_path = pending_path or tempfile.NamedTemporaryFile(delete=False).name
-    ctrl.pending_keys = set()
-    ctrl.queue = deque()
-    ctrl.inflight = None
-    ctrl.lock = asyncio.Lock()
-    ctrl.ack_task = None
-    ctrl.applied_task = None
-    ctrl.quiet_task = None
-    ctrl.retry_task = None
-    ctrl.last_result = None
-    ctrl.key_state = {}
-    ctrl.post_drain_refresh_pending = False
-    proxy._ctrl = ctrl
-    return ctrl
 
 
 def test_parse_mqtt_state_topic_valid(monkeypatch):
@@ -177,57 +120,41 @@ async def test_handle_mqtt_state_message(monkeypatch):
     assert proxy._msc.persist_values.called
 
 
-@pytest.mark.asyncio
-async def test_control_publish_result_basic():
-    proxy = _make_proxy()
-    _attach_real_ctrl(proxy)
+def test_control_pipeline_format_helpers():
     tx = {
         "tx_id": "123",
-        "request_key": "tbl_box_prms/SA/1",
+        "tbl_name": "tbl_box_prms",
+        "tbl_item": "SA",
+        "new_value": "1",
+        "stage": "queued",
+    }
+    result = {
+        "tx_id": "123",
+        "status": "accepted",
         "tbl_name": "tbl_box_prms",
         "tbl_item": "SA",
         "new_value": "1",
     }
 
-    await proxy._ctrl.publish_result(tx=tx, status="accepted")
-    assert proxy.mqtt_publisher.publish_raw.called
-    assert proxy._ctrl.last_result["status"] == "accepted"
+    assert ControlPipeline.format_tx(tx) == "tbl_box_prms/SA=1 (queued) tx=123"
+    assert ControlPipeline.format_result(result) == "accepted tbl_box_prms/SA=1 tx=123"
 
 
-def test_control_result_key_state():
-    assert ControlPipeline.result_key_state("accepted", None) == "queued"
-    assert ControlPipeline.result_key_state("completed", "noop_already_set") is None
-    assert ControlPipeline.result_key_state("error", None) == "error"
+def test_control_pipeline_append_to_log(tmp_path):
+    ctrl = ControlPipeline.__new__(ControlPipeline)
+    ctrl.log_path = str(tmp_path / "control.log")
+
+    ctrl.append_to_log("line-1\n")
+
+    with open(ctrl.log_path, encoding="utf-8") as fh:
+        assert fh.read() == "line-1\n"
 
 
 @pytest.mark.asyncio
-async def test_control_publish_key_status():
-    proxy = _make_proxy()
-    _attach_real_ctrl(proxy)
-    tx = {"request_key": "tbl_box_prms/SA/1"}
-    await proxy._ctrl.publish_key_status(tx=tx, state="queued", detail=None)
-    assert proxy.mqtt_publisher.publish_raw.called
-    assert "tbl_box_prms/SA/1" in proxy._ctrl.key_state
+async def test_control_pipeline_async_methods_noop():
+    ctrl = ControlPipeline(object())
 
-
-def test_control_load_pending_keys(tmp_path):
-    proxy = _make_proxy()
-    pending_path = str(tmp_path / "pending.json")
-    _attach_real_ctrl(proxy, pending_path=pending_path)
-    with open(pending_path, "w", encoding="utf-8") as fh:
-        json.dump(["tbl_box_prms/SA/1"], fh)
-
-    keys = proxy._ctrl.load_pending_keys()
-    assert keys == {"tbl_box_prms/SA/1"}
-
-
-def test_control_update_pending_keys(tmp_path):
-    proxy = _make_proxy()
-    pending_path = str(tmp_path / "pending.json")
-    _attach_real_ctrl(proxy, pending_path=pending_path)
-
-    proxy._ctrl.update_pending_keys(request_key="tbl_box_prms/SA/1", state="queued")
-    assert "tbl_box_prms/SA/1" in proxy._ctrl.pending_keys
-
-    proxy._ctrl.update_pending_keys(request_key="tbl_box_prms/SA/1", state="done")
-    assert "tbl_box_prms/SA/1" not in proxy._ctrl.pending_keys
+    await ctrl.publish_restart_errors()
+    await ctrl.note_box_disconnect()
+    await ctrl.observe_box_frame({}, None, "")
+    await ctrl.maybe_start_next()

@@ -2,12 +2,21 @@
 # pylint: disable=protected-access
 
 import asyncio
+import importlib.util
 import os
 import time
+from pathlib import Path
 import pytest
 
-from control_pipeline import ControlPipeline
 from tests.helpers import make_proxy
+
+
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "addon" / "oig-proxy" / "control_pipeline.py"
+_SPEC = importlib.util.spec_from_file_location("control_pipeline", _MODULE_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+ControlPipeline = _MODULE.ControlPipeline
 
 
 @pytest.mark.skip("async mocking complexity, not priority for SonarCloud")

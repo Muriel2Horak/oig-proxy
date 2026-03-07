@@ -248,7 +248,7 @@ class CloudSessionManager:
                     self._last_warn_ts = now
                 await self.close()
                 raise
-            except Exception:
+            except (OSError, ConnectionError, RuntimeError, asyncio.IncompleteReadError):
                 self.stats.errors += 1
                 now = time.monotonic()
                 if (now - self._last_warn_ts) >= _WARN_THROTTLE_S:

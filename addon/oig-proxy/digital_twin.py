@@ -23,6 +23,8 @@ Usage:
     result = await twin.on_ack(OnAckDTO(conn_id=1, ...))
 """
 
+# pylint: disable=C0302
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from config import MQTT_NAMESPACE, TWIN_CLOUD_ALIGNED
 from oig_frame import infer_table_name
 from oig_frame import build_end_time_frame, build_frame
-from parser import OIGDataParser
+from oig_parser import OIGDataParser
 from twin_state import (
     AckResult,
     OnAckDTO,
@@ -99,6 +101,10 @@ class ReplayEntry:
 
 
 class TwinMQTTHandler:
+    """Handler for MQTT-based twin commands."""
+
+    # pylint: disable=R0903
+
     def __init__(
         self,
         *,
@@ -112,8 +118,14 @@ class TwinMQTTHandler:
         self._qos = qos
         self._loop: asyncio.AbstractEventLoop | None = None
         self.set_topic = f"{MQTT_NAMESPACE}/+/+/set"
+        self.on_mqtt_message = self._default_on_mqtt_message
 
     def setup_mqtt(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Set up MQTT message handler with event loop.
+
+        Args:
+            loop: asyncio event loop for scheduling coroutines.
+        """
         self._loop = loop
 
         def _handler(
@@ -136,7 +148,7 @@ class TwinMQTTHandler:
         )
         logger.info("TWIN_MQTT: MQTT enabled (set=%s)", self.set_topic)
 
-    async def on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
+    async def _default_on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
         parts = topic.split("/")
         if len(parts) != 4 or parts[3] != "set":
             logger.error("TWIN_MQTT: Invalid topic format: %s", topic)
@@ -208,6 +220,8 @@ class DigitalTwin:
         INV-3: Timeout Task Ownership in timeout handlers
     """
 
+    # pylint: disable=R0902,R0904
+
     def __init__(
         self,
         session_id: str | None = None,
@@ -222,10 +236,10 @@ class DigitalTwin:
         self._lock = asyncio.Lock()
         self._ack_task: asyncio.Task[Any] | None = None
         self._applied_task: asyncio.Task[Any] | None = None
-        
+
         # Simplified queue for cloud-aligned mode (single-item dict, like ControlSettings.pending)
         self._pending_simple: dict = {}
-        
+
         self._replay_buffer: deque[ReplayEntry] = deque()
         self._completed_tx_ids: set[str] = set()
         self._replay_tx_counts: dict[str, int] = {}
@@ -238,6 +252,7 @@ class DigitalTwin:
         self._state_topic = f"{MQTT_NAMESPACE}/oig_proxy/twin_state/state"
 
     def attach_mqtt_publisher(self, mqtt_publisher: MQTTPublisher) -> None:
+        """Attach MQTT publisher to the twin."""
         self._mqtt_publisher = mqtt_publisher
 
     def attach_cloud_forwarder(
@@ -246,6 +261,7 @@ class DigitalTwin:
         *,
         availability_checker: Callable[[], bool] | None = None,
     ) -> None:
+        """Attach cloud forwarder and availability checker."""
         self._cloud_forwarder = forwarder
         self._cloud_available_checker = availability_checker
 
@@ -297,6 +313,7 @@ class DigitalTwin:
         frame: str,
         conn_id: int,
     ) -> PollResponseDTO | None:
+        """Process incoming frame and return response."""
         table_name = self._parse_table(frame)
 
         if table_name == "IsNewSet":
@@ -591,8 +608,7 @@ class DigitalTwin:
         """
         if TWIN_CLOUD_ALIGNED:
             return await self._on_ack_cloud_aligned(dto)
-        else:
-            return await self._on_ack_legacy(dto)
+        return await self._on_ack_legacy(dto)
 
     async def _on_ack_cloud_aligned(
         self,
@@ -820,24 +836,23 @@ class DigitalTwin:
                 )
                 await self._publish_state()
                 return result
-            else:
-                result = TransactionResultDTO(
-                    tx_id=dto.tx_id,
-                    conn_id=dto.conn_id,
-                    status="error",
-                    error="box_nack",
-                    timestamp=get_timestamp(),
-                )
-                self._inflight = None
-                self._inflight_ctx = None
-                self._store_last_result(
-                    result,
-                    tbl_name=new_pending.tbl_name,
-                    tbl_item=new_pending.tbl_item,
-                    new_value=new_pending.new_value,
-                )
-                await self._publish_state()
-                return result
+            result = TransactionResultDTO(
+                tx_id=dto.tx_id,
+                conn_id=dto.conn_id,
+                status="error",
+                error="box_nack",
+                timestamp=get_timestamp(),
+            )
+            self._inflight = None
+            self._inflight_ctx = None
+            self._store_last_result(
+                result,
+                tbl_name=new_pending.tbl_name,
+                tbl_item=new_pending.tbl_item,
+                new_value=new_pending.new_value,
+            )
+            await self._publish_state()
+            return result
 
     async def validate_ack_conn_ownership(
         self,
@@ -1421,12 +1436,15 @@ class DigitalTwin:
         )
 
     async def get_replay_buffer_length(self) -> int:
+        """Return the length of the replay buffer."""
         return len(self._replay_buffer)
 
     async def get_replay_buffer_snapshot(self) -> Sequence[ReplayEntry]:
+        """Return a snapshot of the replay buffer."""
         return list(self._replay_buffer)
 
     def is_tx_completed(self, tx_id: str) -> bool:
+        """Check if a transaction is completed."""
         return tx_id in self._completed_tx_ids
 
     async def restore_from_snapshot(
@@ -1434,7 +1452,6 @@ class DigitalTwin:
         snapshot: SnapshotDTO,
     ) -> None:
         """Restore state from a snapshot."""
-        pass
 
     # ------------------------------------------------------------------
     # Timeout Handlers with INV-3 Validation

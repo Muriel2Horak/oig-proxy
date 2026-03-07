@@ -1,4 +1,5 @@
 """Additional coverage tests for telemetry_client."""
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
 # pylint: disable=missing-function-docstring,protected-access,exec-used,unspecified-encoding
 
 from types import ModuleType
@@ -8,7 +9,9 @@ from unittest.mock import MagicMock, patch
 import telemetry_client
 
 
-def test_ensure_connected_reconnect_succeeds_sets_connected(monkeypatch):
+@patch("telemetry_client.config")
+@patch("telemetry_client.MQTT_AVAILABLE", False)
+def test_ensure_connected_reconnect_succeeds_sets_connected(_mock_config):
     """When _client exists but _connected is False, and is_connected() returns True,
     _ensure_connected should set _connected=True and return True."""
     client = telemetry_client.TelemetryClient("DEV1", "1.0.0")
@@ -21,13 +24,15 @@ def test_ensure_connected_reconnect_succeeds_sets_connected(monkeypatch):
     assert client._connected is True
 
 
-def test_ensure_connected_reconnect_exception_triggers_cleanup():
+@patch("telemetry_client.config")
+@patch("telemetry_client.MQTT_AVAILABLE", False)
+def test_ensure_connected_reconnect_exception_triggers_cleanup(_mock_config):
     """When reconnect() raises, _cleanup_client is called and _client becomes None,
     then _create_client is called."""
     client = telemetry_client.TelemetryClient("DEV1", "1.0.0")
     mock_client = MagicMock()
     mock_client.is_connected.return_value = False
-    mock_client.reconnect.side_effect = RuntimeError("boom")
+    mock_client.reconnect.side_effect = OSError("boom")
     client._client = mock_client
     client._connected = False
     client._create_client = MagicMock(return_value=False)
@@ -40,13 +45,15 @@ def test_ensure_connected_reconnect_exception_triggers_cleanup():
     client._create_client.assert_called_once()
 
 
-def test_ensure_connected_cleanup_exception_is_safe():
+@patch("telemetry_client.config")
+@patch("telemetry_client.MQTT_AVAILABLE", False)
+def test_ensure_connected_cleanup_exception_is_safe(_mock_config):
     """Even if loop_stop raises during cleanup, _ensure_connected should not crash."""
     client = telemetry_client.TelemetryClient("DEV1", "1.0.0")
     mock_client = MagicMock()
     mock_client.is_connected.return_value = False
-    mock_client.reconnect.side_effect = RuntimeError("reconnect failed")
-    mock_client.loop_stop.side_effect = RuntimeError("loop_stop boom")
+    mock_client.reconnect.side_effect = OSError("reconnect failed")
+    mock_client.loop_stop.side_effect = OSError("loop_stop boom")
     client._client = mock_client
     client._connected = False
     client._create_client = MagicMock(return_value=False)
@@ -56,7 +63,9 @@ def test_ensure_connected_cleanup_exception_is_safe():
 
 
 def test_import_success_branch_exec(monkeypatch):
-    source = Path(telemetry_client.__file__).read_text()
+    module_path = telemetry_client.__file__
+    assert module_path is not None
+    source = Path(module_path).read_text()
 
     fake_paho = ModuleType("paho")
     fake_mqtt = ModuleType("paho.mqtt")
@@ -71,9 +80,9 @@ def test_import_success_branch_exec(monkeypatch):
 
     globs: dict = {
         "__name__": "telemetry_client_with_mqtt",
-        "__file__": telemetry_client.__file__,
+        "__file__": module_path,
     }
-    exec(compile(source, telemetry_client.__file__, "exec"), globs)
+    exec(compile(source, module_path, "exec"), globs)
 
     assert globs["MQTT_AVAILABLE"] is True
     assert globs["mqtt"] is not None

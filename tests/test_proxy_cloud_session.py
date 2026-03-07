@@ -1,5 +1,7 @@
 """Tests for cloud session helpers (now on CloudForwarder)."""
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable,broad-exception-caught
 
@@ -34,6 +36,13 @@ class DummyWriter:
     async def wait_closed(self):
         return None
 
+    def get_extra_info(self, name, default=None):
+        if name == "peername":
+            return ("127.0.0.1", 5710)
+        if name == "socket":
+            return None
+        return default
+
 
 class DummyReader:
     def __init__(self, data=b""):
@@ -61,6 +70,7 @@ def _make_proxy_and_cf():
     proxy._hm.record_success = MagicMock()
     proxy._hm.force_offline_enabled = MagicMock(return_value=False)
     proxy._process_frame_offline = AsyncMock()
+    proxy._respond_local_offline = AsyncMock()
     proxy.stats = {"frames_forwarded": 0, "acks_local": 0, "acks_cloud": 0}
 
     cf = CloudForwarder.__new__(CloudForwarder)
@@ -175,7 +185,7 @@ async def test_handle_cloud_connection_failed_hybrid(monkeypatch):
         cloud_attempted=True,
     )
 
-    proxy._process_frame_offline.assert_called_once()
+    proxy._respond_local_offline.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -212,7 +222,7 @@ async def test_handle_cloud_eof_hybrid():
     )
 
     assert cf.disconnects == 1
-    proxy._process_frame_offline.assert_called_once()
+    proxy._respond_local_offline.assert_called_once()
 
 
 @pytest.mark.asyncio

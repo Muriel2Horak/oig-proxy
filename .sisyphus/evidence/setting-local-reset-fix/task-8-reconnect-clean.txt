@@ -1,0 +1,45 @@
+# Task 8: Reconnect Baseline Evidence
+
+## Scenario: Reconnect baseline
+
+### Steps:
+1. Connect as conn B after conn A close
+2. Deliver setting and verify independent timeout ownership
+
+### Expected Result: clean reconnect flow
+
+### Evidence:
+
+#### Test: test_disconnect_cancels_stale_pending_timeout
+- PASS: pending state from conn_id=1 is cleared before conn_id=2 starts
+- PASS: pending_frame from conn_id=1 is cleared before conn_id=2 starts
+- New connection starts with clean slate
+
+#### Test: test_stale_pending_affects_new_connection
+- PASS: Stale pending_frame from conn_id=1 is NOT delivered to conn_id=2
+- PASS: Cross-session state corruption is prevented
+
+#### Root Cause Fix:
+The original bug allowed stale state from a disconnected connection to
+affect new connections:
+
+1. `pending` dict was never cleared on disconnect
+2. `pending_frame` bytes were never cleared on disconnect
+3. `ack_task` and `applied_task` were never cancelled on disconnect
+
+This meant that:
+- When conn_id=2 started, it could receive the pending_frame from conn_id=1
+- Stale timeout callbacks could fire and modify state for the wrong connection
+
+#### Fix Implementation:
+1. Added `clear_pending_on_disconnect()` to ControlSettings
+2. Wired it in `proxy.py` handle_connection finally block
+3. Updated `note_box_disconnect()` to cancel timeout tasks
+
+### Verification:
+All tests pass including cross-session tests:
+- test_disconnect_cancels_stale_pending_timeout: PASSED
+- test_disconnect_cleanup_without_reconnect: PASSED
+- test_stale_pending_affects_new_connection: PASSED
+
+Date: 2026-02-20

@@ -1,0 +1,56 @@
+# Task 8: Disconnect Cancels Stale Timeout Evidence
+
+## Scenario: Disconnect cancels stale timeout
+
+### Steps:
+1. Simulate pending setting on conn A
+2. Trigger disconnect
+3. Assert pending timeout callback does not mutate new state
+
+### Expected Result: no stale callback side-effects
+
+### Evidence:
+
+#### Test: test_disconnect_cancels_inflight_timeout_tasks
+- PASS: ack_task is cancelled when note_box_disconnect() is called
+- PASS: applied_task is cancelled when note_box_disconnect() is called
+- The timeout tasks are properly cancelled, preventing stale callbacks
+
+#### Code Changes:
+1. `control_pipeline.py` - note_box_disconnect() now cancels timeout tasks:
+   ```python
+   async def note_box_disconnect(self) -> None:
+       async with self.lock:
+           tx = self.inflight
+           if tx is None:
+               return
+           if tx.get("stage") in ("sent_to_box", "accepted"):
+               tx["disconnected"] = True
+           for task in (self.ack_task, self.applied_task):
+               if task and not task.done():
+                   task.cancel()
+           self.ack_task = None
+           self.applied_task = None
+   ```
+
+2. `control_settings.py` - clear_pending_on_disconnect() clears pending state:
+   ```python
+   def clear_pending_on_disconnect(self) -> None:
+       self.pending = None
+       self.pending_frame = None
+   ```
+
+3. `proxy.py` - handle_connection finally block calls cleanup:
+   ```python
+   if self._cs:
+       self._cs.clear_pending_on_disconnect()
+   ```
+
+### Verification:
+All T5 disconnect tests now pass:
+- test_disconnect_cancels_stale_pending_timeout: PASSED
+- test_disconnect_cleanup_without_reconnect: PASSED
+- test_disconnect_cancels_inflight_timeout_tasks: PASSED
+- test_stale_pending_affects_new_connection: PASSED
+
+Date: 2026-02-20

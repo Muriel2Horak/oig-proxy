@@ -16,34 +16,38 @@ HOST_ADDON_DIR="/mnt/data/supervisor/addons/git/d7b5d5b1/addon/oig-proxy"
 
 # Python soubory + konfigurace k deployi (vše z addon/oig-proxy)
 DEPLOY_FILES=(
-  config.py
-  models.py
-  utils.py
-  parser.py
-  cloud_manager.py
-  cloud_session.py
-  cloud_forwarder.py
-  mqtt_publisher.py
-  mqtt_state_cache.py
-  proxy.py
-  proxy_status.py
-  telemetry_client.py
-  telemetry_collector.py
-  control_api.py
-  control_pipeline.py
-  control_settings.py
-  local_oig_crc.py
-  oig_frame.py
-  main.py
-  backoff.py
-  db_utils.py
-  hybrid_mode.py
-  mode_persistence.py
-  config.json
-  sensor_map.json
-  Dockerfile
-  requirements.txt
-  run
+config.py
+models.py
+utils.py
+oig_parser.py
+cloud_manager.py
+cloud_session.py
+cloud_forwarder.py
+mqtt_publisher.py
+mqtt_state_cache.py
+proxy.py
+proxy_status.py
+telemetry_client.py
+telemetry_collector.py
+control_api.py
+control_pipeline.py
+control_settings.py
+local_oig_crc.py
+oig_frame.py
+main.py
+backoff.py
+db_utils.py
+hybrid_mode.py
+mode_persistence.py
+digital_twin.py
+twin_adapter.py
+twin_state.py
+twin_transaction.py
+config.json
+sensor_map.json
+Dockerfile
+requirements.txt
+run
 )
 
 # ── Pomocné funkce ───────────────────────────────────────
