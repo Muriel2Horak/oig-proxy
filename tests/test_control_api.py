@@ -70,7 +70,7 @@ def _request(method: str, path: str, body: bytes | None,
         + "".join(f"{k}: {v}\r\n" for k, v in headers.items())
         + "\r\n"
     ).encode("utf-8") + body
-    server = SimpleNamespace(proxy=DummyProxy())
+    server = SimpleNamespace(proxy=DummyProxy(), control_api_token="test-token")
     handler = _TestHandler(raw, server)
     response = handler.wfile.getvalue()
     header_part, body_part = response.split(b"\r\n\r\n", 1)
@@ -80,7 +80,7 @@ def _request(method: str, path: str, body: bytes | None,
 
 
 def test_control_api_health_and_setting():
-    status, data, proxy = _request("GET", "/api/health", None)
+    status, data, proxy = _request("GET", "/api/health", None, {"Authorization": "Bearer test-token"})
     payload = json.loads(data.decode("utf-8"))
     assert status == 200
     assert payload["ok"] is True
@@ -92,7 +92,7 @@ def test_control_api_health_and_setting():
         "POST",
         "/api/setting",
         body,
-        {"Content-Type": "application/json"},
+        {"Content-Type": "application/json", "Authorization": "Bearer test-token"},
     )
     assert status == 200
     assert proxy.last_setting["tbl_name"] == "tbl_box_prms"
@@ -105,7 +105,7 @@ def test_control_api_missing_fields():
         "POST",
         "/api/setting",
         body,
-        {"Content-Type": "application/json"},
+        {"Content-Type": "application/json", "Authorization": "Bearer test-token"},
     )
     payload = json.loads(data.decode("utf-8"))
     assert status == 400
@@ -113,11 +113,11 @@ def test_control_api_missing_fields():
 
 
 def test_control_api_not_found_paths():
-    status, _data, _proxy = _request("GET", "/nope", None)
+    status, _data, _proxy = _request("GET", "/nope", None, {"Authorization": "Bearer test-token"})
     assert status == 404
 
     status, _data, _proxy = _request(
-        "POST", "/nope", b"{}", {"Content-Type": "application/json"})
+        "POST", "/nope", b"{}", {"Content-Type": "application/json", "Authorization": "Bearer test-token"})
     assert status == 404
 
 
@@ -128,7 +128,7 @@ def test_control_api_xml_fallback():
         "<NewValue>2</NewValue>"
     ).encode("utf-8")
     status, data, _proxy = _request(
-        "POST", "/api/setting", body, {"Content-Type": "text/plain"})
+        "POST", "/api/setting", body, {"Content-Type": "text/plain", "Authorization": "Bearer test-token"})
     payload = json.loads(data.decode("utf-8"))
     assert status == 200
     assert payload["ok"] is True
@@ -136,13 +136,13 @@ def test_control_api_xml_fallback():
 
 def test_control_api_stop_without_start():
     proxy = DummyProxy()
-    server = ControlAPIServer(host="127.0.0.1", port=0, proxy=proxy)
-    server.stop()
+    with patch("control_api.TOKEN_FILE_PATH", "/tmp/test_control_api_token"):
+        server = ControlAPIServer(host="127.0.0.1", port=0, proxy=proxy)
+        server.stop()
 
 
 def test_control_api_start_and_stop():
     proxy = DummyProxy()
-    server = ControlAPIServer(host="127.0.0.1", port=0, proxy=proxy)
 
     class DummyHTTPD:
         def __init__(self, *_args, **_kwargs):
@@ -158,8 +158,10 @@ def test_control_api_start_and_stop():
         def server_close(self):
             return None
 
-    with patch("control_api.ThreadingHTTPServer", DummyHTTPD):
-        server.start()
-        assert server._httpd is not None
-        assert server._httpd.proxy is proxy
-        server.stop()
+    with patch("control_api.TOKEN_FILE_PATH", "/tmp/test_control_api_token"):
+        with patch("control_api.ThreadingHTTPServer", DummyHTTPD):
+            server = ControlAPIServer(host="127.0.0.1", port=0, proxy=proxy)
+            server.start()
+            assert server._httpd is not None
+            assert server._httpd.proxy is proxy
+            server.stop()
