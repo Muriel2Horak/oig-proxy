@@ -16,6 +16,7 @@ Verification:
 # pylint: disable=too-many-lines
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -1061,6 +1062,7 @@ class TestDigitalTwinAdditionalCoverage:
         loop = asyncio.get_running_loop()
         handler.setup_mqtt(loop)
         assert publisher.handlers and publisher.handlers[0][2] == 2
+        assert any(t == digital_twin_module.CONTROL_MQTT_SET_TOPIC for t, _, _ in publisher.handlers)
 
         scheduled: list[str] = []
 
@@ -1112,6 +1114,71 @@ class TestDigitalTwinAdditionalCoverage:
 
         handler._loop = None
         cb("x/y/z/set", b"{}", 1, False)
+
+    async def test_twin_legacy_topic_adapter_success_and_error_markers(self, monkeypatch):
+        twin = DigitalTwin(session_id="legacy-adapter")
+        publisher = _StubMQTTPublisher()
+        handler = digital_twin_module.TwinMQTTHandler(twin=twin, mqtt_publisher=publisher)
+
+        generated = iter(["gen-1", "gen-2", "gen-3"])
+        monkeypatch.setattr(digital_twin_module, "generate_tx_id", lambda: next(generated))
+
+        await handler.on_mqtt_message(
+            topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
+            payload=json.dumps(
+                {
+                    "tbl_name": "tbl_box_prms",
+                    "tbl_item": "MODE",
+                }
+            ).encode(),
+        )
+        assert twin._last_result is not None
+        assert twin._last_result["status"] == "error"
+        assert twin._last_result["error"] == "missing_fields"
+
+        await handler.on_mqtt_message(
+            topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
+            payload=json.dumps(
+                {
+                    "tbl_name": "tbl_box_prms",
+                    "tbl_item": "MODE",
+                    "new_value": "3",
+                }
+            ).encode(),
+        )
+
+        snapshot = await twin.get_queue_snapshot()
+        assert len(snapshot) == 1
+        dto = snapshot[0]
+        expected_request_key = "tbl_box_prms/MODE/3"
+        expected_tx = f"legacy-{hashlib.sha1(expected_request_key.encode('utf-8')).hexdigest()[:16]}"
+        assert dto.tbl_name == "tbl_box_prms"
+        assert dto.tbl_item == "MODE"
+        assert dto.new_value == "3"
+        assert dto.request_key == expected_request_key
+        assert dto.tx_id == expected_tx
+
+        await handler.on_mqtt_message(
+            topic=digital_twin_module.CONTROL_MQTT_SET_TOPIC,
+            payload=json.dumps(
+                {
+                    "tbl_name": "tbl_invertor_prm1",
+                    "tbl_item": "AAC_MAX_CHRG",
+                    "new_value": "50",
+                    "tx_id": "legacy-explicit-tx",
+                    "request_key": "legacy-explicit-rk",
+                }
+            ).encode(),
+        )
+
+        snapshot = await twin.get_queue_snapshot()
+        assert len(snapshot) == 2
+        dto2 = snapshot[1]
+        assert dto2.tbl_name == "tbl_invertor_prm1"
+        assert dto2.tbl_item == "AAC_MAX_CHRG"
+        assert dto2.new_value == "50.0"
+        assert dto2.tx_id == "legacy-explicit-tx"
+        assert dto2.request_key == "legacy-explicit-rk"
 
     async def test_cloud_availability_forwarding_and_publish_helpers(self):
         twin = DigitalTwin(session_id="test-session")

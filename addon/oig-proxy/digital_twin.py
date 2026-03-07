@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -37,7 +38,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from config import MQTT_NAMESPACE, TWIN_CLOUD_ALIGNED
+from config import (
+    CONTROL_MQTT_SET_TOPIC,
+    CONTROL_WRITE_WHITELIST,
+    MQTT_NAMESPACE,
+    TWIN_CLOUD_ALIGNED,
+    normalize_control_value,
+)
 from oig_frame import infer_table_name
 from oig_frame import build_end_time_frame, build_frame
 from oig_parser import OIGDataParser
@@ -118,6 +125,7 @@ class TwinMQTTHandler:
         self._qos = qos
         self._loop: asyncio.AbstractEventLoop | None = None
         self.set_topic = f"{MQTT_NAMESPACE}/+/+/set"
+        self.legacy_set_topic = str(CONTROL_MQTT_SET_TOPIC)
         self.on_mqtt_message = self._default_on_mqtt_message
 
     def setup_mqtt(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -146,9 +154,138 @@ class TwinMQTTHandler:
             handler=_handler,
             qos=self._qos,
         )
+        if self.legacy_set_topic and self.legacy_set_topic != self.set_topic:
+            self._mqtt_publisher.add_message_handler(
+                topic=self.legacy_set_topic,
+                handler=_handler,
+                qos=self._qos,
+            )
         logger.info("TWIN_MQTT: MQTT enabled (set=%s)", self.set_topic)
 
+    async def _publish_legacy_error(
+        self,
+        *,
+        payload: dict[str, Any],
+        error: str,
+        detail: str | None = None,
+    ) -> None:
+        tx_id_raw = str(payload.get("tx_id") or "").strip()
+        tx_id = tx_id_raw or generate_tx_id()
+        await self._twin.mark_input_error(
+            tx_id=tx_id,
+            conn_id=0,
+            error=error,
+            detail=detail,
+        )
+
+    async def _handle_legacy_control_message(self, *, topic: str, payload: bytes) -> None:
+        try:
+            data = json.loads(payload.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            logger.error("TWIN_MQTT: Invalid JSON payload on legacy topic %s: %s", topic, exc)
+            await self._publish_legacy_error(payload={}, error="invalid_json")
+            return
+
+        if not isinstance(data, dict):
+            logger.error(
+                "TWIN_MQTT: JSON payload must be object on legacy topic %s",
+                topic,
+            )
+            await self._publish_legacy_error(payload={}, error="invalid_payload_type")
+            return
+
+        tbl_name = str(data.get("tbl_name") or data.get("TblName") or "").strip()
+        tbl_item = str(data.get("tbl_item") or data.get("TblItem") or "").strip()
+        if "new_value" in data:
+            raw_new_value = data.get("new_value")
+        else:
+            raw_new_value = data.get("NewValue")
+
+        if not tbl_name or not tbl_item or raw_new_value is None:
+            logger.error("TWIN_MQTT: Legacy payload missing required fields on %s", topic)
+            await self._publish_legacy_error(
+                payload=data,
+                error="missing_fields",
+                detail="required: tbl_name,tbl_item,new_value",
+            )
+            return
+
+        allowed_items = CONTROL_WRITE_WHITELIST.get(tbl_name)
+        if allowed_items is None:
+            logger.error(
+                "TWIN_MQTT: Legacy tbl_name not in whitelist: %s (topic=%s)",
+                tbl_name,
+                topic,
+            )
+            await self._publish_legacy_error(
+                payload=data,
+                error="tbl_name_not_whitelisted",
+                detail=tbl_name,
+            )
+            return
+
+        if tbl_item not in allowed_items:
+            logger.error(
+                "TWIN_MQTT: Legacy tbl_item not in whitelist: %s/%s",
+                tbl_name,
+                tbl_item,
+            )
+            await self._publish_legacy_error(
+                payload=data,
+                error="tbl_item_not_whitelisted",
+                detail=f"{tbl_name}/{tbl_item}",
+            )
+            return
+
+        normalized_value, norm_state = normalize_control_value(
+            tbl_name,
+            tbl_item,
+            raw_new_value,
+        )
+        if normalized_value is None:
+            await self._publish_legacy_error(
+                payload=data,
+                error="bad_value",
+                detail=norm_state,
+            )
+            return
+
+        request_key_raw = str(data.get("request_key") or "").strip()
+        request_key = request_key_raw or f"{tbl_name}/{tbl_item}/{norm_state}"
+
+        tx_id_raw = str(data.get("tx_id") or "").strip()
+        tx_id = tx_id_raw or f"legacy-{hashlib.sha1(request_key.encode('utf-8')).hexdigest()[:16]}"
+
+        dto = QueueSettingDTO(
+            tx_id=tx_id,
+            conn_id=0,
+            tbl_name=tbl_name,
+            tbl_item=tbl_item,
+            new_value=normalized_value,
+            confirm=str(data.get("confirm") or data.get("Confirm") or "New"),
+            request_key=request_key,
+            received_at=(
+                str(data.get("received_at")).strip()
+                if data.get("received_at") is not None
+                else None
+            ),
+        )
+
+        result = await self._twin.queue_setting(dto)
+        logger.info(
+            "TWIN_MQTT: Legacy queued %s/%s=%s tx_id=%s request_key=%s",
+            dto.tbl_name,
+            dto.tbl_item,
+            dto.new_value,
+            result.tx_id,
+            dto.request_key,
+        )
+
     async def _default_on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
+        if topic == self.legacy_set_topic:
+            await self._handle_legacy_control_message(topic=topic, payload=payload)
+            return
+
         parts = topic.split("/")
         if len(parts) != 4 or parts[3] != "set":
             logger.error("TWIN_MQTT: Invalid topic format: %s", topic)
@@ -381,6 +518,32 @@ class DigitalTwin:
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.debug("TWIN: state publish failed: %s", exc)
+
+    async def mark_input_error(
+        self,
+        *,
+        tx_id: str,
+        conn_id: int,
+        error: str,
+        detail: str | None = None,
+    ) -> TransactionResultDTO:
+        async with self._lock:
+            result = TransactionResultDTO(
+                tx_id=tx_id,
+                conn_id=conn_id,
+                status="error",
+                error=error,
+                detail=detail,
+                timestamp=get_timestamp(),
+            )
+            self._store_last_result(
+                result,
+                tbl_name=None,
+                tbl_item=None,
+                new_value=None,
+            )
+            await self._publish_state()
+            return result
 
     # ------------------------------------------------------------------
     # Queue Operations
