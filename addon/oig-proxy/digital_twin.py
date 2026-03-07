@@ -610,8 +610,8 @@ class DigitalTwin:
             TransactionResultDTO with updated status, None if no matching tx
         """
         async with self._lock:
-            inflight = self._inflight
-            if inflight is None or inflight.tx_id != dto.tx_id:
+            inflight = self._get_matching_inflight_for_ack(dto)
+            if inflight is None:
                 return None
 
             delivered_conn_id = self._resolve_delivered_conn_id(inflight)
@@ -624,16 +624,31 @@ class DigitalTwin:
             ):
                 return None
 
-            new_pending = inflight.mark_ack_received(dto.ack)
-            self._inflight = new_pending
-            self._update_pending_simple_after_ack(dto, new_pending)
-            self._cancel_ack_task()
-
+            pending = self._apply_cloud_aligned_ack_state(dto, inflight)
             if dto.ack:
                 self._schedule_applied_timeout_after_ack()
-                return await self._finalize_cloud_ack_success(dto, new_pending)
+                return await self._finalize_cloud_ack_success(dto, pending)
 
-            return await self._finalize_cloud_ack_nack(dto, new_pending)
+            return await self._finalize_cloud_ack_nack(dto, pending)
+
+    def _get_matching_inflight_for_ack(self, dto: OnAckDTO) -> PendingSettingState | None:
+        inflight = self._inflight
+        if inflight is None:
+            return None
+        if inflight.tx_id != dto.tx_id:
+            return None
+        return inflight
+
+    def _apply_cloud_aligned_ack_state(
+        self,
+        dto: OnAckDTO,
+        inflight: PendingSettingState,
+    ) -> PendingSettingState:
+        pending = inflight.mark_ack_received(dto.ack)
+        self._inflight = pending
+        self._update_pending_simple_after_ack(dto, pending)
+        self._cancel_ack_task()
+        return pending
 
     @staticmethod
     def _resolve_delivered_conn_id(inflight: PendingSettingState) -> int:
@@ -845,23 +860,14 @@ class DigitalTwin:
     ) -> TransactionResultDTO | None:
         """Handle tbl_events from BOX."""
         sa_dto: QueueSettingDTO | None = None
+        result: TransactionResultDTO | None = None
         async with self._lock:
-            if not self._matches_inflight_tbl_event(dto):
+            processed = await self._process_tbl_event_locked(dto)
+            if processed is None:
                 return None
+            result, sa_dto = processed
 
-            new_pending = self._mark_inflight_applied()
-            result = self._build_applied_result(new_pending)
-            self._store_last_result(
-                result,
-                tbl_name=new_pending.tbl_name,
-                tbl_item=new_pending.tbl_item,
-                new_value=new_pending.new_value,
-            )
-            await self._publish_state()
-
-            sa_dto = self._build_auto_sa_queue_dto(new_pending)
-
-        if sa_dto is not None:
+        if sa_dto is not None and result is not None:
             await self.queue_setting(sa_dto)
             logger.info(
                 "TWIN: Auto-queued SA command after applied tx_id=%s source=%s/%s",
@@ -871,6 +877,25 @@ class DigitalTwin:
             )
 
         return result
+
+    async def _process_tbl_event_locked(
+        self,
+        dto: OnTblEventDTO,
+    ) -> tuple[TransactionResultDTO, QueueSettingDTO | None] | None:
+        if not self._matches_inflight_tbl_event(dto):
+            return None
+
+        new_pending = self._mark_inflight_applied()
+        result = self._build_applied_result(new_pending)
+        self._store_last_result(
+            result,
+            tbl_name=new_pending.tbl_name,
+            tbl_item=new_pending.tbl_item,
+            new_value=new_pending.new_value,
+        )
+        await self._publish_state()
+        sa_dto = self._build_auto_sa_queue_dto(new_pending)
+        return result, sa_dto
 
     def _matches_inflight_tbl_event(self, dto: OnTblEventDTO) -> bool:
         if self._inflight is None:
