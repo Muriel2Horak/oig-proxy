@@ -7,10 +7,12 @@ queue management, transaction tracking, and MQTT event publishing.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from typing import Any
 
+logger = logging.getLogger(__name__)
 
 # pylint: disable=too-many-instance-attributes
 class ControlPipeline:
@@ -239,8 +241,8 @@ class ControlPipeline:
                 qos=self.qos,
                 retain=True,
             )
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
+        except Exception: # pylint: disable=broad-exception-caught
+            logger.debug("Failed to publish control state to MQTT: %s", Exception)
 
     async def on_box_setting_ack(self, *, tx_id: str | None, ack: bool) -> None:
         """Handle box setting acknowledgment.
