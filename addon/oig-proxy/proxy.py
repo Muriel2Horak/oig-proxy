@@ -733,7 +733,7 @@ class OIGProxy:
         if not callable(is_twin_routing_available):
             return
         try:
-            twin_routing_available = is_twin_routing_available()
+            twin_routing_available = is_twin_routing_available()  # pylint: disable=not-callable
         except AttributeError:
             return
         if not twin_routing_available:
