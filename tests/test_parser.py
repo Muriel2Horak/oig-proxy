@@ -5,7 +5,7 @@
 # pylint: disable=duplicate-code
 import pytest
 
-from parser import OIGDataParser
+from oig_parser import OIGDataParser
 
 
 def test_parse_xml_frame_basic():

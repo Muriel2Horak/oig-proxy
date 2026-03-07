@@ -950,7 +950,7 @@ class TestCloudAlignedMode:
         await twin.deliver_pending_setting(tx_id="tx-pending-simple", conn_id=1)
 
         # Verify _pending_simple is empty before ACK
-        assert twin._pending_simple == {}
+        assert not twin._pending_simple
 
         ack_dto = make_on_ack_dto(tx_id="tx-pending-simple", conn_id=1, ack=True)
         result = await twin.on_ack(ack_dto)
@@ -991,7 +991,7 @@ class TestCloudAlignedMode:
         assert result.error == "box_nack"
 
         # Verify _pending_simple is cleared after NACK
-        assert twin._pending_simple == {}
+        assert not twin._pending_simple
 
     async def test_cloud_aligned_basic_conn_id_validation(self):
         """
@@ -1250,7 +1250,7 @@ class TestDigitalTwinAdditionalCoverage:
         twin._update_pending_simple_after_ack(make_on_ack_dto("tx-cloud", 3, True), inflight)
         assert twin._pending_simple["status"] == "ack_received"
         twin._update_pending_simple_after_ack(make_on_ack_dto("tx-cloud", 3, False), inflight)
-        assert twin._pending_simple == {}
+        assert not twin._pending_simple
 
         r_ok = await twin.on_ack(make_on_ack_dto("tx-cloud", conn_id=3, ack=True))
         assert r_ok is not None and r_ok.status == "box_ack"

@@ -602,7 +602,6 @@ class TestTimeoutNoFalsePositives:
         # For this edge case, we need to test a different scenario
         # Let's skip this test as it tests an internal edge case that doesn't
         # occur in normal flow (timeout task only created on delivery)
-        pass
 
     async def test_concurrent_timeout_and_ack_no_race(self):
         """

@@ -1,3 +1,5 @@
+"""Tests for transaction formatting in ControlPipeline."""
+
 import importlib
 from typing import Any
 
@@ -5,6 +7,7 @@ ControlPipeline = importlib.import_module("control_pipeline").ControlPipeline
 
 
 def test_format_tx_with_and_without_attempts():
+    """Test format_tx includes attempts when present."""
     tx: dict[str, Any] = {
         "tbl_name": "tbl_box_prms",
         "tbl_item": "SA",

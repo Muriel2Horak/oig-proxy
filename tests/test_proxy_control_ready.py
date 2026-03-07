@@ -1,3 +1,5 @@
+"""Tests for ready state in ControlSettings."""
+
 import importlib
 from types import SimpleNamespace
 
@@ -5,6 +7,7 @@ ControlSettings = importlib.import_module("control_settings").ControlSettings
 
 
 def test_get_health_includes_basic_proxy_flags():
+    """Test get_health returns proxy flags."""
     proxy = SimpleNamespace(
         device_id="DEV1",
         box_connected=True,

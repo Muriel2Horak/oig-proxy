@@ -28,6 +28,7 @@ import pytest
 # Ensure addon/oig-proxy is in path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'addon', 'oig-proxy'))
 
+# pylint: disable=wrong-import-position
 from config import TWIN_CLOUD_ALIGNED
 from digital_twin import DigitalTwin, DigitalTwinConfig
 from twin_state import (
@@ -114,13 +115,13 @@ class TestQueueSettingParity:
         # Twin mode test
         twin = DigitalTwin(session_id="test-session")
         dto = make_queue_dto(tx_id="tx-queue-1", conn_id=1)
-        
+
         result = await twin.queue_setting(dto)
-        
+
         assert result is not None
         assert result.status == "accepted"
         assert result.tx_id == "tx-queue-1"
-        
+
         # Verify queue length increased
         queue_len = await twin.get_queue_length()
         assert queue_len == 1
@@ -131,13 +132,13 @@ class TestQueueSettingParity:
         EXPECTED: Queue length reflects number of queued items
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Queue multiple settings
         for i in range(3):
             dto = make_queue_dto(tx_id=f"tx-queue-{i}", conn_id=1)
             result = await twin.queue_setting(dto)
             assert result.status == "accepted"
-        
+
         # Verify queue length
         queue_len = await twin.get_queue_length()
         assert queue_len == 3
@@ -149,10 +150,10 @@ class TestQueueSettingParity:
         """
         twin = DigitalTwin(session_id="test-session")
         custom_tx_id = "custom-tx-12345"
-        
+
         dto = make_queue_dto(tx_id=custom_tx_id, conn_id=1)
         result = await twin.queue_setting(dto)
-        
+
         assert result.tx_id == custom_tx_id
 
 
@@ -172,17 +173,17 @@ class TestAckProcessingParityCloudAligned:
         EXPECTED: ACK processed successfully, returns box_ack status
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-ack-ok", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-ack-ok", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-ack-ok", conn_id=1)
-        
+
         # Process ACK on same conn_id
         ack_dto = make_on_ack_dto(tx_id="tx-ack-ok", conn_id=1, ack=True)
         result = await twin.on_ack(ack_dto)
-        
+
         assert result is not None
         assert result.status == "box_ack"
 
@@ -191,24 +192,24 @@ class TestAckProcessingParityCloudAligned:
         CLOUD-ALIGNED MODE:
         SCENARIO: ACK arrives on different connection than where delivered
         EXPECTED: Returns None (silently ignored, no exception)
-        
+
         This matches Cloud behavior: maybe_handle_ack returns False (line 336-345)
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver on conn_id=1
         dto = make_queue_dto(tx_id="tx-ack-wrong", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-ack-wrong", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-ack-wrong", conn_id=1)
-        
+
         # Process ACK on wrong conn_id
         ack_dto = make_on_ack_dto(tx_id="tx-ack-wrong", conn_id=2, ack=True)
         result = await twin.on_ack(ack_dto)
-        
+
         # Cloud-aligned: returns None (silently ignored)
         assert result is None
-        
+
         # Verify pending state is unchanged
         pending = await twin.get_inflight()
         assert pending is not None
@@ -221,18 +222,18 @@ class TestAckProcessingParityCloudAligned:
         EXPECTED: ACK only processed if conn_id matches delivered_conn_id
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver on conn_id=5
         dto = make_queue_dto(tx_id="tx-conn-val", conn_id=5)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-conn-val", conn_id=5)
         await twin.deliver_pending_setting(tx_id="tx-conn-val", conn_id=5)
-        
+
         # ACK on wrong conn_id returns None
         ack_dto = make_on_ack_dto(tx_id="tx-conn-val", conn_id=99, ack=True)
         result = await twin.on_ack(ack_dto)
         assert result is None
-        
+
         # ACK on correct conn_id succeeds
         ack_dto = make_on_ack_dto(tx_id="tx-conn-val", conn_id=5, ack=True)
         result = await twin.on_ack(ack_dto)
@@ -251,17 +252,17 @@ class TestAckProcessingParityLegacy:
         EXPECTED: ACK processed successfully, returns box_ack status
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-ack-ok", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-ack-ok", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-ack-ok", conn_id=1)
-        
+
         # Process ACK on same conn_id
         ack_dto = make_on_ack_dto(tx_id="tx-ack-ok", conn_id=1, ack=True)
         result = await twin.on_ack(ack_dto)
-        
+
         assert result is not None
         assert result.status == "box_ack"
 
@@ -270,24 +271,24 @@ class TestAckProcessingParityLegacy:
         LEGACY MODE:
         SCENARIO: ACK arrives on different connection than where delivered
         EXPECTED: Raises InvariantViolationError (INV-1)
-        
+
         This is stricter than Cloud behavior which silently ignores.
         """
         from twin_transaction import InvariantViolationError
-        
+
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver on conn_id=1
         dto = make_queue_dto(tx_id="tx-ack-wrong", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-ack-wrong", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-ack-wrong", conn_id=1)
-        
+
         # Process ACK on wrong conn_id raises exception
         ack_dto = make_on_ack_dto(tx_id="tx-ack-wrong", conn_id=2, ack=True)
         with pytest.raises(InvariantViolationError) as exc_info:
             await twin.on_ack(ack_dto)
-        
+
         assert "INV-1" in str(exc_info.value)
 
 
@@ -301,21 +302,21 @@ class TestAckProcessingParityShared:
         EXPECTED: Both modes clear pending state and return error status
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-nack", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-nack", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-nack", conn_id=1)
-        
+
         # Process NACK
         nack_dto = make_on_ack_dto(tx_id="tx-nack", conn_id=1, ack=False)
         result = await twin.on_ack(nack_dto)
-        
+
         assert result is not None
         assert result.status == "error"
         assert result.error == "box_nack"
-        
+
         # Verify pending state is cleared
         pending = await twin.get_inflight()
         assert pending is None
@@ -326,11 +327,11 @@ class TestAckProcessingParityShared:
         EXPECTED: Both modes return None (no matching transaction)
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # No setup - try ACK for non-existent tx
         ack_dto = make_on_ack_dto(tx_id="tx-unknown", conn_id=1, ack=True)
         result = await twin.on_ack(ack_dto)
-        
+
         assert result is None
 
 
@@ -347,24 +348,24 @@ class TestTimeoutHandlingParity:
         """
         SCENARIO: Setting delivered but no ACK received within timeout period
         EXPECTED: Transaction times out and moves to deferred state
-        
+
         Both Cloud and Twin should timeout similarly after ack_timeout_s.
-        
+
         Note: This test verifies the timeout mechanism exists. The actual
         stage transition may vary based on timing and implementation.
         """
         config = DigitalTwinConfig(ack_timeout_s=0.02)  # Very short timeout for test
         twin = DigitalTwin(session_id="test-session", config=config)
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-timeout", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-timeout", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-timeout", conn_id=1)
-        
+
         # Wait for timeout to trigger (give it more time)
         await asyncio.sleep(0.15)
-        
+
         # Check that pending state is still tracked (timeout didn't crash)
         pending = await twin.get_inflight()
         # In both modes, pending should still exist or be cleared gracefully
@@ -383,20 +384,20 @@ class TestTimeoutHandlingParity:
         """
         config = DigitalTwinConfig(ack_timeout_s=0.5)  # Longer timeout
         twin = DigitalTwin(session_id="test-session", config=config)
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-no-timeout", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-no-timeout", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-no-timeout", conn_id=1)
-        
+
         # Process ACK immediately (before timeout)
         ack_dto = make_on_ack_dto(tx_id="tx-no-timeout", conn_id=1, ack=True)
         result = await twin.on_ack(ack_dto)
-        
+
         assert result is not None
         assert result.status == "box_ack"
-        
+
         # Wait a bit and verify state is still box_ack (not deferred)
         await asyncio.sleep(0.05)
         pending = await twin.get_inflight()
@@ -407,30 +408,30 @@ class TestTimeoutHandlingParity:
         """
         SCENARIO: New transaction started before old timeout fires
         EXPECTED: Old timeout doesn't affect new transaction (INV-3 pattern)
-        
+
         Both Cloud and Twin validate that timeout belongs to current transaction.
         """
         config = DigitalTwinConfig(ack_timeout_s=0.05)
         twin = DigitalTwin(session_id="test-session", config=config)
-        
+
         # First transaction
         dto1 = make_queue_dto(tx_id="tx-timeout-1", conn_id=1)
         await twin.queue_setting(dto1)
         await twin.start_inflight("tx-timeout-1", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-timeout-1", conn_id=1)
-        
+
         # Complete first transaction before timeout
         await twin.finish_inflight("tx-timeout-1", conn_id=1, success=True)
-        
+
         # Second transaction
         dto2 = make_queue_dto(tx_id="tx-timeout-2", conn_id=1)
         await twin.queue_setting(dto2)
         await twin.start_inflight("tx-timeout-2", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-timeout-2", conn_id=1)
-        
+
         # Wait for original timeout to fire
         await asyncio.sleep(0.1)
-        
+
         # Second transaction should be unaffected
         pending = await twin.get_inflight()
         assert pending is not None
@@ -453,13 +454,13 @@ class TestDisconnectHandlingParity:
         EXPECTED: Pending state is cleared and moved to error status
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-disconnect", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-disconnect", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-disconnect", conn_id=1)
-        
+
         # Disconnect
         disconnect_dto = OnDisconnectDTO(
             tx_id=None,
@@ -467,11 +468,11 @@ class TestDisconnectHandlingParity:
             session_id="test-session",
         )
         results = await twin.on_disconnect(disconnect_dto)
-        
+
         # Verify state is cleared
         pending = await twin.get_inflight()
         assert pending is None
-        
+
         # Verify error result returned
         assert len(results) == 1
         assert results[0].error == "disconnect"
@@ -480,19 +481,19 @@ class TestDisconnectHandlingParity:
         """
         SCENARIO: Disconnect occurs before setting is delivered
         EXPECTED: Setting remains in queue for next connection
-        
+
         Cloud: clear_pending_on_disconnect keeps undelivered settings (line 459-464)
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue but don't start inflight
         dto = make_queue_dto(tx_id="tx-undelivered", conn_id=1)
         await twin.queue_setting(dto)
-        
+
         # Verify queue has item
         queue_len_before = await twin.get_queue_length()
         assert queue_len_before == 1
-        
+
         # Disconnect
         disconnect_dto = OnDisconnectDTO(
             tx_id=None,
@@ -500,7 +501,7 @@ class TestDisconnectHandlingParity:
             session_id="test-session",
         )
         await twin.on_disconnect(disconnect_dto)
-        
+
         # Queue should still have the item
         queue_len_after = await twin.get_queue_length()
         assert queue_len_after == 1
@@ -520,25 +521,25 @@ class TestEdgeCaseParity:
         CLOUD-ALIGNED MODE:
         SCENARIO: Multiple ACKs received for same transaction
         EXPECTED: First ACK processes, subsequent ACKs handled gracefully
-        
+
         Note: In cloud-aligned mode, after first ACK the transaction moves to
         BOX_ACK stage. Second ACK may return None or raise depending on state.
         The key behavior is: no crash, state remains consistent.
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-multi-ack", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-multi-ack", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-multi-ack", conn_id=1)
-        
+
         # First ACK processes
         ack_dto = make_on_ack_dto(tx_id="tx-multi-ack", conn_id=1, ack=True)
         result1 = await twin.on_ack(ack_dto)
         assert result1 is not None
         assert result1.status == "box_ack"
-        
+
         # Second ACK for same tx - in cloud-aligned mode, the state is BOX_ACK
         # and trying to ACK again may return None or the same result
         # The key behavior is: no crash, state consistent
@@ -547,7 +548,7 @@ class TestEdgeCaseParity:
             # If it returns a result, it should be consistent
             if result2 is not None:
                 assert result2.tx_id == "tx-multi-ack"
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             # If it raises, that's also acceptable behavior for duplicate ACK
             pass
 
@@ -557,19 +558,19 @@ class TestEdgeCaseParity:
         EXPECTED: NACK clears state, subsequent ACK returns None
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Setup: Queue, start inflight, deliver
         dto = make_queue_dto(tx_id="tx-nack-then-ack", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-nack-then-ack", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-nack-then-ack", conn_id=1)
-        
+
         # NACK clears state
         nack_dto = make_on_ack_dto(tx_id="tx-nack-then-ack", conn_id=1, ack=False)
         result_nack = await twin.on_ack(nack_dto)
         assert result_nack is not None
         assert result_nack.status == "error"
-        
+
         # Subsequent ACK returns None
         ack_dto = make_on_ack_dto(tx_id="tx-nack-then-ack", conn_id=1, ack=True)
         result_ack = await twin.on_ack(ack_dto)
@@ -581,15 +582,15 @@ class TestEdgeCaseParity:
         EXPECTED: Graceful handling (returns None/0 as appropriate)
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # Queue length should be 0
         queue_len = await twin.get_queue_length()
         assert queue_len == 0
-        
+
         # Getting inflight should return None
         pending = await twin.get_inflight()
         assert pending is None
-        
+
         # Delivering pending on empty should return None
         delivered = await twin.deliver_pending_setting(tx_id="tx-empty", conn_id=1)
         assert delivered is None
@@ -609,7 +610,7 @@ class TestBehavioralParitySummary:
         CLOUD-ALIGNED MODE:
         SCENARIO: Complete setting lifecycle from queue to completion
         EXPECTED: Same behavior as Cloud
-        
+
         This test exercises the full happy path:
         1. Queue setting
         2. Start inflight
@@ -618,34 +619,34 @@ class TestBehavioralParitySummary:
         5. Complete transaction
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # 1. Queue setting
         dto = make_queue_dto(tx_id="tx-lifecycle", conn_id=1)
         result = await twin.queue_setting(dto)
         assert result.status == "accepted"
-        
+
         # 2. Start inflight
         pending = await twin.start_inflight("tx-lifecycle", conn_id=1)
         assert pending is not None
         assert pending.stage == SettingStage.ACCEPTED
-        
+
         # 3. Deliver setting
         delivered = await twin.deliver_pending_setting(tx_id="tx-lifecycle", conn_id=1)
         assert delivered is not None
         assert delivered.delivered_conn_id == 1
         assert delivered.stage == SettingStage.SENT_TO_BOX
-        
+
         # 4. Receive ACK
         ack_dto = make_on_ack_dto(tx_id="tx-lifecycle", conn_id=1, ack=True)
         ack_result = await twin.on_ack(ack_dto)
         assert ack_result is not None
         assert ack_result.status == "box_ack"
-        
+
         # 5. Complete transaction
         finish_result = await twin.finish_inflight("tx-lifecycle", conn_id=1, success=True)
         assert finish_result is not None
         assert finish_result.status == "completed"
-        
+
         # Verify cleared state
         pending = await twin.get_inflight()
         assert pending is None
@@ -657,34 +658,34 @@ class TestBehavioralParitySummary:
         EXPECTED: Full lifecycle works with strict invariant validation
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # 1. Queue setting
         dto = make_queue_dto(tx_id="tx-lifecycle", conn_id=1)
         result = await twin.queue_setting(dto)
         assert result.status == "accepted"
-        
+
         # 2. Start inflight
         pending = await twin.start_inflight("tx-lifecycle", conn_id=1)
         assert pending is not None
         assert pending.stage == SettingStage.ACCEPTED
-        
+
         # 3. Deliver setting
         delivered = await twin.deliver_pending_setting(tx_id="tx-lifecycle", conn_id=1)
         assert delivered is not None
         assert delivered.delivered_conn_id == 1
         assert delivered.stage == SettingStage.SENT_TO_BOX
-        
+
         # 4. Receive ACK
         ack_dto = make_on_ack_dto(tx_id="tx-lifecycle", conn_id=1, ack=True)
         ack_result = await twin.on_ack(ack_dto)
         assert ack_result is not None
         assert ack_result.status == "box_ack"
-        
+
         # 5. Complete transaction
         finish_result = await twin.finish_inflight("tx-lifecycle", conn_id=1, success=True)
         assert finish_result is not None
         assert finish_result.status == "completed"
-        
+
         # Verify cleared state
         pending = await twin.get_inflight()
         assert pending is None
@@ -695,22 +696,22 @@ class TestBehavioralParitySummary:
         EXPECTED: Can queue new setting after error (both modes)
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         # First transaction - fails with NACK
         dto1 = make_queue_dto(tx_id="tx-error-1", conn_id=1)
         await twin.queue_setting(dto1)
         await twin.start_inflight("tx-error-1", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-error-1", conn_id=1)
-        
+
         nack_dto = make_on_ack_dto(tx_id="tx-error-1", conn_id=1, ack=False)
         result = await twin.on_ack(nack_dto)
         assert result.status == "error"
-        
+
         # Second transaction - should succeed
         dto2 = make_queue_dto(tx_id="tx-error-2", conn_id=1)
         result = await twin.queue_setting(dto2)
         assert result.status == "accepted"
-        
+
         # Can start new inflight
         pending = await twin.start_inflight("tx-error-2", conn_id=1)
         assert pending is not None
@@ -730,23 +731,23 @@ class TestInternalStateDifferences:
         CLOUD-ALIGNED MODE:
         SCENARIO: Cloud-aligned mode ACK processing
         EXPECTED: _pending_simple dict is populated (Twin-specific internal state)
-        
+
         Note: This is an internal implementation detail, not external behavior.
         Cloud doesn't have this, but it doesn't affect external parity.
         """
         twin = DigitalTwin(session_id="test-session")
-        
+
         dto = make_queue_dto(tx_id="tx-pending-simple", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-pending-simple", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-pending-simple", conn_id=1)
-        
+
         # Before ACK, _pending_simple is empty
         assert twin._pending_simple == {}
-        
+
         ack_dto = make_on_ack_dto(tx_id="tx-pending-simple", conn_id=1, ack=True)
         await twin.on_ack(ack_dto)
-        
+
         # After ACK, _pending_simple is populated
         assert twin._pending_simple["tx_id"] == "tx-pending-simple"
         assert twin._pending_simple["status"] == "ack_received"
@@ -756,22 +757,22 @@ class TestInternalStateDifferences:
         LEGACY MODE:
         SCENARIO: Legacy mode with strict invariant validation
         EXPECTED: Raises InvariantViolationError for INV-1 violations
-        
+
         Note: Cloud-aligned mode returns None instead of raising.
         This is a documented behavioral difference.
         """
         from twin_transaction import InvariantViolationError
-        
+
         twin = DigitalTwin(session_id="test-session")
-        
+
         dto = make_queue_dto(tx_id="tx-inv-legacy", conn_id=1)
         await twin.queue_setting(dto)
         await twin.start_inflight("tx-inv-legacy", conn_id=1)
         await twin.deliver_pending_setting(tx_id="tx-inv-legacy", conn_id=1)
-        
+
         # ACK on wrong conn_id raises InvariantViolationError in legacy mode
         ack_dto = make_on_ack_dto(tx_id="tx-inv-legacy", conn_id=2, ack=True)
         with pytest.raises(InvariantViolationError) as exc_info:
             await twin.on_ack(ack_dto)
-        
+
         assert "INV-1" in str(exc_info.value)

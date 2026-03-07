@@ -126,6 +126,7 @@ def twin_adapter():
     return StubTwinAdapter()
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def make_queue_setting_dto(
     tbl_name: str,
     tbl_item: str,

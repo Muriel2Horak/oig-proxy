@@ -1,3 +1,5 @@
+"""Tests for additional ControlPipeline and ControlSettings functionality."""
+
 import importlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,6 +21,7 @@ def _proxy_stub() -> SimpleNamespace:
 
 
 def test_formatters_are_stable():
+    """Test that format_tx and format_result produce stable output."""
     tx = {
         "tbl_name": "tbl_box_prms",
         "tbl_item": "MODE",
@@ -40,6 +43,7 @@ def test_formatters_are_stable():
 
 
 def test_append_to_log_writes_when_path_set(tmp_path):
+    """Test append_to_log writes to file when log_path is set."""
     pipe = ControlPipeline(_proxy_stub())
     target = tmp_path / "control.log"
     pipe.log_path = str(target)
@@ -48,6 +52,7 @@ def test_append_to_log_writes_when_path_set(tmp_path):
 
 
 def test_control_settings_parse_setting_event_roundtrip():
+    """Test parse_setting_event correctly parses setting event strings."""
     parsed = ControlSettings.parse_setting_event(
         "Remotely : tbl_box_prms / MODE: [0]->[1]"
     )
@@ -56,6 +61,7 @@ def test_control_settings_parse_setting_event_roundtrip():
 
 @pytest.mark.asyncio
 async def test_control_settings_handle_setting_event_tracks_buffer():
+    """Test handle_setting_event tracks set commands in buffer."""
     cs = ControlSettings(_proxy_stub())
     await cs.handle_setting_event(
         parsed={"Type": "Setting", "Content": "Remotely : tbl_box_prms / MODE: [0]->[1]"},

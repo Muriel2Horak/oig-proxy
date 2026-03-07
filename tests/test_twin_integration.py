@@ -22,16 +22,16 @@ class TestTwinSensorMap:
         """Verify Twin sensors are defined in sensor_map.json"""
         # Load sensor map
         sensor_map_path = os.path.join(
-            os.path.dirname(__file__), 
-            '..', 
-            'addon', 
-            'oig-proxy', 
+            os.path.dirname(__file__),
+            '..',
+            'addon',
+            'oig-proxy',
             'sensor_map.json'
         )
-        
-        with open(sensor_map_path) as f:
+
+        with open(sensor_map_path, encoding='utf-8') as f:
             sensor_map = json.load(f)
-        
+
         # Verify Twin sensors exist
         twin_sensors = [
             'twin_state:queue_length',
@@ -40,13 +40,13 @@ class TestTwinSensorMap:
             'twin_state:session_active',
             'twin_state:mode'
         ]
-        
+
         for sensor in twin_sensors:
             assert sensor in sensor_map['sensors'], f"Missing sensor: {sensor}"
-        
+
         # Verify session_active is binary
         assert sensor_map['sensors']['twin_state:session_active'].get('is_binary') is True
-        
+
         # Verify all use proxy device mapping
         for sensor in twin_sensors:
             assert sensor_map['sensors'][sensor]['device_mapping'] == 'proxy'
@@ -54,23 +54,23 @@ class TestTwinSensorMap:
     def test_twin_sensor_structure(self):
         """Verify Twin sensors have correct structure"""
         sensor_map_path = os.path.join(
-            os.path.dirname(__file__), 
-            '..', 
-            'addon', 
-            'oig-proxy', 
+            os.path.dirname(__file__),
+            '..',
+            'addon',
+            'oig-proxy',
             'sensor_map.json'
         )
-        
-        with open(sensor_map_path) as f:
+
+        with open(sensor_map_path, encoding='utf-8') as f:
             sensor_map = json.load(f)
-        
+
         # Check required fields for each Twin sensor
         required_fields = [
             'name', 'name_cs', 'unit_of_measurement', 'device_class',
             'state_class', 'sensor_type_category', 'device_mapping',
             'todo', 'entity_category'
         ]
-        
+
         twin_sensors = [
             'twin_state:queue_length',
             'twin_state:inflight_tx',
@@ -78,7 +78,7 @@ class TestTwinSensorMap:
             'twin_state:session_active',
             'twin_state:mode'
         ]
-        
+
         for sensor_name in twin_sensors:
             sensor = sensor_map['sensors'][sensor_name]
             for field in required_fields:
@@ -108,10 +108,10 @@ class TestTwinArchitecture:
             'oig-proxy',
             'digital_twin.py'
         )
-        
-        with open(dt_path) as f:
+
+        with open(dt_path, encoding='utf-8') as f:
             content = f.read()
-        
+
         assert 'class TwinMQTTHandler' in content, "TwinMQTTHandler class not found"
         assert 'def on_mqtt_message' in content, "on_mqtt_message method not found"
 
@@ -124,10 +124,10 @@ class TestTwinArchitecture:
             'oig-proxy',
             'digital_twin.py'
         )
-        
-        with open(dt_path) as f:
+
+        with open(dt_path, encoding='utf-8') as f:
             content = f.read()
-        
+
         assert '_publish_state' in content, "_publish_state method not found"
         assert 'twin_state/state' in content, "twin_state topic not found"
 

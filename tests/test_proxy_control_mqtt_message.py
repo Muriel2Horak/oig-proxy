@@ -1,3 +1,5 @@
+"""Tests for MQTT message handling in ControlSettings."""
+
 import importlib
 import json
 
@@ -5,6 +7,7 @@ ControlSettings = importlib.import_module("control_settings").ControlSettings
 
 
 def test_parse_setting_event_from_json_content_field():
+    """Test parsing setting event from JSON Content field."""
     payload = {
         "Type": "Setting",
         "Content": "Remotely : tbl_box_prms / SA: [0]->[1]",

@@ -107,9 +107,6 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
     proxy.mqtt_publisher.start_health_check = fake_health_check
     proxy.mqtt_publisher.attach_loop = lambda *_: None
 
-    async def fake_publish():
-        return None
-
     async def fake_proxy_status():
         return None
 

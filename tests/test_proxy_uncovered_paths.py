@@ -455,7 +455,7 @@ async def test_respond_local_offline_send_ack_false():
     proxy = _mk_proxy()
     writer = DummyWriter()
     await proxy._respond_local_offline(b"x", "tbl", "DEV1", writer, send_ack=False)
-    assert writer.buffer == []
+    assert not writer.buffer
 
 
 def test_resolve_local_control_routing_all_branches():
@@ -535,7 +535,7 @@ async def test_dispatch_local_control_via_twin_reaches_final_false_with_stateful
     proxy = _mk_proxy()
     writer = DummyWriter()
 
-    class StatefulName:
+    class StatefulName:  # pylint: disable=too-few-public-methods
         def __init__(self):
             self.calls = 0
 
@@ -606,7 +606,7 @@ async def test_maybe_handle_twin_ack_schedules_background_task(monkeypatch):
         on_ack=AsyncMock(return_value=SimpleNamespace(tx_id="tx2")),
     )
 
-    class DummyTask:
+    class DummyTask:  # pylint: disable=too-few-public-methods
         def __init__(self):
             self.cb = None
 
