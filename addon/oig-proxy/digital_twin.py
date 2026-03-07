@@ -114,9 +114,9 @@ class TwinMQTTHandler:
         self._qos = qos
         self._loop: asyncio.AbstractEventLoop | None = None
         self.set_topic = f"{MQTT_NAMESPACE}/+/+/set"
+        self.on_mqtt_message = self._default_on_mqtt_message
 
     def setup_mqtt(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Initialize MQTT handler with event loop."""
         self._loop = loop
 
         def _handler(
@@ -139,8 +139,7 @@ class TwinMQTTHandler:
         )
         logger.info("TWIN_MQTT: MQTT enabled (set=%s)", self.set_topic)
 
-    async def on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
-        """Handle incoming MQTT set messages."""
+    async def _default_on_mqtt_message(self, *, topic: str, payload: bytes) -> None:
         parts = topic.split("/")
         if len(parts) != 4 or parts[3] != "set":
             logger.error("TWIN_MQTT: Invalid topic format: %s", topic)

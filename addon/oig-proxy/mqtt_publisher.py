@@ -261,6 +261,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
 
     def _setup_client_callbacks(self) -> None:
         """Nastavení callbacků pro MQTT klienta."""
+        if self.client is None:
+            return
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
         self.client.on_publish = self._on_publish

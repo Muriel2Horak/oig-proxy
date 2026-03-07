@@ -520,6 +520,8 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         return "unknown"
 
     async def _do_initial_provisioning(self) -> None:
+        if self.client is None:
+            return
         try:
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
@@ -528,6 +530,8 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             logger.debug("Initial telemetry provisioning failed: %s", exc)
 
     async def _send_first_telemetry(self) -> None:
+        if self.client is None:
+            return
         try:
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
@@ -538,6 +542,8 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             logger.debug("First telemetry send failed: %s", exc)
 
     async def _send_periodic_telemetry(self) -> None:
+        if self.client is None:
+            return
         try:
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
@@ -762,6 +768,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         if device_id:
             metrics.update(self._build_device_specific_metrics(device_id))
 
+    # pylint: disable=protected-access
     def collect_metrics(self) -> dict[str, Any]:
         """Sbírá a agreguje telemetrické metriky z proxy."""
         proxy = self._proxy
@@ -815,6 +822,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         device_id = proxy.device_id if proxy.device_id != "AUTO" else ""
         self._add_device_specific_metrics(metrics, device_id)
         return metrics
+    # pylint: enable=protected-access
 
     # ------------------------------------------------------------------
     # Fire-and-forget events

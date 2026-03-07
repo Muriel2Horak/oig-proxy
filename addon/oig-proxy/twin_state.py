@@ -39,6 +39,7 @@ class SettingStage(str, Enum):
 
 
 @dataclass(frozen=True)
+# pylint: disable=too-many-instance-attributes
 class QueueSettingDTO:
     """DTO for queuing a setting command.
 
@@ -137,6 +138,7 @@ class OnAckDTO:
 
 
 @dataclass(frozen=True)
+# pylint: disable=too-many-instance-attributes
 class OnTblEventDTO:
     """DTO for tbl_events handling.
 
@@ -196,6 +198,7 @@ class OnDisconnectDTO:
         }
 
 
+# pylint: disable=too-many-instance-attributes
 @dataclass
 class PendingSettingState:
     """Mutable state for a pending setting.
@@ -509,6 +512,7 @@ class PendingSettingState:
 
 
 @dataclass(frozen=True)
+# pylint: disable=too-many-instance-attributes
 class SnapshotDTO:
     """DTO for state snapshots.
 
@@ -550,6 +554,7 @@ class SnapshotDTO:
 
 
 @dataclass(frozen=True)
+# pylint: disable=too-many-instance-attributes
 class TransactionResultDTO:
     """DTO for transaction results.
 

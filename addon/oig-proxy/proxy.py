@@ -22,6 +22,7 @@ from typing import Any
 from parser import OIGDataParser
 from cloud_forwarder import CloudForwarder
 from control_settings import ControlSettings
+from control_pipeline import ControlPipeline
 from mode_persistence import ModePersistence
 from proxy_status import ProxyStatusReporter
 from config import (
@@ -107,6 +108,7 @@ class OIGProxy:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._control_api: ControlAPIServer | None = None
         self._cs = ControlSettings(self)
+        self._ctrl = ControlPipeline(self)
         self._proxy_status_attrs_topic: str = str(PROXY_STATUS_ATTRS_TOPIC)
         self._ps = ProxyStatusReporter(self)
         self._local_getactual_enabled: bool = bool(LOCAL_GETACTUAL_ENABLED)
@@ -834,7 +836,7 @@ class OIGProxy:
                 conn_id,
                 self._active_box_peer,
             )
-        except (ConnectionResetError, OSError, TimeoutError):
+        except (OSError, TimeoutError):
             logger.exception(
                 "❌ Box connection handler error (conn=%s, peer=%s)",
                 conn_id,

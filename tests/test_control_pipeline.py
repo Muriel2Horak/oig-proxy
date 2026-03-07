@@ -1,3 +1,6 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring
+"""Tests for control_pipeline module."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -15,6 +18,7 @@ ControlPipeline = _MODULE.ControlPipeline
 
 
 def test_control_pipeline_init_defaults():
+    """Test ControlPipeline initialization with default values."""
     ctrl = ControlPipeline(object())
 
     assert isinstance(ctrl.session_id, str)
