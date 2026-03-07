@@ -1,0 +1,23 @@
+Task T2 — External dependency uncertainty capture
+
+Timestamp: 2026-03-07
+Host checked: `ha` (SSH)
+
+Commands executed:
+1) `ssh -o BatchMode=yes -o ConnectTimeout=5 ha "echo connected"`
+2) `ssh -o BatchMode=yes -o ConnectTimeout=10 ha "grep -R -nE --include='*.yaml' --include='*.yml' 'oig_local/oig_proxy/control/(set|result|status)' /homeassistant 2>/dev/null || true"`
+3) `ssh -o BatchMode=yes -o ConnectTimeout=10 ha "grep -R -nE --include='*' 'oig_local/oig_proxy/control/(set|result|status)' /homeassistant/.storage 2>/dev/null || true"`
+
+Observed output summary:
+- SSH connectivity: OK (`connected`)
+- YAML scan under `/homeassistant`: no matches
+- Storage scan under `/homeassistant/.storage`: no matches
+
+External consumer class status:
+- HA YAML automations/scripts using legacy topics: NO (not found on scanned host)
+- HA `.storage` metadata entries with legacy topics: NO (not found on scanned host)
+- Node-RED flows / AppDaemon / custom external services outside `/homeassistant`: UNKNOWN
+- External MQTT clients (mobile apps, dashboards, integrations outside this host): UNKNOWN
+
+Risk statement:
+- Even with no matches on the scanned HA host, external dependencies remain possible outside inspected paths and outside this host; treat legacy `control/result` and `control/status/#` consumers as unknown blast radius until broker-level subscription telemetry or fleet-wide config audit is collected.
