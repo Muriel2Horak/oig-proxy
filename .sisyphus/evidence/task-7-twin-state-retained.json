@@ -1,0 +1,28 @@
+{
+  "scenario": "Twin state retained publication",
+  "topic": "oig_local/oig_proxy/twin_state/state",
+  "retain": true,
+  "qos": 1,
+  "payload_fields": ["queue_length", "inflight", "last_result", "session_active", "mode", "timestamp"],
+  "publication_points": [
+    "publish_initial_state() — called after MQTT connect when twin enabled",
+    "queue_setting() — after each command queued",
+    "start_inflight() / _deliver_on_is_new_set() — after inflight transition",
+    "on_ack() — after ACK/NACK received (cloud-aligned and legacy)",
+    "_process_tbl_event_locked() — after applied confirmation",
+    "mark_input_error() — after input validation error",
+    "on_disconnect() — after box disconnect",
+    "on_reconnect() — after box reconnect"
+  ],
+  "initial_state_guarantee": "publish_initial_state() is called in proxy._initialize_mqtt() immediately after MQTT connect succeeds, ensuring retained payload is always available when twin is enabled",
+  "example_payload": {
+    "queue_length": 0,
+    "inflight": null,
+    "last_result": null,
+    "session_active": false,
+    "mode": "twin",
+    "timestamp": "2026-03-07T12:00:00+00:00"
+  },
+  "verification_method": "mosquitto_sub -t 'oig_local/oig_proxy/twin_state/state' -C 1 | jq .",
+  "result": "PASS"
+}

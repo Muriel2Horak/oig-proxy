@@ -200,6 +200,8 @@ class OIGProxy:
 
         if self._twin_mqtt_handler is not None and self._loop is not None:
             self._twin_mqtt_handler.setup_mqtt(self._loop)
+        if self._twin is not None and connected:
+            await self._twin.publish_initial_state()
         self._msc.setup()
 
     def _install_twin_mqtt_activation_hook(self) -> None:

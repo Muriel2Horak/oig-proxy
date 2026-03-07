@@ -178,64 +178,58 @@ class TwinMQTTHandler:
             detail=detail,
         )
 
-    async def _handle_legacy_control_message(self, *, topic: str, payload: bytes) -> None:
+    @staticmethod
+    def _parse_payload_json(payload: bytes) -> dict[str, Any] | None:
         try:
             data = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            logger.error("TWIN_MQTT: Invalid JSON payload on legacy topic %s: %s", topic, exc)
-            await self._publish_legacy_error(payload={}, error="invalid_json")
-            return
-
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
         if not isinstance(data, dict):
-            logger.error(
-                "TWIN_MQTT: JSON payload must be object on legacy topic %s",
-                topic,
-            )
-            await self._publish_legacy_error(payload={}, error="invalid_payload_type")
-            return
+            return None
+        return data
 
-        tbl_name = str(data.get("tbl_name") or data.get("TblName") or "").strip()
-        tbl_item = str(data.get("tbl_item") or data.get("TblItem") or "").strip()
+    @staticmethod
+    def _extract_new_value(data: dict[str, Any]) -> Any:
         if "new_value" in data:
-            raw_new_value = data.get("new_value")
-        else:
-            raw_new_value = data.get("NewValue")
+            return data.get("new_value")
+        return data.get("NewValue")
+
+    async def _build_validated_dto(
+        self,
+        *,
+        data: dict[str, Any],
+        topic_tbl_name: str,
+        topic_tbl_item: str,
+        tx_id_strategy: str,
+    ) -> QueueSettingDTO | None:
+        tbl_name = str(data.get("tbl_name") or data.get("TblName") or topic_tbl_name).strip()
+        tbl_item = str(data.get("tbl_item") or data.get("TblItem") or topic_tbl_item).strip()
+        raw_new_value = self._extract_new_value(data)
 
         if not tbl_name or not tbl_item or raw_new_value is None:
-            logger.error("TWIN_MQTT: Legacy payload missing required fields on %s", topic)
             await self._publish_legacy_error(
                 payload=data,
                 error="missing_fields",
                 detail="required: tbl_name,tbl_item,new_value",
             )
-            return
+            return None
 
         allowed_items = CONTROL_WRITE_WHITELIST.get(tbl_name)
         if allowed_items is None:
-            logger.error(
-                "TWIN_MQTT: Legacy tbl_name not in whitelist: %s (topic=%s)",
-                tbl_name,
-                topic,
-            )
             await self._publish_legacy_error(
                 payload=data,
                 error="tbl_name_not_whitelisted",
                 detail=tbl_name,
             )
-            return
+            return None
 
         if tbl_item not in allowed_items:
-            logger.error(
-                "TWIN_MQTT: Legacy tbl_item not in whitelist: %s/%s",
-                tbl_name,
-                tbl_item,
-            )
             await self._publish_legacy_error(
                 payload=data,
                 error="tbl_item_not_whitelisted",
                 detail=f"{tbl_name}/{tbl_item}",
             )
-            return
+            return None
 
         normalized_value, norm_state = normalize_control_value(
             tbl_name,
@@ -248,15 +242,20 @@ class TwinMQTTHandler:
                 error="bad_value",
                 detail=norm_state,
             )
-            return
+            return None
 
         request_key_raw = str(data.get("request_key") or "").strip()
         request_key = request_key_raw or f"{tbl_name}/{tbl_item}/{norm_state}"
 
         tx_id_raw = str(data.get("tx_id") or "").strip()
-        tx_id = tx_id_raw or f"legacy-{hashlib.sha1(request_key.encode('utf-8')).hexdigest()[:16]}"
+        if tx_id_raw:
+            tx_id = tx_id_raw
+        elif tx_id_strategy == "legacy_hash":
+            tx_id = f"legacy-{hashlib.sha1(request_key.encode('utf-8')).hexdigest()[:16]}"
+        else:
+            tx_id = generate_tx_id()
 
-        dto = QueueSettingDTO(
+        return QueueSettingDTO(
             tx_id=tx_id,
             conn_id=0,
             tbl_name=tbl_name,
@@ -270,6 +269,22 @@ class TwinMQTTHandler:
                 else None
             ),
         )
+
+    async def _handle_legacy_control_message(self, *, topic: str, payload: bytes) -> None:
+        data = self._parse_payload_json(payload)
+        if data is None:
+            logger.error("TWIN_MQTT: Invalid JSON payload on legacy topic %s", topic)
+            await self._publish_legacy_error(payload={}, error="invalid_json")
+            return
+
+        dto = await self._build_validated_dto(
+            data=data,
+            topic_tbl_name="",
+            topic_tbl_item="",
+            tx_id_strategy="legacy_hash",
+        )
+        if dto is None:
+            return
 
         result = await self._twin.queue_setting(dto)
         logger.info(
@@ -294,44 +309,20 @@ class TwinMQTTHandler:
         topic_tbl_name = parts[1].strip()
         topic_tbl_item = parts[2].strip()
 
-        try:
-            data = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            logger.error("TWIN_MQTT: Invalid JSON payload on %s: %s", topic, exc)
+        data = self._parse_payload_json(payload)
+        if data is None:
+            logger.error("TWIN_MQTT: Invalid JSON payload on %s", topic)
+            await self._publish_legacy_error(payload={}, error="invalid_json")
             return
 
-        if not isinstance(data, dict):
-            logger.error("TWIN_MQTT: JSON payload must be object on %s", topic)
-            return
-
-        if "new_value" not in data:
-            logger.error("TWIN_MQTT: Missing new_value field on %s", topic)
-            return
-
-        tx_id_raw = str(data.get("tx_id") or "").strip()
-        tx_id = tx_id_raw or generate_tx_id()
-
-        tbl_name = str(data.get("tbl_name") or topic_tbl_name).strip() or topic_tbl_name
-        tbl_item = str(data.get("tbl_item") or topic_tbl_item).strip() or topic_tbl_item
-
-        dto = QueueSettingDTO(
-            tx_id=tx_id,
-            conn_id=0,
-            tbl_name=tbl_name,
-            tbl_item=tbl_item,
-            new_value=str(data.get("new_value")),
-            confirm=str(data.get("confirm") or "New"),
-            request_key=(
-                str(data.get("request_key")).strip()
-                if data.get("request_key") is not None
-                else None
-            ),
-            received_at=(
-                str(data.get("received_at")).strip()
-                if data.get("received_at") is not None
-                else None
-            ),
+        dto = await self._build_validated_dto(
+            data=data,
+            topic_tbl_name=topic_tbl_name,
+            topic_tbl_item=topic_tbl_item,
+            tx_id_strategy="generated",
         )
+        if dto is None:
+            return
 
         result = await self._twin.queue_setting(dto)
         logger.info(
@@ -391,6 +382,17 @@ class DigitalTwin:
     def attach_mqtt_publisher(self, mqtt_publisher: MQTTPublisher) -> None:
         """Attach MQTT publisher to the twin."""
         self._mqtt_publisher = mqtt_publisher
+
+    async def publish_initial_state(self) -> None:
+        """Publish initial retained twin state so subscribers always get a payload.
+
+        Must be called after MQTT publisher is connected.
+        """
+        logger.info(
+            "TWIN_MARKER: enabled stage=enabled session_id=%s",
+            self.session_id,
+        )
+        await self._publish_state()
 
     def attach_cloud_forwarder(
         self,
@@ -507,6 +509,7 @@ class DigitalTwin:
             "last_result": self._last_result,
             "session_active": self._active_conn_id is not None,
             "mode": "twin",
+            "timestamp": get_timestamp(),
         }
 
         try:
@@ -528,6 +531,13 @@ class DigitalTwin:
         detail: str | None = None,
     ) -> TransactionResultDTO:
         async with self._lock:
+            # Lifecycle marker: error
+            logger.info(
+                "TWIN_MARKER: error tx_id=%s stage=error error=%s detail=%s",
+                tx_id,
+                error,
+                detail or "",
+            )
             result = TransactionResultDTO(
                 tx_id=tx_id,
                 conn_id=conn_id,
@@ -569,6 +579,14 @@ class DigitalTwin:
             self._create_pending_state_for_queue(tx_id, dto)
             self._enqueue_setting_dto(dto)
             self._log_queued_setting(dto, tx_id)
+            # Lifecycle marker: queued
+            logger.info(
+                "TWIN_MARKER: queued tx_id=%s tbl=%s/%s stage=queued queue_len=%d",
+                tx_id,
+                dto.tbl_name,
+                dto.tbl_item,
+                len(self._queue),
+            )
             result = self._build_accepted_result(tx_id=tx_id, conn_id=dto.conn_id)
             self._store_last_result(
                 result,
@@ -675,13 +693,15 @@ class DigitalTwin:
             self._inflight = pending
             self._inflight_ctx = ctx
 
-            logger.debug(
-                "TWIN: Started inflight Setting %s/%s tx_id=%s conn_id=%s",
+            # Lifecycle marker: inflight
+            logger.info(
+                "TWIN_MARKER: inflight tx_id=%s tbl=%s/%s stage=inflight conn_id=%s",
+                pending.tx_id,
                 pending.tbl_name,
                 pending.tbl_item,
-                pending.tx_id,
                 conn_id,
             )
+            await self._publish_state()
 
             return pending
 
@@ -733,12 +753,13 @@ class DigitalTwin:
                 self._completed_tx_ids.add(tx_id)
                 self._prune_completed_tx_ids()
 
-            logger.debug(
-                "TWIN: Finished inflight tx_id=%s conn_id=%s success=%s status=%s",
+            finish_stage = "completed" if success else "error"
+            logger.info(
+                "TWIN_MARKER: %s tx_id=%s stage=%s detail=%s",
+                finish_stage,
                 tx_id,
-                conn_id,
-                success,
-                status,
+                finish_stage,
+                detail or "",
             )
 
             self._inflight = None
@@ -804,6 +825,14 @@ class DigitalTwin:
                 return None
 
             pending = self._apply_cloud_aligned_ack_state(dto, inflight)
+            ack_stage = "ack_received" if dto.ack else "nack_received"
+            logger.info(
+                "TWIN_MARKER: %s tx_id=%s stage=%s conn_id=%s",
+                ack_stage,
+                dto.tx_id,
+                ack_stage,
+                dto.conn_id,
+            )
             if dto.ack:
                 self._schedule_applied_timeout_after_ack()
                 return await self._finalize_cloud_ack_success(dto, pending)
@@ -973,12 +1002,13 @@ class DigitalTwin:
             self._inflight = new_pending
             self._inflight_ctx = ctx.with_stage(new_pending.stage.value)
 
-            logger.debug(
-                "TWIN: Legacy ACK received for tx_id=%s conn_id=%s ack=%s stage=%s",
+            ack_stage = "ack_received" if dto.ack else "nack_received"
+            logger.info(
+                "TWIN_MARKER: %s tx_id=%s stage=%s conn_id=%s",
+                ack_stage,
                 dto.tx_id,
+                ack_stage,
                 dto.conn_id,
-                dto.ack,
-                new_pending.stage.value,
             )
 
             self._cancel_ack_task()
@@ -1065,6 +1095,14 @@ class DigitalTwin:
 
         new_pending = self._mark_inflight_applied()
         result = self._build_applied_result(new_pending)
+        # Lifecycle marker: applied
+        logger.info(
+            "TWIN_MARKER: applied tx_id=%s tbl=%s/%s stage=applied new_value=%s",
+            result.tx_id,
+            new_pending.tbl_name,
+            new_pending.tbl_item,
+            new_pending.new_value,
+        )
         self._store_last_result(
             result,
             tbl_name=new_pending.tbl_name,
@@ -1305,6 +1343,13 @@ class DigitalTwin:
                 )
                 self._inflight = pending
                 self._inflight_ctx = ctx
+                logger.info(
+                    "TWIN_MARKER: inflight tx_id=%s tbl=%s/%s stage=inflight conn_id=%s",
+                    pending.tx_id,
+                    pending.tbl_name,
+                    pending.tbl_item,
+                    conn_id,
+                )
 
             if self._inflight is not None:
                 return self._build_delivery_response(conn_id)
@@ -1355,12 +1400,12 @@ class DigitalTwin:
         new_pending = self._inflight.mark_delivered(conn_id)
         self._inflight = new_pending
 
-        logger.debug(
-            "TWIN: Building delivery response conn_id=%s tx_id=%s tbl=%s/%s",
-            conn_id,
+        logger.info(
+            "TWIN_MARKER: sent_to_box tx_id=%s tbl=%s/%s stage=sent_to_box conn_id=%s",
             new_pending.tx_id,
             new_pending.tbl_name,
             new_pending.tbl_item,
+            conn_id,
         )
 
         if self._inflight_ctx:
@@ -1646,6 +1691,11 @@ class DigitalTwin:
             if self._inflight.stage not in (SettingStage.SENT_TO_BOX, SettingStage.ACCEPTED):
                 return
 
+            logger.info(
+                "TWIN_MARKER: timeout tx_id=%s stage=ack_timeout conn_id=%s",
+                ctx.tx_id,
+                ctx.conn_id,
+            )
             self._inflight = self._inflight.mark_deferred()
 
     async def _applied_timeout_handler(self, ctx: TransactionContext) -> None:
@@ -1674,6 +1724,11 @@ class DigitalTwin:
             if self._inflight.stage in (SettingStage.APPLIED, SettingStage.COMPLETED, SettingStage.ERROR):
                 return
 
+            logger.info(
+                "TWIN_MARKER: timeout tx_id=%s stage=applied_timeout conn_id=%s",
+                ctx.tx_id,
+                ctx.conn_id,
+            )
             self._inflight = self._inflight.mark_error()
 
     def _cancel_timeout_tasks(self) -> None:

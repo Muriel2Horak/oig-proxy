@@ -1,0 +1,50 @@
+Scenario: Lifecycle marker emission
+=============================================
+
+All TWIN_MARKER log entries in digital_twin.py with stage and tx_id:
+
+1. TWIN_MARKER: enabled stage=enabled session_id=%s
+   → Emitted in: publish_initial_state() on twin init after MQTT connect
+
+2. TWIN_MARKER: queued tx_id=%s tbl=%s/%s stage=queued queue_len=%d
+   → Emitted in: queue_setting() when command accepted into queue
+
+3. TWIN_MARKER: inflight tx_id=%s tbl=%s/%s stage=inflight conn_id=%s
+   → Emitted in: start_inflight() AND _deliver_on_is_new_set() (both inflight creation paths)
+
+4. TWIN_MARKER: sent_to_box tx_id=%s tbl=%s/%s stage=sent_to_box conn_id=%s
+   → Emitted in: _build_delivery_response() when frame delivered to BOX
+
+5. TWIN_MARKER: ack_received tx_id=%s stage=ack_received conn_id=%s
+   → Emitted in: _on_ack_cloud_aligned() and _on_ack_legacy() on ACK
+
+6. TWIN_MARKER: nack_received tx_id=%s stage=nack_received conn_id=%s
+   → Emitted in: _on_ack_cloud_aligned() and _on_ack_legacy() on NACK
+
+7. TWIN_MARKER: applied tx_id=%s tbl=%s/%s stage=applied new_value=%s
+   → Emitted in: _process_tbl_event_locked() when tbl_event confirms setting applied
+
+8. TWIN_MARKER: completed tx_id=%s stage=completed detail=%s
+   → Emitted in: finish_inflight() on successful completion
+
+9. TWIN_MARKER: error tx_id=%s stage=error error=%s detail=%s
+   → Emitted in: mark_input_error() on input validation failure
+
+10. TWIN_MARKER: error tx_id=%s stage=error detail=%s
+    → Emitted in: finish_inflight() on failure
+
+11. TWIN_MARKER: timeout tx_id=%s stage=ack_timeout conn_id=%s
+    → Emitted in: _ack_timeout_handler() when ACK not received in time
+
+12. TWIN_MARKER: timeout tx_id=%s stage=applied_timeout conn_id=%s
+    → Emitted in: _applied_timeout_handler() when applied event not received in time
+
+Expected lifecycle chain for a successful command:
+  enabled → queued → inflight → sent_to_box → ack_received → applied → completed
+
+All markers include tx_id (except 'enabled') and lifecycle stage.
+All markers are at INFO level for reliable log capture.
+
+Verification: grep -E 'TWIN_MARKER' addon/oig-proxy/digital_twin.py | wc -l → 12 markers
+
+Result: PASS
