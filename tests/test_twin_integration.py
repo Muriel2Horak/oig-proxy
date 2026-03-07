@@ -113,7 +113,7 @@ class TestTwinArchitecture:
             content = f.read()
 
         assert 'class TwinMQTTHandler' in content, "TwinMQTTHandler class not found"
-        assert 'def on_mqtt_message' in content, "on_mqtt_message method not found"
+        assert 'self.on_mqtt_message' in content, "on_mqtt_message attribute not found"
 
     def test_twin_state_publishing_exists(self):
         """Verify _publish_state method exists"""
