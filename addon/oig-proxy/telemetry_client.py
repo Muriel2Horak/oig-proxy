@@ -84,7 +84,7 @@ class TelemetryBuffer:
             count = self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
             if count > 0:
                 logger.debug("📡 Telemetry buffer: %d pending messages", count)
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.warning("Failed to initialize telemetry buffer: %s", e)
             self._conn = None
 
@@ -120,7 +120,7 @@ class TelemetryBuffer:
             if count > BUFFER_MAX_MESSAGES:
                 self._cleanup()
             return True
-        except Exception:
+        except sqlite3.Error:
             return False
 
     def get_pending(self, limit: int = 50) -> list[tuple[int, str, dict]]:
@@ -145,7 +145,7 @@ class TelemetryBuffer:
             if deleted:
                 self._conn.commit()
             return results
-        except Exception:
+        except (sqlite3.Error, json.JSONDecodeError):
             return []
 
     def remove(self, message_id: int) -> None:
@@ -164,7 +164,7 @@ class TelemetryBuffer:
             return 0
         try:
             return self._conn.execute(SQL_SELECT_COUNT).fetchone()[0]
-        except Exception:
+        except sqlite3.Error:
             return 0
 
     def close(self) -> None:
@@ -301,7 +301,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
             self._cleanup_client()
             self._connect_backoff.record_failure()
             return False
-        except Exception:
+        except (OSError, ConnectionError, TimeoutError, AttributeError):
             self._cleanup_client()
             self._connect_backoff.record_failure()
             return False
@@ -325,7 +325,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 # Let paho reconnect in place if possible.
                 self._client.reconnect()
                 self._client.loop_start()
-            except Exception:
+            except (OSError, ConnectionError, TimeoutError, AttributeError):
                 self._cleanup_client()
 
         if not self._client:
@@ -347,7 +347,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                 return False
             result = self._client.publish(topic, message, qos=1)
             return result.rc == 0
-        except Exception:
+        except (OSError, ConnectionError, TimeoutError, AttributeError):
             return False
 
     def _flush_buffer_sync(self) -> int:
@@ -367,7 +367,7 @@ class TelemetryClient:  # pylint: disable=too-many-instance-attributes
                     sent += 1
                 else:
                     break
-            except Exception:
+            except (OSError, ConnectionError, TimeoutError, AttributeError):
                 break
         if sent > 0:
             logger.debug("📡 Flushed %d buffered messages", sent)

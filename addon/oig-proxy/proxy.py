@@ -627,7 +627,7 @@ class OIGProxy:
                 frame=frame,
                 conn_id=conn_id,
             )
-        except Exception:
+        except (ValueError, KeyError, TypeError, AttributeError):
             # Nechceme shazovat celé BOX spojení kvůli chybě v publish/discovery/parsing.
             # Traceback nám pomůže najít přesnou příčinu (např. regex v
             # některé knihovně).
@@ -799,7 +799,7 @@ class OIGProxy:
                 conn_id,
                 self._active_box_peer,
             )
-        except Exception:
+        except (ConnectionResetError, OSError, TimeoutError):
             logger.exception(
                 "❌ Box connection handler error (conn=%s, peer=%s)",
                 conn_id,
