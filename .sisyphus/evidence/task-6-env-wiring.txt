@@ -1,0 +1,57 @@
+# Task 6 Evidence: Env Wiring Active
+
+## Summary
+Twin env keys are now visible and exported in runtime via the run script.
+
+## Implementation Details
+
+### 1. config.json - Schema Exposure
+All Twin configuration options are exposed in config.json:
+
+Options (lines 36-42):
+- twin_enabled: false (default - safe for backward compatibility)
+- twin_kill_switch: false
+- twin_cloud_aligned: false
+- twin_ack_deadline_seconds: 30.0
+- twin_applied_deadline_seconds: 60.0
+- local_control_routing: "auto"
+- twin_verbose_logging: false
+
+Schema (lines 66-72):
+- twin_enabled: "bool?"
+- twin_kill_switch: "bool?"
+- twin_cloud_aligned: "bool?"
+- twin_ack_deadline_seconds: "float?"
+- twin_applied_deadline_seconds: "float?"
+- local_control_routing: "list(auto|force_twin|force_cloud)?"
+- twin_verbose_logging: "bool?"
+
+### 2. run - Environment Variable Wiring
+All Twin env variables are exported from config in run (lines 191-247):
+
+TWIN_ENABLED: Wired from twin_enabled config option
+TWIN_KILL_SWITCH: Wired from twin_kill_switch config option
+TWIN_CLOUD_ALIGNED: Wired from twin_cloud_aligned config option
+LOCAL_CONTROL_ROUTING: Wired from local_control_routing config option
+TWIN_VERBOSE_LOGGING: Wired from twin_verbose_logging config option
+TWIN_ACK_DEADLINE_SECONDS: Wired from twin_ack_deadline_seconds config option
+TWIN_APPLIED_DEADLINE_SECONDS: Wired from twin_applied_deadline_seconds config option
+
+### 3. Startup Logging
+The run script now logs effective Twin mode flags at startup (lines 239-247):
+```
+🔧 Twin Configuration:
+   TWIN_ENABLED=<value>
+   TWIN_KILL_SWITCH=<value>
+   TWIN_CLOUD_ALIGNED=<value>
+   LOCAL_CONTROL_ROUTING=<value>
+   TWIN_VERBOSE_LOGGING=<value>
+   TWIN_ACK_DEADLINE_SECONDS=<value>
+   TWIN_APPLIED_DEADLINE_SECONDS=<value>
+```
+
+## Verification
+- Config options visible in schema: YES
+- Env variables exported in runtime: YES
+- Startup logs print effective values: YES
+- Backward compatible defaults: YES (all defaults are False/safe values)

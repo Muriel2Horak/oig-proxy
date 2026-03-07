@@ -223,4 +223,27 @@ if [ "$TWIN_VERBOSE_LOGGING_RAW" = "true" ] || [ "$TWIN_VERBOSE_LOGGING_RAW" = "
   export TWIN_VERBOSE_LOGGING="true"
 fi
 
+# Twin deadline configuration (optional, with safe defaults)
+TWIN_ACK_DEADLINE_RAW=$(bashio::config 'twin_ack_deadline_seconds' 2>/dev/null)
+if [ -z "$TWIN_ACK_DEADLINE_RAW" ] || [ "$TWIN_ACK_DEADLINE_RAW" = "null" ]; then
+  TWIN_ACK_DEADLINE_RAW=30.0
+fi
+export TWIN_ACK_DEADLINE_SECONDS=$TWIN_ACK_DEADLINE_RAW
+
+TWIN_APPLIED_DEADLINE_RAW=$(bashio::config 'twin_applied_deadline_seconds' 2>/dev/null)
+if [ -z "$TWIN_APPLIED_DEADLINE_RAW" ] || [ "$TWIN_APPLIED_DEADLINE_RAW" = "null" ]; then
+  TWIN_APPLIED_DEADLINE_RAW=60.0
+fi
+export TWIN_APPLIED_DEADLINE_SECONDS=$TWIN_APPLIED_DEADLINE_RAW
+
+# Startup log: print effective Twin mode flags
+bashio::log.info "🔧 Twin Configuration:"
+bashio::log.info "   TWIN_ENABLED=$TWIN_ENABLED"
+bashio::log.info "   TWIN_KILL_SWITCH=$TWIN_KILL_SWITCH"
+bashio::log.info "   TWIN_CLOUD_ALIGNED=$TWIN_CLOUD_ALIGNED"
+bashio::log.info "   LOCAL_CONTROL_ROUTING=$LOCAL_CONTROL_ROUTING"
+bashio::log.info "   TWIN_VERBOSE_LOGGING=${TWIN_VERBOSE_LOGGING:-false}"
+bashio::log.info "   TWIN_ACK_DEADLINE_SECONDS=$TWIN_ACK_DEADLINE_SECONDS"
+bashio::log.info "   TWIN_APPLIED_DEADLINE_SECONDS=$TWIN_APPLIED_DEADLINE_SECONDS"
+
 python -u /app/main.py

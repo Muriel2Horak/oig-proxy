@@ -36,6 +36,8 @@
     "twin_enabled": false,
     "twin_kill_switch": false,
     "twin_cloud_aligned": false,
+    "twin_ack_deadline_seconds": 30.0,
+    "twin_applied_deadline_seconds": 60.0,
     "local_control_routing": "auto",
     "twin_verbose_logging": false
   },
@@ -64,6 +66,8 @@
     "twin_enabled": "bool?",
     "twin_kill_switch": "bool?",
     "twin_cloud_aligned": "bool?",
+    "twin_ack_deadline_seconds": "float?",
+    "twin_applied_deadline_seconds": "float?",
     "local_control_routing": "list(auto|force_twin|force_cloud)?",
     "twin_verbose_logging": "bool?"
   },

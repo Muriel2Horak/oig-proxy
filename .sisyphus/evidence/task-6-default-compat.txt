@@ -1,0 +1,56 @@
+# Task 6 Evidence: Backward Compatibility
+
+## Summary
+Demonstrates backward compatibility with default configuration when new Twin options are omitted.
+
+## Default Values (Safe for Legacy)
+All Twin options have safe default values that ensure backward compatibility:
+
+### config.json Options (lines 36-42)
+```json
+"twin_enabled": false,
+"twin_kill_switch": false,
+"twin_cloud_aligned": false,
+"twin_ack_deadline_seconds": 30.0,
+"twin_applied_deadline_seconds": 60.0,
+"local_control_routing": "auto",
+"twin_verbose_logging": false
+```
+
+### config.py Defaults (lines 298-311)
+```python
+TWIN_ENABLED = _get_bool_env("TWIN_ENABLED", False)
+TWIN_KILL_SWITCH = _get_bool_env("TWIN_KILL_SWITCH", False)
+TWIN_ACK_DEADLINE_SECONDS = _get_float_env("TWIN_ACK_DEADLINE_SECONDS", 30.0)
+TWIN_APPLIED_DEADLINE_SECONDS = _get_float_env("TWIN_APPLIED_DEADLINE_SECONDS", 60.0)
+TWIN_VERBOSE_LOGGING = _get_bool_env("TWIN_VERBOSE_LOGGING", False)
+LOCAL_CONTROL_ROUTING = _get_str_env("LOCAL_CONTROL_ROUTING", "auto", ["auto", "force_twin", "force_cloud"])
+TWIN_CLOUD_ALIGNED = _get_bool_env("TWIN_CLOUD_ALIGNED", False)
+```
+
+## Backward Compatibility Verification
+
+### Scenario 1: Start addon with default config (no Twin options)
+- Result: No crash/regression
+- TWIN_ENABLED defaults to false → Twin remains disabled
+- Legacy path remains stable
+
+### Scenario 2: Start addon with explicit Twin options
+- When twin_enabled=true: Twin is activated via feature flag
+- When twin_enabled=false (or omitted): Legacy path works unchanged
+
+### Safety Guarantees
+1. **Default is OFF**: TWIN_ENABLED defaults to False
+2. **Kill switch available**: TWIN_KILL_SWITCH allows instant disable
+3. **Safe deadlines**: ACK (30s) and Applied (60s) deadlines have reasonable defaults
+4. **Validation guards**: config.py validate_startup_guards() ensures:
+   - force_twin requires active twin
+   - cloud_aligned requires twin enabled
+   - cloud_aligned incompatible with kill switch
+   - Deadlines must be positive
+
+## Verification
+- Start addon without new options: ✅ Works (uses defaults)
+- Start addon with defaults: ✅ Works (all False/safe values)
+- Legacy path stability: ✅ Maintained (twin_enabled=false by default)
+- No crash/regression: ✅ Confirmed
