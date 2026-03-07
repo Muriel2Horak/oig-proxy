@@ -19,7 +19,7 @@ import time
 from contextlib import suppress
 from typing import Any
 
-from parser import OIGDataParser
+from oig_parser import OIGDataParser
 from cloud_forwarder import CloudForwarder
 from control_settings import ControlSettings
 from control_pipeline import ControlPipeline

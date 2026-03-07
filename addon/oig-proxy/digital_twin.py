@@ -23,6 +23,8 @@ Usage:
     result = await twin.on_ack(OnAckDTO(conn_id=1, ...))
 """
 
+# pylint: disable=C0302
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from config import MQTT_NAMESPACE, TWIN_CLOUD_ALIGNED
 from oig_frame import infer_table_name
 from oig_frame import build_end_time_frame, build_frame
-from parser import OIGDataParser
+from oig_parser import OIGDataParser
 from twin_state import (
     AckResult,
     OnAckDTO,
@@ -101,6 +103,8 @@ class ReplayEntry:
 class TwinMQTTHandler:
     """Handler for MQTT-based twin commands."""
 
+    # pylint: disable=R0903
+
     def __init__(
         self,
         *,
@@ -117,6 +121,11 @@ class TwinMQTTHandler:
         self.on_mqtt_message = self._default_on_mqtt_message
 
     def setup_mqtt(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Set up MQTT message handler with event loop.
+
+        Args:
+            loop: asyncio event loop for scheduling coroutines.
+        """
         self._loop = loop
 
         def _handler(
@@ -210,6 +219,8 @@ class DigitalTwin:
         INV-2: Session Transaction in all state modifications
         INV-3: Timeout Task Ownership in timeout handlers
     """
+
+    # pylint: disable=R0902,R0904
 
     def __init__(
         self,
@@ -597,8 +608,7 @@ class DigitalTwin:
         """
         if TWIN_CLOUD_ALIGNED:
             return await self._on_ack_cloud_aligned(dto)
-        else:
-            return await self._on_ack_legacy(dto)
+        return await self._on_ack_legacy(dto)
 
     async def _on_ack_cloud_aligned(
         self,
@@ -826,24 +836,23 @@ class DigitalTwin:
                 )
                 await self._publish_state()
                 return result
-            else:
-                result = TransactionResultDTO(
-                    tx_id=dto.tx_id,
-                    conn_id=dto.conn_id,
-                    status="error",
-                    error="box_nack",
-                    timestamp=get_timestamp(),
-                )
-                self._inflight = None
-                self._inflight_ctx = None
-                self._store_last_result(
-                    result,
-                    tbl_name=new_pending.tbl_name,
-                    tbl_item=new_pending.tbl_item,
-                    new_value=new_pending.new_value,
-                )
-                await self._publish_state()
-                return result
+            result = TransactionResultDTO(
+                tx_id=dto.tx_id,
+                conn_id=dto.conn_id,
+                status="error",
+                error="box_nack",
+                timestamp=get_timestamp(),
+            )
+            self._inflight = None
+            self._inflight_ctx = None
+            self._store_last_result(
+                result,
+                tbl_name=new_pending.tbl_name,
+                tbl_item=new_pending.tbl_item,
+                new_value=new_pending.new_value,
+            )
+            await self._publish_state()
+            return result
 
     async def validate_ack_conn_ownership(
         self,

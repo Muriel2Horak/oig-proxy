@@ -133,6 +133,7 @@ class MqttStateCache:
     # -----------------------------------------------------------------
 
     @staticmethod
+    # pylint: disable=too-many-return-statements
     def _coerce_value(value: Any) -> Any:
         if value is None or isinstance(value, (int, float, bool)):
             return value

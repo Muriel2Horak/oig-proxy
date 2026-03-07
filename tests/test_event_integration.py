@@ -25,6 +25,7 @@ class TestEventIntegration:
 
     @pytest.fixture
     def mock_proxy(self):
+        # pylint: disable=too-many-statements
         """Create a mock proxy with all necessary components."""
         proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
         proxy._hm = MagicMock()

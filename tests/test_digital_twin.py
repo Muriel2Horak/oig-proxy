@@ -13,6 +13,7 @@ Verification:
 
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable
+# pylint: disable=too-many-lines
 
 import asyncio
 import json
@@ -1066,7 +1067,6 @@ class TestDigitalTwinAdditionalCoverage:
         def fake_run_coroutine_threadsafe(coro, _loop):
             scheduled.append("ok")
             coro.close()
-            return None
 
         monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe)
         cb = publisher.handlers[0][1]
@@ -1135,7 +1135,7 @@ class TestDigitalTwinAdditionalCoverage:
 
         twin.attach_cloud_forwarder(None, availability_checker=None)
         await twin._forward_to_cloud("<Frame>none</Frame>")
-        assert forwarded == []
+        assert not forwarded
 
         twin.attach_cloud_forwarder(forwarder, availability_checker=None)
         assert twin._cloud_available() is True

@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 
+# pylint: disable=too-many-instance-attributes
 class ControlPipeline:
     """Manages control setting flow orchestration for OIG Box."""
 
@@ -135,6 +136,7 @@ class ControlPipeline:
                 return (None, "bad_value")
         return (str(new_value), str(new_value))
 
+    # pylint: disable=too-many-return-statements
     @staticmethod
     def coerce_value(value: Any) -> Any:
         """Coerce a value to appropriate Python type.
@@ -203,6 +205,7 @@ class ControlPipeline:
         """
         return
 
+    # pylint: disable=too-many-arguments
     async def publish_setting_event_state(
         self,
         *,
