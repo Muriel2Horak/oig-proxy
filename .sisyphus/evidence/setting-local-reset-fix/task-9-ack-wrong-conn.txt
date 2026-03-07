@@ -1,0 +1,91 @@
+EVIDENCE: Task 9 - Wrong conn_id ACK Ignored
+=============================================
+Date: 2026-02-20
+Status: VERIFIED
+
+## Implementation Verified
+
+### Guard Clause Implementation
+
+File: addon/oig-proxy/control_settings.py
+Lines 318-330:
+```python
+# Validate conn_id ownership - only the connection that delivered the Setting
+# should process the ACK/NACK response
+delivered_conn_id = pending.get("delivered_conn_id")
+if delivered_conn_id is not None and conn_id != delivered_conn_id:
+    logger.debug(
+        "CONTROL: ACK/NACK ignored — conn_id mismatch "
+        "(delivered_conn=%s, current_conn=%s, %s/%s)",
+        delivered_conn_id,
+        conn_id,
+        pending.get("tbl_name"),
+        pending.get("tbl_item"),
+    )
+    return False
+```
+
+### Key Behaviors When conn_id MISMATCH:
+
+1. **Guard Returns FALSE** - ACK is NOT processed
+2. **pending is PRESERVED** - NOT cleared (no assignment to None)
+3. **END is NOT sent** - no response to BOX
+4. **Debug log emitted** with diagnostic details:
+   - delivered_conn (original owner)
+   - current_conn (mismatched caller)
+   - tbl_name / tbl_item (affected setting)
+
+### Test Evidence
+
+Tests verifying this behavior:
+
+1. **test_cross_session_ack_should_not_clear_pending_offline**
+   - Session 1 delivers setting (delivered_conn_id=1)
+   - BOX reconnects (conn_id=2)
+   - ACK arrives on conn_id=2
+   - Result: ACK ignored, pending preserved
+
+2. **test_cross_session_ack_should_not_clear_pending_hybrid_offline**
+   - Same logic in HYBRID+OFFLINE mode
+   - Result: ACK ignored, pending preserved
+
+3. **test_cross_session_nack_should_not_clear_pending_offline**
+   - NACK instead of ACK
+   - Result: NACK ignored, pending preserved
+
+4. **test_ack_with_wrong_conn_id_is_ignored**
+   - Explicit test of guard clause
+   - delivered_conn_id=1, ACK with conn_id=2
+   - Result: maybe_handle_ack returns False
+
+5. **test_nack_with_wrong_conn_id_is_ignored**
+   - Same as above with NACK
+   - Result: maybe_handle_ack returns False
+
+### Test Output (Full)
+```
+tests/test_proxy_control_ack.py::test_cross_session_ack_should_not_clear_pending_offline PASSED
+tests/test_proxy_control_ack.py::test_cross_session_ack_should_not_clear_pending_hybrid_offline PASSED
+tests/test_proxy_control_ack.py::test_cross_session_multiple_reconnects_pending_preserved PASSED
+tests/test_proxy_control_ack.py::test_cross_session_nack_should_not_clear_pending_offline PASSED
+tests/test_proxy_control_more.py::test_ack_with_wrong_conn_id_is_ignored PASSED
+tests/test_proxy_control_more.py::test_nack_with_wrong_conn_id_is_ignored PASSED
+```
+
+### Diagnostic Log Example
+
+When mismatched ACK arrives:
+```
+DEBUG: CONTROL: ACK/NACK ignored — conn_id mismatch (delivered_conn=1, current_conn=2, tbl_invertor_prm1/AAC_MAX_CHRG)
+```
+
+## Security/Safety Guarantees
+
+1. **No stale ACK processing** - Old session's ACK cannot clear new session's pending
+2. **No false END emission** - BOX doesn't receive spurious END frames
+3. **Pending preserved** - Setting will be re-delivered on new connection's next poll
+4. **Audit trail** - Debug logs capture all mismatch events
+
+## Conclusion
+✅ Wrong-conn_id ACK is correctly ignored with explicit diagnostic logging.
+✅ pending state is preserved for re-delivery on new connection.

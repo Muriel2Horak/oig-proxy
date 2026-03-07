@@ -1,0 +1,29 @@
+F2 Reproducibility Review Evidence — 2026-02-19
+=================================================
+
+ARTIFACT CHECKSUMS & COUNTS
+  cloud-baseline.jsonl   MD5=2912bf8e6ee83b12a6b0d5ddbfeaf35b  lines=15201
+  mock-baseline.jsonl    MD5=a3b5057c6f866cfe9ba2427d72fdb18d  lines=2928
+  proxy-session-matrix.csv  MD5=f4c07dee53f42867f66c67c306b0bb7c  lines=1673  data_rows=1672
+  mock-session-matrix.csv   MD5=674a84c101e208140b20eb7326bd3982  lines=514   data_rows=513
+
+SCHEMA VALIDATION
+  proxy-session-matrix columns: conn_id,open_ts,close_ts,duration_ms,frames_count,close_reason,session_type
+  mock-session-matrix columns:  conn_id,open_ts,close_ts,duration_ms,frames_count,close_reason,has_setting,forensic_coverage
+  Empty conn_id: 0/1672 (proxy), 0/513 (mock)
+  Empty frames_count: 0/1672 (proxy), 0/513 (mock)
+
+JSONL KEY VALIDATION
+  cloud-baseline: ts_epoch_ms present=15201/15201, frame_type present=15201/15201
+  mock-baseline:  ts_epoch_ms present=2928/2928,   frame_type present=2928/2928
+
+FRAME TYPE DISTRIBUTION
+  cloud: ACK_TABLE, DATA, LOG, POLL (4 types)
+  mock:  ACK_GETACTUAL, ACK_TABLE, ACK_TIMEOUT, CONN_CLOSE, CONN_OPEN, END, LOG, SETTING, SETTING_DELIVERED, SETTING_SEND (10 types)
+
+DRIFT CHECK
+  cloud-baseline: expected=15201, actual=15201, drift=0
+  mock-baseline:  expected=2928,  actual=2928,  drift=0
+  No prior evidence files existed; this is the baseline checkpoint.
+
+Repro [PASS] | Schema [PASS] | Drift [NONE] | VERDICT

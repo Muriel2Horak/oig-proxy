@@ -1,7 +1,10 @@
 {
-  "active_plan": "/Users/martinhorak/Projects/oig-proxy-analysis/.sisyphus/plans/oig-cloud-protocol-clean-analysis.md",
-  "started_at": "2026-03-03T10:00:00.000Z",
-  "session_ids": [],
-  "plan_name": "oig-cloud-protocol-clean-analysis",
-  "agent": "atlas"
+  "active_plan": "/Users/martinhorak/Projects/oig-proxy/.sisyphus/plans/code-review-remediation.md",
+  "started_at": "2026-03-07T07:02:58.659Z",
+  "session_ids": [
+    "ses_33bccf94affeghKw2u1zx5MVWt"
+  ],
+  "plan_name": "code-review-remediation",
+  "agent": "atlas",
+  "worktree_path": "/Users/martinhorak/Projects/oig-proxy"
 }

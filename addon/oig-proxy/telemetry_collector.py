@@ -268,14 +268,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             self.end_frames_received += 1
         self.last_end_frame_time = time.time()
 
-    def record_response(
-        self,
-        response_text: str,
-        *,
-        source: str,
-        conn_id: int,
-    ) -> None:
-        """Spáruje odpověď s requestem a aktualizuje statistiky."""
+    def _get_table_name_from_queue(self, conn_id: int) -> tuple[str, deque[str] | None]:
         queue = self.req_pending.get(conn_id)
         if queue:
             table_name = queue.popleft()
@@ -283,6 +276,9 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             table_name = "unmatched"
         if queue is not None and not queue:
             self.req_pending.pop(conn_id, None)
+        return table_name, queue
+
+    def _resolve_mode_value(self) -> str:
         mode_value = getattr(self._proxy, "mode", None)
         if mode_value is None:
             mp = getattr(self._proxy, "_mp", None)
@@ -299,6 +295,15 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             )
         if mode_value_str not in {"online", "hybrid", "offline"}:
             mode_value_str = ProxyMode.OFFLINE.value
+        return mode_value_str
+
+    def _update_response_stats(
+        self,
+        table_name: str,
+        source: str,
+        mode_value_str: str,
+        response_text: str,
+    ) -> None:
         key = (table_name, source, mode_value_str)
         stats_counter = self.stats.setdefault(
             key,
@@ -319,6 +324,17 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             self.record_nack_reason(self._extract_nack_reason(response_text))
         if source == "cloud":
             self.cloud_ok_in_window = True
+
+    def record_response(
+        self,
+        response_text: str,
+        *,
+        source: str,
+        conn_id: int,
+    ) -> None:
+        table_name, _ = self._get_table_name_from_queue(conn_id)
+        mode_value_str = self._resolve_mode_value()
+        self._update_response_stats(table_name, source, mode_value_str, response_text)
 
     def record_timeout(self, *, conn_id: int) -> None:
         """Zaznamená timeout při čekání na odpověď z cloudu."""
@@ -502,14 +518,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         logger.warning("Could not determine version, reporting version as 'unknown'")
         return "unknown"
 
-    async def loop(self) -> None:
-        """Periodicky odesílá telemetrii na diagnostický server."""
-        if not self.client:
-            return
-
-        await asyncio.sleep(30)
-
-        # Initial provisioning
+    async def _do_initial_provisioning(self) -> None:
         try:
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
@@ -517,11 +526,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         except Exception as exc:
             logger.debug("Initial telemetry provisioning failed: %s", exc)
 
-        logger.info(
-            "📊 Telemetry loop started (every %ss)",
-            self.interval_s)
-
-        # First telemetry immediately
+    async def _send_first_telemetry(self) -> None:
         try:
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
@@ -531,15 +536,32 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         except Exception as exc:
             logger.debug("First telemetry send failed: %s", exc)
 
+    async def _send_periodic_telemetry(self) -> None:
+        try:
+            if self.client.device_id == "" and self._proxy.device_id != "AUTO":
+                self.client.device_id = self._proxy.device_id
+            metrics = self.collect_metrics()
+            await self.client.send_telemetry(metrics)
+        except Exception as exc:
+            logger.debug("Telemetry send failed: %s", exc)
+
+    async def loop(self) -> None:
+        if not self.client:
+            return
+
+        await asyncio.sleep(30)
+
+        await self._do_initial_provisioning()
+
+        logger.info(
+            "📊 Telemetry loop started (every %ss)",
+            self.interval_s)
+
+        await self._send_first_telemetry()
+
         while True:
             await asyncio.sleep(self.interval_s)
-            try:
-                if self.client.device_id == "" and self._proxy.device_id != "AUTO":
-                    self.client.device_id = self._proxy.device_id
-                metrics = self.collect_metrics()
-                await self.client.send_telemetry(metrics)
-            except Exception as exc:
-                logger.debug("Telemetry send failed: %s", exc)
+            await self._send_periodic_telemetry()
 
     # ------------------------------------------------------------------
     # Metrics collection
@@ -706,33 +728,60 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             ),
         }
 
-    def collect_metrics(self) -> dict[str, Any]:
-        """Sestaví kompletní telemetrický payload."""
-        proxy = self._proxy
-        uptime_s = int(time.time() - proxy._start_time)  # pylint: disable=protected-access
-        set_commands = proxy._cs.set_commands_buffer[:]  # pylint: disable=protected-access
-        proxy._cs.set_commands_buffer.clear()  # pylint: disable=protected-access
+    def _gather_window_status(self) -> tuple[bool, bool, dict[str, Any]]:
         debug_active = self.debug_windows_remaining > 0
         box_connected_window = self._get_box_connected_window_status()
         include_logs = self._should_include_logs(debug_active, box_connected_window)
         logs = self._get_telemetry_logs(debug_active, include_logs)
         cloud_online_window = self._get_cloud_online_window_status()
         window_metrics = self._collect_and_clear_window_metrics(logs)
+        return box_connected_window, cloud_online_window, window_metrics
+
+    def _clear_telemetry_counters(self) -> None:
+        self.nack_reasons.clear()
+        self.conn_mismatch_drops = 0
+        self.cloud_gap_durations.clear()
+        self.pairing_high = 0
+        self.pairing_medium = 0
+        self.pairing_low = 0
+        self.frames_box_to_proxy = 0
+        self.frames_cloud_to_proxy = 0
+        self.frames_proxy_to_box = 0
+        self.signal_class_counts.clear()
+        self.end_frames_received = 0
+        self.end_frames_sent = 0
+        self.last_end_frame_time = None
+
+    def _add_device_specific_metrics(
+        self,
+        metrics: dict[str, Any],
+        device_id: str,
+    ) -> None:
+        if device_id:
+            metrics.update(self._build_device_specific_metrics(device_id))
+
+    def collect_metrics(self) -> dict[str, Any]:
+        proxy = self._proxy
+        uptime_s = int(time.time() - proxy._start_time)
+        set_commands = proxy._cs.set_commands_buffer[:]
+        proxy._cs.set_commands_buffer.clear()
+
+        box_connected_window, cloud_online_window, window_metrics = self._gather_window_status()
 
         metrics: dict[str, Any] = {
             "timestamp": self._utc_iso(),
             "interval_s": int(self.interval_s),
             "uptime_s": uptime_s,
-            "mode": proxy._hm.mode.value,  # pylint: disable=protected-access
-            "configured_mode": proxy._hm.configured_mode,  # pylint: disable=protected-access
+            "mode": proxy._hm.mode.value,
+            "configured_mode": proxy._hm.configured_mode,
             "box_connected": box_connected_window,
-            "box_peer": proxy._active_box_peer,  # pylint: disable=protected-access
+            "box_peer": proxy._active_box_peer,
             "frames_received": proxy.stats.get("frames_received", 0),
             "frames_forwarded": proxy.stats.get("frames_forwarded", 0),
-            "cloud_connects": proxy._cf.connects,  # pylint: disable=protected-access
-            "cloud_disconnects": proxy._cf.disconnects,  # pylint: disable=protected-access
-            "cloud_timeouts": proxy._cf.timeouts,  # pylint: disable=protected-access
-            "cloud_errors": proxy._cf.errors,  # pylint: disable=protected-access
+            "cloud_connects": proxy._cf.connects,
+            "cloud_disconnects": proxy._cf.disconnects,
+            "cloud_timeouts": proxy._cf.timeouts,
+            "cloud_errors": proxy._cf.errors,
             "cloud_online": cloud_online_window,
             "mqtt_ok": proxy.mqtt_publisher.is_ready() if proxy.mqtt_publisher else False,
             "mqtt_queue": proxy.mqtt_publisher.queue.size() if proxy.mqtt_publisher else 0,
@@ -758,22 +807,10 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
                 "time_since_last_s": int(time.time() - self.last_end_frame_time) if self.last_end_frame_time else None,
             },
         }
-        self.nack_reasons.clear()
-        self.conn_mismatch_drops = 0
-        self.cloud_gap_durations.clear()
-        self.pairing_high = 0
-        self.pairing_medium = 0
-        self.pairing_low = 0
-        self.frames_box_to_proxy = 0
-        self.frames_cloud_to_proxy = 0
-        self.frames_proxy_to_box = 0
-        self.signal_class_counts.clear()
-        self.end_frames_received = 0
-        self.end_frames_sent = 0
-        self.last_end_frame_time = None
+        self._clear_telemetry_counters()
+
         device_id = proxy.device_id if proxy.device_id != "AUTO" else ""
-        if device_id:
-            metrics.update(self._build_device_specific_metrics(device_id))
+        self._add_device_specific_metrics(metrics, device_id)
         return metrics
 
     # ------------------------------------------------------------------

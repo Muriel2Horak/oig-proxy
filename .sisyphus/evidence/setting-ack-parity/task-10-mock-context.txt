@@ -1,0 +1,73 @@
+Task 10: Mock Pre-Setting Context Reconstruction
+=================================================
+Date: 2026-02-19
+Status: COMPLETE
+
+Summary
+-------
+Extracted T-120s..T+60s context windows for 2 FAILED delivery cases from mock overnight data.
+Both cases follow identical pattern: PENDING -> DELIVERED -> (session close) -> ACK_TIMEOUT -> FAILED.
+
+Output File
+-----------
+analysis/setting-ack-parity/mock-pre-setting-context.json (2 failed cases)
+
+Failed Case 1: tbl_box_prms/MODE=3
+-----------------------------------
+  delivery_ts:  2026-02-19T06:46:15+00:00 (conn_id=1, via IsNewFW poll)
+  close_ts:     2026-02-19T06:46:39+00:00 (24.0s after delivery, Reason=normal, 1 frame)
+  timeout_ts:   2026-02-19T06:46:49+00:00 (34.0s after delivery, effective_timeout=30.0s)
+  id_frame:     21998974
+  id_set:       1771480192
+  Cross-session: YES - timeout fires on conn_id=2 (reconnected at 06:46:45)
+  Reconnect:    conn_id=2, 43 frames, 175.4s duration, normal close
+  Context window: 8 forensic frames, 9 log entries, 17 baseline records
+
+Failed Case 2: tbl_box_prms/MODE=2
+-----------------------------------
+  delivery_ts:  2026-02-19T06:57:39+00:00 (conn_id=17, via IsNewSet poll)
+  close_ts:     2026-02-19T06:58:03+00:00 (24.0s after delivery, Reason=normal, 11 frames)
+  timeout_ts:   2026-02-19T06:58:14+00:00 (35.0s after delivery, effective_timeout=30.0s)
+  id_frame:     59104377
+  id_set:       1771484137
+  Cross-session: YES - timeout fires on conn_id=18 (reconnected at 06:58:09)
+  Reconnect:    conn_id=18, 2 frames, 8.6s duration, normal close
+  Context window: 29 forensic frames, 15 log entries, 44 baseline records
+
+Key Findings
+------------
+1. Both deliveries are cross-session failures: BOX closes connection normally ~24s after
+   receiving Setting frame, then reconnects, but ACK never arrives.
+2. ACK timeout fires 34-35s after delivery (configured effective_timeout=30s, with ~4s check interval).
+3. Connection closes with Reason=normal - BOX does not report error.
+4. BOX reconnects within 6-10s of close, but new connection does NOT carry ACK(Reason=Setting).
+5. Connection carrying delivery has only 1 frame (Case 1) or 11 frames (Case 2) - the Setting
+   frame is injected into regular poll cycle.
+6. Subsequent connections after failure continue normal data polling without retries.
+
+Timezone Discovery
+------------------
+mock-setting-events.jsonl and mock-overnight.log use CET (UTC+1) timestamps despite field
+being named "ts_utc". Forensic ts_utc is actual UTC. 1-hour offset must be compensated
+when correlating across sources.
+
+Validation
+----------
+[✓] Files created: analysis/setting-ack-parity/mock-pre-setting-context.json
+[✓] Contains 2 failed cases with complete timeline
+[✓] Each failed case has: delivery_ts, close_ts, timeout_ts
+[✓] Context windows match cloud baseline format (T-120s..T+60s)
+[✓] Cross-session and reconnect data included
+[✓] Forensic delivery frames with raw XML preserved
+[✓] id_frame and id_set extracted from XML
+
+Source Files Used
+-----------------
+- analysis/setting-ack-parity/mock-setting-events.jsonl (1,030 lines) - setting lifecycle
+- analysis/setting-ack-parity/mock-forensic.jsonl (22,777 lines / 1,898 records) - raw frames
+- analysis/setting-ack-parity/mock-overnight.log (1,030 lines) - container logs
+- analysis/setting-ack-parity/mock-baseline.jsonl (2,928 records) - normalized baseline
+
+Extraction Script
+-----------------
+analysis/setting-ack-parity/extract_mock_pre_setting_context.py

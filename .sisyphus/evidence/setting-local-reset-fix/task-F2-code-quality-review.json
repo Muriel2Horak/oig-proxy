@@ -1,0 +1,178 @@
+{
+  "metadata": {
+    "task_id": "F2",
+    "task_name": "Code Quality + Regression Integrity Review",
+    "plan": "setting-local-without-cloud-reset-fix",
+    "review_date": "2026-02-22",
+    "git_branch": "opencode/quiet-forest",
+    "git_head": "8b55e8c",
+    "baseline_commit": "4fa5a5f",
+    "reviewer": "automated-sisyphus-F2"
+  },
+  "test_results": {
+    "verdict": "PASS",
+    "total_tests": 74,
+    "passed": 68,
+    "failed": 0,
+    "skipped": 6,
+    "pass_rate": 0.919,
+    "execution_time_s": 0.26,
+    "python_version": "3.13.4",
+    "pytest_version": "9.0.2",
+    "test_files": [
+      {
+        "file": "tests/test_proxy_control_ack.py",
+        "total": 11,
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "new_tests": [
+          "test_cross_session_ack_should_not_clear_pending_offline",
+          "test_cross_session_ack_with_timeout_exceeded_should_not_clear_pending_offline",
+          "test_cross_session_ack_should_not_clear_pending_hybrid_offline",
+          "test_cross_session_multiple_reconnects_pending_preserved",
+          "test_cross_session_nack_should_not_clear_pending_offline"
+        ]
+      },
+      {
+        "file": "tests/test_proxy_control_more.py",
+        "total": 16,
+        "passed": 16,
+        "failed": 0,
+        "skipped": 0,
+        "new_tests": [
+          "test_ack_with_wrong_conn_id_is_ignored",
+          "test_nack_with_wrong_conn_id_is_ignored"
+        ]
+      },
+      {
+        "file": "tests/test_proxy_main_loop.py",
+        "total": 11,
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "new_tests": [
+          "test_disconnect_keeps_undelivered_pending",
+          "test_disconnect_clears_delivered_pending",
+          "test_disconnect_keeps_undelivered_pending_no_reconnect",
+          "test_disconnect_cancels_inflight_timeout_tasks",
+          "test_stale_pending_affects_new_connection"
+        ]
+      },
+      {
+        "file": "tests/test_proxy_modes.py",
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "new_tests": []
+      },
+      {
+        "file": "tests/test_proxy_additional.py",
+        "total": 30,
+        "passed": 24,
+        "failed": 0,
+        "skipped": 6,
+        "new_tests": [],
+        "skip_reasons": [
+          "test_read_box_bytes_eof: test data mismatch",
+          "test_forward_frame_online_success: test data mismatch",
+          "test_forward_frame_online_ack_eof: test data mismatch",
+          "test_handle_box_connection_online: test data mismatch",
+          "test_handle_box_connection_offline: test data mismatch",
+          "test_handle_connection_lifecycle: logic issue - pre-existing"
+        ]
+      }
+    ]
+  },
+  "type_checks": {
+    "verdict": "PASS",
+    "method": "py_compile",
+    "modules_checked": 5,
+    "modules_passed": 5,
+    "modules": [
+      { "file": "addon/oig-proxy/control_settings.py", "status": "PASS" },
+      { "file": "addon/oig-proxy/proxy.py", "status": "PASS" },
+      { "file": "addon/oig-proxy/cloud_forwarder.py", "status": "PASS" },
+      { "file": "addon/oig-proxy/control_pipeline.py", "status": "PASS" },
+      { "file": "addon/oig-proxy/telemetry_collector.py", "status": "PASS" }
+    ]
+  },
+  "unsafe_patterns": {
+    "verdict": "PASS",
+    "bare_excepts": {
+      "count": 0,
+      "locations": [],
+      "note": "All except clauses use 'except Exception' — appropriate for non-critical paths (drain scheduling, background tasks)"
+    },
+    "missing_awaits": {
+      "count": 0,
+      "note": "asyncio.create_task() used correctly for fire-and-forget patterns in maybe_handle_ack()"
+    },
+    "unguarded_attribute_access": {
+      "count": 0,
+      "note": "delivered_conn_id field properly tracked in control_settings.py pending state; conn_id checked before use in maybe_handle_ack()"
+    },
+    "race_conditions": {
+      "count": 0,
+      "note": "Single-threaded asyncio event loop — no threading races. Task cancellation in clear_pending_on_disconnect() is safe."
+    }
+  },
+  "code_hygiene": {
+    "verdict": "PASS",
+    "todo_fixme_hack_count": 0,
+    "scanned_paths": [
+      "addon/oig-proxy/*.py (source modules)",
+      "tests/test_proxy_*.py (test files)"
+    ]
+  },
+  "test_quality_review": {
+    "verdict": "PASS",
+    "assessment": "HIGH",
+    "details": {
+      "new_test_count": 12,
+      "assertion_quality": "All new tests use specific assertions (assert_called_with, assertEqual on state fields) — no trivial assert True",
+      "scenario_coverage": [
+        "Cross-session ACK in offline mode — pending preserved",
+        "Cross-session ACK with timeout exceeded — pending preserved",
+        "Cross-session ACK in hybrid-offline mode — pending preserved",
+        "Multiple reconnects — pending preserved across all",
+        "Cross-session NACK — pending preserved",
+        "ACK with wrong conn_id — ignored + telemetry counter",
+        "NACK with wrong conn_id — ignored + telemetry counter",
+        "Disconnect with undelivered pending — kept",
+        "Disconnect with delivered pending — cleared",
+        "Disconnect with undelivered + no reconnect — kept",
+        "Disconnect cancels inflight timeout tasks",
+        "Stale pending affects new connection correctly"
+      ],
+      "modes_covered": ["offline", "hybrid-offline"],
+      "edge_cases_tested": ["multiple reconnects", "timeout exceeded", "conn_id mismatch", "inflight task cancellation"]
+    }
+  },
+  "baseline_comparison": {
+    "verdict": "PASS",
+    "baseline_date": "2026-02-20",
+    "baseline_commit": "4fa5a5f",
+    "baseline_total": 62,
+    "current_total": 74,
+    "delta": "+12",
+    "regression_count": 0,
+    "skipped_baseline": 6,
+    "skipped_current": 6,
+    "skipped_delta": 0,
+    "per_file_delta": [
+      { "file": "test_proxy_control_ack.py", "baseline": 6, "current": 11, "delta": "+5" },
+      { "file": "test_proxy_control_more.py", "baseline": 14, "current": 16, "delta": "+2" },
+      { "file": "test_proxy_main_loop.py", "baseline": 6, "current": 11, "delta": "+5" },
+      { "file": "test_proxy_modes.py", "baseline": 6, "current": 6, "delta": "0" },
+      { "file": "test_proxy_additional.py", "baseline": 30, "current": 30, "delta": "0" }
+    ],
+    "note": "All 12 new tests target the cross-session timeout fix — no pre-existing tests removed or modified"
+  },
+  "overall_verdict": {
+    "status": "PASS",
+    "summary": "All 74 targeted tests pass (68 passed, 6 pre-existing skips). Zero regressions detected. 12 new high-quality tests added covering cross-session ACK/NACK, conn_id ownership, and disconnect cleanup scenarios. All 5 changed modules pass py_compile. No unsafe patterns (bare excepts, missing awaits, race conditions) detected. Zero TODO/FIXME/HACK comments. Code quality meets project standards.",
+    "risk_assessment": "LOW — fix is well-isolated to control_settings.py pending state tracking and proxy.py disconnect cleanup. No changes to frame parsing, MQTT publishing, or cloud forwarding hot paths."
+  }
+}

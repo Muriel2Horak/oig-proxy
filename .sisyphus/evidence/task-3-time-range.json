@@ -1,0 +1,19 @@
+{
+  "task": "Time Range & Timezone Definition",
+  "date": "2026-03-02",
+  "timezones": {
+    "UTC": {
+      "start_epoch": 1772304000,
+      "end_epoch": 1772390399,
+      "start_iso": "2026-03-02T00:00:00+00:00",
+      "end_iso": "2026-03-02T23:59:59+00:00"
+    },
+    "Europe/Prague": {
+      "start_epoch": 1772300400,
+      "end_epoch": 1772386799,
+      "start_iso": "2026-03-02T00:00:00+01:00",
+      "end_iso": "2026-03-02T23:59:59+01:00"
+    }
+  },
+  "generated_at": "2026-03-03T00:00:00+00:00"
+}
