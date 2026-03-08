@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "timestamp": "2026-03-07T19:14:10.538801Z",
+  "captures": [
+    "status",
+    "set",
+    "twin_state",
+    "result",
+    "tbl_box_prms_state"
+  ],
+  "error": null
+}

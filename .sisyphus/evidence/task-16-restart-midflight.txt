@@ -1,0 +1,43 @@
+Task: T16 - Failure injection validation
+Scenario: Addon restart mid-command
+Date: 2026-03-07
+
+Goal
+- Validate deterministic safe outcome when proxy/addon restarts during an inflight Twin command; avoid incorrect completion/duplicate apply; ensure no orphaned inflight state.
+
+Environment Constraint
+- No Home Assistant Supervisor / `ha apps restart` available in this local worktree environment, so I validated the restart semantics using the repository's restart equivalent: session invalidation (session_id change) as used by existing tests.
+
+What I Ran
+1) E2E restart-equivalent (session change) test:
+   PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_e2e_roundtrip.py -k "session_change_invalidates_old_transaction" --maxfail=1
+
+Result (stdout)
+  1 passed, 21 deselected, 1 warning in 0.03s
+
+2) INV-2 session ownership enforcement tests:
+   PYTHONPATH=addon/oig-proxy pytest -q tests/test_digital_twin.py -k "ack_from_old_session_rejected or finish_inflight_validates_session" --maxfail=1
+
+Result (stdout)
+  2 passed, 60 deselected, 2 warnings in 0.03s
+
+Evidence Mapping To Expected Results
+- Restart mid-command is modeled as session change (proxy restart invalidates in-flight ownership).
+- Deterministic safe error: operations against an inflight tx from the old session are rejected (INV-2) rather than incorrectly completing.
+
+Key Assertions Covered By Tests
+- Session change invalidates old transaction operations:
+  - tests/test_twin_e2e_roundtrip.py::TestCrossSessionFailure::test_session_change_invalidates_old_transaction
+- ACK against old-session inflight raises INV-2 (prevents incorrect completion):
+  - tests/test_digital_twin.py::TestINV2SessionTransaction::test_ack_from_old_session_rejected
+- finish_inflight against old-session inflight raises INV-2 (prevents silent clearing/incorrect completion):
+  - tests/test_digital_twin.py::TestINV2SessionTransaction::test_finish_inflight_validates_session
+
+Known Gap / Follow-up Needed For Full HA Fault Injection
+- True add-on restart behavior implies process restart + state restore/reconciliation.
+- DigitalTwin.restore_from_snapshot is currently a stub and covered by an xfail RED test:
+  - tests/test_digital_twin.py::test_restore_from_snapshot_rebuilds_state (xfail)
+- Because restore/reconciliation is not implemented, I cannot fully validate "no orphan tx after restart" across an actual restart boundary using only in-repo unit tests.
+
+Notes
+- Warnings observed are DeprecationWarning from twin_state timestamp generation; no test failures.

@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-03-07T19:14:10.538304Z",
+  "data": {
+    "tx_id": null,
+    "conn_id": null,
+    "session_id": "test-session",
+    "queue_length": 0,
+    "has_inflight": false,
+    "inflight_stage": null,
+    "inflight_tbl_name": null,
+    "inflight_tbl_item": null,
+    "inflight_new_value": null,
+    "inflight_delivered_conn_id": null,
+    "pending_keys": [],
+    "replay_buffer_length": 0,
+    "completed_tx_count": 1,
+    "timestamp": "2026-03-07T19:14:10.538299Z"
+  }
+}

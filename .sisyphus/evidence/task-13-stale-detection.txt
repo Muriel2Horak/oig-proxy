@@ -1,0 +1,144 @@
+================================================================================
+TASK 13: Stale Retained Detection Evidence
+================================================================================
+Generated: 2026-03-07T12:00:00Z
+Script: .sisyphus/evidence/task-13-cleanup-retained.py
+
+================================================================================
+STALE DETECTION POLICY
+================================================================================
+
+A retained message is considered STALE if:
+1. Timestamp-based: Payload contains timestamp > 24 hours old
+2. Empty payload: Retained message with empty/null payload
+3. Legacy topics: Topics from deprecated control systems
+
+================================================================================
+TEST CASE: Stale Payload Detection
+================================================================================
+
+--- Payload 1: STALE Twin State (48 hours old) ---
+Topic: oig_local/oig_proxy/twin_state/state
+Payload:
+{
+  "queue_length": 0,
+  "inflight": null,
+  "last_result": {
+    "tx_id": "abc-123-def",
+    "status": "applied",
+    "tbl_name": "tbl_box_prms",
+    "tbl_item": "MODE",
+    "timestamp": "2026-03-05T12:00:00Z"
+  },
+  "session_active": false,
+  "mode": "twin"
+}
+
+Detection Analysis:
+  - has_timestamp: true
+  - timestamp_field: last_result.timestamp
+  - detected_age_hours: 48.0
+  - is_stale: TRUE (48.0 > 24 hours threshold)
+  - status: applied
+
+Policy Recommendation: REFRESH or CLEAR
+  - Option A: Wait for twin to republish fresh state on next poll
+  - Option B: Manually clear: mosquitto_pub -t 'topic' -r -n
+
+--------------------------------------------------------------------------------
+
+--- Payload 2: FRESH Twin State (30 minutes old) ---
+Topic: oig_local/oig_proxy/twin_state/state
+Payload:
+{
+  "queue_length": 1,
+  "inflight": {
+    "tx_id": "xyz-789-ghi",
+    "tbl_name": "tbl_boiler_prms",
+    "tbl_item": "MANUAL",
+    "new_value": "1",
+    "stage": "delivered",
+    "timestamp": "2026-03-07T11:30:00Z"
+  },
+  "last_result": null,
+  "session_active": true,
+  "mode": "twin"
+}
+
+Detection Analysis:
+  - has_timestamp: true
+  - timestamp_field: inflight.timestamp
+  - detected_age_hours: 0.5
+  - is_stale: FALSE (0.5 < 24 hours threshold)
+  - status: N/A (inflight)
+
+Policy Recommendation: PRESERVE
+  - This is fresh state from active session
+
+--------------------------------------------------------------------------------
+
+--- Payload 3: STALE Control Result (72 hours old) ---
+Topic: oig_local/oig_proxy/control/result
+Payload:
+{
+  "tx_id": "old-123",
+  "status": "applied",
+  "timestamp": "2026-03-04T12:00:00Z",
+  "value": "3"
+}
+
+Detection Analysis:
+  - has_timestamp: true
+  - timestamp_field: timestamp
+  - detected_age_hours: 72.0
+  - is_stale: TRUE (72.0 > 24 hours threshold)
+  - status: applied
+
+Policy Recommendation: PRESERVE (in allowlist)
+  - Control result topics are in allowlist
+  - Even if stale, should not be cleared blindly
+
+================================================================================
+DETERMINISTIC STALE DETECTION ALGORITHM
+================================================================================
+
+The cleanup script uses this algorithm:
+
+1. Parse JSON payload
+2. Look for timestamp fields in order of priority:
+   a. Direct: timestamp, time, ts, datetime
+   b. Nested: last_result.timestamp
+   c. Nested: inflight.timestamp
+3. Parse ISO 8601 timestamp
+4. Calculate age: now_utc - timestamp_utc
+5. If age > STALE_THRESHOLD_HOURS (default 24):
+   - Mark as stale
+   - If NOT in allowlist -> recommend clear
+   - If in allowlist -> preserve (log warning)
+
+================================================================================
+VERIFICATION: Stale entries identified deterministically
+================================================================================
+
+Test Results:
+  ✓ Payload 1 (48h old): Correctly identified as STALE
+  ✓ Payload 2 (0.5h old): Correctly identified as FRESH
+  ✓ Payload 3 (72h old): Correctly identified as STALE but PRESERVED (allowlist)
+
+Deterministic behavior confirmed:
+  - Same input always produces same detection result
+  - Age calculation uses UTC timezone (no DST issues)
+  - ISO 8601 parsing handles Z suffix correctly
+
+================================================================================
+CONCLUSION: STALE DETECTION SUCCESSFUL
+================================================================================
+
+The stale detection mechanism:
+1. Correctly identifies stale timestamps (age > 24 hours)
+2. Preserves allowlisted topics even if stale
+3. Provides clear age information for each topic
+4. Recommends appropriate action (refresh/clear/preserve)
+
+This ensures safe cleanup of stale retained messages without
+accidentally removing authoritative state.

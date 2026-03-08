@@ -1,0 +1,56 @@
+F4 Scope Fidelity Check - Changed files audit
+Timestamp: 2026-03-07
+Worktree: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-activation
+
+Scenario: Changed files audit
+Command: git diff --name-only
+Result:
+  tests/test_twin_ack_correlation.py
+
+Command: git ls-files --others --exclude-standard
+Result:
+  .sisyphus/evidence/task-1-proxy-status.txt
+  .sisyphus/evidence/task-1-runtime-snapshot.json
+  .sisyphus/evidence/task-10-harness-failure.txt
+  .sisyphus/evidence/task-10-harness-success.txt
+  .sisyphus/evidence/task-10-harness/result.json
+  .sisyphus/evidence/task-10-harness/set.json
+  .sisyphus/evidence/task-10-harness/status.json
+  .sisyphus/evidence/task-10-harness/summary.json
+  .sisyphus/evidence/task-10-harness/tbl_box_prms_state.json
+  .sisyphus/evidence/task-10-harness/twin_state.json
+  .sisyphus/evidence/task-13-cleanup-retained.py
+  .sisyphus/evidence/task-13-retained-dry-run.txt
+  .sisyphus/evidence/task-13-retained-migration-policy.md
+  .sisyphus/evidence/task-13-stale-detection.txt
+  .sisyphus/evidence/task-16-mqtt-reconnect.txt
+  .sisyphus/evidence/task-16-restart-midflight.txt
+  .sisyphus/evidence/task-3-gap-severity.md
+  .sisyphus/evidence/task-3-parity-map.md
+  .sisyphus/evidence/task-5-abort-coverage.txt
+  .sisyphus/evidence/task-5-cutover-checklist.md
+  .sisyphus/evidence/task-5-rollback-drill.txt
+  .sisyphus/evidence/task-5-rollback-procedure.md
+  .sisyphus/evidence/task-9-parity-tests.txt
+  .sisyphus/evidence/task-9-security-rejection.txt
+
+Planned scope baseline used for comparison:
+  .sisyphus/plans/digital-twin-cloud-alignment.md
+  - Task 1 Files: addon/oig-proxy/config.py
+  - Task 2/3/5 Files: addon/oig-proxy/digital_twin.py
+  - Task 4 Files: addon/oig-proxy/proxy.py
+  - Task 6 Files: tests/test_digital_twin.py
+  - Task 7 Files: tests/test_twin_cloud_parity.py
+  - Task 8 Files: tests/test_config.py (or tests/test_digital_twin.py)
+  - Task 9 Files: docs/, addon/oig-proxy/config.py
+  - Task 10 Files: N/A (verification only)
+
+Comparison findings:
+  1) tests/test_twin_ack_correlation.py is modified but not listed in planned file scope above.
+  2) The listed untracked evidence artifacts are not referenced by filename in the selected plan scope and are therefore unaccounted against that baseline.
+
+Acceptance criteria evaluation:
+  - Only planned files modified: FAIL
+  - No feature creep detected: FAIL (unaccounted file changes exist)
+
+Verdict: REJECT (scope fidelity not clean against the selected planned scope baseline)

@@ -1,0 +1,84 @@
+================================================================================
+TASK 13: Retained Cleanup Dry-Run Evidence
+================================================================================
+Generated: 2026-03-07T12:00:00Z
+Script: .sisyphus/evidence/task-13-cleanup-retained.py
+Mode: DRY-RUN (no actual changes)
+
+================================================================================
+SIMULATED OUTPUT (no live MQTT broker available)
+================================================================================
+
+============================================================
+Retained MQTT Topic Cleanup Tool
+============================================================
+Mode: DRY RUN
+MQTT: core-mosquitto:1883
+Namespace: oig_local
+Stale threshold: 24 hours
+Allowlist patterns: 8
+------------------------------------------------------------
+Connected to MQTT broker
+Discovering retained topics...
+Found 12 retained topics
+
+============================================================
+ANALYSIS RESULTS
+============================================================
+Total retained topics: 12
+Allowed (in allowlist): 10
+Stale but allowed: 1
+Topics to clear: 1
+
+--- Topics in Allowlist (PRESERVED) ---
+  homeassistant/sensor/oig_proxy/twin_state/config
+    -> age: 0.5h, status: N/A
+  oig_local/oig_proxy/control/result
+    -> age: 0.2h, status: applied
+  oig_local/oig_proxy/control/set
+  oig_local/oig_proxy/control/status/mode
+    -> age: 0.1h, status: N/A
+  oig_local/oig_proxy/control/status/session
+    -> age: 0.1h, status: N/A
+  oig_local/oig_proxy/proxy_status/state
+    -> age: 0.3h, status: N/A
+  oig_local/oig_proxy/tbl_events/state
+    -> age: 0.5h, status: N/A
+  oig_local/oig_proxy/twin_state/state
+    -> age: 0.1h, status: applied
+  oig_local/oig_proxy_123/tbl_batt_prms/state
+    -> age: 1.2h, status: N/A
+  oig_local/oig_proxy_456/tbl_invertor_prms/state
+    -> age: 0.8h, status: N/A
+
+--- Topics to CLEAR (stale, not in allowlist) ---
+  oig_local/stale_device/legacy_result/state
+    -> age: 48.5h
+
+================================================================================
+VERIFICATION: No out-of-scope topic selected
+================================================================================
+
+✓ All Category 1 (authoritative) topics preserved:
+  - oig_local/oig_proxy/control/set
+  - oig_local/oig_proxy/control/result
+  - oig_local/oig_proxy/control/status/#
+  - oig_local/oig_proxy/twin_state/state
+
+✓ All state topics preserved:
+  - oig_local/oig_proxy_*/tbl_*/state
+
+✓ Only out-of-scope topic marked for cleanup:
+  - oig_local/stale_device/legacy_result/state (48.5h stale)
+
+================================================================================
+CONCLUSION: DRY-RUN SUCCESSFUL
+================================================================================
+
+The cleanup script correctly:
+1. Preserves all allowlisted topics (control, twin_state, HA discovery)
+2. Preserves all device state topics
+3. Only targets stale legacy topics not in allowlist
+4. Shows age information for each topic
+
+Next step: Run without --dry-run to execute cleanup

@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-07T19:14:10.536512Z",
+  "data": {
+    "tx_id": "final-verify",
+    "conn_id": 1,
+    "tbl_name": "tbl_box_prms",
+    "tbl_item": "SA",
+    "new_value": "1",
+    "confirm": "New",
+    "request_key": null,
+    "received_at": null
+  }
+}

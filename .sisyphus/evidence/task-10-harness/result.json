@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-03-07T19:14:10.538217Z",
+  "data": {
+    "tx_id": "final-verify",
+    "conn_id": 1,
+    "status": "completed",
+    "error": null,
+    "detail": null,
+    "tbl_name": null,
+    "tbl_item": null,
+    "new_value": null,
+    "old_value": null,
+    "attempts": null,
+    "timestamp": "2026-03-07T19:14:10.538205Z"
+  }
+}

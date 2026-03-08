@@ -1,0 +1,124 @@
+=== ROLLBACK DRILL (TABLETOP) ===
+Date: 2026-03-07T21:30:00Z
+Type: Dry-run tabletop exercise
+Baseline: .sisyphus/evidence/task-1-baseline.json
+
+== SCENARIO: Failed cutover - addon crash loop after TWIN_ENABLED=true ==
+
+--- STEP 1: Simulate failed cutover condition ---
+[SIMULATED] Addon restarted with TWIN_ENABLED=true
+[SIMULATED] Python traceback detected in logs:
+  "ImportError: cannot import name 'TwinMQTTHandler' from 'digital_twin'"
+[SIMULATED] Addon state: stopped (crash loop)
+[TRIGGER] RT-1 matched: Addon crash loop (>2 restarts in 5 min)
+[DECISION] → Rollback Level 3 (Full Restore) selected because addon is NOT running
+
+--- STEP 2: Execute rollback commands (dry-run) ---
+
+Command sequence (Level 3 Full Restore):
+
+  [DRY-RUN] ha addons stop d7b5d5b1_oig_proxy
+    → Expected: addon stops (already stopped in crash scenario)
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] cp -a /data /data.failed-cutover-$(date +%Y%m%d_%H%M%S)
+    → Expected: snapshot of failed state preserved for debugging
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] echo "false" > /data/twin_enabled
+    → Expected: file written, Twin disabled on next start
+    → VERIFY: cat /data/twin_enabled → "false"
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] echo "true" > /data/twin_kill_switch
+    → Expected: kill switch active as safety net
+    → VERIFY: cat /data/twin_kill_switch → "true"
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] echo "false" > /data/twin_cloud_aligned
+    → Expected: cloud-aligned mode disabled
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] echo "auto" > /data/local_control_routing
+    → Expected: routing back to auto (legacy)
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] cp /data.pre-twin-backup/prms_state.json /data/prms_state.json
+    → Expected: state restored from pre-cutover backup
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] ha addons start d7b5d5b1_oig_proxy
+    → Expected: addon starts with legacy config
+    → STATUS: SIMULATED OK
+
+  [DRY-RUN] sleep 45
+    → Expected: wait for full initialization
+    → STATUS: SIMULATED OK
+
+--- STEP 3: Post-rollback validation commands (dry-run) ---
+
+  [DRY-RUN] ha addons info d7b5d5b1_oig_proxy | jq -r .data.state
+    → Expected: "started"
+    → VALIDATES: addon running after rollback
+
+  [DRY-RUN] ha addons logs d7b5d5b1_oig_proxy | grep -c Traceback
+    → Expected: "0"
+    → VALIDATES: no Python errors after rollback
+
+  [DRY-RUN] ha addons logs d7b5d5b1_oig_proxy | grep "Twin: ENABLED"
+    → Expected: NOT FOUND
+    → VALIDATES: Twin is disabled
+
+  [DRY-RUN] ha addons logs d7b5d5b1_oig_proxy | grep "kill switch"
+    → Expected: "Twin kill switch: ENABLED"
+    → VALIDATES: kill switch active
+
+  [DRY-RUN] mosquitto_sub -t 'oig_local/oig_proxy/proxy_status/state' -C 1 -W 60 | jq -r .status
+    → Expected: "online"
+    → VALIDATES: proxy operational
+
+  [DRY-RUN] mosquitto_sub -t 'oig_local/oig_proxy/proxy_status/state' -C 1 -W 60 | jq -r .cloud_online
+    → Expected: "1"
+    → VALIDATES: cloud connection restored
+
+  [DRY-RUN] mosquitto_sub -t 'oig_local/oig_proxy/proxy_status/state' -C 1 -W 120 | jq -r .box_data_recent
+    → Expected: "1"
+    → VALIDATES: BOX reconnected and sending data
+
+  [DRY-RUN] mosquitto_sub -t 'oig_local/oig_proxy/twin_state/state' -C 1 -W 10
+    → Expected: TIMEOUT (no twin_state published)
+    → VALIDATES: Twin is not active
+
+--- STEP 4: Compare against baseline ---
+
+Baseline values from task-1-baseline.json:
+  proxy_mode: hybrid
+  telemetry_enabled: false
+
+Baseline from task-1-runtime-snapshot.json:
+  version: 1.6.3
+  status: running
+  proxy_status.status: online
+  proxy_status.mode: online
+  proxy_status.cloud_online: 1
+  proxy_status.box_data_recent: 1
+
+Post-rollback expected values:
+  TWIN_ENABLED: false (matches pre-cutover)
+  TWIN_KILL_SWITCH: true (safety addition - acceptable)
+  TWIN_CLOUD_ALIGNED: false (matches pre-cutover)
+  LOCAL_CONTROL_ROUTING: auto (matches pre-cutover)
+  proxy status: online (matches baseline)
+  cloud_online: 1 (matches baseline)
+  box_data_recent: 1 (matches baseline)
+
+BASELINE MATCH: YES (all critical values match pre-cutover state)
+
+=== DRILL ASSESSMENT ===
+Rollback flow: UNAMBIGUOUS - clear decision tree, 3 escalation levels
+Completeness: COMPLETE - all environment variables covered, all validation checks present
+Time to recover: ~5 minutes maximum (Level 3)
+Gaps found: NONE
+Ambiguities: NONE
+
+DRILL RESULT: PASS

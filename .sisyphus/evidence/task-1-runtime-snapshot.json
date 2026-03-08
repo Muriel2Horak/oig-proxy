@@ -1,0 +1,29 @@
+{
+  "addon_slug": "d7b5d5b1_oig_proxy",
+  "addon_name": "OIG Proxy",
+  "version": "1.6.3",
+  "image": "d7b5d5b1/amd64-addon-oig_proxy:1.6.3",
+  "base_version": "2026.02.0",
+  "hostname": "d7b5d5b1-oig-proxy",
+  "status": "running",
+  "docker_container_status": "Up 21 minutes",
+  "collection_timestamp": "2026-03-07T19:57:00+0100",
+  "options": {
+    "description": "Collected from docker inspect and MQTT status",
+    "mqtt_status_topic": "oig_local/oig_proxy/proxy_status/state",
+    "note": "Full addon options unavailable - collected from docker inspection"
+  },
+  "proxy_status_from_mqtt": {
+    "status": "online",
+    "mode": "online",
+    "configured_mode": "online",
+    "box_device_id": "2206237016",
+    "cloud_online": 1,
+    "box_connected": 0,
+    "box_connections": 63,
+    "box_data_recent": 1,
+    "last_data": "2026-03-07T19:57:57+0100",
+    "isnewset_polls": 63,
+    "isnewset_last_rtt_ms": 82.1
+  }
+}

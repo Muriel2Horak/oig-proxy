@@ -1,0 +1,8 @@
+Harness Failure Detection Evidence
+====================================
+tx_id: test-fault-003
+conn_id: 1
+fault_mode: True
+elapsed: 0.00s
+captures: ['status', 'set', 'twin_state', 'result']
+timestamp: 2026-03-07T19:12:51.701064Z

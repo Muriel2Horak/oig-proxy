@@ -1,0 +1,104 @@
+=== ABORT CONDITION COVERAGE ANALYSIS ===
+Date: 2026-03-07T21:30:00Z
+Source: task-5-cutover-checklist.md + task-5-rollback-procedure.md
+
+1. CRITICAL ABORT CONDITIONS (cutover checklist)
+--------------------------------------------------------------------------------
+  [COVERED] ABORT-1: Addon fails to start after restart
+           Detection: `state != started` after 30s
+           Action:    Rollback immediately
+           MaxTime:   30 seconds
+  [COVERED] ABORT-2: Python traceback in logs
+           Detection: `grep -c Traceback` in logs
+           Action:    Activate kill switch
+           MaxTime:   60 seconds
+  [COVERED] ABORT-3: BOX fails to reconnect
+           Detection: `box_data_recent=0` for >3 min
+           Action:    Rollback to baseline
+           MaxTime:   3 minutes
+  [COVERED] ABORT-4: Cloud connection lost
+           Detection: `cloud_online=0` for >2 min
+           Action:    Activate kill switch
+           MaxTime:   2 minutes
+  [COVERED] ABORT-5: Settings not delivered
+           Detection: `control_queue_len > 0` for >5 min
+           Action:    Activate kill switch + rollback
+           MaxTime:   5 minutes
+  [COVERED] ABORT-6: MQTT broker unreachable
+           Detection: `mosquitto_pub` fails
+           Action:    Rollback to baseline
+           MaxTime:   30 seconds
+  [COVERED] ABORT-7: HA entities disappear
+           Detection: Twin sensors missing from HA
+           Action:    Investigate (non-critical)
+           MaxTime:   10 minutes
+  [COVERED] ABORT-8: Continuous error log spam
+           Detection: `>50 ERROR lines/min`
+           Action:    Activate kill switch
+           MaxTime:   2 minutes
+  [COVERED] ABORT-9: Data corruption suspected
+           Detection: `prms_state.json` changes unexpectedly
+           Action:    Rollback + restore backup
+           MaxTime:   5 minutes
+
+  Result: 9/9 covered
+
+2. ROLLBACK TRIGGERS (rollback procedure)
+--------------------------------------------------------------------------------
+  [COVERED] RT-1: Addon crash loop (>2 restarts in 5 min) [CRITICAL]
+  [COVERED] RT-2: BOX disconnected >3 minutes after cutover [CRITICAL]
+  [COVERED] RT-3: Python traceback in addon logs [CRITICAL]
+  [COVERED] RT-4: Cloud connection lost >2 min post-cutover [HIGH]
+  [COVERED] RT-5: Settings delivery failure (queue stuck >5 min) [HIGH]
+  [COVERED] RT-6: Twin state not publishing after restart [HIGH]
+  [COVERED] RT-7: Error rate >50/min sustained for 2 min [HIGH]
+  [COVERED] RT-8: Data corruption (unexpected file changes) [CRITICAL]
+  [COVERED] RT-9: Operator judgment (anything feels wrong) [ANY]
+
+  Result: 9/9 covered
+
+3. PREFLIGHT GO/NO-GO ABORT ACTIONS
+--------------------------------------------------------------------------------
+  [COVERED] 1.1: Addon is running → ABORT- fix addon first
+  [COVERED] 1.2: BOX connected recently → ABORT- BOX offline, unsafe to cutov
+  [COVERED] 1.3: Cloud is online → ABORT- Cloud down, must cutover fro
+  [COVERED] 1.4: Cloud queue empty → ABORT- Drain queue first before cut
+  [COVERED] 1.5: Control queue empty → ABORT- Wait for in-flight settings 
+  [COVERED] 1.6: No active control inflight → ABORT- Wait for completion
+  [COVERED] 1.7: Disk space adequate → ABORT- Free disk space
+  [COVERED] 1.8: MQTT broker responding → ABORT- Fix MQTT first
+  [COVERED] 1.9: digital_twin.py present in image → ABORT- Image missing Twin code
+  [COVERED] 1.10: twin_transaction.py present → ABORT- Image incomplete
+  [COVERED] 1.11: twin_state.py present → ABORT- Image incomplete
+  [COVERED] 1.12: twin_adapter.py present → ABORT- Image incomplete
+  [COVERED] 1.13: sensor_map has Twin sensors → ABORT- Sensor map not updated
+  [COVERED] 1.14: Config schema accepts twin flags → ABORT- Schema not updated
+  [COVERED] 1.15: Not during BOX data burst → DELAY- Wait for session gap
+  [COVERED] 1.16: Operator available for 30 min → DELAY- Schedule for available windo
+  [COVERED] 1.17: No pending HA updates → DELAY- Complete updates first
+
+  Result: 17/17 covered
+
+4. CROSS-REFERENCE: ABORT conditions → Rollback Triggers
+--------------------------------------------------------------------------------
+  ABORT-1 (Addon fails to start after restart) ↔ RT-1 (Addon crash loop (>2 restarts in 5 min))
+  ABORT-2 (Python traceback in logs) ↔ RT-3 (Python traceback in addon logs)
+  ABORT-3 (BOX fails to reconnect) ↔ RT-2 (BOX disconnected >3 minutes after cutove)
+  ABORT-4 (Cloud connection lost) ↔ RT-4 (Cloud connection lost >2 min post-cutove)
+  ABORT-5 (Settings not delivered) ↔ RT-5 (Settings delivery failure (queue stuck >)
+  ABORT-6 (MQTT broker unreachable) → handled directly (no RT needed)
+  ABORT-7 (HA entities disappear) → handled directly (no RT needed)
+  ABORT-8 (Continuous error log spam) ↔ RT-7 (Error rate >50/min sustained for 2 min)
+  ABORT-9 (Data corruption suspected) ↔ RT-8 (Data corruption (unexpected file changes)
+
+================================================================================
+SUMMARY
+================================================================================
+  Critical abort conditions: 9/9 (100%)
+  Rollback triggers:         9/9 (100%)
+  Preflight abort actions:   17/17 (100%)
+  TOTAL:                     35/35 (100%)
+
+  VERDICT: PASS
+  - 100% critical failures covered: YES
+  - No critical condition without owner/action: YES

@@ -1,0 +1,7 @@
+Harness Success Evidence
+========================
+tx_id: final-verify
+conn_id: 1
+elapsed: 0.00s
+captures: ['status', 'set', 'twin_state', 'result', 'tbl_box_prms_state']
+timestamp: 2026-03-07T19:14:10.539174Z

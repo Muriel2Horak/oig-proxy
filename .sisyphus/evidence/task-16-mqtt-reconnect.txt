@@ -1,0 +1,39 @@
+Task: T16 - Failure injection validation
+Scenario: MQTT reconnect during command (modeled as disconnect/reconnect + MQTT handler resubscribe)
+Date: 2026-03-07
+
+Goal
+- Validate Twin-first flow resilience under transient connectivity: no stuck inflight, no duplicate effective apply, clear terminal outcomes.
+
+What I Ran
+1) Replay/reconnect resilience subset:
+   PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_replay_resilience.py -k "reconnect or replay" --maxfail=1
+
+Result (stdout)
+  19 passed, 90 warnings in 0.05s
+
+2) MQTT handler + reconnect helper coverage (simulates post-reconnect message handler invocation + reconnect replay branching):
+   PYTHONPATH=addon/oig-proxy pytest -q tests/test_digital_twin.py -k "twin_mqtt_handler_setup_and_message_variants or reconnect_and_replay_branches_and_helpers" --maxfail=1
+
+Result (stdout)
+  2 passed, 60 deselected, 10 warnings in 0.04s
+
+Evidence Mapping To Expected Results
+- Preconditions satisfied (active command in progress): tests exercise inflight setting delivered to BOX (SENT_TO_BOX) before disconnect.
+- Step 1 (trigger reconnect event): modeled by DigitalTwin.on_disconnect(...) followed by DigitalTwin.on_reconnect(...).
+- Step 2 (observe recovery behavior): replay buffer moves back to queue on reconnect; delivery happens on new connection.
+
+Key Assertions Covered By Tests
+- No stuck inflight after disconnect: disconnect moves delivered-but-unacked inflight to replay buffer and clears inflight.
+  - tests/test_twin_replay_resilience.py::TestReplayBuffer::test_delivered_but_unacked_moved_to_replay_buffer
+- Exactly-once effective apply / dedup on replay: completed tx_id is not replayed.
+  - tests/test_twin_replay_resilience.py::TestDuplicatePrevention::test_completed_transaction_not_replayed
+- Deterministic completion after reconnect: disconnect mid-flight then reconnect allows full roundtrip to COMPLETED.
+  - tests/test_twin_replay_resilience.py::TestStateRecovery::test_full_roundtrip_after_reconnect
+- Replay attempt exhaustion yields explicit safe error:
+  - tests/test_twin_replay_resilience.py::TestMaxReplayAttempts::test_exceed_max_replay_returns_error
+- MQTT reconnect robustness (handler re-registration + message variants do not crash and enqueue validated DTO):
+  - tests/test_digital_twin.py::TestDigitalTwinAdditionalCoverage::test_twin_mqtt_handler_setup_and_message_variants
+
+Notes
+- Warnings observed are DeprecationWarning from twin_state timestamp generation; no test failures.
