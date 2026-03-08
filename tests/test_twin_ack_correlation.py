@@ -9,6 +9,8 @@ Verification:
   PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_ack_correlation.py -k wrong_conn --maxfail=1
 """
 
+# pyright: reportMissingImports=false
+
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 # pylint: disable=too-few-public-methods,invalid-name,unused-variable
 
