@@ -293,6 +293,32 @@ async def test_send_frame_to_cloud_ok(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_send_frame_end_does_not_wait_for_ack(monkeypatch):
+    proxy, cf = _make_proxy_and_cf()
+    reader = DummyReader(data=b"<Frame>ACK</Frame>\r\n")
+    writer = DummyWriter()
+
+    async def fake_wait_for(coro, timeout):
+        return await coro
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+
+    ack_data, ack_required = await cf.send_frame(
+        frame_bytes=b"<Frame>END</Frame>",
+        cloud_writer=writer,
+        cloud_reader=reader,
+        table_name="END",
+        conn_id=1,
+    )
+
+    assert ack_data is None
+    assert ack_required is False
+    assert reader._read_count == 0
+    assert proxy.stats["frames_forwarded"] == 1
+    proxy._tc.record_end_frame.assert_called_once_with(sent=True)
+
+
+@pytest.mark.asyncio
 async def test_send_frame_to_cloud_eof(monkeypatch):
     proxy, cf = _make_proxy_and_cf()
     reader = DummyReader(data=b"")

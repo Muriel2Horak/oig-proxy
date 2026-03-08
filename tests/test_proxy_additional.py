@@ -474,7 +474,7 @@ def _setup_cloud_timeout(proxy, monkeypatch):
 
 
 def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
-    """In ONLINE mode, END timeout does NOT send local ACK - fully transparent."""
+    """In ONLINE mode, END is forwarded without waiting for cloud ACK."""
     proxy = make_proxy(tmp_path)
     proxy._hm.configured_mode = "online"  # ONLINE mode: transparent
     box_writer = _setup_cloud_timeout(proxy, monkeypatch)
@@ -491,13 +491,13 @@ def test_forward_frame_online_timeout_end_transparent(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
     )
-    # ONLINE: no local ACK, BOX times out
     assert proxy.stats["acks_local"] == 0
-    assert proxy._cf.timeouts == 1
+    assert proxy._cf.timeouts == 0
+    proxy._tc.record_end_frame.assert_called_once_with(sent=True)
 
 
 def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
-    """In HYBRID mode (after threshold), END timeout sends local END ACK."""
+    """In HYBRID mode, END is also forwarded without waiting for cloud ACK."""
     proxy = make_proxy(tmp_path)
     proxy._hm.configured_mode = "hybrid"  # HYBRID mode
     proxy._hm.is_hybrid_mode.return_value = True
@@ -516,9 +516,9 @@ def test_forward_frame_hybrid_timeout_end_local_ack(tmp_path, monkeypatch):
             connect_timeout_s=0.1,
         )
     )
-    # HYBRID in offline: sends local END ACK
-    assert proxy.stats["acks_local"] == 1
-    assert proxy._cf.timeouts == 1
+    assert proxy.stats["acks_local"] == 0
+    assert proxy._cf.timeouts == 0
+    proxy._tc.record_end_frame.assert_called_once_with(sent=True)
 
 
 def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):

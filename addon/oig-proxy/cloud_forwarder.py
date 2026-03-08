@@ -371,12 +371,15 @@ class CloudForwarder:
         cloud_reader: asyncio.StreamReader,
         table_name: str | None,  # pylint: disable=unused-argument
         conn_id: int,  # pylint: disable=unused-argument
-    ) -> tuple[bytes | None, None]:
+    ) -> tuple[bytes | None, bool]:
         cloud_writer.write(frame_bytes)
         await cloud_writer.drain()
         self._proxy.stats["frames_forwarded"] += 1
         self._proxy._tc.cloud_ok_in_window = True
         self._proxy._tc.record_frame_direction("proxy_to_box")
+        if table_name == "END":
+            self._proxy._tc.record_end_frame(sent=True)
+            return None, False
         ack_data = await self.read_ack(
             cloud_reader=cloud_reader,
             ack_timeout_s=CLOUD_ACK_TIMEOUT,
@@ -384,7 +387,7 @@ class CloudForwarder:
         )
         if not ack_data:
             raise EOFError("Cloud closed connection")
-        return ack_data, None
+        return ack_data, True
 
     async def read_ack(
         self,
@@ -497,13 +500,15 @@ class CloudForwarder:
             )
 
         try:
-            ack_data, _ = await self.send_frame(
+            ack_data, ack_required = await self.send_frame(
                 frame_bytes=frame_bytes,
                 cloud_writer=cloud_writer,
                 cloud_reader=cloud_reader,
                 table_name=table_name,
                 conn_id=conn_id,
             )
+            if not ack_required:
+                return cloud_reader, cloud_writer
             if not ack_data:
                 return await self.handle_eof(
                     conn_id=conn_id,
