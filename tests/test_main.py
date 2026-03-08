@@ -88,6 +88,25 @@ def test_main_handles_exception(monkeypatch):
     assert asyncio.run(run()) == 1
 
 
+def test_main_exits_on_invalid_twin_configuration(monkeypatch):
+    monkeypatch.setattr(main_module, "check_requirements", lambda: None)
+    monkeypatch.setattr(main_module, "validate_startup_guards", lambda: (_ for _ in ()).throw(ValueError("bad combo")))
+    monkeypatch.setattr(main_module, "load_sensor_map", lambda: None)
+
+    monkeypatch.setattr(
+        main_module.sys,
+        "exit",
+        lambda code=0: (_ for _ in ()).throw(SystemExit(code)),
+    )
+
+    async def run():
+        with pytest.raises(SystemExit) as exc:
+            await main_module.main()
+        return exc.value.code
+
+    assert asyncio.run(run()) == 1
+
+
 def test_main_module_interrupts(monkeypatch):
     def fake_run(coro):
         coro.close()

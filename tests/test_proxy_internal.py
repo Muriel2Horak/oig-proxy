@@ -404,6 +404,31 @@ def test_install_twin_mqtt_on_connect_hook_handles_publish_exception(tmp_path, m
     loop.close()
 
 
+def test_install_twin_mqtt_on_connect_hook_without_loop_is_noop(tmp_path):
+    proxy = _make_proxy(tmp_path)
+
+    class TwinStub:
+        def __init__(self):
+            self.calls = 0
+
+        async def publish_initial_state(self):
+            self.calls += 1
+
+    twin = TwinStub()
+    proxy._twin = twin
+    proxy._loop = None
+
+    proxy._install_twin_mqtt_on_connect_hook()
+    assert len(proxy.mqtt_publisher._on_connect_handlers) == 1
+    proxy.mqtt_publisher._on_connect_handlers[0]()
+    assert twin.calls == 0
+
+
+def test_safe_twin_available_returns_false_without_checker(tmp_path):
+    proxy = _make_proxy(tmp_path)
+    assert proxy._ps._safe_twin_available(object()) is False
+
+
 def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
     proxy = _make_proxy(tmp_path)
     tc = proxy._tc

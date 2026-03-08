@@ -207,6 +207,32 @@ def test_on_connect_invokes_registered_handlers(monkeypatch):
     assert calls["count"] == 1
 
 
+def test_on_connect_handler_exception_is_logged(monkeypatch):
+    publisher = _make_publisher(monkeypatch)
+
+    def bad_handler() -> None:
+        raise RuntimeError("boom")
+
+    class DummyClient:
+        def publish(self, *_args, **_kwargs):
+            return SimpleNamespace(rc=0, mid=1)
+
+        def subscribe(self, *_args, **_kwargs):
+            return (0, 1)
+
+    publisher.add_on_connect_handler(bad_handler)
+    with patch("mqtt_publisher.logger") as mock_logger:
+        publisher._on_connect(DummyClient(), None, {}, 0)
+        assert any("on_connect handler failed" in call.args[0] for call in mock_logger.debug.call_args_list)
+
+
+def test_create_client_returns_none_when_mqtt_symbol_missing(monkeypatch):
+    monkeypatch.setattr(mqtt_publisher, "MQTT_AVAILABLE", True)
+    monkeypatch.setattr(mqtt_publisher, "mqtt", None)
+    publisher = _make_publisher(monkeypatch)
+    assert publisher._create_client() is None
+
+
 @pytest.mark.asyncio
 async def test_publish_raw_no_client(monkeypatch):
     publisher = _make_publisher(monkeypatch)

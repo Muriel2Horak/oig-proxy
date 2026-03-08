@@ -73,3 +73,13 @@ def test_control_parity_contract_whitelist_matches_contract_keys():
     assert set(config.CONTROL_WRITE_WHITELIST.keys()) == set(config.CONTROL_WRITE_PARITY_CONTRACT.keys())
     for tbl_name, items in config.CONTROL_WRITE_PARITY_CONTRACT.items():
         assert config.CONTROL_WRITE_WHITELIST[tbl_name] == set(items.keys())
+
+
+def test_control_parity_contract_fallback_for_unknown_profile():
+    normalized = config.normalize_control_value("tbl_unknown", "X", 123)
+    assert normalized == ("123", "123")
+
+
+def test_control_parity_contract_mode_bad_type_is_rejected():
+    normalized = config.normalize_control_value("tbl_box_prms", "MODE", object())
+    assert normalized == (None, "bad_value")
