@@ -1,8 +1,7 @@
-"""Tests for Whitelist Command Parity Matrix - RED Tests.
+"""Tests for Whitelist Command Parity Matrix.
 
-This file creates RED tests that verify all whitelisted commands
-can be executed through the twin adapter interface. These tests FAIL
-because the twin adapter implementation doesn't exist yet.
+This file verifies all whitelisted commands can be executed through the
+DigitalTwin adapter interface.
 
 Purpose:
 - Enumerate all commands in CONTROL_WRITE_WHITELIST
@@ -16,11 +15,9 @@ Related:
 - Task 1: Freeze ACK/Setting Invariants (test_proxy_control_ack.py)
 - Task 2: Define Twin Interface Contract (twin_adapter.py, twin_state.py)
 
-RED TEST DESIGN:
-- Tests import the real twin adapter (not mock)
+TEST DESIGN:
+- Tests use the real DigitalTwin implementation
 - Tests expect queue_setting() to return TransactionResultDTO
-- Tests FAIL because real implementation raises NotImplementedError
-- Tests will PASS after implementation is complete
 """
 
 # pylint: disable=missing-function-docstring,missing-class-docstring
@@ -33,8 +30,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Import twin adapter - this is the REAL implementation (not mock)
-# When implementation is complete, these imports will work
 from twin_adapter import (
     TwinAdapterProtocol,
     QueueSettingDTO,
@@ -43,6 +38,7 @@ from twin_adapter import (
     SettingStage,
 )
 from twin_state import AckResult
+from digital_twin import DigitalTwin
 
 # Import control config for whitelist
 from config import CONTROL_WRITE_WHITELIST
@@ -54,76 +50,7 @@ from config import CONTROL_WRITE_WHITELIST
 
 @pytest.fixture
 def twin_adapter():
-    """Get the real twin adapter implementation.
-
-    Currently returns a stub that raises NotImplementedError.
-    After implementation, this should return the real adapter.
-    """
-    # Import the real adapter class when it exists
-    # For now, we use a stub that demonstrates RED test behavior
-    class StubTwinAdapter:
-        """Stub twin adapter for RED tests.
-
-        This stub demonstrates the expected interface but raises
-        NotImplementedError to make tests FAIL. When the real
-        implementation is added, tests will start PASSING.
-        """
-
-        async def queue_setting(self, dto: QueueSettingDTO) -> TransactionResultDTO:
-            # This is the RED test behavior - raise NotImplementedError
-            # After implementation, this should return a proper TransactionResultDTO
-            raise NotImplementedError(
-                f"TwinAdapter.queue_setting() not implemented. "
-                f"Expected: return TransactionResultDTO with status='accepted'. "
-                f"Got: NotImplementedError for tbl={dto.tbl_name} item={dto.tbl_item}"
-            )
-
-        async def get_queue_length(self) -> int:
-            raise NotImplementedError("get_queue_length not implemented")
-
-        async def get_queue_snapshot(self):
-            raise NotImplementedError("get_queue_snapshot not implemented")
-
-        async def get_inflight(self):
-            raise NotImplementedError("get_inflight not implemented")
-
-        async def start_inflight(self, tx_id: str, conn_id: int):
-            raise NotImplementedError("start_inflight not implemented")
-
-        async def finish_inflight(self, tx_id: str, conn_id: int, **kwargs):
-            raise NotImplementedError("finish_inflight not implemented")
-
-        async def on_ack(self, dto):
-            raise NotImplementedError("on_ack not implemented")
-
-        async def validate_ack_conn_ownership(self, tx_id: str, conn_id: int, delivered_conn_id):
-            raise NotImplementedError("validate_ack_conn_ownership not implemented")
-
-        async def on_tbl_event(self, dto):
-            raise NotImplementedError("on_tbl_event not implemented")
-
-        async def on_disconnect(self, dto):
-            raise NotImplementedError("on_disconnect not implemented")
-
-        async def on_poll(self, tx_id, conn_id, table_name):
-            raise NotImplementedError("on_poll not implemented")
-
-        async def deliver_pending_setting(self, tx_id, conn_id):
-            raise NotImplementedError("deliver_pending_setting not implemented")
-
-        async def get_snapshot(self, conn_id=None):
-            raise NotImplementedError("get_snapshot not implemented")
-
-        async def get_pending_state(self, tx_id, conn_id):
-            raise NotImplementedError("get_pending_state not implemented")
-
-        async def clear_all(self):
-            raise NotImplementedError("clear_all not implemented")
-
-        async def restore_from_snapshot(self, snapshot):
-            raise NotImplementedError("restore_from_snapshot not implemented")
-
-    return StubTwinAdapter()
+    return DigitalTwin(session_id="parity-matrix")
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -186,7 +113,6 @@ def make_queue_setting_dto(
 # tbl_batt_prms Tests
 # =============================================================================
 
-@pytest.mark.xfail(reason="RED tests - TwinAdapter.queue_setting() not implemented")
 class TestTwinParity_tbl_batt_prms:
     """RED tests for tbl_batt_prms whitelist commands."""
 
@@ -201,10 +127,8 @@ class TestTwinParity_tbl_batt_prms:
             conn_id=1,
         )
 
-        # RED TEST: This raises NotImplementedError
         result = await twin_adapter.queue_setting(dto)
 
-        # These assertions should pass after implementation:
         assert result.status == "accepted"
         assert result.tx_id == dto.tx_id
 
@@ -229,7 +153,6 @@ class TestTwinParity_tbl_batt_prms:
 # tbl_boiler_prms Tests
 # =============================================================================
 
-@pytest.mark.xfail(reason="RED tests - TwinAdapter.queue_setting() not implemented")
 class TestTwinParity_tbl_boiler_prms:
     """RED tests for tbl_boiler_prms whitelist commands."""
 
@@ -322,7 +245,6 @@ class TestTwinParity_tbl_boiler_prms:
 # tbl_box_prms Tests
 # =============================================================================
 
-@pytest.mark.xfail(reason="RED tests - TwinAdapter.queue_setting() not implemented")
 class TestTwinParity_tbl_box_prms:
     """RED tests for tbl_box_prms whitelist commands."""
 
@@ -405,7 +327,6 @@ class TestTwinParity_tbl_box_prms:
 # tbl_invertor_prms Tests
 # =============================================================================
 
-@pytest.mark.xfail(reason="RED tests - TwinAdapter.queue_setting() not implemented")
 class TestTwinParity_tbl_invertor_prms:
     """RED tests for tbl_invertor_prms whitelist commands."""
 
@@ -456,7 +377,6 @@ class TestTwinParity_tbl_invertor_prms:
 # tbl_invertor_prm1 Tests
 # =============================================================================
 
-@pytest.mark.xfail(reason="RED tests - TwinAdapter.queue_setting() not implemented")
 class TestTwinParity_tbl_invertor_prm1:
     """RED tests for tbl_invertor_prm1 whitelist commands."""
 

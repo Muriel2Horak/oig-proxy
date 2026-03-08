@@ -1660,7 +1660,39 @@ class DigitalTwin:
         self,
         snapshot: SnapshotDTO,
     ) -> None:
-        """Restore state from a snapshot."""
+        """Restore minimal transactional state from a snapshot payload."""
+        async with self._lock:
+            self._queue.clear()
+            self._replay_buffer.clear()
+            self._cancel_timeout_tasks()
+            self._inflight_ctx = None
+
+            self._active_conn_id = snapshot.conn_id
+
+            if not snapshot.has_inflight or not snapshot.tx_id:
+                self._inflight = None
+                await self._publish_state()
+                return
+
+            stage = SettingStage.ACCEPTED
+            if snapshot.inflight_stage:
+                try:
+                    stage = SettingStage(snapshot.inflight_stage)
+                except ValueError:
+                    stage = SettingStage.ACCEPTED
+
+            self._inflight = PendingSettingState(
+                tx_id=snapshot.tx_id,
+                conn_id=snapshot.conn_id or 0,
+                tbl_name=snapshot.inflight_tbl_name or "",
+                tbl_item=snapshot.inflight_tbl_item or "",
+                new_value=snapshot.inflight_new_value or "",
+                confirm="New",
+                stage=stage,
+                delivered_conn_id=snapshot.inflight_delivered_conn_id,
+            )
+
+            await self._publish_state()
 
     # ------------------------------------------------------------------
     # Timeout Handlers with INV-3 Validation

@@ -1772,7 +1772,6 @@ class TestREDExpectedFailures:
             "RED: on_poll must return frame_data when pending setting exists"
         )
 
-    @pytest.mark.xfail(reason="RED tests - implementation not complete")
     async def test_restore_from_snapshot_rebuilds_state(self):
         """
         RED TEST: restore_from_snapshot must rebuild complete state.
