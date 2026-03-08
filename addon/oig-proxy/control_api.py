@@ -11,6 +11,8 @@ Intentionally:
 - minimal validation (only checks that BOX is connected and sending data)
 """
 
+# pylint: disable=too-many-locals,too-many-return-statements
+
 from __future__ import annotations
 
 import json

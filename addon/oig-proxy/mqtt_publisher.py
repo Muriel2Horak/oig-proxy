@@ -230,7 +230,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
     def __init__(self, device_id: str):
         self.device_id = device_id
         self.proxy_device_id = PROXY_DEVICE_ID or device_id
-        self.client: mqtt.Client | None = None
+        self.client: Any | None = None
         self.connected = False
         self.discovery_sent: set[str] = set()
         self._last_payload_by_topic: dict[str, str] = {}
@@ -240,6 +240,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                                                 Callable[[str, bytes, int, bool], None]]] = {}
         self._wildcard_handlers: list[tuple[str, int,
                                             Callable[[str, bytes, int, bool], None]]] = []
+        self._on_connect_handlers: list[Callable[[], None]] = []
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._replay_future: concurrent.futures.Future[Any] | None = None
 
@@ -268,14 +269,16 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self.client.on_publish = self._on_publish
         self.client.on_message = self._on_message
 
-    def _create_client(self) -> mqtt.Client | None:
+    def _create_client(self) -> Any | None:
         if not MQTT_AVAILABLE:
             logger.error("MQTT library paho-mqtt is not installed")
+            return None
+        if mqtt is None:
             return None
 
         client_kwargs: dict[str, Any] = {
             "client_id": f"{MQTT_NAMESPACE}_{self.device_id}",
-            "protocol": mqtt.MQTTv311,
+            "protocol": getattr(mqtt, "MQTTv311", 4),
         }
         callback_api = getattr(mqtt, "CallbackAPIVersion", None)
         if callback_api is not None:
@@ -386,11 +389,22 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
 
             # Trigger replay
             self._schedule_replay()
+
+            for handler in self._on_connect_handlers:
+                try:
+                    handler()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.debug("MQTT: on_connect handler failed: %s", e)
         else:
             logger.error("MQTT: ❌ Connection refused: %s", rc_msg)
             self.connected = False
             self.last_error_time = time.time()
             self.last_error_msg = rc_msg
+
+    def add_on_connect_handler(self, handler: Callable[[], None]) -> None:
+        """Register callback executed after each successful MQTT connect."""
+        if handler not in self._on_connect_handlers:
+            self._on_connect_handlers.append(handler)
 
     def _on_disconnect(
         self, _client: Any, _userdata: Any, rc: int

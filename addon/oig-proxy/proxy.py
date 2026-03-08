@@ -148,6 +148,7 @@ class OIGProxy:
             if self._twin is not None
             else None
         )
+        self._install_twin_mqtt_on_connect_hook()
         self._pending_twin_activation: bool = False
         self._twin_mode_active: bool = False
         self._install_twin_mqtt_activation_hook()
@@ -200,9 +201,30 @@ class OIGProxy:
 
         if self._twin_mqtt_handler is not None and self._loop is not None:
             self._twin_mqtt_handler.setup_mqtt(self._loop)
-        if self._twin is not None and connected:
-            await self._twin.publish_initial_state()
         self._msc.setup()
+
+    def _install_twin_mqtt_on_connect_hook(self) -> None:
+        twin = self._twin
+        if twin is None:
+            return
+
+        def _on_mqtt_connected() -> None:
+            if self._loop is None:
+                return
+            fut = asyncio.run_coroutine_threadsafe(
+                twin.publish_initial_state(),
+                self._loop,
+            )
+
+            def _consume(_fut: Any) -> None:
+                try:
+                    _fut.result()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.debug("TWIN: publish_initial_state on connect failed: %s", exc)
+
+            fut.add_done_callback(_consume)
+
+        self.mqtt_publisher.add_on_connect_handler(_on_mqtt_connected)
 
     def _install_twin_mqtt_activation_hook(self) -> None:
         if self._twin_mqtt_handler is None:

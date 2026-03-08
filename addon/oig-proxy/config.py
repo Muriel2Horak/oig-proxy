@@ -211,6 +211,7 @@ def normalize_control_value(
     tbl_item: str,
     new_value: Any,
 ) -> tuple[str | None, str]:
+    """Normalize control input using the parity contract for whitelist items."""
     profile = CONTROL_WRITE_PARITY_CONTRACT.get(tbl_name, {}).get(tbl_item)
     if profile is None:
         return (str(new_value), str(new_value))

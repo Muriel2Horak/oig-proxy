@@ -251,7 +251,7 @@ class TwinMQTTHandler:
         if tx_id_raw:
             tx_id = tx_id_raw
         elif tx_id_strategy == "legacy_hash":
-            tx_id = f"legacy-{hashlib.sha1(request_key.encode('utf-8')).hexdigest()[:16]}"
+            tx_id = f"legacy-{hashlib.sha1(request_key.encode('utf-8'), usedforsecurity=False).hexdigest()[:16]}"
         else:
             tx_id = generate_tx_id()
 
@@ -530,6 +530,7 @@ class DigitalTwin:
         error: str,
         detail: str | None = None,
     ) -> TransactionResultDTO:
+        """Store and publish an error state for invalid incoming control payloads."""
         async with self._lock:
             # Lifecycle marker: error
             logger.info(
