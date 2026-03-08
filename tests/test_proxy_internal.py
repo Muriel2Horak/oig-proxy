@@ -9,9 +9,11 @@ import json
 import logging
 import time
 from collections import deque
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 import proxy as proxy_module
+import proxy_status as proxy_status_module
 from cloud_forwarder import CloudForwarder
 from config import MQTT_NAMESPACE
 from control_pipeline import ControlPipeline
@@ -38,6 +40,7 @@ class DummyMQTT:
         self.published_data = []
         self.published_raw = []
         self._ready = True
+        self._on_connect_handlers = []
 
     def is_ready(self) -> bool:
         return self._ready
@@ -73,6 +76,9 @@ class DummyMQTT:
 
     def set_cached_payload(self, topic: str, payload: str) -> None:
         self._last_payload_by_topic[topic] = payload
+
+    def add_on_connect_handler(self, handler):
+        self._on_connect_handlers.append(handler)
 
 
 class DummyParser:
@@ -281,6 +287,120 @@ def test_status_payload_and_mode_publish(tmp_path, monkeypatch):
 
     proxy._mp.mode_value = 2
     proxy._mp.mode_device_id = "DEV2"
+
+
+@pytest.mark.parametrize(
+    "flag,twin_enabled,kill_switch,available,mode_active,pending,expected_state,expected_reason",
+    [
+        (False, True, False, True, False, False, "DISABLED", "control_twin_first_disabled"),
+        (True, True, True, True, False, False, "BLOCKED_KILL_SWITCH", "twin_kill_switch_enabled"),
+        (True, False, False, True, False, False, "DISABLED", "twin_enabled_false"),
+        (True, True, False, False, False, False, "UNAVAILABLE", "twin_runtime_unavailable"),
+        (True, True, False, True, True, False, "ACTIVE", ""),
+        (True, True, False, True, False, True, "ENABLED_WAITING", "pending_session_activation"),
+        (True, True, False, True, False, False, "ENABLED_IDLE", "waiting_for_control_command"),
+    ],
+)
+def test_twin_effective_state_matrix(
+    tmp_path,
+    monkeypatch,
+    flag,
+    twin_enabled,
+    kill_switch,
+    available,
+    mode_active,
+    pending,
+    expected_state,
+    expected_reason,
+):
+    proxy = _make_proxy(tmp_path)
+    monkeypatch.setattr(proxy_status_module, "CONTROL_TWIN_FIRST_ENABLED", flag)
+    proxy._twin_enabled = twin_enabled
+    proxy._twin_kill_switch = kill_switch
+    proxy._twin_mode_active = mode_active
+    proxy._pending_twin_activation = pending
+    proxy._is_twin_routing_available = lambda: available
+
+    attrs = proxy._ps.build_status_attrs_payload()
+    assert attrs["twin_effective_state"] == expected_state
+    assert attrs["twin_not_active_reason"] == expected_reason
+
+
+def test_install_twin_mqtt_on_connect_hook_publishes_initial_state(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    loop = asyncio.new_event_loop()
+    proxy._loop = loop
+
+    class TwinStub:
+        def __init__(self):
+            self.calls = 0
+
+        async def publish_initial_state(self):
+            self.calls += 1
+
+    twin = TwinStub()
+    proxy._twin = twin
+
+    class FutureOK:
+        def __init__(self, coro):
+            self._coro = coro
+
+        def add_done_callback(self, callback):
+            loop.run_until_complete(self._coro)
+            callback(self)
+
+        def result(self):
+            return None
+
+    monkeypatch.setattr(
+        proxy_module.asyncio,
+        "run_coroutine_threadsafe",
+        lambda coro, _loop: FutureOK(coro),
+    )
+
+    proxy._install_twin_mqtt_on_connect_hook()
+    assert len(proxy.mqtt_publisher._on_connect_handlers) == 1
+    proxy.mqtt_publisher._on_connect_handlers[0]()
+    assert twin.calls == 1
+    loop.close()
+
+
+def test_install_twin_mqtt_on_connect_hook_handles_publish_exception(tmp_path, monkeypatch):
+    proxy = _make_proxy(tmp_path)
+    loop = asyncio.new_event_loop()
+    proxy._loop = loop
+
+    class TwinStub:
+        async def publish_initial_state(self):
+            return None
+
+    proxy._twin = TwinStub()
+
+    class FutureFail:
+        def add_done_callback(self, callback):
+            callback(self)
+
+        def result(self):
+            raise RuntimeError("boom")
+
+    def _fake_run_coroutine_threadsafe(coro, _loop):
+        coro.close()
+        return FutureFail()
+
+    monkeypatch.setattr(
+        proxy_module.asyncio,
+        "run_coroutine_threadsafe",
+        _fake_run_coroutine_threadsafe,
+    )
+
+    with patch("proxy.logger") as mock_logger:
+        proxy._install_twin_mqtt_on_connect_hook()
+        proxy.mqtt_publisher._on_connect_handlers[0]()
+        assert any(
+            "publish_initial_state on connect failed" in call.args[0]
+            for call in mock_logger.debug.call_args_list
+        )
+    loop.close()
 
 
 def test_collect_telemetry_metrics_flushes_window_metrics(tmp_path):
