@@ -38,6 +38,7 @@
     "twin_cloud_aligned": false,
     "twin_ack_deadline_seconds": 30.0,
     "twin_applied_deadline_seconds": 60.0,
+    "control_twin_first_enabled": false,
     "local_control_routing": "auto",
     "twin_verbose_logging": false
   },
@@ -68,6 +69,7 @@
     "twin_cloud_aligned": "bool?",
     "twin_ack_deadline_seconds": "float?",
     "twin_applied_deadline_seconds": "float?",
+    "control_twin_first_enabled": "bool?",
     "local_control_routing": "list(auto|force_twin|force_cloud)?",
     "twin_verbose_logging": "bool?"
   },

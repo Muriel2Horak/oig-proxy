@@ -236,6 +236,13 @@ if [ -z "$TWIN_APPLIED_DEADLINE_RAW" ] || [ "$TWIN_APPLIED_DEADLINE_RAW" = "null
 fi
 export TWIN_APPLIED_DEADLINE_SECONDS=$TWIN_APPLIED_DEADLINE_RAW
 
+CONTROL_TWIN_FIRST_RAW=$(bashio::config 'control_twin_first_enabled' 2>/dev/null)
+if [ "$CONTROL_TWIN_FIRST_RAW" = "true" ] || [ "$CONTROL_TWIN_FIRST_RAW" = "1" ]; then
+  export CONTROL_TWIN_FIRST_ENABLED="true"
+else
+  export CONTROL_TWIN_FIRST_ENABLED="false"
+fi
+
 # Startup log: print effective Twin mode flags
 bashio::log.info "🔧 Twin Configuration:"
 bashio::log.info "   TWIN_ENABLED=$TWIN_ENABLED"
@@ -245,5 +252,6 @@ bashio::log.info "   LOCAL_CONTROL_ROUTING=$LOCAL_CONTROL_ROUTING"
 bashio::log.info "   TWIN_VERBOSE_LOGGING=${TWIN_VERBOSE_LOGGING:-false}"
 bashio::log.info "   TWIN_ACK_DEADLINE_SECONDS=$TWIN_ACK_DEADLINE_SECONDS"
 bashio::log.info "   TWIN_APPLIED_DEADLINE_SECONDS=$TWIN_APPLIED_DEADLINE_SECONDS"
+bashio::log.info "   CONTROL_TWIN_FIRST_ENABLED=$CONTROL_TWIN_FIRST_ENABLED"
 
 python -u /app/main.py

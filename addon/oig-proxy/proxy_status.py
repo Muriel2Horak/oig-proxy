@@ -10,7 +10,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from config import PROXY_STATUS_INTERVAL
+from config import CONTROL_TWIN_FIRST_ENABLED, PROXY_STATUS_INTERVAL
 
 if TYPE_CHECKING:
     from proxy import OIGProxy
@@ -65,6 +65,30 @@ class ProxyStatusReporter:
             return f"{status} {tbl}/{item}={val} err={err} tx={tx_id}".strip()
         return f"{status} {tbl}/{item}={val} tx={tx_id}".strip()
 
+    @staticmethod
+    def _derive_twin_state(
+        *,
+        control_twin_first_enabled: bool,
+        twin_enabled: bool,
+        twin_kill_switch: bool,
+        twin_available: bool,
+        twin_mode_active: bool,
+        twin_pending_activation: bool,
+    ) -> tuple[str, str]:
+        if not control_twin_first_enabled:
+            return "DISABLED", "control_twin_first_disabled"
+        if twin_kill_switch:
+            return "BLOCKED_KILL_SWITCH", "twin_kill_switch_enabled"
+        if not twin_enabled:
+            return "DISABLED", "twin_enabled_false"
+        if not twin_available:
+            return "UNAVAILABLE", "twin_runtime_unavailable"
+        if twin_mode_active:
+            return "ACTIVE", ""
+        if twin_pending_activation:
+            return "ENABLED_WAITING", "pending_session_activation"
+        return "ENABLED_IDLE", "waiting_for_control_command"
+
     def build_status_payload(self) -> dict[str, Any]:
         """Vytvoří payload pro proxy_status MQTT sensor."""
         p = self._proxy
@@ -76,10 +100,32 @@ class ProxyStatusReporter:
         last_result_str = self._format_result(last_result)
         inflight_key = str(getattr(inflight, "tx_id", "") or "") if inflight else ""
         queue_keys = [str(getattr(tx, "tx_id", "") or "") for tx in queue]
+        control_twin_first_enabled = bool(CONTROL_TWIN_FIRST_ENABLED)
+        twin_enabled = bool(getattr(p, "_twin_enabled", False))
+        twin_kill_switch = bool(getattr(p, "_twin_kill_switch", False))
+        twin_available = bool(getattr(p, "_is_twin_routing_available", lambda: False)())
+        twin_mode_active = bool(getattr(p, "_twin_mode_active", False))
+        twin_pending_activation = bool(getattr(p, "_pending_twin_activation", False))
+        twin_effective_state, twin_not_active_reason = self._derive_twin_state(
+            control_twin_first_enabled=control_twin_first_enabled,
+            twin_enabled=twin_enabled,
+            twin_kill_switch=twin_kill_switch,
+            twin_available=twin_available,
+            twin_mode_active=twin_mode_active,
+            twin_pending_activation=twin_pending_activation,
+        )
         return {
             "status": p._hm.mode.value,
             "mode": p._hm.mode.value,
             "configured_mode": p._hm.configured_mode,
+            "control_twin_first_enabled": int(control_twin_first_enabled),
+            "twin_enabled": int(twin_enabled),
+            "twin_kill_switch": int(twin_kill_switch),
+            "twin_available": int(twin_available),
+            "twin_mode_active": int(twin_mode_active),
+            "twin_pending_activation": int(twin_pending_activation),
+            "twin_effective_state": twin_effective_state,
+            "twin_not_active_reason": twin_not_active_reason,
             "control_session_id": getattr(twin, "session_id", ""),
             "box_device_id": p.device_id if p.device_id != "AUTO" else None,
             "cloud_online": int(not p._hm.in_offline),
@@ -118,9 +164,25 @@ class ProxyStatusReporter:
         queue = list(getattr(twin, "_queue", [])) if twin is not None else []
         inflight_key = str(getattr(inflight, "tx_id", "") or "") if inflight else ""
         queue_keys = [str(getattr(tx, "tx_id", "") or "") for tx in queue]
+        control_twin_first_enabled = bool(CONTROL_TWIN_FIRST_ENABLED)
+        twin_enabled = bool(getattr(p, "_twin_enabled", False))
+        twin_kill_switch = bool(getattr(p, "_twin_kill_switch", False))
+        twin_available = bool(getattr(p, "_is_twin_routing_available", lambda: False)())
+        twin_mode_active = bool(getattr(p, "_twin_mode_active", False))
+        twin_pending_activation = bool(getattr(p, "_pending_twin_activation", False))
+        twin_effective_state, twin_not_active_reason = self._derive_twin_state(
+            control_twin_first_enabled=control_twin_first_enabled,
+            twin_enabled=twin_enabled,
+            twin_kill_switch=twin_kill_switch,
+            twin_available=twin_available,
+            twin_mode_active=twin_mode_active,
+            twin_pending_activation=twin_pending_activation,
+        )
         return {
             "control_inflight_key": inflight_key,
             "control_queue_keys": [k for k in queue_keys if k],
+            "twin_effective_state": twin_effective_state,
+            "twin_not_active_reason": twin_not_active_reason,
         }
 
     async def publish(self) -> None:
@@ -166,7 +228,7 @@ class ProxyStatusReporter:
             box_uptime = f"{int(now - p._box_connected_since_epoch)}s"
 
         logger.info(
-            "💓 HB: mode=%s box=%s cloud=%s cloud_sess=%s mqtt=%s q_mqtt=%s "
+            "💓 HB: mode=%s box=%s cloud=%s cloud_sess=%s mqtt=%s q_mqtt=%s twin=%s twin_active=%s "
             "frames_rx=%s tx=%s ack=%s/%s last_data_age=%s box_uptime=%s",
             p._hm.mode.value,
             "on" if p.box_connected else "off",
@@ -174,6 +236,8 @@ class ProxyStatusReporter:
             "on" if p._cf.session_connected else "off",
             "on" if p.mqtt_publisher.is_ready() else "off",
             p.mqtt_publisher.queue.size(),
+            "on" if p._is_twin_routing_available() else "off",
+            "on" if getattr(p, "_twin_mode_active", False) else "off",
             p.stats["frames_received"],
             p.stats["frames_forwarded"],
             p.stats["acks_local"],
