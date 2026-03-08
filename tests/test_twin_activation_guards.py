@@ -1,5 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring
 # pylint: disable=wrong-import-position,wrong-import-order,duplicate-code
+# pylint: disable=too-few-public-methods
 import importlib
 import os
 

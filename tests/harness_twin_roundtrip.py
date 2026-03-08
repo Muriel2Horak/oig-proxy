@@ -15,6 +15,10 @@ Usage:
     --fault-mode     Test failure path (subscribe to non-existing topic)
 """
 
+# pylint: disable=wrong-import-position,unspecified-encoding,too-many-locals
+# pylint: disable=broad-exception-caught,too-many-return-statements,too-many-statements
+# pylint: disable=no-else-return
+
 from __future__ import annotations
 
 import argparse

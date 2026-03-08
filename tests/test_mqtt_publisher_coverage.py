@@ -186,6 +186,27 @@ def test_on_connect_subscribe_success_and_failure(monkeypatch):
         assert any("Subscribe failed" in call.args[0] for call in mock_logger.warning.call_args_list)
 
 
+def test_on_connect_invokes_registered_handlers(monkeypatch):
+    publisher = _make_publisher(monkeypatch)
+    calls = {"count": 0}
+
+    def on_connect() -> None:
+        calls["count"] += 1
+
+    class DummyClient:
+        def publish(self, *_args, **_kwargs):
+            return SimpleNamespace(rc=0, mid=1)
+
+        def subscribe(self, *_args, **_kwargs):
+            return (0, 1)
+
+    publisher.add_on_connect_handler(on_connect)
+    publisher.add_on_connect_handler(on_connect)
+
+    publisher._on_connect(DummyClient(), None, {}, 0)
+    assert calls["count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_publish_raw_no_client(monkeypatch):
     publisher = _make_publisher(monkeypatch)
