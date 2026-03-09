@@ -1755,7 +1755,7 @@ class DigitalTwin:
             ok, err = TransactionValidator.validate_inv3(
                 ctx,
                 self._inflight.tx_id,
-                self._inflight.stage.value,
+                None,
             )
             if not ok:
                 logger.debug("INV-3 validation in ack_timeout: %s", err)
@@ -1815,7 +1815,7 @@ class DigitalTwin:
             ok, err = TransactionValidator.validate_inv3(
                 ctx,
                 self._inflight.tx_id,
-                self._inflight.stage.value,
+                None,
             )
             if not ok:
                 logger.debug("INV-3 validation in applied_timeout: %s", err)

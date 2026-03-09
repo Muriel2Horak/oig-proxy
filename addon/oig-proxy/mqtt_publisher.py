@@ -8,7 +8,6 @@ import concurrent.futures
 import datetime
 import json
 import logging
-import os
 import re
 import sqlite3
 import time
@@ -30,6 +29,7 @@ from config import (
     PROXY_DEVICE_ID,
     MQTT_USERNAME,
 )
+from db_utils import init_sqlite_db
 from models import SensorConfig
 from utils import get_sensor_config, iso_now
 
@@ -63,8 +63,6 @@ class MQTTQueue:
 
     def _init_db(self) -> sqlite3.Connection:
         """Inicializuje SQLite databázi."""
-        from db_utils import init_sqlite_db
-
         schema_sql = """
             CREATE TABLE IF NOT EXISTS queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
