@@ -105,12 +105,12 @@ async def test_finish_inflight_releases_inflight():
     twin._inflight.tx_id = "test-1"
     twin._inflight_ctx = MagicMock()
     twin._lock = AsyncMock()
-    
+
     # Mock _finish_inflight_locked to clear inflight
     def clear_inflight(*args, **kwargs):
         twin._inflight = None
         return MagicMock()
-    
+
     with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
         # Call finish_inflight with required params
         result = await twin.finish_inflight(
@@ -118,7 +118,7 @@ async def test_finish_inflight_releases_inflight():
             conn_id=1,
             success=True,
         )
-        
+
         # Inflight should be cleared
         assert twin._inflight is None
 
@@ -132,12 +132,12 @@ async def test_queue_continues_after_inflight_release():
     twin._inflight.tx_id = "test-1"
     twin._inflight_ctx = MagicMock()
     twin._lock = AsyncMock()
-    
+
     # Mock _finish_inflight_locked to clear inflight
     def clear_inflight(*args, **kwargs):
         twin._inflight = None
         return MagicMock()
-    
+
     with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
         # Finish inflight
         await twin.finish_inflight(
@@ -145,10 +145,10 @@ async def test_queue_continues_after_inflight_release():
             conn_id=1,
             success=True,
         )
-        
+
         # Queue should still have items
         assert len(twin._queue) == 1
-        
+
         # Should be able to process next item
         assert twin._inflight is None
 
@@ -162,12 +162,12 @@ async def test_error_handler_clears_inflight():
     twin._inflight_ctx = MagicMock()
     twin._queue = []
     twin._lock = AsyncMock()
-    
+
     # Mock _finish_inflight_locked to clear inflight on error
     def clear_inflight(*args, **kwargs):
         twin._inflight = None
         return MagicMock()
-    
+
     with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
         # If finish_inflight is called on terminal states with success=False, inflight is cleared
         await twin.finish_inflight(
@@ -188,19 +188,19 @@ async def test_inflight_finalization_on_all_terminal_states():
         (False, "Timeout"),  # Timeout
         (True, "Completed"), # Completed
     ]
-    
+
     for success, detail in terminal_results:
         twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
         twin._inflight = MagicMock()
         twin._inflight.tx_id = f"test-{detail}"
         twin._inflight_ctx = MagicMock()
         twin._lock = AsyncMock()
-        
+
         # Mock _finish_inflight_locked to clear inflight
         def clear_inflight(*args, **kwargs):
             twin._inflight = None
             return MagicMock()
-        
+
         with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
             # Finalize
             await twin.finish_inflight(
@@ -209,7 +209,7 @@ async def test_inflight_finalization_on_all_terminal_states():
                 success=success,
                 detail=detail,
             )
-            
+
             # Should be cleared
             assert twin._inflight is None, f"Inflight not cleared for result: {detail}"
 
@@ -223,12 +223,12 @@ async def test_new_item_can_start_after_inflight_cleared():
     twin._inflight_ctx = MagicMock()
     twin._queue = [{"tx_id": "test-2", "data": "payload"}]
     twin._lock = AsyncMock()
-    
+
     # Mock _finish_inflight_locked to clear inflight
     def clear_inflight(*args, **kwargs):
         twin._inflight = None
         return MagicMock()
-    
+
     with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
         # Clear inflight
         await twin.finish_inflight(
@@ -236,13 +236,13 @@ async def test_new_item_can_start_after_inflight_cleared():
             conn_id=1,
             success=True,
         )
-        
+
         # Can now process next item
         assert twin._inflight is None
-        
+
         # Simulate starting next item
         next_item = twin._queue.pop(0)
         twin._inflight = MagicMock()
         twin._inflight.tx_id = next_item["tx_id"]
-        
+
         assert twin._inflight.tx_id == "test-2"

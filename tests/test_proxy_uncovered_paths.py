@@ -430,7 +430,7 @@ async def test_activate_session_twin_mode_returns_when_routing_unavailable_or_di
 @pytest.mark.asyncio
 async def test_handle_box_frame_iteration_short_circuit_paths():
     proxy = _mk_proxy()
-    proxy._process_box_frame_with_guard = AsyncMock(return_value=("DEV1", "IsNewSet"))
+    proxy._process_box_frame_with_guard = AsyncMock(return_value=("DEV1", "IsNewSet", False))
     proxy._maybe_handle_twin_ack = AsyncMock(return_value=True)
     _, _, should_break = await proxy._handle_box_frame_iteration(
         data=b"x",

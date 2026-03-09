@@ -1060,7 +1060,7 @@ class TestDigitalTwinAdditionalCoverage:
         loop = asyncio.get_running_loop()
         handler.setup_mqtt(loop)
         assert publisher.handlers and publisher.handlers[0][2] == 2
-        assert any(t == digital_twin_module.CONTROL_MQTT_SET_TOPIC for t, _, _ in publisher.handlers)
+        assert any(t == handler.set_topic for t, _, _ in publisher.handlers)
 
         scheduled: list[str] = []
 

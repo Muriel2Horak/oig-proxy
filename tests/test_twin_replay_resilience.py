@@ -384,12 +384,12 @@ class TestStateRecovery:
         assert "<Reason>Setting</Reason>" in response.frame_data
 
         await twin.on_ack(make_ack_dto(tx_id=tx_id, conn_id=2))
-        await twin.on_tbl_event(
+        result = await twin.on_tbl_event(
             make_tbl_event_dto(tx_id=tx_id, conn_id=2, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
         )
-        result = await twin.finish_inflight(tx_id, conn_id=2, success=True)
 
-        assert result.status == "completed"
+        assert result is not None
+        assert result.status == "applied"
         assert twin.is_tx_completed(tx_id)
 
 

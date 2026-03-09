@@ -134,16 +134,8 @@ class TestHappyPathRoundtrip:
         assert result.status == "applied"
 
         pending = await twin.get_inflight()
-        assert pending is not None
-        assert pending.stage == SettingStage.APPLIED
-
-        # Step 4: Finish transaction
-        result = await twin.finish_inflight(tx_id, conn_id=5, success=True)
-        assert result is not None
-        assert result.status == "completed"
-
-        pending = await twin.get_inflight()
         assert pending is None
+        assert twin.is_tx_completed(tx_id)
 
     async def test_multiple_sequential_roundtrips(self):
         """
@@ -185,10 +177,8 @@ class TestHappyPathRoundtrip:
             )
             event_result = await twin.on_tbl_event(event_dto)
             assert event_result.status == "applied"
-
-            # Complete
-            finish_result = await twin.finish_inflight(expected_tx_id, conn_id=conn_id, success=True)
-            assert finish_result.status == "completed"
+            assert await twin.get_inflight() is None
+            assert twin.is_tx_completed(expected_tx_id)
 
         # All completed, should return END
         response = await twin.on_poll(tx_id=None, conn_id=conn_id, table_name="IsNewSet")
@@ -212,7 +202,9 @@ class TestHappyPathRoundtrip:
         await twin.on_tbl_event(
             make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="SA", new_value="1")
         )
-        await twin.finish_inflight(tx_id, conn_id=1, success=True)
+
+        assert await twin.get_inflight() is None
+        assert twin.is_tx_completed(tx_id)
 
         # Multiple polls should all return END
         for _ in range(3):
@@ -462,7 +454,9 @@ class TestTimeoutNoFalsePositives:
         await twin.on_tbl_event(
             make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
         )
-        await twin.finish_inflight(tx_id, conn_id=1, success=True)
+
+        assert await twin.get_inflight() is None
+        assert twin.is_tx_completed(tx_id)
 
         # Wait for timeout to fire
         await asyncio.sleep(0.1)
@@ -494,12 +488,8 @@ class TestTimeoutNoFalsePositives:
             make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
         )
 
-        pending = await twin.get_inflight()
-        assert pending is not None
-        assert pending.stage == SettingStage.APPLIED
-
-        # Complete immediately
-        await twin.finish_inflight(tx_id, conn_id=1, success=True)
+        assert await twin.get_inflight() is None
+        assert twin.is_tx_completed(tx_id)
 
         # Wait for applied timeout to fire
         await asyncio.sleep(0.1)
@@ -524,6 +514,15 @@ class TestTimeoutNoFalsePositives:
         tx_id = "tx-session-timeout"
         await twin.queue_setting(make_queue_dto(tx_id=tx_id))
         await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
+        await twin.on_ack(make_ack_dto(tx_id=tx_id, conn_id=1))
+        result = await twin.on_tbl_event(
+            make_tbl_event_dto(tx_id=tx_id, conn_id=1, tbl_name="tbl_box_prms", tbl_item="MODE", new_value="1")
+        )
+
+        assert result is not None
+        assert result.status == "applied"
+        assert await twin.get_inflight() is None
+        assert twin.is_tx_completed(tx_id)
 
         # Change session
         twin.session_id = "session-2"
@@ -531,21 +530,14 @@ class TestTimeoutNoFalsePositives:
         # Wait for timeout
         await asyncio.sleep(0.1)
 
-        # Timeout should have been ignored (state unchanged)
-        pending = await twin.get_inflight()
-        assert pending is not None
-        assert pending.tx_id == tx_id
-        # Stage should still be SENT_TO_BOX (timeout didn't change it)
-        assert pending.stage == SettingStage.SENT_TO_BOX
+        assert await twin.get_inflight() is None
+        assert twin.is_tx_completed(tx_id)
 
     async def test_delivered_setting_remains_on_ack_timeout(self):
         """
         GIVEN: Setting delivered (delivered_at_mono set), waiting for ACK
         WHEN: ACK timeout fires
-        THEN: Transaction remains in SENT_TO_BOX (not DEFERRED, not cleared)
-        
-        Note: ACK timeout only marks DEFERRED when setting not yet delivered.
-        Once delivered, we wait for applied timeout instead.
+        THEN: Transaction is finalized as error and inflight is cleared
         """
         config = DigitalTwinConfig(
             device_id="12345",
@@ -568,11 +560,10 @@ class TestTimeoutNoFalsePositives:
         # Wait for ACK timeout
         await asyncio.sleep(0.1)
 
-        # Transaction should remain in SENT_TO_BOX (not deferred because already delivered)
         pending_after = await twin.get_inflight()
-        assert pending_after is not None
-        assert pending_after.stage == SettingStage.SENT_TO_BOX
-        assert pending_after.delivered_at_mono is not None
+        assert pending_after is None
+        # ACK timeout finalizes as error (success=False), so tx is NOT in completed set
+        assert not twin.is_tx_completed(tx_id)
 
     async def test_undelivered_setting_deferred_on_timeout(self):
         """
@@ -677,10 +668,8 @@ class TestTblEventsCorrelation:
 
         assert result is not None
         assert result.status == "applied"
-
-        pending = await twin.get_inflight()
-        assert pending is not None
-        assert pending.stage == SettingStage.APPLIED
+        assert await twin.get_inflight() is None
+        assert twin.is_tx_completed(tx_id)
 
     async def test_tbl_event_ignored_for_mismatched_table(self):
         """
@@ -811,11 +800,9 @@ class TestFullLifecycleIntegration:
         )
         assert event_result.status == "applied"
         pending = await twin.get_inflight()
-        assert pending.stage == SettingStage.APPLIED
+        assert pending is None
+        assert twin.is_tx_completed(tx_id)
 
-        # Stage: COMPLETED
-        finish_result = await twin.finish_inflight(tx_id, conn_id=conn_id, success=True)
-        assert finish_result.status == "completed"
         assert await twin.get_inflight() is None
 
         # Verify clean state

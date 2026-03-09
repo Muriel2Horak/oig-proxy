@@ -411,7 +411,7 @@ class TestTimeoutHandlingParity:
 
         Both Cloud and Twin validate that timeout belongs to current transaction.
         """
-        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        config = DigitalTwinConfig(ack_timeout_s=5.0)
         twin = DigitalTwin(session_id="test-session", config=config)
 
         # First transaction

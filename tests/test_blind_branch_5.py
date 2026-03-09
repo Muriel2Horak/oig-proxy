@@ -15,12 +15,37 @@ class DummyTwin:
     def __init__(self, queue_length=0, inflight=None):
         self._queue_length = queue_length
         self._inflight = inflight
-    
-    def get_queue_length(self):
+
+    async def get_queue_length(self):
         return self._queue_length
-    
-    def get_inflight(self):
+
+    async def get_inflight(self):
         return self._inflight
+
+    async def on_reconnect(self):
+        return None
+
+    async def on_tbl_event(self, *_args, **_kwargs):
+        return None
+
+    async def finish_inflight(self):
+        self._inflight = None
+
+    async def queue_setting(self, *_args, **_kwargs):
+        return None
+
+    async def start_inflight(self, *_args, **_kwargs):
+        return None
+
+    async def on_ack(self, *_args, **_kwargs):
+        return None
+
+    async def on_poll(self, *_args, **_kwargs):
+        return None
+
+    async def clear_all(self):
+        self._queue_length = 0
+        self._inflight = None
 
 
 def _make_proxy():
@@ -55,12 +80,12 @@ async def test_pending_expires_when_idle():
     """Test that pending expires when idle (queue=0, inflight=None) for timeout period."""
     proxy = _make_proxy()
     proxy._pending_twin_activation = True
-    proxy._pending_twin_activation_since = time.monotonic() - 70  # 70s ago (> 60s timeout)
+    proxy._pending_twin_activation_since = time.time() - 70  # 70s ago (> 60s timeout)
     proxy._twin = DummyTwin(queue_length=0, inflight=None)
     proxy._twin_mode_active = False
-    
+
     await proxy._maybe_expire_pending_twin_activation()
-    
+
     # Pending should be cleared
     assert proxy._pending_twin_activation is False
     assert proxy._pending_twin_activation_since is None
@@ -71,11 +96,11 @@ async def test_pending_remains_when_queue_active():
     """Test that pending remains when queue is active (queue>0)."""
     proxy = _make_proxy()
     proxy._pending_twin_activation = True
-    proxy._pending_twin_activation_since = time.monotonic() - 70
+    proxy._pending_twin_activation_since = time.time() - 70
     proxy._twin = DummyTwin(queue_length=1, inflight=None)
-    
+
     await proxy._maybe_expire_pending_twin_activation()
-    
+
     # Pending should remain True
     assert proxy._pending_twin_activation is True
 
@@ -85,11 +110,11 @@ async def test_pending_remains_when_inflight_exists():
     """Test that pending remains when inflight exists."""
     proxy = _make_proxy()
     proxy._pending_twin_activation = True
-    proxy._pending_twin_activation_since = time.monotonic() - 70
+    proxy._pending_twin_activation_since = time.time() - 70
     proxy._twin = DummyTwin(queue_length=0, inflight={"tx_id": "test"})
-    
+
     await proxy._maybe_expire_pending_twin_activation()
-    
+
     # Pending should remain True
     assert proxy._pending_twin_activation is True
 
@@ -99,14 +124,14 @@ async def test_deactivation_guard_runs_after_expire():
     """Test that deactivation guard runs after pending expires."""
     proxy = _make_proxy()
     proxy._pending_twin_activation = True
-    proxy._pending_twin_activation_since = time.monotonic() - 70
+    proxy._pending_twin_activation_since = time.time() - 70
     proxy._twin = DummyTwin(queue_length=0, inflight=None)
     proxy._twin_mode_active = True
-    
+
     # Track if deactivation would be called
     # After pending clears, deactivation guard can run
     await proxy._maybe_expire_pending_twin_activation()
-    
+
     # Pending cleared, allowing deactivation
     assert proxy._pending_twin_activation is False
 
@@ -115,16 +140,16 @@ async def test_deactivation_guard_runs_after_expire():
 async def test_timestamp_tracks_pending_duration():
     """Test that timestamp tracks how long pending is active."""
     proxy = _make_proxy()
-    
+
     # Set pending with timestamp
-    start_time = time.monotonic() - 30  # 30s ago
+    start_time = time.time() - 30  # 30s ago
     proxy._pending_twin_activation = True
     proxy._pending_twin_activation_since = start_time
-    
+
     # Not yet expired (60s timeout)
     proxy._twin = DummyTwin(queue_length=0, inflight=None)
     await proxy._maybe_expire_pending_twin_activation()
-    
+
     # Should still be pending (only 30s elapsed)
     assert proxy._pending_twin_activation is True
 
@@ -134,11 +159,11 @@ async def test_pending_not_expired_before_timeout():
     """Test that pending is not expired before 60s timeout."""
     proxy = _make_proxy()
     proxy._pending_twin_activation = True
-    proxy._pending_twin_activation_since = time.monotonic() - 30  # 30s ago
+    proxy._pending_twin_activation_since = time.time() - 30  # 30s ago
     proxy._twin = DummyTwin(queue_length=0, inflight=None)
-    
+
     await proxy._maybe_expire_pending_twin_activation()
-    
+
     # Should still be pending
     assert proxy._pending_twin_activation is True
     assert proxy._pending_twin_activation_since is not None

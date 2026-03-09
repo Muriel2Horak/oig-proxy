@@ -11,11 +11,15 @@ from models import ProxyMode
 
 
 class DummyTwin:
-    def __init__(self, queue_length=0):
+    def __init__(self, queue_length=0, inflight=None):
         self._queue_length = queue_length
-    
-    def get_queue_length(self):
+        self._inflight = inflight
+
+    async def get_queue_length(self):
         return self._queue_length
+
+    async def get_inflight(self):
+        return self._inflight
 
 
 def _make_proxy():
@@ -52,10 +56,10 @@ async def test_activation_called_during_session_when_pending_and_queue():
     proxy._pending_twin_activation = True
     proxy._twin = DummyTwin(queue_length=1)
     proxy._twin_mode_active = False
-    
+
     # Call activation check
     await proxy._activate_session_twin_mode_if_needed(conn_id=1)
-    
+
     # Should activate twin mode
     assert proxy._twin_mode_active is True
     assert proxy._pending_twin_activation is False
@@ -68,9 +72,9 @@ async def test_twin_mode_active_set_after_activation():
     proxy._pending_twin_activation = True
     proxy._twin = DummyTwin(queue_length=1)
     proxy._twin_mode_active = False
-    
+
     await proxy._activate_session_twin_mode_if_needed(conn_id=1)
-    
+
     assert proxy._twin_mode_active is True
 
 
@@ -81,9 +85,9 @@ async def test_activation_not_called_when_queue_empty():
     proxy._pending_twin_activation = True
     proxy._twin = DummyTwin(queue_length=0)
     proxy._twin_mode_active = False
-    
+
     await proxy._activate_session_twin_mode_if_needed(conn_id=1)
-    
+
     # Should NOT activate
     assert proxy._twin_mode_active is False
     assert proxy._pending_twin_activation is True
@@ -96,9 +100,9 @@ async def test_activation_not_called_when_pending_false():
     proxy._pending_twin_activation = False
     proxy._twin = DummyTwin(queue_length=1)
     proxy._twin_mode_active = False
-    
+
     await proxy._activate_session_twin_mode_if_needed(conn_id=1)
-    
+
     # Should NOT activate
     assert proxy._twin_mode_active is False
 
@@ -110,10 +114,10 @@ async def test_activation_works_during_active_session():
     proxy._pending_twin_activation = True
     proxy._twin = DummyTwin(queue_length=1)
     proxy._twin_mode_active = False
-    
+
     # Simulate active session
     await proxy._activate_session_twin_mode_if_needed(conn_id=1)
-    
+
     # Should still activate
     assert proxy._twin_mode_active is True
 
@@ -125,8 +129,8 @@ async def test_pending_cleared_after_activation():
     proxy._pending_twin_activation = True
     proxy._twin = DummyTwin(queue_length=1)
     proxy._pending_twin_activation_since = 12345.0
-    
+
     await proxy._activate_session_twin_mode_if_needed(conn_id=1)
-    
+
     assert proxy._pending_twin_activation is False
     assert proxy._pending_twin_activation_since is None

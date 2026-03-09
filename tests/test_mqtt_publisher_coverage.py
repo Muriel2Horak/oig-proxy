@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import mqtt_publisher
-import db_utils
 from models import SensorConfig
 
 
@@ -52,9 +51,9 @@ def test_mqtt_queue_retain_column_add_success(monkeypatch):
 
     monkeypatch.setattr(mqtt_publisher, "MQTT_QUEUE_DB_PATH", ":memory:")
     monkeypatch.setattr(mqtt_publisher, "MQTT_QUEUE_MAX_SIZE", 10)
-    monkeypatch.setattr(db_utils, "init_sqlite_db", fake_init_sqlite_db)
+    monkeypatch.setattr(mqtt_publisher, "init_sqlite_db", fake_init_sqlite_db)
 
-    queue = mqtt_publisher.MQTTQueue()
+    queue = mqtt_publisher.MQTTQueue(db_path=":memory:")
     assert any("ALTER TABLE queue ADD COLUMN retain" in sql for sql in dummy_conn.executed)
     assert dummy_conn.commits >= 1
     queue.conn = dummy_conn
@@ -79,7 +78,7 @@ def test_mqtt_queue_retain_column_check_error(monkeypatch):
     def fake_init_sqlite_db(*_args, **_kwargs):
         return dummy_conn
 
-    monkeypatch.setattr(db_utils, "init_sqlite_db", fake_init_sqlite_db)
+    monkeypatch.setattr(mqtt_publisher, "init_sqlite_db", fake_init_sqlite_db)
     queue = mqtt_publisher.MQTTQueue(db_path=":memory:")
     assert "PRAGMA table_info(queue)" in dummy_conn.executed[0]
     queue.conn = dummy_conn
