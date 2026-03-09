@@ -252,7 +252,6 @@ MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 MODE_STATE_PATH = os.path.join(DATA_DIR, "mode_state.json")
 PRMS_STATE_PATH = os.path.join(DATA_DIR, "prms_state.json")
-MQTT_QUEUE_DB_PATH = os.path.join(DATA_DIR, "mqtt_queue.db")
 CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
 
 # Control MQTT logging
@@ -275,11 +274,6 @@ CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
 CAPTURE_RETENTION_DAYS = max(0, _get_int_env("CAPTURE_RETENTION_DAYS", 7))
 
 # ============================================================================
-# MQTT Queue Configuration
-# ============================================================================
-MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
-
-# ============================================================================
 # Telemetry Configuration (MQTT to muriel-cz.cz)
 # ============================================================================
 TELEMETRY_ENABLED = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
@@ -287,11 +281,6 @@ TELEMETRY_MQTT_BROKER = os.getenv(
     "TELEMETRY_MQTT_BROKER",
     "telemetry.muriel-cz.cz:1883")
 TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
-
-# ============================================================================
-# MQTT Publisher Configuration
-# ============================================================================
-MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
 
 # ============================================================================
 # Twin Configuration

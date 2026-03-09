@@ -6,7 +6,6 @@
 # pyright: reportMissingImports=false
 import asyncio
 
-import mqtt_publisher
 import proxy as proxy_module
 
 
@@ -29,18 +28,6 @@ class DummyServer:
 
 
 def test_proxy_init_and_start(tmp_path, monkeypatch):
-    class DummyMQTTQueue:
-        def __init__(self, *args, **kwargs) -> None:
-            """Mock class."""
-
-        def size(self) -> int:
-            return 0
-
-    monkeypatch.setattr(
-        mqtt_publisher, "MQTT_QUEUE_DB_PATH", str(
-            tmp_path / "mqtt.db"))
-    monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
-
     proxy = proxy_module.OIGProxy("AUTO")
 
     proxy.mqtt_publisher.connect = lambda: True
@@ -78,13 +65,6 @@ def test_proxy_init_and_start(tmp_path, monkeypatch):
 
 
 def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
-    class DummyMQTTQueue:
-        def __init__(self, *args, **kwargs) -> None:
-            """Mock class."""
-
-        def size(self) -> int:
-            return 0
-
     class DummyControlAPI:
         def __init__(self, *args, **kwargs) -> None:
             """Mock class."""
@@ -94,7 +74,6 @@ def test_proxy_start_mqtt_failure_restores_device(tmp_path, monkeypatch):
 
     monkeypatch.setattr(proxy_module, "CONTROL_API_PORT", 123)
     monkeypatch.setattr(proxy_module, "ControlAPIServer", DummyControlAPI)
-    monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyMQTTQueue)
 
     proxy = proxy_module.OIGProxy("AUTO")
     proxy._mp.mode_device_id = "DEVX"

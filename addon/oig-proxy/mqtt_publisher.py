@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
-"""
-MQTT Publisher s persistentní frontou a replay.
-"""
-
 import asyncio
-import concurrent.futures
 import datetime
 import json
 import logging
 import re
-import sqlite3
 import time
 from typing import Any
 from collections.abc import Callable
@@ -22,16 +16,12 @@ from config import (
     MQTT_PASSWORD,
     MQTT_PORT,
     MQTT_PUBLISH_QOS,
-    MQTT_QUEUE_DB_PATH,
-    MQTT_QUEUE_MAX_SIZE,
     MQTT_STATE_RETAIN,
-    MQTT_REPLAY_RATE,
     PROXY_DEVICE_ID,
     MQTT_USERNAME,
 )
-from db_utils import init_sqlite_db
 from models import SensorConfig
-from utils import get_sensor_config, iso_now
+from utils import get_sensor_config
 
 if MQTT_AVAILABLE:  # pragma: no cover
     import paho.mqtt.client as mqtt  # pragma: no cover
@@ -44,172 +34,7 @@ _MQTT_LOG_SUBSCRIBED = "MQTT: Subscribed %s"
 _MQTT_LOG_SUBSCRIBE_FAILED = "MQTT: Subscribe failed %s: %s"
 
 
-# ============================================================================
-# MQTT Queue - Persistentní fronta pro offline režim
-# ============================================================================
-
-class MQTTQueue:
-    """Persistentní fronta pro MQTT zprávy (SQLite)."""
-
-    def __init__(
-        self,
-        db_path: str = MQTT_QUEUE_DB_PATH,
-        max_size: int = MQTT_QUEUE_MAX_SIZE
-    ):
-        self.db_path = db_path
-        self.max_size = max_size
-        self.conn = self._init_db()
-        self.lock = asyncio.Lock()
-
-    def _init_db(self) -> sqlite3.Connection:
-        """Inicializuje SQLite databázi."""
-        schema_sql = """
-            CREATE TABLE IF NOT EXISTS queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL NOT NULL,
-                topic TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                retain INTEGER NOT NULL DEFAULT 0,
-                queued_at TEXT NOT NULL
-            );
-        """
-
-        indexes_sql = """
-            CREATE INDEX IF NOT EXISTS idx_timestamp ON queue(timestamp);
-        """
-
-        conn = init_sqlite_db(
-            self.db_path,
-            schema_sql,
-            indexes_sql
-        )
-
-        conn.commit()
-        try:
-            cols = {row[1] for row in conn.execute("PRAGMA table_info(queue)")}
-            if "retain" not in cols:
-                conn.execute(
-                    "ALTER TABLE queue ADD COLUMN retain INTEGER NOT NULL DEFAULT 0")
-                conn.commit()
-        except sqlite3.Error as exc:
-            logger.debug("MQTTQueue: retain column check failed: %s", exc)
-
-        logger.info("MQTTQueue: Initialized (%s)", self.db_path)
-        return conn
-
-    def _add_sync(self, topic: str, payload: str, retain: bool) -> bool:
-        """Synchronní implementace add (voláno z thread-pool)."""
-        try:
-            size = self._size_sync()
-            if size >= self.max_size:
-                self.conn.execute(
-                    "DELETE FROM queue WHERE id IN "
-                    "(SELECT id FROM queue ORDER BY id LIMIT 1)"
-                )
-                logger.warning(
-                    "MQTTQueue full (%s), dropped oldest message",
-                    self.max_size,
-                )
-
-            # Pokud je zpráva retain, typicky nás zajímá jen poslední stav/config
-            # pro daný topic.
-            # Tímhle zabráníme tomu, aby po delším výpadku brokera replay poslal tisíce
-            # historických stavů pro stejný topic (což v HA fan-outne do spousty
-            # state_changed událostí).
-            if retain:
-                self.conn.execute(
-                    "DELETE FROM queue WHERE topic = ?", (topic,))
-
-            self.conn.execute(
-                "INSERT INTO queue "
-                "(timestamp, topic, payload, retain, queued_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (time.time(), topic, payload, int(retain), iso_now())
-            )
-            self.conn.commit()
-            return True
-        except sqlite3.Error as exc:
-            logger.error("MQTTQueue: Add failed: %s", exc)
-            return False
-
-    async def add(
-            self,
-            topic: str,
-            payload: str,
-            retain: bool = False) -> bool:
-        """Přidá MQTT zprávu do fronty (FIFO)."""
-        async with self.lock:
-            return await asyncio.to_thread(
-                self._add_sync, topic, payload, retain)
-
-    def _get_next_sync(self) -> tuple[int, str, str, bool] | None:
-        """Synchronní implementace get_next (voláno z thread-pool)."""
-        try:
-            cursor = self.conn.execute(
-                "SELECT id, topic, payload, retain FROM queue "
-                "ORDER BY id LIMIT 1"
-            )
-            row = cursor.fetchone()
-            if not row:
-                return None
-            msg_id, topic, payload, retain = row
-            return int(msg_id), str(topic), str(payload), bool(retain)
-        except sqlite3.Error as exc:
-            logger.error("MQTTQueue: Get next failed: %s", exc)
-            return None
-
-    async def get_next(self) -> tuple[int, str, str, bool] | None:
-        """Vrátí další zprávu (id, topic, payload, retain) nebo None."""
-        async with self.lock:
-            return await asyncio.to_thread(self._get_next_sync)
-
-    def _remove_sync(self, msg_id: int) -> bool:
-        """Synchronní implementace remove (voláno z thread-pool)."""
-        try:
-            self.conn.execute(
-                "DELETE FROM queue WHERE id = ?", (msg_id,)
-            )
-            self.conn.commit()
-            return True
-        except sqlite3.Error as exc:
-            logger.error("MQTTQueue: Remove failed: %s", exc)
-            return False
-
-    async def remove(self, msg_id: int) -> bool:
-        """Odstraní zprávu po úspěšném odeslání."""
-        async with self.lock:
-            return await asyncio.to_thread(self._remove_sync, msg_id)
-
-    def _size_sync(self) -> int:
-        """Synchronní implementace size."""
-        try:
-            cursor = self.conn.execute("SELECT COUNT(*) FROM queue")
-            return cursor.fetchone()[0]
-        except sqlite3.Error as exc:
-            logger.error("MQTTQueue: Size failed: %s", exc)
-            return 0
-
-    def size(self) -> int:
-        """Vrátí počet zpráv ve frontě (sync, pro použití mimo async kontext)."""
-        return self._size_sync()
-
-    def clear(self) -> None:
-        """Vymaže celou frontu."""
-        try:
-            self.conn.execute("DELETE FROM queue")
-            self.conn.commit()
-            logger.info("MQTTQueue: Cleared")
-        except sqlite3.Error as exc:
-            logger.error("MQTTQueue: Clear failed: %s", exc)
-
-
-# ============================================================================
-# MQTT Publisher s replay podporou
-# ============================================================================
-
 class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
-    """MQTT publisher s persistentní frontou a replay."""
-
     # MQTT return codes
     RC_CODES = {
         0: "Connection successful",
@@ -240,11 +65,6 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                                             Callable[[str, bytes, int, bool], None]]] = []
         self._on_connect_handlers: list[Callable[[], None]] = []
         self._main_loop: asyncio.AbstractEventLoop | None = None
-        self._replay_future: concurrent.futures.Future[Any] | None = None
-
-        # Queue
-        self.queue = MQTTQueue()
-        self._replay_task: asyncio.Task[Any] | None = None
 
         # Statistiky
         self.publish_count = 0
@@ -385,9 +205,6 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     logger.warning(_MQTT_LOG_SUBSCRIBE_FAILED, topic, e)
 
-            # Trigger replay
-            self._schedule_replay()
-
             for handler in self._on_connect_handlers:
                 try:
                     handler()
@@ -496,12 +313,9 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         payload: str,
         qos: int = 1,
         retain: bool = False,
-        queue_if_offline: bool = True,
     ) -> bool:
         """Publikuje raw payload na libovolný topic (bez mapování/discovery)."""
         if not self.is_ready():
-            if queue_if_offline:
-                await self.queue.add(topic, payload, retain)
             return False
         if not self.client:
             return False
@@ -511,68 +325,11 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             return result.rc == 0
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("MQTT: publish_raw exception: %s", e)
-            if queue_if_offline:
-                await self.queue.add(topic, payload, retain)
             return False
 
     def is_ready(self) -> bool:
         """Vrací True pokud je MQTT připraveno."""
         return self.client is not None and self.connected
-
-    async def replay_queue(self) -> None:
-        """Replay fronty po reconnectu (rate limited)."""
-        queue_size = self.queue.size()
-        if queue_size == 0:
-            logger.debug("MQTT: Replay queue empty")
-            return
-
-        logger.info("MQTT: Starting replay of %s messages...", queue_size)
-        replayed = 0
-        interval = 1.0 / MQTT_REPLAY_RATE  # ~0.1s pro 10 msg/s
-
-        while True:
-            if not self.is_ready():
-                logger.warning("MQTT: Replay interrupted - disconnected")
-                break
-
-            item = await self.queue.get_next()
-            if not item:
-                break
-            msg_id, topic, payload, retain = item
-
-            try:
-                client = self.client
-                if client is None:
-                    logger.error(
-                        "MQTT: Replay aborted - MQTT client is not initialized")
-                    break
-                result = client.publish(
-                    topic, payload, qos=1, retain=retain)
-                if result.rc == 0:
-                    await self.queue.remove(msg_id)
-                    replayed += 1
-
-                    if replayed % 10 == 0:
-                        remaining = self.queue.size()
-                        logger.debug(
-                            "MQTT: Replay progress: %s/%s (%s remaining)",
-                            replayed,
-                            queue_size,
-                            remaining,
-                        )
-                else:
-                    logger.error(
-                        "MQTT: Replay publish failed rc=%s",
-                        result.rc,
-                    )
-                    break
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.error("MQTT: Replay exception: %s", e)
-                break
-
-            await asyncio.sleep(interval)
-
-        logger.info("MQTT: Replay complete (%s messages)", replayed)
 
     async def health_check_loop(self) -> None:
         """Periodicky kontroluje MQTT spojení."""
@@ -621,22 +378,6 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Naváže asyncio loop (pro scheduling z MQTT threadu)."""
         self._main_loop = loop
-
-    def _schedule_replay(self) -> None:
-        """Naplánuje replay MQTT fronty do asyncio loopu (thread-safe)."""
-        if self._main_loop is None:
-            logger.debug("MQTT: Replay skipped - no asyncio loop")
-            return
-        if self._replay_future is not None and not self._replay_future.done():
-            return
-        try:
-            self._replay_future = asyncio.run_coroutine_threadsafe(
-                self.replay_queue(),
-                self._main_loop,
-            )
-            logger.debug("MQTT: Replay task scheduled")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.debug("MQTT: Replay schedule failed: %s", e)
 
     @staticmethod
     def _state_topic(dev_id: str, table: str | None) -> str:
@@ -822,12 +563,8 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         topic: str,
         payload: str,
     ) -> bool:
-        await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
         if self.publish_count % 100 == 0:
-            logger.warning(
-                "MQTT: Offline - data queued (%s messages)",
-                self.queue.size(),
-            )
+            logger.warning("MQTT: Offline - data dropped")
         self.publish_failed += 1
         return False
 
@@ -842,7 +579,6 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         try:
             client = self.client
             if client is None:
-                await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
                 self.publish_failed += 1
                 logger.error("MQTT: Publish aborted - MQTT client is not initialized")
                 return False
@@ -860,12 +596,10 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                 )
                 return True
 
-            await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
             self.publish_failed += 1
             logger.error("MQTT: Publish failed rc=%s", result.rc)
             return False
         except Exception as e:  # pylint: disable=broad-exception-caught
-            await self.queue.add(topic, payload, MQTT_STATE_RETAIN)
             self.publish_failed += 1
             self.last_error_time = time.time()
             self.last_error_msg = str(e)

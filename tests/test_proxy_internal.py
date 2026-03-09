@@ -25,17 +25,8 @@ from mqtt_state_cache import MqttStateCache
 from telemetry_collector import TelemetryCollector
 
 
-class DummyMQTTQueue:
-    def __init__(self, size: int = 0) -> None:
-        self._size = size
-
-    def size(self) -> int:
-        return self._size
-
-
 class DummyMQTT:
     def __init__(self) -> None:
-        self.queue = DummyMQTTQueue()
         self.device_id = "DEV1"
         self._last_payload_by_topic = {}
         self.published_data = []

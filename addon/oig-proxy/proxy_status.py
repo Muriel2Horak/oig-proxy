@@ -143,7 +143,7 @@ class ProxyStatusReporter:
             "cloud_errors": p._cf.errors,
             "cloud_session_connected": int(p._cf.session_connected),
             "cloud_session_active": int(p._cf.session_connected),
-            "mqtt_queue": p.mqtt_publisher.queue.size(),
+            "mqtt_queue": 0,
             "box_connected": int(p.box_connected),
             "box_connections": p.box_connections,
             "box_connections_active": int(p.box_connected),
@@ -229,7 +229,7 @@ class ProxyStatusReporter:
             "off" if p._hm.in_offline else "on",
             "on" if p._cf.session_connected else "off",
             "on" if p.mqtt_publisher.is_ready() else "off",
-            p.mqtt_publisher.queue.size(),
+            0,
             "on" if self._safe_twin_available(p) else "off",
             "on" if getattr(p, "_twin_mode_active", False) else "off",
             p.stats["frames_received"],
@@ -268,7 +268,7 @@ class ProxyStatusReporter:
             "configured_mode": p._hm.configured_mode,
             "cloud_online": not p._hm.in_offline,
             "hybrid_fail_count": p._hm.fail_count,
-            "mqtt_queue_size": p.mqtt_publisher.queue.size(),
+            "mqtt_queue_size": 0,
             "mqtt_connected": p.mqtt_publisher.connected,
             **p.stats
         }

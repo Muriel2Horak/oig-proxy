@@ -9,24 +9,11 @@ import pytest
 import mqtt_publisher as mq_module
 
 
-class _DummyQueue:
-    def __init__(self):
-        self.items = []
-
-    async def add(self, topic, payload, retain):
-        self.items.append((topic, payload, retain))
-        return True
-
-    def size(self):
-        return len(self.items)
-
-
 @pytest.mark.asyncio
-async def test_identical_payloads_queue_when_offline():
-    """Test that identical payloads are queued when MQTT is offline."""
+async def test_identical_payloads_dropped_when_offline():
+    """Test that identical payloads are dropped when MQTT is offline (no queue)."""
     mq = mq_module.MQTTPublisher.__new__(mq_module.MQTTPublisher)
     mq.is_ready = MagicMock(return_value=False)  # Offline
-    mq.queue = _DummyQueue()
     mq._last_payload_by_topic = {}
     mq.publish_count = 0
     mq.publish_failed = 0
@@ -37,16 +24,16 @@ async def test_identical_payloads_queue_when_offline():
 
     payload = {"_table": "test", "value": "data123"}
 
-    # First payload
+    # First payload — offline → dropped
     result1 = await mq.publish_data(payload)
 
-    # Same payload again (should still queue when offline)
+    # Same payload again — offline → dropped
     result2 = await mq.publish_data(payload)
 
-    # Both should be queued (not deduped before queueing)
-    assert len(mq.queue.items) == 2
+    # Both should fail (no queue, just drop)
     assert result1 is False
     assert result2 is False
+    assert mq.publish_failed == 2
 
 
 def test_dedup_works_when_online():
@@ -85,7 +72,6 @@ async def test_dedup_check_after_is_ready():
 
     mq.is_ready = mock_is_ready
     mq._check_payload_deduplication = mock_dedup
-    mq.queue = _DummyQueue()
     mq.publish_count = 0
     mq.publish_failed = 0
     mq._last_payload_by_topic = {}
@@ -112,23 +98,6 @@ def test_cache_cleared_on_disconnect():
     assert len(mq._last_payload_by_topic) == 0
 
 
-def test_offline_queue_bypasses_dedup():
-    """Test that offline queue bypasses dedup."""
-    mq = mq_module.MQTTPublisher.__new__(mq_module.MQTTPublisher)
-    mq.is_ready = MagicMock(return_value=False)  # Offline
-    mq._queue = []
-
-    payload = {"topic": "test/topic", "payload": "data123"}
-
-    # When offline, identical payloads should both queue
-    # (dedup happens after is_ready check)
-    mq._queue.append(payload)
-    mq._queue.append(payload)  # Same payload again
-
-    # Both should be in queue
-    assert len(mq._queue) == 2
-
-
 @pytest.mark.asyncio
 async def test_publish_data_calls_is_ready_first():
     """Test that publish_data calls is_ready before dedup check."""
@@ -141,7 +110,6 @@ async def test_publish_data_calls_is_ready_first():
         return False
 
     mq.is_ready = mock_is_ready
-    mq.queue = _DummyQueue()
     mq.publish_count = 0
     mq.publish_failed = 0
     mq._last_payload_by_topic = {}

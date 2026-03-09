@@ -794,7 +794,7 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             "cloud_errors": proxy._cf.errors,
             "cloud_online": cloud_online_window,
             "mqtt_ok": proxy.mqtt_publisher.is_ready() if proxy.mqtt_publisher else False,
-            "mqtt_queue": proxy.mqtt_publisher.queue.size() if proxy.mqtt_publisher else 0,
+            "mqtt_queue": 0,
             "set_commands": set_commands,
             "window_metrics": window_metrics,
             "nack_reasons": dict(self.nack_reasons),

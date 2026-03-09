@@ -34,8 +34,6 @@ def _make_proxy_and_tc():
     mock_proxy._active_box_peer = None
     mock_proxy.mqtt_publisher = MagicMock()
     mock_proxy.mqtt_publisher.is_ready = MagicMock(return_value=True)
-    mock_proxy.mqtt_publisher.queue = MagicMock()
-    mock_proxy.mqtt_publisher.queue.size = MagicMock(return_value=2)
     mock_proxy._box_connected_since_epoch = None
     mock_proxy._hm.state = None
     mock_proxy._hm.state_since_epoch = None
@@ -109,7 +107,7 @@ def test_collect_telemetry_metrics_basic():
     assert metrics["frames_received"] == 3
     assert metrics["frames_forwarded"] == 2
     assert metrics["mqtt_ok"] is True
-    assert metrics["mqtt_queue"] == 2
+    assert metrics["mqtt_queue"] == 0
     assert metrics["window_metrics"] == {"window": True}
     assert metrics["x"] == 1
 
