@@ -1,0 +1,48 @@
+Task 11 First Divergence Evidence
+Generated at (UTC): 2026-03-08T21:03:55.353869+00:00
+
+pwd:
+/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+Source files:
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/ack-classification.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-parity-diff.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/state-transition-diff.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/session-ownership-matrix.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl: FOUND
+
+Deterministic run1/run2 winner comparison:
+- run1_winner: CASE-20260219-SRC-sisyphus-evidence-setting-ack-parity-task-10-mock-context-txt
+- run1_hash: 2ead051bf26f8967abb76a37f9561f5b3fffc26e87d807a8cb34a77815d8476e
+- run2_winner: CASE-20260219-SRC-sisyphus-evidence-setting-ack-parity-task-10-mock-context-txt
+- run2_hash: 2ead051bf26f8967abb76a37f9561f5b3fffc26e87d807a8cb34a77815d8476e
+
+Top 3 ranking snapshot:
+1) CASE-20260219-SRC-sisyphus-evidence-setting-ack-parity-task-10-mock-context-txt
+   sort_key=(0, 0, 0, 0, 1771483599000, 2, -8, 'CASE-20260219-SRC-sisyphus-evidence-setting-ack-parity-task-10-mock-context-txt')
+2) CASE-20260219-CONN-0002
+   sort_key=(0, 0, 0, 1, 1771487209000, 0, -2, 'CASE-20260219-CONN-0002')
+3) CASE-20260219-CONN-0018
+   sort_key=(0, 0, 0, 1, 1771487894000, 0, -2, 'CASE-20260219-CONN-0018')
+
+Checks:
+- source_artifacts_present: PASS
+- deterministic_run1_run2_winner_match: PASS
+- deterministic_run1_run2_hash_match: PASS
+- first_divergence_md_exists: PASS
+- section_header_present: PASS
+- section_inputs_present: PASS
+- section_ranking_rules_present: PASS
+- section_primary_coordinates_present: PASS
+- section_causality_chain_present: PASS
+- section_confidence_present: PASS
+- section_ranked_alternatives_present: PASS
+- section_determinism_note_present: PASS
+
+Required final command outputs:
+$ test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/first-divergence.md; echo first_divergence_md:$?
+first_divergence_md:0
+$ test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/.sisyphus/evidence/twin-ack-forensics-verification/task-11-first-divergence.txt; echo evidence_file:$?
+evidence_file:0
+
+Overall verdict: PASS

@@ -1,0 +1,36 @@
+Task 9 Frame Parity Diff Verification Evidence
+Generated at (UTC): 2026-03-08T20:07:46.133559+00:00
+
+pwd:
+/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+Inputs checked:
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-evidence.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/ack-classification.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/golden-handshake-fixtures: MISSING
+
+Checks:
+- file_exists: PASS
+- required_headers_exact: PASS
+- allowed_diff_type_domain: PASS
+- deterministic_ordering: PASS
+- failed_case_coverage: PASS
+- failed_cases_count: 135
+- missing_coverage_cases: []
+
+Summary:
+- total_rows: 135
+- diff_type_histogram: {'no_frame_diff': 135}
+- no_frame_diff_cases: 135
+- baseline_availability: MISSING
+
+Required final command outputs:
+$ test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-parity-diff.csv; echo csv:$?
+csv:0
+$ test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/.sisyphus/evidence/twin-ack-forensics-verification/task-9-frame-diff.txt; echo evidence:$?
+evidence:0
+$ wc -l /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-parity-diff.csv
+     136 /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-parity-diff.csv
+
+Overall verdict: PASS

@@ -1,0 +1,78 @@
+================================================================================
+TASK 2: Runtime Snapshot Verification Evidence
+================================================================================
+
+Task: Runtime snapshot Twin/Proxy konfigurace a módů
+Plan: .sisyphus/plans/twin-ack-forensics-verification.md
+Date: 2026-03-08
+
+================================================================================
+VERIFICATION RESULTS
+================================================================================
+
+1. File existence check:
+   Command: test -f analysis/twin-ack-forensics-verification/runtime-snapshot.json
+   Result: PASS
+
+2. JSON schema validation:
+   Command: python3 -m json.tool analysis/twin-ack-forensics-verification/runtime-snapshot.json >/dev/null
+   Result: PASS
+
+================================================================================
+SNAPSHOT CONTENTS
+================================================================================
+
+Mandatory keys present:
+- captured_at_utc: "2026-03-08T18:45:00Z"
+- twin_enabled: false
+- twin_kill_switch: false
+- twin_cloud_aligned: false
+- routing_mode: "auto"
+- proxy_mode: "online"
+
+Source provenance fields:
+- twin_enabled_source: "config:TWIN_ENABLED AND NOT TWIN_KILL_SWITCH"
+- twin_kill_switch_source: "env:TWIN_KILL_SWITCH"
+- twin_cloud_aligned_source: "env:TWIN_CLOUD_ALIGNED"
+- routing_mode_source: "env:LOCAL_CONTROL_ROUTING"
+- proxy_mode_source: "env:PROXY_MODE"
+
+Additional metadata:
+- config_file_sources: Full config reference from addon/oig-proxy/config.py
+- proxy_py_effective_values: Runtime effective values from addon/oig-proxy/proxy.py
+
+================================================================================
+CONFIGURATION SOURCE ANALYSIS
+================================================================================
+
+addon/oig-proxy/config.py:
+- TWIN_ENABLED (line 239): _get_bool_env("TWIN_ENABLED", False)
+- TWIN_KILL_SWITCH (line 240): _get_bool_env("TWIN_KILL_SWITCH", False)
+- TWIN_CLOUD_ALIGNED (line 252): _get_bool_env("TWIN_CLOUD_ALIGNED", False)
+- PROXY_MODE (line 102): os.getenv("PROXY_MODE", "online").lower()
+- LOCAL_CONTROL_ROUTING (line 244-248): _get_str_env("LOCAL_CONTROL_ROUTING", "auto", [...])
+
+addon/oig-proxy/proxy.py:
+- _twin_enabled (line 142): bool(TWIN_ENABLED) and not self._twin_kill_switch
+- _twin_kill_switch (line 141): bool(TWIN_KILL_SWITCH)
+- _local_control_routing (line 143): str(LOCAL_CONTROL_ROUTING)
+
+================================================================================
+VERDICT
+================================================================================
+
+Status: COMPLETE
+Evidence: PASS
+All acceptance criteria met.
+
+=== PLACEMENT FIX (2026-03-08) ===
+Artifacts were initially placed in wrong location (main repo) and were copied to correct worktree:
+- runtime-snapshot.json: copied from /Users/martinhorak/Projects/oig-proxy/analysis/twin-ack-forensics-verification/
+- task-2-runtime-snapshot.txt: copied from /Users/martinhorak/Projects/oig-proxy/.sisyphus/evidence/twin-ack-forensics-verification/
+
+Absolute path verification:
+test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/runtime-snapshot.json
+Result: PASS
+
+test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/.sisyphus/evidence/twin-ack-forensics-verification/task-2-runtime-snapshot.txt
+Result: PASS

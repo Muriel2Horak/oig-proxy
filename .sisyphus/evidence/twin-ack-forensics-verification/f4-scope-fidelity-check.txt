@@ -1,0 +1,58 @@
+# F4 Scope Fidelity Check
+# Date: 2026-03-08
+# Worktree: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+## Inputs Reviewed
+- Plan guardrails: `.sisyphus/plans/twin-ack-forensics-verification.md` (Must NOT Have, Final Wave F4 output contract)
+- Analysis artifacts reviewed: 13 files under `analysis/twin-ack-forensics-verification/`
+- Evidence artifacts reviewed: 12 files `task-1` through `task-12` under `.sisyphus/evidence/twin-ack-forensics-verification/`
+- Worktree status context: `git status --short --branch`
+
+## Scope Classification (Artifact/Action Level)
+
+### In-scope (26)
+1. `analysis/twin-ack-forensics-verification/source-inventory.md`
+2. `analysis/twin-ack-forensics-verification/runtime-snapshot.json`
+3. `analysis/twin-ack-forensics-verification/proxy-twin-logs-raw.jsonl`
+4. `analysis/twin-ack-forensics-verification/proxy-twin-logs-filtered.jsonl`
+5. `analysis/twin-ack-forensics-verification/frame-evidence.jsonl`
+6. `analysis/twin-ack-forensics-verification/mqtt-timeline.jsonl`
+7. `analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl`
+8. `analysis/twin-ack-forensics-verification/session-ownership-matrix.csv`
+9. `analysis/twin-ack-forensics-verification/ack-classification.csv`
+10. `analysis/twin-ack-forensics-verification/frame-parity-diff.csv`
+11. `analysis/twin-ack-forensics-verification/state-transition-diff.csv`
+12. `analysis/twin-ack-forensics-verification/first-divergence.md`
+13. `analysis/twin-ack-forensics-verification/verification-verdict.md`
+14. `.sisyphus/evidence/twin-ack-forensics-verification/task-1-inventory.txt`
+15. `.sisyphus/evidence/twin-ack-forensics-verification/task-2-runtime-snapshot.txt`
+16. `.sisyphus/evidence/twin-ack-forensics-verification/task-3-log-export.txt`
+17. `.sisyphus/evidence/twin-ack-forensics-verification/task-4-frame-export.txt`
+18. `.sisyphus/evidence/twin-ack-forensics-verification/task-5-mqtt-timeline.txt`
+19. `.sisyphus/evidence/twin-ack-forensics-verification/task-6-canonical.txt`
+20. `.sisyphus/evidence/twin-ack-forensics-verification/task-7-ownership.txt`
+21. `.sisyphus/evidence/twin-ack-forensics-verification/task-8-ack-taxonomy.txt`
+22. `.sisyphus/evidence/twin-ack-forensics-verification/task-9-frame-diff.txt`
+23. `.sisyphus/evidence/twin-ack-forensics-verification/task-10-transition-timing.txt`
+24. `.sisyphus/evidence/twin-ack-forensics-verification/task-11-first-divergence.txt`
+25. `.sisyphus/evidence/twin-ack-forensics-verification/task-12-verdict.txt`
+26. Action: `git status` scope check in active worktree
+
+### Out-of-scope (0)
+- None found.
+
+## Guardrail Checklist (PASS/FAIL)
+1. No runtime protocol fixes during this plan: **PASS**
+   - Evidence: `git status` in active worktree shows only `.sisyphus/*` and plan/evidence/notepad paths; no `addon/`, `proxy/`, or `tests/` modifications.
+2. No unrelated flow mixed as conclusions: **PASS**
+   - Evidence: final synthesis artifacts (`first-divergence.md`, `verification-verdict.md`) are tied to Twin ACK forensic artifacts and reason-coded references.
+3. No conclusions without artifact references: **PASS**
+   - Evidence: `task-12-verdict.txt` records traceability checks passing for major claims.
+4. No manual/non-auditable acceptance criteria: **PASS**
+   - Evidence: task evidence files capture deterministic command-based checks per task.
+
+## Runtime-Fix Contamination Check
+- Confirmed: No runtime fix work introduced as part of this plan.
+- Confirmed: outputs remain analysis/evidence/report artifacts only.
+
+In-scope [26/26] | Out-of-scope [0/26] | PASS

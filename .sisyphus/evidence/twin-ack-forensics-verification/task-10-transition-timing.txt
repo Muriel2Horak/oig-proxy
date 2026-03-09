@@ -1,0 +1,73 @@
+Task 10 State-Transition + Timing Diff Evidence
+Generated at (UTC): 2026-03-08T20:44:50.212101+00:00
+
+pwd:
+/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+Source files:
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/ack-classification.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/session-ownership-matrix.csv: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/mqtt-timeline.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-evidence.jsonl: FOUND
+
+Row counts:
+- ack_classification_rows: 144
+- session_ownership_rows: 144
+- twin_ack_timeline_rows: 3605
+- mqtt_timeline_rows: 1
+- frame_evidence_rows: 238
+- state_transition_diff_rows: 144
+
+Checks:
+- file_exists: PASS
+- required_headers_exact: PASS
+- one_row_per_ack_case: PASS
+- case_id_set_exact: PASS
+- case_id_order_ascending: PASS
+- ack_class_domain: PASS
+- inv_verdict_domain: PASS
+- transition_divergence_domain: PASS
+- threshold_verdict_domain: PASS
+- timing_divergence_domain: PASS
+- determinism_rerun_checksum_stable: PASS
+
+Baseline (source-backed ACK_OK conn cohort):
+- cohort_size: 8
+- setting_to_ack_median_ms: 7425
+- setting_to_ack_p95_ms: 9728
+- setting_to_end_median_ms: 13950
+- setting_to_end_p95_ms: 23727
+- retry_gap_median_ms: 8496
+- retry_gap_p95_ms: 411804
+
+Class/domain distributions:
+- ack_class_histogram: {'ACK_AMBIGUOUS': 115, 'ACK_MISSING': 14, 'ACK_OK': 9, 'END_AS_ACK': 6}
+- transition_divergence_histogram: {'ack_ambiguous': 3, 'missing_setting': 133, 'transition_match': 8}
+- overall_threshold_verdict_histogram: {'PASS': 11, 'UNKNOWN': 133}
+
+Deterministic re-run consistency check:
+- sha256_before_rerun_existing_file: fb020216927eacb45a186e267b9ff0cb68f14e97846cade817d6d9df8376f5cc
+- sha256_run1_generated_content: 38d79016afeb9da684cd0f48f2deca1144a9357433faa42716e006af5e6e3fc6
+- sha256_run2_generated_content: 38d79016afeb9da684cd0f48f2deca1144a9357433faa42716e006af5e6e3fc6
+- sha256_file_after_run1_write: 38d79016afeb9da684cd0f48f2deca1144a9357433faa42716e006af5e6e3fc6
+- sha256_file_after_run2_write: 38d79016afeb9da684cd0f48f2deca1144a9357433faa42716e006af5e6e3fc6
+- verdict: PASS
+
+Required final command outputs:
+$ test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/state-transition-diff.csv; echo csv:$?
+csv:0
+$ python3 - <<'PY'
+import csv, pathlib
+p = pathlib.Path('/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/state-transition-diff.csv')
+with p.open(newline="", encoding="utf-8") as f:
+    r = csv.DictReader(f)
+    rows = list(r)
+    print("header_ok", int(r.fieldnames is not None))
+    print("rows", len(rows))
+PY
+header_ok 1
+rows 144
+
+Overall verdict: PASS
+PASS summary: file_exists, required_headers_exact, one_row_per_ack_case, case_id_set_exact, case_id_order_ascending, ack_class_domain, inv_verdict_domain, transition_divergence_domain, threshold_verdict_domain, timing_divergence_domain, determinism_rerun_checksum_stable
