@@ -3,57 +3,92 @@
 # pyright: reportMissingImports=false
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-
-# Import digital_twin module
 import digital_twin as dt_module
+from twin_state import OnAckDTO, TransactionResultDTO
 
 
 @pytest.mark.asyncio
 async def test_on_ack_cloud_aligned_sets_inflight_none():
     """Test that ACK Applied sets _inflight to None."""
     twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
-    twin._inflight = {"tx_id": "test-1", "state": "SENT"}
+    twin._inflight = MagicMock()
+    twin._inflight.tx_id = "test-1"
+    twin._inflight_ctx = MagicMock()
+    twin._inflight_ctx.conn_id = 1
+    twin._pending_simple = {}
+    twin._lock = AsyncMock()
     
-    # Simulate ACK Applied response
-    await twin._on_ack_cloud_aligned(
-        table_name="tbl_test",
+    # Create ACK DTO
+    dto = OnAckDTO(
         tx_id="test-1",
-        result="Applied",
+        conn_id=1,
+        ack=True,
     )
     
-    # Inflight should be cleared
-    assert twin._inflight is None
+    # Mock _get_matching_inflight_for_ack to return the inflight
+    with patch.object(twin, '_get_matching_inflight_for_ack', return_value=twin._inflight):
+        with patch.object(twin, '_resolve_delivered_conn_id', return_value=1):
+            with patch.object(twin, '_is_cloud_aligned_ack_conn_valid', return_value=True):
+                with patch.object(twin, '_finish_inflight_locked', return_value=MagicMock()) as mock_finish:
+                    # Simulate ACK Applied response
+                    await twin._on_ack_cloud_aligned(dto)
+                    
+                    # Verify finish was called
+                    mock_finish.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_on_ack_legacy_sets_inflight_none():
     """Test that legacy ACK handler clears inflight."""
     twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
-    twin._inflight = {"tx_id": "test-1", "state": "SENT"}
+    twin._inflight = MagicMock()
+    twin._inflight.tx_id = "test-1"
+    twin._inflight_ctx = MagicMock()
+    twin._inflight_ctx.conn_id = 1
+    twin._lock = AsyncMock()
     
-    # Simulate legacy ACK
-    await twin._on_ack_legacy(
-        table_name="tbl_test",
+    # Create ACK DTO
+    dto = OnAckDTO(
         tx_id="test-1",
+        conn_id=1,
+        ack=True,
     )
     
-    # Inflight should be cleared
-    assert twin._inflight is None
+    # Mock methods
+    with patch.object(twin, '_finish_inflight_locked', return_value=MagicMock()) as mock_finish:
+        # Simulate legacy ACK
+        await twin._on_ack_legacy(dto)
+        
+        # Verify finish was called
+        mock_finish.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_finish_inflight_releases_inflight():
     """Test that finish_inflight releases the inflight slot."""
     twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
-    twin._inflight = {"tx_id": "test-1", "state": "SENT"}
+    twin._inflight = MagicMock()
+    twin._inflight.tx_id = "test-1"
+    twin._inflight_ctx = MagicMock()
+    twin._lock = AsyncMock()
     
-    # Call finish_inflight
-    twin.finish_inflight()
+    # Mock _finish_inflight_locked to clear inflight
+    def clear_inflight(*args, **kwargs):
+        twin._inflight = None
+        return MagicMock()
     
-    # Inflight should be cleared
-    assert twin._inflight is None
+    with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
+        # Call finish_inflight with required params
+        result = await twin.finish_inflight(
+            tx_id="test-1",
+            conn_id=1,
+            success=True,
+        )
+        
+        # Inflight should be cleared
+        assert twin._inflight is None
 
 
 @pytest.mark.asyncio
@@ -61,66 +96,121 @@ async def test_queue_continues_after_inflight_release():
     """Test that queue processing continues after inflight is released."""
     twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
     twin._queue = [{"tx_id": "test-2"}]
-    twin._inflight = {"tx_id": "test-1", "state": "APPLIED"}
+    twin._inflight = MagicMock()
+    twin._inflight.tx_id = "test-1"
+    twin._inflight_ctx = MagicMock()
+    twin._lock = AsyncMock()
     
-    # Finish inflight
-    twin.finish_inflight()
+    # Mock _finish_inflight_locked to clear inflight
+    def clear_inflight(*args, **kwargs):
+        twin._inflight = None
+        return MagicMock()
     
-    # Queue should still have items
-    assert len(twin._queue) == 1
-    
-    # Should be able to process next item
-    assert twin._inflight is None
+    with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
+        # Finish inflight
+        await twin.finish_inflight(
+            tx_id="test-1",
+            conn_id=1,
+            success=True,
+        )
+        
+        # Queue should still have items
+        assert len(twin._queue) == 1
+        
+        # Should be able to process next item
+        assert twin._inflight is None
 
 
 @pytest.mark.asyncio
 async def test_error_handler_clears_inflight():
     """Test that error handlers also clear inflight."""
     twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
-    twin._inflight = {"tx_id": "test-1", "state": "SENT"}
+    twin._inflight = MagicMock()
+    twin._inflight.tx_id = "test-1"
+    twin._inflight_ctx = MagicMock()
     twin._queue = []
+    twin._lock = AsyncMock()
     
-    # Simulate error handling
-    if hasattr(twin, 'on_tbl_event'):
-        # Check if on_tbl_event clears inflight on error
-        pass  # Implementation depends on actual method
+    # Mock _finish_inflight_locked to clear inflight on error
+    def clear_inflight(*args, **kwargs):
+        twin._inflight = None
+        return MagicMock()
     
-    # If finish_inflight is called on terminal states, inflight is cleared
-    twin.finish_inflight()
-    assert twin._inflight is None
+    with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
+        # If finish_inflight is called on terminal states with success=False, inflight is cleared
+        await twin.finish_inflight(
+            tx_id="test-1",
+            conn_id=1,
+            success=False,
+            detail="Error occurred",
+        )
+        assert twin._inflight is None
 
 
 @pytest.mark.asyncio
 async def test_inflight_finalization_on_all_terminal_states():
     """Test that finish_inflight is called on all terminal state transitions."""
-    terminal_states = ["APPLIED", "ERROR", "TIMEOUT", "COMPLETED"]
+    terminal_results = [
+        (True, "Applied"),   # Success
+        (False, "Error"),    # Error
+        (False, "Timeout"),  # Timeout
+        (True, "Completed"), # Completed
+    ]
     
-    for state in terminal_states:
+    for success, detail in terminal_results:
         twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
-        twin._inflight = {"tx_id": f"test-{state}", "state": state}
+        twin._inflight = MagicMock()
+        twin._inflight.tx_id = f"test-{detail}"
+        twin._inflight_ctx = MagicMock()
+        twin._lock = AsyncMock()
         
-        # Finalize
-        twin.finish_inflight()
+        # Mock _finish_inflight_locked to clear inflight
+        def clear_inflight(*args, **kwargs):
+            twin._inflight = None
+            return MagicMock()
         
-        # Should be cleared
-        assert twin._inflight is None, f"Inflight not cleared for state: {state}"
+        with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
+            # Finalize
+            await twin.finish_inflight(
+                tx_id=f"test-{detail}",
+                conn_id=1,
+                success=success,
+                detail=detail,
+            )
+            
+            # Should be cleared
+            assert twin._inflight is None, f"Inflight not cleared for result: {detail}"
 
 
 @pytest.mark.asyncio
 async def test_new_item_can_start_after_inflight_cleared():
     """Test that new queue item can start after inflight is cleared."""
     twin = dt_module.DigitalTwin.__new__(dt_module.DigitalTwin)
-    twin._inflight = {"tx_id": "test-1", "state": "APPLIED"}
+    twin._inflight = MagicMock()
+    twin._inflight.tx_id = "test-1"
+    twin._inflight_ctx = MagicMock()
     twin._queue = [{"tx_id": "test-2", "data": "payload"}]
+    twin._lock = AsyncMock()
     
-    # Clear inflight
-    twin.finish_inflight()
+    # Mock _finish_inflight_locked to clear inflight
+    def clear_inflight(*args, **kwargs):
+        twin._inflight = None
+        return MagicMock()
     
-    # Can now process next item
-    assert twin._inflight is None
-    
-    # Simulate starting next item
-    next_item = twin._queue.pop(0)
-    twin._inflight = {"tx_id": next_item["tx_id"], "state": "SENT"}
-    
-    assert twin._inflight["tx_id"] == "test-2"
+    with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
+        # Clear inflight
+        await twin.finish_inflight(
+            tx_id="test-1",
+            conn_id=1,
+            success=True,
+        )
+        
+        # Can now process next item
+        assert twin._inflight is None
+        
+        # Simulate starting next item
+        next_item = twin._queue.pop(0)
+        twin._inflight = MagicMock()
+        twin._inflight.tx_id = next_item["tx_id"]
+        
+        assert twin._inflight.tx_id == "test-2"

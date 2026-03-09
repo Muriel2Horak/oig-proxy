@@ -249,11 +249,11 @@ class OIGProxy:
         if inflight is not None:
             return
         # Check if pending has been idle for timeout period (60s)
-        PENDING_ACTIVATION_TIMEOUT_S = 60.0
+        pending_activation_timeout_s = 60.0
         if self._pending_twin_activation_since is None:
             return
         elapsed = time.time() - self._pending_twin_activation_since
-        if elapsed >= PENDING_ACTIVATION_TIMEOUT_S:
+        if elapsed >= pending_activation_timeout_s:
             self._pending_twin_activation = False
             self._pending_twin_activation_since = None
             logger.info(

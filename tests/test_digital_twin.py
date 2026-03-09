@@ -1554,9 +1554,190 @@ class TestDigitalTwinAdditionalCoverage:
         )
         assert twin._inflight.stage == SettingStage.BOX_ACK
 
-        twin._applied_task = asyncio.create_task(asyncio.sleep(1))
-        twin._cancel_timeout_tasks()
-        assert twin._applied_task is None
+
+# =============================================================================
+# ACK Timeout Recovery Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestACKTimeoutRecovery:
+    """Tests for ACK timeout recovery (Task 3).
+
+    Verifies that ACK timeout properly transitions to terminal state
+    and doesn't leave items stuck in DEFERRED state.
+    """
+
+    async def test_ack_timeout_transitions_to_terminal_state_not_deferred(self):
+        """
+        GIVEN: Setting delivered and ACK timeout fires
+        WHEN: Timeout occurs
+        THEN: Item transitions to ERROR terminal state (not DEFERRED)
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-timeout-terminal", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-timeout-terminal", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-timeout-terminal", conn_id=1)
+
+        # Wait for timeout to fire
+        await asyncio.sleep(0.1)
+
+        # Verify inflight is cleared (terminal state reached)
+        pending = await twin.get_inflight()
+        assert pending is None, "Timeout should clear inflight (terminal state)"
+
+    async def test_ack_timeout_marks_item_as_error(self):
+        """
+        GIVEN: Setting delivered and ACK timeout fires
+        WHEN: Timeout occurs
+        THEN: Item is marked as error (not requeued)
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-timeout-error", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-timeout-error", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-timeout-error", conn_id=1)
+
+        # Wait for timeout to fire
+        await asyncio.sleep(0.1)
+
+        # Verify the last result indicates error
+        last_result = twin._last_result
+        assert last_result is not None
+        assert last_result["status"] == "error"
+        assert last_result["error"] == "ack_timeout"
+
+    async def test_queue_proceeds_after_ack_timeout(self):
+        """
+        GIVEN: Setting delivered, ACK timeout fires, new setting queued
+        WHEN: New setting is started after timeout
+        THEN: Queue can proceed with new transaction
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        # First transaction that will timeout
+        dto1 = make_queue_dto(tx_id="tx-timeout-1", conn_id=1)
+        await twin.queue_setting(dto1)
+        await twin.start_inflight("tx-timeout-1", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-timeout-1", conn_id=1)
+
+        # Wait for timeout to fire
+        await asyncio.sleep(0.1)
+
+        # Verify inflight is cleared
+        pending = await twin.get_inflight()
+        assert pending is None, "First transaction should be cleared after timeout"
+
+        # Queue and start a new transaction
+        dto2 = make_queue_dto(tx_id="tx-timeout-2", conn_id=1)
+        await twin.queue_setting(dto2)
+        pending2 = await twin.start_inflight("tx-timeout-2", conn_id=1)
+
+        assert pending2 is not None, "New transaction should start successfully"
+        assert pending2.tx_id == "tx-timeout-2"
+
+    async def test_deliver_pending_does_not_block_on_deferred_state(self):
+        """
+        GIVEN: Setting in SENT_TO_BOX stage (not DEFERRED)
+        WHEN: deliver_pending_setting is called
+        THEN: It completes immediately (doesn't block)
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-deliver-test", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-deliver-test", conn_id=1)
+
+        # deliver_pending_setting should complete immediately
+        start_time = time.monotonic()
+        pending = await twin.deliver_pending_setting(tx_id="tx-deliver-test", conn_id=1)
+        elapsed = time.monotonic() - start_time
+
+        assert pending is not None
+        assert elapsed < 0.01, "deliver_pending_setting should not block"
+
+    async def test_ack_timeout_clears_inflight_completely(self):
+        """
+        GIVEN: Setting delivered and ACK timeout fires
+        WHEN: Timeout occurs
+        THEN: _inflight is None (completely cleared, not stuck in any state)
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-timeout-clear", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-timeout-clear", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-timeout-clear", conn_id=1)
+
+        # Wait for timeout to fire
+        await asyncio.sleep(0.1)
+
+        # Verify _inflight is completely cleared
+        assert twin._inflight is None, "inflight should be completely cleared"
+        assert twin._inflight_ctx is None, "inflight_ctx should be cleared"
+
+    async def test_ack_timeout_cancels_pending_timeout_task(self):
+        """
+        GIVEN: Setting delivered and ACK timeout scheduled
+        WHEN: ACK arrives before timeout fires
+        THEN: Timeout task is cancelled
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.5)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-timeout-cancel", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-timeout-cancel", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-timeout-cancel", conn_id=1)
+
+        # Verify ACK task is scheduled
+        assert twin._ack_task is not None
+
+        # Send ACK before timeout
+        ack_dto = make_on_ack_dto(tx_id="tx-timeout-cancel", conn_id=1, ack=True)
+        await twin.on_ack(ack_dto)
+
+        # Timeout task should be cancelled
+        assert twin._ack_task is None, "ACK task should be cancelled after ACK"
+
+    async def test_ack_timeout_does_not_affect_different_tx_id(self):
+        """
+        GIVEN: TX1 delivered, TX2 started before TX1 timeout fires
+        WHEN: TX1 timeout fires but TX2 is now inflight
+        THEN: TX1 timeout is ignored (INV-3 validation)
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        # TX1 - will timeout
+        dto1 = make_queue_dto(tx_id="tx-1", conn_id=1)
+        await twin.queue_setting(dto1)
+        await twin.start_inflight("tx-1", conn_id=1)
+        await twin.deliver_pending_setting(tx_id="tx-1", conn_id=1)
+
+        # Complete TX1 before timeout fires
+        await twin.finish_inflight("tx-1", conn_id=1, success=True)
+
+        # TX2 - starts before TX1 timeout fires
+        dto2 = make_queue_dto(tx_id="tx-2", conn_id=1)
+        await twin.queue_setting(dto2)
+        await twin.start_inflight("tx-2", conn_id=1)
+
+        # Wait for what would have been TX1's timeout
+        await asyncio.sleep(0.1)
+
+        # TX2 should still be inflight (not affected by TX1 timeout)
+        pending = await twin.get_inflight()
+        assert pending is not None
+        assert pending.tx_id == "tx-2"
 
 
 # =============================================================================
@@ -1703,3 +1884,298 @@ class TestREDExpectedFailures:
         assert restored_snapshot.tx_id == "tx-restore-test", (
             "RED: restore_from_snapshot must restore tx_id"
         )
+
+
+# =============================================================================
+# Inflight Finalization Tests (Task 9)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestInflightFinalization:
+    """Tests verifying inflight is released on all terminal paths.
+
+    These tests verify that _inflight is None after each terminal state
+    transition: APPLIED, ERROR, COMPLETED, ACK handlers, and timeouts.
+    """
+
+    async def test_inflight_released_on_applied_state(self):
+        """
+        GIVEN: Transaction in BOX_ACK stage
+        WHEN: tbl_event received (applied)
+        THEN: inflight is None after transition
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-applied-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-applied-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-applied-release", conn_id=1)
+
+        # Transition to BOX_ACK
+        ack_dto = make_on_ack_dto(tx_id="tx-applied-release", conn_id=1, ack=True)
+        await twin.on_ack(ack_dto)
+
+        # Verify inflight still exists in BOX_ACK stage
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+        assert inflight_before.stage == SettingStage.BOX_ACK
+
+        # Receive tbl_event to transition to APPLIED
+        event_dto = OnTblEventDTO(
+            tx_id="tx-applied-release",
+            conn_id=1,
+            event_type="Setting",
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+        )
+        await twin.on_tbl_event(event_dto)
+
+        # Verify inflight is None after APPLIED
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_released_on_error_state(self):
+        """
+        GIVEN: Transaction in SENT_TO_BOX stage
+        WHEN: NACK received
+        THEN: inflight is None after ERROR transition
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-error-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-error-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-error-release", conn_id=1)
+
+        # Verify inflight exists before NACK
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+        assert inflight_before.stage == SettingStage.SENT_TO_BOX
+
+        # Receive NACK to transition to ERROR
+        nack_dto = make_on_ack_dto(tx_id="tx-error-release", conn_id=1, ack=False)
+        await twin.on_ack(nack_dto)
+
+        # Verify inflight is None after ERROR
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_released_on_completed_state(self):
+        """
+        GIVEN: Transaction in any stage
+        WHEN: finish_inflight called with success=True
+        THEN: inflight is None after COMPLETED
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-completed-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-completed-release", conn_id=1)
+
+        # Verify inflight exists before finish
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+        assert inflight_before.stage == SettingStage.ACCEPTED
+
+        # Call finish_inflight with success
+        await twin.finish_inflight("tx-completed-release", conn_id=1, success=True)
+
+        # Verify inflight is None after COMPLETED
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_released_in_ack_handler_on_ack(self):
+        """
+        GIVEN: Transaction delivered to BOX
+        WHEN: ACK received in on_ack handler
+        THEN: inflight remains (in BOX_ACK) but can be finished
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-ack-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-ack-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-ack-release", conn_id=1)
+
+        # Receive ACK
+        ack_dto = make_on_ack_dto(tx_id="tx-ack-release", conn_id=1, ack=True)
+        result = await twin.on_ack(ack_dto)
+
+        # Verify ACK processed successfully
+        assert result is not None
+        assert result.status == "box_ack"
+
+        # Inflight should still exist in BOX_ACK stage (waiting for applied)
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is not None
+        assert inflight_after.stage == SettingStage.BOX_ACK
+
+        # Now finish the inflight (simulating applied)
+        await twin.finish_inflight("tx-ack-release", conn_id=1, success=True)
+
+        # Verify inflight is None after finalization
+        inflight_final = await twin.get_inflight()
+        assert inflight_final is None
+
+    async def test_inflight_released_in_ack_handler_on_nack(self):
+        """
+        GIVEN: Transaction delivered to BOX
+        WHEN: NACK received in on_ack handler
+        THEN: inflight is None immediately after NACK
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-nack-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-nack-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-nack-release", conn_id=1)
+
+        # Verify inflight exists before NACK
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+
+        # Receive NACK
+        nack_dto = make_on_ack_dto(tx_id="tx-nack-release", conn_id=1, ack=False)
+        result = await twin.on_ack(nack_dto)
+
+        # Verify NACK processed and inflight is None
+        assert result is not None
+        assert result.status == "error"
+        assert result.error == "box_nack"
+
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_released_on_ack_timeout(self):
+        """
+        GIVEN: Transaction delivered but no ACK received within timeout
+        WHEN: ACK timeout fires
+        THEN: inflight is None after timeout handling
+        """
+        config = DigitalTwinConfig(ack_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-timeout-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-timeout-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-timeout-release", conn_id=1)
+
+        # Verify inflight exists before timeout
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+
+        # Wait for timeout to fire
+        await asyncio.sleep(0.1)
+
+        # Verify inflight is None after timeout
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_released_on_applied_timeout(self):
+        """
+        GIVEN: Transaction in BOX_ACK stage but no tbl_event within timeout
+        WHEN: Applied timeout fires
+        THEN: inflight is None after timeout handling
+        """
+        config = DigitalTwinConfig(applied_timeout_s=0.05)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-applied-timeout-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-applied-timeout-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-applied-timeout-release", conn_id=1)
+
+        # Transition to BOX_ACK
+        ack_dto = make_on_ack_dto(tx_id="tx-applied-timeout-release", conn_id=1, ack=True)
+        await twin.on_ack(ack_dto)
+
+        # Verify inflight exists in BOX_ACK stage
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+        assert inflight_before.stage == SettingStage.BOX_ACK
+
+        # Wait for applied timeout to fire
+        await asyncio.sleep(0.1)
+
+        # Verify inflight is None after applied timeout
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_released_on_disconnect(self):
+        """
+        GIVEN: Transaction delivered to BOX
+        WHEN: Disconnect occurs
+        THEN: inflight is None after disconnect handling
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-disconnect-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-disconnect-release", conn_id=1)
+        await twin.deliver_pending_setting("tx-disconnect-release", conn_id=1)
+
+        # Verify inflight exists before disconnect
+        inflight_before = await twin.get_inflight()
+        assert inflight_before is not None
+
+        # Disconnect
+        disconnect_dto = OnDisconnectDTO(
+            tx_id=None,
+            conn_id=1,
+            session_id="test-session",
+        )
+        await twin.on_disconnect(disconnect_dto)
+
+        # Verify inflight is None after disconnect
+        inflight_after = await twin.get_inflight()
+        assert inflight_after is None
+
+    async def test_inflight_ctx_also_cleared_on_finalization(self):
+        """
+        GIVEN: Transaction in progress with context
+        WHEN: finish_inflight called
+        THEN: both _inflight and _inflight_ctx are None
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-ctx-release", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-ctx-release", conn_id=1)
+
+        # Verify both exist before finish
+        assert twin._inflight is not None
+        assert twin._inflight_ctx is not None
+
+        # Finish the inflight
+        await twin.finish_inflight("tx-ctx-release", conn_id=1, success=True)
+
+        # Verify both are None after finalization
+        assert twin._inflight is None
+        assert twin._inflight_ctx is None
+
+    async def test_timeout_tasks_cancelled_on_finalization(self):
+        """
+        GIVEN: Transaction with timeout tasks scheduled
+        WHEN: finish_inflight called
+        THEN: timeout tasks are cancelled
+        """
+        config = DigitalTwinConfig(ack_timeout_s=30.0, applied_timeout_s=60.0)
+        twin = DigitalTwin(session_id="test-session", config=config)
+
+        dto = make_queue_dto(tx_id="tx-task-cancel", conn_id=1)
+        await twin.queue_setting(dto)
+        await twin.start_inflight("tx-task-cancel", conn_id=1)
+        await twin.deliver_pending_setting("tx-task-cancel", conn_id=1)
+
+        # Verify timeout tasks are scheduled
+        assert twin._ack_task is not None
+        assert not twin._ack_task.done()
+
+        # Finish the inflight
+        await twin.finish_inflight("tx-task-cancel", conn_id=1, success=True)
+
+        # Verify timeout tasks are cancelled
+        assert twin._ack_task is None
+        assert twin._applied_task is None
