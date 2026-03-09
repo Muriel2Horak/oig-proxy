@@ -36,7 +36,6 @@ from config import (
     PROXY_STATUS_ATTRS_TOPIC,
     TELEMETRY_ENABLED,
     TELEMETRY_INTERVAL_S,
-    TWIN_CLOUD_ALIGNED,
     TWIN_ENABLED,
     TWIN_KILL_SWITCH,
     LOCAL_CONTROL_ROUTING,
@@ -55,6 +54,7 @@ from oig_frame import (
 from models import ProxyMode
 from digital_twin import DigitalTwin, DigitalTwinConfig, TwinMQTTHandler
 from mqtt_publisher import MQTTPublisher
+from twin_state import OnAckDTO, OnDisconnectDTO, OnTblEventDTO
 from utils import (
     capture_payload,
 )
@@ -142,7 +142,9 @@ class OIGProxy:
         self._twin_enabled: bool = bool(TWIN_ENABLED) and not self._twin_kill_switch
         self._local_control_routing: str = str(LOCAL_CONTROL_ROUTING)
         twin_config = DigitalTwinConfig(device_id=device_id)
-        self._twin: DigitalTwin | None = DigitalTwin(config=twin_config) if self._twin_enabled else None
+        self._twin: DigitalTwin | None = (
+            DigitalTwin(config=twin_config) if self._twin_enabled else None
+        )
         self._twin_mqtt_handler: TwinMQTTHandler | None = (
             TwinMQTTHandler(twin=self._twin, mqtt_publisher=self.mqtt_publisher)
             if self._twin is not None
@@ -440,10 +442,13 @@ class OIGProxy:
 
         # Twin lifecycle: on_reconnect
         if self._twin is not None:
-            from twin_state import OnDisconnectDTO
             results = await self._twin.on_reconnect(conn_id=conn_id)
             for result in results:
-                logger.info("TWIN reconnect result: tx_id=%s, status=%s", result.tx_id, result.status)
+                logger.info(
+                    "TWIN reconnect result: tx_id=%s, status=%s",
+                    result.tx_id,
+                    result.status,
+                )
 
         try:
             await self._handle_box_connection(reader, writer, conn_id)
@@ -475,13 +480,16 @@ class OIGProxy:
 
             # Twin lifecycle: on_disconnect
             if self._twin is not None:
-                from twin_state import OnDisconnectDTO
                 results = await self._twin.on_disconnect(OnDisconnectDTO(
                     tx_id=None,
                     conn_id=conn_id,
                 ))
                 for result in results:
-                    logger.info("TWIN disconnect result: tx_id=%s, status=%s", result.tx_id, result.status)
+                    logger.info(
+                        "TWIN disconnect result: tx_id=%s, status=%s",
+                        result.tx_id,
+                        result.status,
+                    )
 
             await self._unregister_box_connection(writer)
             await self.publish_proxy_status()
@@ -620,23 +628,30 @@ class OIGProxy:
         frame_bytes: bytes,
         frame: str,
         conn_id: int,
-    ) -> tuple[str | None, str | None] | None:
+    ) -> tuple[str | None, str | None, bool]:
         try:
-            return await self._process_box_frame_common(
+            device_id, table_name = await self._process_box_frame_common(
                 frame_bytes=frame_bytes,
                 frame=frame,
                 conn_id=conn_id,
             )
+            return device_id, table_name, False
         except (ValueError, KeyError, TypeError, AttributeError):
             # Nechceme shazovat celé BOX spojení kvůli chybě v publish/discovery/parsing.
             # Traceback nám pomůže najít přesnou příčinu (např. regex v
             # některé knihovně).
-            logger.exception(
-                "❌ Frame processing error (conn=%s, peer=%s)",
+            table_name = self._infer_table_name(frame)
+            device_id = self._infer_device_id(frame)
+            logger.warning(
+                "⚠️ Frame processing failed; continuing with inferred header routing "
+                "(conn=%s, peer=%s, table=%s, device_id=%s)",
                 conn_id,
                 self._active_box_peer,
+                table_name,
+                device_id,
+                exc_info=True,
             )
-            return None
+            return device_id, table_name, True
 
     async def _maybe_handle_local_control_poll(
         self,
@@ -764,10 +779,21 @@ class OIGProxy:
             frame=frame,
             conn_id=conn_id,
         )
-        if processed is None:
-            return cloud_reader, cloud_writer, False
+        device_id, table_name, processing_failed = processed
 
-        device_id, table_name = processed
+        if processing_failed:
+            current_mode = await self._hm.get_current_mode()
+            return await self._route_box_frame_by_mode(
+                frame_bytes=data,
+                table_name=table_name,
+                device_id=device_id,
+                conn_id=conn_id,
+                box_writer=box_writer,
+                cloud_reader=cloud_reader,
+                cloud_writer=cloud_writer,
+                cloud_connect_timeout_s=cloud_connect_timeout_s,
+                current_mode=current_mode,
+            )
 
         if await self._maybe_handle_twin_ack(frame, box_writer, conn_id=conn_id):
             return cloud_reader, cloud_writer, False
@@ -931,7 +957,11 @@ class OIGProxy:
         mode = self._hm.mode
         configured = self._hm.configured_mode
 
-        if self._hm.should_route_settings_via_twin() or configured == "offline" or mode == ProxyMode.OFFLINE:
+        if (
+            self._hm.should_route_settings_via_twin()
+            or configured == "offline"
+            or mode == ProxyMode.OFFLINE
+        ):
             if self._is_twin_routing_available():
                 return "twin"
             return "local"
@@ -951,7 +981,11 @@ class OIGProxy:
         return "cloud"
 
     def _is_twin_routing_available(self) -> bool:
-        return (not self._twin_kill_switch) and self._twin_enabled and self._twin is not None
+        return (
+            (not self._twin_kill_switch)
+            and self._twin_enabled
+            and self._twin is not None
+        )
 
     def set_twin_kill_switch(self, enabled: bool) -> None:
         """Enable or disable the twin kill switch.
@@ -1057,7 +1091,6 @@ class OIGProxy:
         if not has_reason or (not has_ack and not has_nack and not has_end):
             return False
 
-        from twin_state import OnAckDTO
         ack_ok = has_ack or has_end
 
         dto = OnAckDTO(
@@ -1071,7 +1104,6 @@ class OIGProxy:
             result = await self._twin.on_ack(dto)
             if result is not None:
                 if not has_end:
-                    from oig_frame import build_end_time_frame
                     box_writer.write(build_end_time_frame())
                     try:
                         task = asyncio.create_task(box_writer.drain())
@@ -1095,7 +1127,7 @@ class OIGProxy:
         self,
         parsed: dict[str, Any] | None,
         table_name: str | None,
-        device_id: str | None,
+        _device_id: str | None,
     ) -> None:
         twin = getattr(self, "_twin", None)
         if twin is None:
@@ -1123,7 +1155,6 @@ class OIGProxy:
         if str(new_v) != str(inflight.new_value):
             return
 
-        from twin_state import OnTblEventDTO
         dto = OnTblEventDTO(
             tx_id=inflight.tx_id,
             conn_id=inflight.conn_id,
