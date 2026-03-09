@@ -33,7 +33,7 @@ import logging
 import secrets
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -42,7 +42,6 @@ from oig_frame import infer_table_name
 from oig_frame import build_end_time_frame, build_frame
 from oig_parser import OIGDataParser
 from twin_state import (
-    AckResult,
     OnAckDTO,
     OnDisconnectDTO,
     OnTblEventDTO,
@@ -483,6 +482,7 @@ class DigitalTwin:
         Returns:
             PendingSettingState if a command was started, None if queue empty
         """
+        _ = tx_id
         async with self._lock:
             if self._inflight is not None:
                 return None
@@ -544,45 +544,60 @@ class DigitalTwin:
             TransactionResultDTO with final status, None if no inflight
         """
         async with self._lock:
-            if self._inflight is None:
-                return None
-
-            if self._inflight.tx_id != tx_id:
-                return None
-
-            if self._inflight_ctx:
-                ok, err = TransactionValidator.validate_inv2(
-                    self._inflight_ctx, self.session_id
-                )
-                if not ok:
-                    raise ValueError(f"INV-2 violation in finish_inflight: {err}")
-
-            status = "completed" if success else "error"
-            result = TransactionResultDTO(
+            return self._finish_inflight_locked(
                 tx_id=tx_id,
                 conn_id=conn_id,
-                status=status,
+                success=success,
                 detail=detail,
-                timestamp=get_timestamp(),
             )
 
-            if success:
-                self._completed_tx_ids.add(tx_id)
-                self._prune_completed_tx_ids()
+    def _finish_inflight_locked(
+        self,
+        *,
+        tx_id: str,
+        conn_id: int,
+        success: bool,
+        detail: str | None = None,
+    ) -> TransactionResultDTO | None:
+        if self._inflight is None:
+            return None
 
-            logger.debug(
-                "TWIN: Finished inflight tx_id=%s conn_id=%s success=%s status=%s",
-                tx_id,
-                conn_id,
-                success,
-                status,
+        if self._inflight.tx_id != tx_id:
+            return None
+
+        if self._inflight_ctx:
+            ok, err = TransactionValidator.validate_inv2(
+                self._inflight_ctx, self.session_id
             )
+            if not ok:
+                raise ValueError(f"INV-2 violation in finish_inflight: {err}")
 
-            self._inflight = None
-            self._inflight_ctx = None
-            self._cancel_timeout_tasks()
+        status = "completed" if success else "error"
+        result = TransactionResultDTO(
+            tx_id=tx_id,
+            conn_id=conn_id,
+            status=status,
+            detail=detail,
+            timestamp=get_timestamp(),
+        )
 
-            return result
+        if success:
+            self._completed_tx_ids.add(tx_id)
+            self._prune_completed_tx_ids()
+
+        logger.debug(
+            "TWIN: Finished inflight tx_id=%s conn_id=%s success=%s status=%s",
+            tx_id,
+            conn_id,
+            success,
+            status,
+        )
+
+        self._inflight = None
+        self._inflight_ctx = None
+        self._cancel_timeout_tasks()
+
+        return result
 
     def _prune_completed_tx_ids(self, max_size: int = 1000) -> None:
         if len(self._completed_tx_ids) > max_size:
@@ -724,7 +739,7 @@ class DigitalTwin:
     def _schedule_applied_timeout_after_ack(self) -> None:
         ctx = self._inflight_ctx
         if ctx:
-            self._ack_task = asyncio.create_task(self._applied_timeout_handler(ctx))
+            self._applied_task = asyncio.create_task(self._applied_timeout_handler(ctx))
 
     async def _finalize_cloud_ack_success(
         self,
@@ -751,6 +766,12 @@ class DigitalTwin:
         dto: OnAckDTO,
         pending: PendingSettingState,
     ) -> TransactionResultDTO:
+        self._finish_inflight_locked(
+            tx_id=dto.tx_id,
+            conn_id=dto.conn_id,
+            success=False,
+            detail="box_nack",
+        )
         result = TransactionResultDTO(
             tx_id=dto.tx_id,
             conn_id=dto.conn_id,
@@ -758,8 +779,6 @@ class DigitalTwin:
             error="box_nack",
             timestamp=get_timestamp(),
         )
-        self._inflight = None
-        self._inflight_ctx = None
         self._store_last_result(
             result,
             tbl_name=pending.tbl_name,
@@ -821,7 +840,7 @@ class DigitalTwin:
             self._cancel_ack_task()
 
             if dto.ack:
-                self._ack_task = asyncio.create_task(self._applied_timeout_handler(ctx))
+                self._applied_task = asyncio.create_task(self._applied_timeout_handler(ctx))
                 result = TransactionResultDTO(
                     tx_id=dto.tx_id,
                     conn_id=dto.conn_id,
@@ -843,8 +862,12 @@ class DigitalTwin:
                 error="box_nack",
                 timestamp=get_timestamp(),
             )
-            self._inflight = None
-            self._inflight_ctx = None
+            self._finish_inflight_locked(
+                tx_id=dto.tx_id,
+                conn_id=dto.conn_id,
+                success=False,
+                detail="box_nack",
+            )
             self._store_last_result(
                 result,
                 tbl_name=new_pending.tbl_name,
@@ -861,6 +884,7 @@ class DigitalTwin:
         delivered_conn_id: int | None,
     ) -> bool:
         """Validate INV-1: Connection Ownership invariant."""
+        _ = tx_id
         if delivered_conn_id is None:
             return True
         return conn_id == delivered_conn_id
@@ -900,17 +924,33 @@ class DigitalTwin:
         if not self._matches_inflight_tbl_event(dto):
             return None
 
-        new_pending = self._mark_inflight_applied()
-        result = self._build_applied_result(new_pending)
-        self._store_last_result(
-            result,
-            tbl_name=new_pending.tbl_name,
-            tbl_item=new_pending.tbl_item,
-            new_value=new_pending.new_value,
-        )
-        await self._publish_state()
-        sa_dto = self._build_auto_sa_queue_dto(new_pending)
-        return result, sa_dto
+        try:
+            new_pending = self._mark_inflight_applied()
+            result = self._build_applied_result(new_pending)
+            self._finish_inflight_locked(
+                tx_id=new_pending.tx_id,
+                conn_id=dto.conn_id,
+                success=True,
+                detail="applied",
+            )
+            self._store_last_result(
+                result,
+                tbl_name=new_pending.tbl_name,
+                tbl_item=new_pending.tbl_item,
+                new_value=new_pending.new_value,
+            )
+            await self._publish_state()
+            sa_dto = self._build_auto_sa_queue_dto(new_pending)
+            return result, sa_dto
+        except Exception:  # pylint: disable=broad-exception-caught
+            if self._inflight is not None:
+                self._finish_inflight_locked(
+                    tx_id=self._inflight.tx_id,
+                    conn_id=dto.conn_id,
+                    success=False,
+                    detail="tbl_event_error",
+                )
+            raise
 
     def _matches_inflight_tbl_event(self, dto: OnTblEventDTO) -> bool:
         if self._inflight is None:
@@ -1258,6 +1298,7 @@ class DigitalTwin:
 
         Updates delivered_conn_id for INV-1 validation.
         """
+        _ = tx_id
         async with self._lock:
             if self._inflight is None:
                 return None
@@ -1306,6 +1347,7 @@ class DigitalTwin:
         conn_id: int | None,
     ) -> PendingSettingState | None:
         """Get pending setting state."""
+        _ = conn_id
         if self._inflight is None:
             return None
         if tx_id is not None and self._inflight.tx_id != tx_id:
@@ -1483,7 +1525,44 @@ class DigitalTwin:
             if self._inflight.stage not in (SettingStage.SENT_TO_BOX, SettingStage.ACCEPTED):
                 return
 
-            self._inflight = self._inflight.mark_deferred()
+            timed_out = self._inflight
+
+            if timed_out.delivered_conn_id is not None:
+                logger.warning(
+                    "TWIN: ACK timeout for tx_id=%s (%s/%s), clearing inflight",
+                    timed_out.tx_id,
+                    timed_out.tbl_name,
+                    timed_out.tbl_item,
+                )
+                errored = timed_out.mark_error()
+                result = TransactionResultDTO(
+                    tx_id=errored.tx_id,
+                    conn_id=ctx.conn_id,
+                    status="error",
+                    error="ack_timeout",
+                    detail="ack_not_received_within_timeout",
+                    timestamp=get_timestamp(),
+                )
+                self._pending_simple.clear()
+                self._inflight = None
+                self._inflight_ctx = None
+                self._ack_task = None
+                self._store_last_result(
+                    result,
+                    tbl_name=errored.tbl_name,
+                    tbl_item=errored.tbl_item,
+                    new_value=errored.new_value,
+                )
+                await self._publish_state()
+                return
+
+            self._inflight = timed_out.mark_deferred()
+            self._finish_inflight_locked(
+                tx_id=ctx.tx_id,
+                conn_id=ctx.conn_id,
+                success=False,
+                detail="ack_timeout",
+            )
 
     async def _applied_timeout_handler(self, ctx: TransactionContext) -> None:
         """Handle applied timeout with INV-3 validation."""
@@ -1508,10 +1587,20 @@ class DigitalTwin:
                 logger.debug("INV-3 validation in applied_timeout: %s", err)
                 return
 
-            if self._inflight.stage in (SettingStage.APPLIED, SettingStage.COMPLETED, SettingStage.ERROR):
+            if self._inflight.stage in (
+                SettingStage.APPLIED,
+                SettingStage.COMPLETED,
+                SettingStage.ERROR,
+            ):
                 return
 
             self._inflight = self._inflight.mark_error()
+            self._finish_inflight_locked(
+                tx_id=ctx.tx_id,
+                conn_id=ctx.conn_id,
+                success=False,
+                detail="applied_timeout",
+            )
 
     def _cancel_timeout_tasks(self) -> None:
         """Cancel all timeout tasks."""
