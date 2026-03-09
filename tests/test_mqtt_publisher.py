@@ -139,7 +139,11 @@ def test_publish_raw_queues_when_offline(monkeypatch):
     asyncio.run(run())
 
 
-def test_publish_data_offline_queues_and_dedupes(monkeypatch):
+def test_publish_data_offline_queues_all_payloads_no_dedup(monkeypatch):
+    """When offline, ALL payloads should be queued, including duplicates.
+
+    Dedup should only happen when online (Task 7: dedup reorder).
+    """
     class DummyQueue:
         def __init__(self, *args, **kwargs) -> None:
             self.added = []
@@ -168,16 +172,19 @@ def test_publish_data_offline_queues_and_dedupes(monkeypatch):
         ok1 = await publisher.publish_data(data)
         ok2 = await publisher.publish_data(data)
 
+        # Both publishes return False (queued offline) - no dedup when offline
         assert ok1 is False
-        assert ok2 is True
-        assert len(publisher.queue.added) == 1
+        assert ok2 is False
+        # Both payloads should be queued (no dedup when offline)
+        assert len(publisher.queue.added) == 2
         topic, payload, retain = publisher.queue.added[0]
         assert topic == (
             f"{mqtt_publisher.MQTT_NAMESPACE}/DEV1/tbl_actual/state"
         )
         assert json.loads(payload) == {"POWER": 5}
         assert retain is mqtt_publisher.MQTT_STATE_RETAIN
-        assert publisher.publish_failed == 1
+        # Both count as failed (offline)
+        assert publisher.publish_failed == 2
 
     asyncio.run(run())
 
