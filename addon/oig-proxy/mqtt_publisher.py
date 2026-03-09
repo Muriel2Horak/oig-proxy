@@ -873,11 +873,11 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             str(table) if table else None)
         payload = json.dumps(publish_data)
 
-        if self._check_payload_deduplication(topic, payload):
-            return True
-
         if not self.is_ready():
             return await self._handle_offline_queueing(topic, payload)
+
+        if self._check_payload_deduplication(topic, payload):
+            return True
 
         return await self._execute_publish(topic, payload, mapped_count)
 

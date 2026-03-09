@@ -151,6 +151,7 @@ class OIGProxy:
             else None
         )
         self._pending_twin_activation: bool = False
+        self._pending_twin_activation_since: float | None = None
         self._twin_mode_active: bool = False
         self._install_twin_mqtt_activation_hook()
 
@@ -222,6 +223,7 @@ class OIGProxy:
                 return
 
             self._pending_twin_activation = True
+            self._pending_twin_activation_since = time.time()
             logger.info(
                 "TWIN: Pending session activation armed (ONLINE mode, mqtt topic=%s)",
                 topic,
@@ -233,6 +235,31 @@ class OIGProxy:
         if self._twin is None:
             return False
         return (await self._twin.get_queue_length()) > 0
+
+    async def _maybe_expire_pending_twin_activation(self) -> None:
+        """Clear pending twin activation if idle for too long (Task 5)."""
+        if not self._pending_twin_activation:
+            return
+        if self._twin is None:
+            return
+        # Don't expire if queue has items or inflight exists
+        if await self._queue_has_items():
+            return
+        inflight = await self._twin.get_inflight()
+        if inflight is not None:
+            return
+        # Check if pending has been idle for timeout period (60s)
+        PENDING_ACTIVATION_TIMEOUT_S = 60.0
+        if self._pending_twin_activation_since is None:
+            return
+        elapsed = time.time() - self._pending_twin_activation_since
+        if elapsed >= PENDING_ACTIVATION_TIMEOUT_S:
+            self._pending_twin_activation = False
+            self._pending_twin_activation_since = None
+            logger.info(
+                "TWIN: Pending activation expired after %.1fs (queue=0, inflight=None)",
+                elapsed,
+            )
 
     def _restore_device_id(self) -> None:
         if self.device_id != "AUTO":
@@ -737,10 +764,14 @@ class OIGProxy:
         return cloud_reader, cloud_writer, False
 
     async def _activate_session_twin_mode_if_needed(self, *, conn_id: int) -> None:
+        # Task 5: Check if pending activation has expired (idle timeout)
+        await self._maybe_expire_pending_twin_activation()
+
         pending_twin_activation = getattr(self, "_pending_twin_activation", False)
         if pending_twin_activation and await self._queue_has_items():
             self._twin_mode_active = True
             self._pending_twin_activation = False
+            self._pending_twin_activation_since = None
             logger.info("TWIN: Session twin mode activated (conn=%s)", conn_id)
             return
 

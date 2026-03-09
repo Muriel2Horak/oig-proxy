@@ -180,3 +180,13 @@ Adjusted four test files to match current twin/cloud behavior after refactors (a
 ## Verification
 - `PYTHONPATH=addon/oig-proxy pytest -q tests/test_twin_e2e_roundtrip.py tests/test_twin_replay_resilience.py tests/test_proxy_cloud_session.py tests/test_proxy_box_session.py`
 - Result: `59 passed`
+
+---
+
+# Task: Twin inflight deterministic finalization (Blind Branch #2)
+
+## Learnings
+- Centralizing inflight cleanup through a single locked helper prevents drift between ACK/NACK, tbl_event, and timeout paths.
+- Releasing inflight on `applied` avoids queue starvation when no explicit completion callback follows table-event confirmation.
+- Timeout handlers should finalize terminal states (deferred/error) and clear `_inflight` immediately to guarantee next queue item can proceed.
+- Existing tests encoded non-terminal expectations for `applied` and timeout error stage; they must be aligned with deterministic terminal-release semantics.
