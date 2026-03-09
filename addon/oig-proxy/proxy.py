@@ -908,6 +908,8 @@ class OIGProxy:
                 )
                 if should_break:
                     break
+                # Task 4: Mid-session twin activation - check pending activation after each frame
+                await self._activate_session_twin_mode_if_needed(conn_id=conn_id)
 
         except ConnectionResetError:
             # Běžné: BOX přeruší TCP (např. reconnect po modem resetu).
