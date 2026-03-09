@@ -1765,43 +1765,38 @@ class DigitalTwin:
                 return
 
             timed_out = self._inflight
+            logger.warning(
+                "TWIN: ACK timeout for tx_id=%s (%s/%s), finalizing as error",
+                timed_out.tx_id,
+                timed_out.tbl_name,
+                timed_out.tbl_item,
+            )
 
-            if timed_out.delivered_conn_id is not None:
-                logger.warning(
-                    "TWIN: ACK timeout for tx_id=%s (%s/%s), clearing inflight",
-                    timed_out.tx_id,
-                    timed_out.tbl_name,
-                    timed_out.tbl_item,
-                )
-                errored = timed_out.mark_error()
-                result = TransactionResultDTO(
-                    tx_id=errored.tx_id,
-                    conn_id=ctx.conn_id,
-                    status="error",
-                    error="ack_timeout",
-                    detail="ack_not_received_within_timeout",
-                    timestamp=get_timestamp(),
-                )
-                self._pending_simple.clear()
-                self._inflight = None
-                self._inflight_ctx = None
-                self._ack_task = None
-                self._store_last_result(
-                    result,
-                    tbl_name=errored.tbl_name,
-                    tbl_item=errored.tbl_item,
-                    new_value=errored.new_value,
-                )
-                await self._publish_state()
-                return
-
-            self._inflight = timed_out.mark_deferred()
+            errored = timed_out.mark_error()
+            self._inflight = errored
+            self._pending_simple.clear()
             self._finish_inflight_locked(
-                tx_id=ctx.tx_id,
+                tx_id=errored.tx_id,
                 conn_id=ctx.conn_id,
                 success=False,
                 detail="ack_timeout",
             )
+
+            result = TransactionResultDTO(
+                tx_id=errored.tx_id,
+                conn_id=ctx.conn_id,
+                status="error",
+                error="ack_timeout",
+                detail="ack_not_received_within_timeout",
+                timestamp=get_timestamp(),
+            )
+            self._store_last_result(
+                result,
+                tbl_name=errored.tbl_name,
+                tbl_item=errored.tbl_item,
+                new_value=errored.new_value,
+            )
+            await self._publish_state()
 
     async def _applied_timeout_handler(self, ctx: TransactionContext) -> None:
         """Handle applied timeout with INV-3 validation."""
