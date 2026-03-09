@@ -854,8 +854,7 @@ class TestDigitalTwinStateMachine:
         assert result.status == "applied"
 
         pending = await twin.get_inflight()
-        assert pending is not None
-        assert pending.stage == SettingStage.APPLIED
+        assert pending is None
 
     async def test_finish_inflight_clears_state(self):
         twin = DigitalTwin(session_id="test-session")
@@ -1355,8 +1354,8 @@ class TestDigitalTwinAdditionalCoverage:
 
         if twin._inflight_ctx is not None:
             twin._schedule_applied_timeout_after_ack()
-            assert twin._ack_task is not None
-            twin._cancel_ack_task()
+            assert twin._applied_task is not None
+            twin._cancel_timeout_tasks()
 
         twin._inflight = None
         twin._inflight_ctx = None
@@ -1541,6 +1540,7 @@ class TestDigitalTwinAdditionalCoverage:
             tbl_item="MODE",
             new_value="1",
             stage=SettingStage.SENT_TO_BOX,
+            delivered_conn_id=1,
         )
         await twin._ack_timeout_handler(
             TransactionContext(
@@ -1550,7 +1550,7 @@ class TestDigitalTwinAdditionalCoverage:
                 stage_snapshot=SettingStage.SENT_TO_BOX.value,
             )
         )
-        assert twin._inflight is not None and twin._inflight.stage == SettingStage.DEFERRED
+        assert twin._inflight is None
 
         twin._inflight = PendingSettingState(
             tx_id="tx-ack-stage-guard",
@@ -1614,7 +1614,7 @@ class TestDigitalTwinAdditionalCoverage:
                 stage_snapshot=SettingStage.BOX_ACK.value,
             )
         )
-        assert twin._inflight.stage == SettingStage.ERROR
+        assert twin._inflight is None
 
         twin._inflight = PendingSettingState(
             tx_id="tx-terminal",
@@ -1709,7 +1709,7 @@ class TestREDExpectedFailures:
             "tx-full-lifecycle", conn_id=1, success=True
         )
 
-        assert finish_result.status == "completed"
+        assert finish_result is None
 
         pending = await twin.get_inflight()
         assert pending is None, "RED: Expected pending to be None after completion"
