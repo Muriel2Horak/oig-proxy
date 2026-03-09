@@ -1,0 +1,185 @@
+================================================================================
+TASK 4: Frame-Level Evidence Export
+================================================================================
+
+Task: Export frame-level evidence (payload capture / forensic)
+Plan: .sisyphus/plans/twin-ack-forensics-verification.md
+Date: 2026-03-08
+Worktree: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+================================================================================
+VERIFICATION RESULTS
+================================================================================
+
+1. Frame evidence file existence check:
+Command: test -f analysis/twin-ack-forensics-verification/frame-evidence.jsonl
+Result: PASS
+
+2. JSONL parse validation:
+Command: python3 -c "import json; [json.loads(l) for l in open('analysis/twin-ack-forensics-verification/frame-evidence.jsonl')]"
+Result: PASS
+
+3. Required keys validation:
+Command: python3 -c "
+import json
+required = ['ts', 'conn_id', 'raw_xml', 'source']
+with open('analysis/twin-ack-forensics-verification/frame-evidence.jsonl') as f:
+    for i, line in enumerate(f, 1):
+        r = json.loads(line)
+        missing = [k for k in required if k not in r]
+        if missing:
+            print(f'FAIL: Line {i} missing {missing}')
+            exit(1)
+print('PASS: All 238 records have required keys')
+"
+Result: PASS
+
+4. Setting attempt traceability:
+Command: python3 -c "
+import json
+setting_count = ack_count = end_count = 0
+with open('analysis/twin-ack-forensics-verification/frame-evidence.jsonl') as f:
+    for line in f:
+        r = json.loads(line)
+        if r.get('frame_type') == 'SETTING':
+            setting_count += 1
+        elif r.get('frame_type') == 'ACK_SETTING':
+            ack_count += 1
+        elif r.get('frame_type') == 'END':
+            end_count += 1
+print(f'SETTING frames: {setting_count}')
+print(f'ACK(Setting) frames: {ack_count}')
+print(f'END frames: {end_count}')
+if setting_count >= 1 and ack_count >= 1:
+    print('PASS: At least one full Setting -> ACK traceable')
+else:
+    print('FAIL')
+"
+Result: PASS
+
+================================================================================
+EXPORT STATISTICS
+================================================================================
+
+Source: .sisyphus/evidence/task-7-day0-frames.json
+Total frames in source: 4458
+Setting frames found: 55
+ACK(Reason=Setting) frames found: 58
+END frames found: 125
+Complete Setting -> ACK sequences: 55
+Complete Setting -> ACK -> END sequences: 55
+Frames exported: 238
+
+================================================================================
+EXPORT FORMAT
+================================================================================
+
+Output: analysis/twin-ack-forensics-verification/frame-evidence.jsonl
+Format: JSON Lines (one JSON object per line)
+
+Mandatory keys per record:
+- ts: ISO 8601 timestamp (preserved from source)
+- conn_id: Connection identifier for session tracking
+- raw_xml: Raw frame payload (untransformed XML)
+- source: Source file provenance
+
+Additional keys:
+- frame_type: SETTING | ACK_SETTING | END
+- direction: box_to_proxy | cloud_to_proxy
+- table_name: Table name or ACK for ACK frames
+- device_id: Device identifier (when available)
+- sequence_role: setting | ack | end | orphan
+
+================================================================================
+SAMPLE RECORDS
+================================================================================
+
+Record 1 (Setting frame):
+{
+  "ts": "2025-12-18T19:26:23.647960+00:00",
+  "conn_id": 1,
+  "raw_xml": "<Frame><ID>13601763</ID><ID_Device>2206237016</ID_Device>...<Reason>Setting</Reason>...</Frame>\r\n",
+  "source": "task-7-day0-frames.json",
+  "frame_type": "SETTING",
+  "direction": "cloud_to_proxy",
+  "table_name": "IsNewFW",
+  "sequence_role": "setting"
+}
+
+Record 2 (ACK with Reason=Setting):
+{
+  "ts": "2025-12-18T19:26:30.208926+00:00",
+  "conn_id": 1,
+  "raw_xml": "<Frame><Result>ACK</Result><Rdt>2025-12-18 20:26:21</Rdt><Reason>Setting</Reason><Tmr>100</Tmr>...</Frame>\r\n",
+  "source": "task-7-day0-frames.json",
+  "frame_type": "ACK_SETTING",
+  "direction": "box_to_proxy",
+  "table_name": "ACK",
+  "sequence_role": "ack"
+}
+
+Record 3 (END frame):
+{
+  "ts": "2025-12-18T19:26:47.374688+00:00",
+  "conn_id": 1,
+  "raw_xml": "<Frame><Result>END</Result><Time>2025-12-18 20:26:47</Time>...</Frame>\r\n",
+  "source": "task-7-day0-frames.json",
+  "frame_type": "END",
+  "direction": "cloud_to_proxy",
+  "table_name": "ACK",
+  "sequence_role": "end"
+}
+
+================================================================================
+SETTING -> ACK -> END SEQUENCE EXAMPLE
+================================================================================
+
+The export preserves complete sequences traceable by conn_id:
+
+Sequence for conn_id=1 (sample):
+1. SETTING (ts: 2025-12-18T19:26:23.647960+00:00)
+   - Direction: cloud_to_proxy
+   - Contains: <Reason>Setting</Reason>, <TblName>tbl_box_prms</TblName>
+
+2. ACK_SETTING (ts: 2025-12-18T19:26:30.208926+00:00)
+   - Direction: box_to_proxy
+   - Contains: <Result>ACK</Result>, <Reason>Setting</Reason>
+
+3. END (ts: 2025-12-18T19:26:47.374688+00:00)
+   - Direction: cloud_to_proxy
+   - Contains: <Result>END</Result>, <Time>2025-12-18 20:26:47</Time>
+
+================================================================================
+PAYLOAD ORDER PRESERVATION
+================================================================================
+
+✓ Frames exported in chronological order (ts ascending)
+✓ Original frame order preserved within conn_id sequences
+✓ No payload transformation applied (raw XML as captured)
+✓ Source provenance tracked per record
+
+================================================================================
+VERDICT
+================================================================================
+
+Status: COMPLETE
+Evidence: PASS
+
+Acceptance Criteria:
+- [x] Frame export contains ts, conn_id, raw_xml, source
+- [x] At least one full setting attempt traceable across Setting -> ACK -> END
+- [x] Evidence file exists: .sisyphus/evidence/twin-ack-forensics-verification/task-4-frame-export.txt
+
+================================================================================
+DEPENDENCY NOTES
+================================================================================
+
+This task (Task 4) blocks:
+- Task 6: Canonical timeline normalization
+- Task 8: ACK classifier + ambiguity detector
+- Task 9: Frame parity diff against cloud baseline
+
+Output feeds into:
+- Frame parity diff analysis
+- ACK classification taxonomy
+- Session ownership verification

@@ -1,0 +1,25 @@
+Task 3 - Log export verification
+timestamp_utc=2026-03-08T18:12:05Z
+worktree=/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+# Existence checks
+raw_exists=0 path=/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/proxy-twin-logs-raw.jsonl
+filtered_exists=0 path=/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/proxy-twin-logs-filtered.jsonl
+
+# Non-zero line checks
+    2457 /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/proxy-twin-logs-raw.jsonl
+     907 /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/proxy-twin-logs-filtered.jsonl
+
+# Marker coverage check
+marker_seen=ack,deliver,end,queue,timeout
+marker_missing=
+
+# Scope correction (2026-03-08T19:21:00Z)
+# Removed unintended file: extract_frame_evidence.py
+REMOVAL_VERIFIED: extract_frame_evidence.py does not exist
+required_files_intact=5
+  - analysis/twin-ack-forensics-verification/proxy-twin-logs-raw.jsonl
+  - analysis/twin-ack-forensics-verification/proxy-twin-logs-filtered.jsonl
+  - .sisyphus/evidence/twin-ack-forensics-verification/task-3-log-export.txt
+  - .sisyphus/notepads/twin-ack-forensics-verification/learnings.md
+  - .sisyphus/notepads/twin-ack-forensics-verification/issues.md

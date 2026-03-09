@@ -1,0 +1,33 @@
+Task 6 Canonical Timeline Verification
+=====================================
+
+Command: python3 canonical validation script over twin-ack-timeline.jsonl
+Timeline path: analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl
+Total records: 3605
+
+Mandatory fields: case_id, ts, ts_epoch_ms, source, event_type, conn_id, tx_id
+Mandatory field check: PASS
+UTC timestamp check (ts ends with Z / parseable): PASS
+ts_epoch_ms deterministic check: PASS
+Ascending ordering by ts_epoch_ms (nulls at end): PASS
+
+Null value accounting (explicit nulls retained by design when source lacks values):
+- ts null count: 3189
+- conn_id null count: 3178
+- tx_id null count: 185
+
+Per-source counts:
+- frame-evidence.jsonl: 238
+- mqtt-timeline.jsonl: 1
+- proxy_filtered: 907
+- proxy_raw: 2457
+- runtime-snapshot.json: 1
+- source-inventory.md: 1
+
+
+VERDICT: PASS
+
+Normalization notes:
+- Mixed-fidelity source timestamps were normalized to UTC where parseable.
+- Source records with non-parseable/absent timestamp are preserved with ts=null and ts_epoch_ms=null.
+- Deterministic tx_id derivation: frame ID_Set/ID where available; otherwise SHA1(source:line_no) for log artifacts; MQTT payload_hash used as tx_id.

@@ -1,0 +1,35 @@
+Task 8 ACK taxonomy evidence transcript
+Generated at (UTC): 2026-03-08T20:01:37.151104+00:00
+
+Input availability:
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/frame-evidence.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/mqtt-timeline.jsonl: FOUND
+- /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/session-ownership-matrix.csv: FOUND
+
+Checks:
+- header: PASS
+- non_empty: PASS
+- one_row_per_case: PASS
+- domain_exact: PASS
+- order_case_id_asc: PASS
+- determinism_two_run_checksum: PASS
+- canonical_case_count: 144
+- csv_row_count: 144
+- classes_seen: ['ACK_AMBIGUOUS', 'ACK_MISSING', 'ACK_OK', 'END_AS_ACK']
+
+Determinism (two checksums):
+- run1_sha256: 6076a15eaefeff2dd94b0ffca066b6325641444ae83653c5899f0589da16d657
+- run2_sha256: 6076a15eaefeff2dd94b0ffca066b6325641444ae83653c5899f0589da16d657
+- verdict: PASS
+
+Class histogram:
+- ACK_OK: 9
+- NACK: 0
+- END_AS_ACK: 6
+- ACK_AMBIGUOUS: 115
+- ACK_MISSING: 14
+- ambiguous_count: 121
+- direct_frame_level_reason_setting_ack_cases: 9
+
+Overall: PASS

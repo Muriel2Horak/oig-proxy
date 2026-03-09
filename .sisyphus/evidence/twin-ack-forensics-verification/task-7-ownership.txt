@@ -1,0 +1,46 @@
+Task 7 Evidence: Session Ownership Matrix (INV-1/INV-2/INV-3)
+=============================================================
+
+Input timeline: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl
+Total timeline rows: 3605
+Total cases: 144
+Output CSV: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/session-ownership-matrix.csv
+
+Deterministic reconstruction rules:
+1) tx_id -> conn_id: map all rows with both tx_id and conn_id; count links as tx_to_conn_links.
+2) conn_id -> session_id:
+   - single conn_id: session_conn_{conn_id:04d}
+   - multiple conn_id: session_multi_{sha1(sorted_conn_ids)[:12]}
+3) Fallback when session_id unavailable in source data:
+   - if no conn_id but tx_id exists: session_tx_{sha1(tx_id)[:12]}
+   - else: session_case_{sha1(case_id)[:12]}
+4) CSV row ordering: case_id ascending (stable).
+
+Invariant decision rules:
+INV-1 (Connection Ownership):
+  PASS    = setting/delivery and ACK-like events share one conn_id set
+  FAIL    = ACK conn_id differs from setting conn_id set
+  UNKNOWN = missing setting/ack evidence or missing conn_id on either side
+INV-2 (Session Transaction Ownership):
+  PASS    = all conn-bound rows in case use single conn_id (single reconstructed session)
+  FAIL    = multiple conn_id values in same case
+  UNKNOWN = no conn_id in case
+INV-3 (Timeout Task Ownership):
+  PASS    = every timeout row tx_id appears in non-timeout lifecycle rows of same case
+  FAIL    = timeout tx_id missing or not linkable to non-timeout rows in case
+  UNKNOWN = no timeout rows in case
+
+Summary counts:
+- inv1_PASS: 11
+- inv1_UNKNOWN: 133
+- inv2_PASS: 29
+- inv2_UNKNOWN: 115
+- inv3_FAIL: 44
+- inv3_UNKNOWN: 100
+
+FAIL evidence policy:
+- Every row containing any FAIL verdict includes fail_evidence_pointer with source/line/tx reference.
+
+Verification notes:
+- Matrix generated via python stdlib only (json/csv/hashlib/collections/pathlib).
+- No plan files or source code files modified.

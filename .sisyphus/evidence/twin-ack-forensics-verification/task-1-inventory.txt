@@ -1,0 +1,57 @@
+# Task 1 Evidence: Source Inventory Verification
+# Date: 2026-03-08
+# Task: Vymezit analytické okno a inventář zdrojů
+
+=== Location Verification ===
+
+pwd:
+/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+git rev-parse --show-toplevel:
+/Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+=== QA Verification Commands ===
+
+1. test -f analysis/twin-ack-forensics-verification/source-inventory.md
+test -f analysis/twin-ack-forensics-verification/source-inventory.md && echo "PASS" || echo "FAIL"
+Result: PASS
+
+2. grep "IN_SCOPE" analysis/twin-ack-forensics-verification/source-inventory.md
+Result: PASS - Found "## IN_SCOPE" and "- [x] Inventory file exists with IN_SCOPE section"
+
+3. grep "OUT_OF_SCOPE" analysis/twin-ack-forensics-verification/source-inventory.md
+Result: PASS - Found "## OUT_OF_SCOPE" and "- [x] OUT_OF_SCOPE section explicitly documented"
+
+=== Source Discovery Evidence ===
+
+--- Twin-related test files ---
+-rw-r--r--@ 1 martinhorak staff 13478 tests/test_twin_ack_correlation.py
+-rw-r--r--@ 1 martinhorak staff 29156 tests/test_twin_cloud_parity.py
+-rw-r--r--@ 1 martinhorak staff 31717 tests/test_twin_e2e_roundtrip.py
+-rw-r--r--@ 1 martinhorak staff 4106 tests/test_twin_integration.py
+-rw-r--r--@ 1 martinhorak staff 14393 tests/test_twin_poll_delivery.py
+-rw-r--r--@ 1 martinhorak staff 22439 tests/test_twin_replay_resilience.py
+
+--- Related code files ---
+addon/oig-proxy/proxy.py
+addon/oig-proxy/digital_twin.py
+addon/oig-proxy/twin_transaction.py
+addon/oig-proxy/hybrid_mode.py
+
+=== Verification Summary ===
+- Inventory file exists: YES (in worktree)
+- IN_SCOPE section present: YES
+- OUT_OF_SCOPE section present: YES
+- TIME_WINDOW defined: YES
+- TIMEZONE_RULES defined: YES
+- SOURCE_INVENTORY populated: YES (6 test files, 4 code files, reference artifacts)
+- Location verified: CORRECT WORKTREE
+
+=== PLACEMENT FIX (2026-03-08) ===
+Artifact was initially placed in wrong location (main repo) and was copied to correct worktree:
+- Source (wrong): /Users/martinhorak/Projects/oig-proxy/analysis/twin-ack-forensics-verification/source-inventory.md
+- Destination (correct): /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/source-inventory.md
+
+Absolute path verification:
+test -f /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification/analysis/twin-ack-forensics-verification/source-inventory.md
+Result: PASS

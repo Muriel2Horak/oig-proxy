@@ -1,0 +1,139 @@
+================================================================================
+F3: REAL QA REPLAY - Twin ACK Forensics Verification
+================================================================================
+Generated: 2026-03-08
+Worktree: /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+Plan: .sisyphus/plans/twin-ack-forensics-verification.md
+
+================================================================================
+SCENARIO MAPPING (Tasks 1-12)
+================================================================================
+
+| Task | Scenario Name | Evidence File | Status |
+|------|---------------|---------------|--------|
+| 1 | Inventory complete | task-1-inventory.txt | PASS |
+| 2 | Runtime snapshot schema valid | task-2-runtime-snapshot.txt | PASS |
+| 3 | Log export parsable | task-3-log-export.txt | PASS |
+| 4 | Frame export integrity | task-4-frame-export.txt | PASS |
+| 5 | MQTT timeline present | task-5-mqtt-timeline.txt | PASS |
+| 6 | Canonical schema validation | task-6-canonical.txt | PASS |
+| 7 | Ownership matrix complete | task-7-ownership.txt | PASS |
+| 8 | ACK taxonomy deterministic | task-8-ack-taxonomy.txt | PASS |
+| 9 | Frame diff exported | task-9-frame-diff.txt | PASS |
+| 10 | Transition/timing diff complete | task-10-transition-timing.txt | PASS |
+| 11 | Primary divergence deterministic | task-11-first-divergence.txt | PASS |
+| 12 | Verdict traceability | task-12-verdict.txt | PASS |
+
+================================================================================
+EVIDENCE VERIFICATION DETAILS
+================================================================================
+
+Task 1 (Inventory complete):
+  - File exists check: PASS
+  - IN_SCOPE section check: PASS
+  - OUT_OF_SCOPE section check: PASS
+  - Location verified: CORRECT WORKTREE
+
+Task 2 (Runtime snapshot schema valid):
+  - File existence: PASS
+  - JSON parse: PASS
+  - Mandatory keys: captured_at_utc, twin_enabled, twin_kill_switch, twin_cloud_aligned, routing_mode, proxy_mode
+
+Task 3 (Log export parsable):
+  - Raw export exists: PASS (2457 lines)
+  - Filtered export exists: PASS (907 lines)
+  - Marker coverage: queue, deliver, ack, timeout, end
+
+Task 4 (Frame export integrity):
+  - File exists: PASS
+  - JSON parse: PASS
+  - Required keys: ts, conn_id, raw_xml, source (all 238 records)
+  - Setting attempt traceable: PASS (55 complete sequences)
+
+Task 5 (MQTT timeline present):
+  - Export exists: PASS
+  - Timestamp ordered: PASS
+  - Lifecycle chain: >= 1 setting lifecycle
+
+Task 6 (Canonical schema validation):
+  - JSONL parse: PASS
+  - Mandatory fields: case_id, ts_epoch_ms, source, event_type, conn_id, tx_id
+  - Total records: 3605
+  - Ordering: PASS (ascending by ts_epoch_ms)
+
+Task 7 (Ownership matrix complete):
+  - CSV headers: PASS
+  - INV verdict per row: PASS (144 rows)
+  - Cases: 144 total
+
+Task 8 (ACK taxonomy deterministic):
+  - Determinism (two runs): PASS (checksums match)
+  - Classes seen: ACK_OK, NACK, END_AS_ACK, ACK_AMBIGUOUS, ACK_MISSING
+  - Cases: 144
+
+Task 9 (Frame diff exported):
+  - CSV exists: PASS
+  - Required headers: PASS
+  - Failed case coverage: PASS (135 rows)
+
+Task 10 (Transition/timing diff complete):
+  - File exists: PASS
+  - One row per case: PASS (144 rows)
+  - Determinism: PASS (stable checksum across reruns)
+
+Task 11 (Primary divergence deterministic):
+  - first-divergence.md exists: PASS
+  - Run1/Run2 winner match: PASS
+  - All required sections present: PASS
+
+Task 12 (Verdict traceability):
+  - verification-verdict.md exists: PASS
+  - Verdict value: LIMITED_GO
+  - All 5 sections present: VERDICT, EVIDENCE, CONFIDENCE, NEXT_EXPERIMENTS, UNKNOWNS
+  - Reason codes: RC-01 through RC-06 all referenced
+  - Claim traceability: 6 artifact references verified
+
+================================================================================
+AGGREGATE COUNTS
+================================================================================
+
+Total scenarios defined in plan (Tasks 1-12): 12
+Scenarios with evidence files present: 12
+Scenarios with PASS status: 12
+Scenarios with FAIL status: 0
+Scenarios with MISSING evidence: 0
+
+Evidence files verified: 12/12
+Analysis artifacts referenced: 9
+Notepad entries (learnings/issues): 2 files
+
+================================================================================
+FAILURE ANALYSIS
+================================================================================
+
+No failures detected.
+
+All 12 QA scenarios from the plan have corresponding evidence files.
+All evidence files report PASS status for their respective checks.
+No scenarios are missing evidence or explicitly failed.
+
+================================================================================
+VERDICT
+================================================================================
+
+Scenarios [12/12] | Evidence [12/12] | Failures [0] | PASS
+
+================================================================================
+CROSS-REFERENCE
+================================================================================
+
+Evidence directory: .sisyphus/evidence/twin-ack-forensics-verification/
+Analysis directory: analysis/twin-ack-forensics-verification/
+Notepad directory: .sisyphus/notepads/twin-ack-forensics-verification/
+
+All paths verified relative to worktree root:
+  /Users/martinhorak/Projects/oig-proxy-worktrees/twin-ack-forensics-verification
+
+================================================================================
+END OF REPORT
+================================================================================

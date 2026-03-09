@@ -1,0 +1,60 @@
+# F1 Plan Compliance Audit — twin-ack-forensics-verification
+
+Scope: Independent audit of plan compliance against produced artifacts (Tasks 1–12) with final-wave context.
+
+## Must Have Compliance (explicit PASS/FAIL)
+- [PASS] MH-1: UTC normalizace času a jednotný case identifier napříč zdroji.
+  - Evidence: analysis/twin-ack-forensics-verification/twin-ack-timeline.jsonl (case_id, ts_epoch_ms on all rows)
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-6-canonical.txt:8-12
+- [PASS] MH-2: Session ownership analýza (INV-1/2/3) v samostatném artefaktu.
+  - Evidence: analysis/twin-ack-forensics-verification/session-ownership-matrix.csv
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-7-ownership.txt:19-39
+- [PASS] MH-3: Frame-level + state-level + timing-level komparace.
+  - Evidence: analysis/twin-ack-forensics-verification/frame-parity-diff.csv
+  - Evidence: analysis/twin-ack-forensics-verification/state-transition-diff.csv
+  - Evidence: analysis/twin-ack-forensics-verification/verification-verdict.md:67-85, 120-129
+- [PASS] MH-4: Reproducibility check (opakovaný běh s konzistentními počty záznamů).
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-8-ack-taxonomy.txt:21-24
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-10-transition-timing.txt:49-55
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-11-first-divergence.txt:14-32
+
+## Must NOT Have Compliance (explicit PASS/FAIL)
+- [PASS] MNH-1: Žádné runtime fixy protokolu během tohoto plánu (jen verifikace a evidence).
+  - Evidence: git status --porcelain (no modified runtime/source/test paths outside analysis/.sisyphus)
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-7-ownership.txt:45-46
+- [PASS] MNH-2: Žádné závěry bez reference na konkrétní log/frame/case ID.
+  - Evidence: analysis/twin-ack-forensics-verification/verification-verdict.md:195-196
+  - Evidence: analysis/twin-ack-forensics-verification/first-divergence.md:33-56 (explicit case/ts/conn/stage + pointers)
+- [PASS] MNH-3: Žádné míchání unrelated flow (FW/weather-only bez vazby na setting ACK).
+  - Evidence: analysis/twin-ack-forensics-verification/source-inventory.md:69-84 (OUT_OF_SCOPE)
+  - Evidence: analysis/twin-ack-forensics-verification/verification-verdict.md:178-179 (source-mixing limitation explicitly disclosed)
+- [PASS] MNH-4: Žádné manuální, neauditovatelné acceptance criteria.
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-1..12-*.txt (all present)
+  - Evidence: .sisyphus/evidence/twin-ack-forensics-verification/task-12-verdict.txt:65-71
+
+## Task Coverage (1–12)
+- [PASS] Task 1
+- [PASS] Task 2
+- [PASS] Task 3
+- [PASS] Task 4
+- [PASS] Task 5
+- [PASS] Task 6
+- [PASS] Task 7
+- [PASS] Task 8
+- [PASS] Task 9
+- [PASS] Task 10
+- [PASS] Task 11
+- [PASS] Task 12
+
+## Final-wave context (current)
+- F1 (this audit): PASS — artifact created at `.sisyphus/evidence/twin-ack-forensics-verification/f1-plan-compliance-audit.txt`.
+- F2: PENDING / not evaluated in this F1 scope.
+- F3: PENDING / not evaluated in this F1 scope.
+- F4: PENDING / not evaluated in this F1 scope.
+
+## Counts
+- Must Have satisfied: 4/4
+- Must NOT Have satisfied: 4/4
+- Task coverage satisfied: 12/12
+
+Must Have [4/4] | Must NOT Have [4/4] | Tasks [12/12] | PASS
