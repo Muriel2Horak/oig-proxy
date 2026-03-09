@@ -113,7 +113,7 @@ async def test_finish_inflight_releases_inflight():
 
     with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
         # Call finish_inflight with required params
-        result = await twin.finish_inflight(
+        await twin.finish_inflight(
             tx_id="test-1",
             conn_id=1,
             success=True,
@@ -197,8 +197,8 @@ async def test_inflight_finalization_on_all_terminal_states():
         twin._lock = AsyncMock()
 
         # Mock _finish_inflight_locked to clear inflight
-        def clear_inflight(*args, **kwargs):
-            twin._inflight = None
+        def clear_inflight(*args, _tw=twin, **kwargs):
+            _tw._inflight = None
             return MagicMock()
 
         with patch.object(twin, '_finish_inflight_locked', side_effect=clear_inflight):
@@ -241,7 +241,8 @@ async def test_new_item_can_start_after_inflight_cleared():
         assert twin._inflight is None
 
         # Simulate starting next item
-        next_item = twin._queue.pop(0)
+        next_item = twin._queue[0]
+        twin._queue = twin._queue[1:]
         twin._inflight = MagicMock()
         twin._inflight.tx_id = next_item["tx_id"]
 

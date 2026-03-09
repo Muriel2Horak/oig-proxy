@@ -107,7 +107,8 @@ def test_queue_processes_after_timeout():
     assert len(twin._queue) == 2
 
     # Can start next item
-    next_item = twin._queue.pop(0)
+    next_item = twin._queue[0]
+    twin._queue = twin._queue[1:]
     twin._inflight = {"tx_id": next_item["tx_id"], "state": "SENT"}
 
     assert twin._inflight["tx_id"] == "test-2"
