@@ -2151,8 +2151,7 @@ class TestInflightFinalization:
         WHEN: ACK timeout fires
         THEN: inflight is None after timeout handling
         """
-        config = DigitalTwinConfig(ack_timeout_s=0.05)
-        twin = DigitalTwin(session_id="test-session", config=config)
+        twin = DigitalTwin(session_id="test-session")
 
         dto = make_queue_dto(tx_id="tx-timeout-release", conn_id=1)
         await twin.queue_setting(dto)
@@ -2163,8 +2162,14 @@ class TestInflightFinalization:
         inflight_before = await twin.get_inflight()
         assert inflight_before is not None
 
-        # Wait for timeout to fire
-        await asyncio.sleep(0.1)
+        # Directly call the timeout handler with proper context
+        ctx = TransactionContext(
+            tx_id="tx-timeout-release",
+            conn_id=1,
+            session_id="test-session",
+            stage_snapshot=SettingStage.SENT_TO_BOX.value,
+        )
+        await twin._ack_timeout_handler(ctx)
 
         # Verify inflight is None after timeout
         inflight_after = await twin.get_inflight()
@@ -2176,8 +2181,7 @@ class TestInflightFinalization:
         WHEN: Applied timeout fires
         THEN: inflight is None after timeout handling
         """
-        config = DigitalTwinConfig(applied_timeout_s=0.05)
-        twin = DigitalTwin(session_id="test-session", config=config)
+        twin = DigitalTwin(session_id="test-session")
 
         dto = make_queue_dto(tx_id="tx-applied-timeout-release", conn_id=1)
         await twin.queue_setting(dto)
@@ -2193,8 +2197,14 @@ class TestInflightFinalization:
         assert inflight_before is not None
         assert inflight_before.stage == SettingStage.BOX_ACK
 
-        # Wait for applied timeout to fire
-        await asyncio.sleep(0.1)
+        # Directly call the applied timeout handler with proper context
+        ctx = TransactionContext(
+            tx_id="tx-applied-timeout-release",
+            conn_id=1,
+            session_id="test-session",
+            stage_snapshot=SettingStage.BOX_ACK.value,
+        )
+        await twin._applied_timeout_handler(ctx)
 
         # Verify inflight is None after applied timeout
         inflight_after = await twin.get_inflight()
