@@ -376,12 +376,12 @@ API returned `{"ok": true}` but Twin never received it.
 ha addons logs d7b5d5b1_oig_proxy | grep -E "queue_setting|twin"
 
 # Try sending via MQTT directly (bypasses Control API)
-mosquitto_pub -h core-mosquitto -u oig -P oig \
+mosquitto_pub -h core-mosquitto -u <mqtt_username> -P <mqtt_password> \
   -t "oig_local/<device_id>/tbl_box_prms/MODE/set" \
   -m '{"value": "1"}'
 
 # Check queue_length again
-mosquitto_sub -h core-mosquitto -u oig -P oig \
+mosquitto_sub -h core-mosquitto -u <mqtt_username> -P <mqtt_password> \
   -t "oig_local/oig_proxy/twin_state/state" \
   -C 1 | python3 -c "import sys,json; s=json.loads(sys.stdin.read()); print('queue_length:', s['queue_length'])"
 ```

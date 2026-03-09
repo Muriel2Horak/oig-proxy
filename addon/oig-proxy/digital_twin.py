@@ -153,13 +153,11 @@ class TwinMQTTHandler:
             handler=_handler,
             qos=self._qos,
         )
-        if self.legacy_set_topic and self.legacy_set_topic != self.set_topic:
-            self._mqtt_publisher.add_message_handler(
-                topic=self.legacy_set_topic,
-                handler=_handler,
-                qos=self._qos,
-            )
-        logger.info("TWIN_MQTT: MQTT enabled (set=%s)", self.set_topic)
+        logger.info(
+            "TWIN_MQTT: MQTT enabled (wildcard=%s, legacy_via_wildcard=%s)",
+            self.set_topic,
+            self.legacy_set_topic,
+        )
 
     async def _publish_legacy_error(
         self,
