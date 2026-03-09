@@ -288,13 +288,14 @@ class CloudForwarder:
                     conn_id,
                 )
                 end_frame = build_end_time_frame()
-                self._proxy._tc.record_response(
-                    end_frame.decode("utf-8", errors="replace"),
-                    source="local",
-                    conn_id=conn_id,
-                )
                 box_writer.write(end_frame)
                 await box_writer.drain()
+                self._proxy._record_proxy_to_box_frame(
+                    frame_bytes=end_frame,
+                    table_name="END",
+                    conn_id=conn_id,
+                    source="local",
+                )
                 self._proxy.stats["acks_local"] += 1
                 return cloud_reader, cloud_writer
             return await self.fallback_offline(

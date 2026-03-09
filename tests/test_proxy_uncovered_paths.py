@@ -172,6 +172,18 @@ def test_restore_device_id_returns_when_not_auto():
     assert proxy.device_id == "DEV1"
 
 
+def test_restore_device_id_updates_twin_config_when_available():
+    proxy = _mk_proxy()
+    proxy.device_id = "AUTO"
+    proxy._mp.mode_device_id = "2206237016"
+    proxy._twin = SimpleNamespace(config=SimpleNamespace(device_id="AUTO"))
+
+    proxy._restore_device_id()
+
+    assert proxy.device_id == "2206237016"
+    assert proxy._twin.config.device_id == "2206237016"
+
+
 @pytest.mark.asyncio
 async def test_full_refresh_loop_continue_branches(monkeypatch):
     proxy = _mk_proxy()
@@ -303,6 +315,17 @@ async def test_maybe_autodetect_device_id_returns_when_not_auto():
     proxy.device_id = "DEV1"
     await proxy._maybe_autodetect_device_id("DEV2")
     assert proxy.device_id == "DEV1"
+
+
+@pytest.mark.asyncio
+async def test_maybe_autodetect_device_id_updates_twin_device_id():
+    proxy = _mk_proxy()
+    proxy.device_id = "AUTO"
+    proxy._twin = SimpleNamespace(set_device_id=AsyncMock())
+
+    await proxy._maybe_autodetect_device_id("2206237016")
+
+    proxy._twin.set_device_id.assert_awaited_once_with("2206237016")
 
 
 @pytest.mark.asyncio
@@ -513,21 +536,65 @@ def test_set_twin_kill_switch_toggles_both_branches():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_local_control_via_twin_branches():
+async def test_dispatch_local_control_via_twin_branches(monkeypatch, caplog):
     proxy = _mk_proxy()
     writer = DummyWriter()
+    captured = []
+    caplog.set_level("INFO")
+
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
+    )
 
     proxy._twin = None
-    assert await proxy._dispatch_local_control_via_twin(table_name="IsNewSet", conn_id=1, box_writer=writer) is False
+    assert (
+        await proxy._dispatch_local_control_via_twin(
+            table_name="IsNewSet",
+            conn_id=1,
+            box_writer=writer,
+        )
+        is False
+    )
 
     proxy._twin = SimpleNamespace(on_poll=AsyncMock())
-    assert await proxy._dispatch_local_control_via_twin(table_name="tbl_actual", conn_id=1, box_writer=writer) is False
+    assert (
+        await proxy._dispatch_local_control_via_twin(
+            table_name="tbl_actual",
+            conn_id=1,
+            box_writer=writer,
+        )
+        is False
+    )
 
-    proxy._twin.on_poll = AsyncMock(return_value=SimpleNamespace(frame_data="<Frame><Result>ACK</Result></Frame>"))
-    assert await proxy._dispatch_local_control_via_twin(table_name="IsNewSet", conn_id=1, box_writer=writer) is True
+    proxy._twin.on_poll = AsyncMock(
+        return_value=SimpleNamespace(frame_data="<Frame><Result>ACK</Result></Frame>")
+    )
+    assert (
+        await proxy._dispatch_local_control_via_twin(
+            table_name="IsNewSet",
+            conn_id=1,
+            box_writer=writer,
+        )
+        is True
+    )
+    assert captured[-1][1]["direction"] == "proxy_to_box"
+    assert captured[-1][0][1] == "IsNewSet"
+    assert "source=twin table=IsNewSet conn=1" in caplog.text
 
     proxy._twin.on_poll = AsyncMock(return_value=SimpleNamespace(frame_data=None))
-    assert await proxy._dispatch_local_control_via_twin(table_name="IsNewWeather", conn_id=1, box_writer=writer) is True
+    assert (
+        await proxy._dispatch_local_control_via_twin(
+            table_name="IsNewWeather",
+            conn_id=1,
+            box_writer=writer,
+        )
+        is True
+    )
+    assert captured[-1][1]["direction"] == "proxy_to_box"
+    assert captured[-1][0][1] == "IsNewWeather"
+    assert "source=twin table=IsNewWeather conn=1" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -624,6 +691,24 @@ async def test_maybe_handle_twin_ack_schedules_background_task(monkeypatch):
     assert await proxy._maybe_handle_twin_ack(frame, writer, conn_id=1) is True
     assert task in proxy._background_tasks
     assert task.cb is not None
+
+
+@pytest.mark.asyncio
+async def test_maybe_handle_twin_ack_records_end_after_flush():
+    proxy = _mk_proxy()
+    writer = DummyWriter()
+    inflight = SimpleNamespace(tx_id="tx3", delivered_conn_id=1)
+    proxy._twin = SimpleNamespace(
+        get_inflight=AsyncMock(return_value=inflight),
+        on_ack=AsyncMock(return_value=SimpleNamespace(tx_id="tx3")),
+    )
+    proxy._record_proxy_to_box_frame = MagicMock()
+
+    frame = "<Reason>Setting</Reason><Result>ACK</Result>"
+    assert await proxy._maybe_handle_twin_ack(frame, writer, conn_id=1) is True
+    await asyncio.sleep(0)
+
+    proxy._record_proxy_to_box_frame.assert_called_once()
 
 
 @pytest.mark.asyncio

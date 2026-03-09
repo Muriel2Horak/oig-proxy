@@ -1428,11 +1428,15 @@ class TestDigitalTwinAdditionalCoverage:
 
         dto2 = make_queue_dto(tx_id="tx-poll-new", conn_id=1)
         await twin.queue_setting(dto2)
-        poll2 = await twin._deliver_on_is_new_set(tx_id="tx-poll-new", conn_id=1)
+        poll2 = await twin._deliver_on_is_new_set(
+            tx_id="tx-poll-new",
+            conn_id=1,
+            table_name="IsNewFW",
+        )
         assert poll2.frame_data is not None
 
         twin._inflight = None
-        end_resp = twin._build_delivery_response(conn_id=1)
+        end_resp = twin._build_delivery_response(conn_id=1, table_name="IsNewFW")
         assert end_resp.frame_data is not None
 
         twin._inflight = PendingSettingState(
@@ -1443,7 +1447,7 @@ class TestDigitalTwinAdditionalCoverage:
             new_value="1",
             stage=SettingStage.BOX_ACK,
         )
-        end_resp2 = twin._build_delivery_response(conn_id=1)
+        end_resp2 = twin._build_delivery_response(conn_id=1, table_name="IsNewFW")
         assert end_resp2.frame_data is not None
 
         twin._inflight = None

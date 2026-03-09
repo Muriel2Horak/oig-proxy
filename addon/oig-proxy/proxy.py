@@ -13,6 +13,7 @@ Modes:
 # pylint: disable=deprecated-module
 
 import asyncio
+import hashlib
 import logging
 import socket
 import time
@@ -175,6 +176,13 @@ class OIGProxy:
         self._isnew_last_rtt_ms: float | None = None
         self._isnew_last_poll_epoch: float | None = None
 
+        self._stale_table_name: str | None = None
+        self._stale_payload_hash: str | None = None
+        self._stale_first_seen_epoch: float | None = None
+        self._stale_last_seen_epoch: float | None = None
+        self._stale_repeat_count: int = 0
+        self._stale_last_log_epoch: float | None = None
+
     def _initialize_control_api(self) -> None:
         if not (CONTROL_API_PORT and CONTROL_API_PORT > 0):
             return
@@ -293,6 +301,9 @@ class OIGProxy:
             return
         self.device_id = restored_device_id
         self.mqtt_publisher.device_id = restored_device_id
+        twin = getattr(self, "_twin", None)
+        if twin is not None and hasattr(twin, "config"):
+            twin.config.device_id = restored_device_id
         logger.info(
             "🔑 Restoring device_id from saved state: %s",
             self.device_id,
@@ -352,6 +363,41 @@ class OIGProxy:
     async def publish_proxy_status(self) -> None:
         """Delegate to ProxyStatusReporter."""
         await self._ps.publish()
+
+    def _record_proxy_to_box_frame(
+        self,
+        *,
+        frame_bytes: bytes,
+        table_name: str | None,
+        conn_id: int,
+        source: str,
+        tx_id: str | None = None,
+    ) -> None:
+        frame_text = frame_bytes.decode("utf-8", errors="replace")
+        capture_payload(
+            self.device_id,
+            table_name,
+            frame_text,
+            frame_bytes,
+            {},
+            direction="proxy_to_box",
+            length=len(frame_bytes),
+            conn_id=conn_id,
+            peer=self._active_box_peer,
+        )
+        self._tc.record_response(
+            frame_text,
+            source=source,
+            conn_id=conn_id,
+        )
+        logger.info(
+            "PROXY_TO_BOX: source=%s table=%s conn=%s tx_id=%s frame=%s",
+            source,
+            table_name,
+            conn_id,
+            tx_id or "-",
+            frame_text,
+        )
 
     async def _send_getactual_to_box(
         self, writer: asyncio.StreamWriter, *, conn_id: int
@@ -596,6 +642,59 @@ class OIGProxy:
             "%Y-%m-%dT%H:%M:%S%z", time.localtime())
         self._last_data_epoch = time.time()
 
+    def _update_stale_frame_detector(
+        self,
+        *,
+        frame_bytes: bytes,
+        table_name: str | None,
+    ) -> None:
+        if table_name is None:
+            return
+        current_table = getattr(self, "_stale_table_name", None)
+        current_hash = getattr(self, "_stale_payload_hash", None)
+        current_repeat_count = int(getattr(self, "_stale_repeat_count", 0))
+        current_first_seen = getattr(self, "_stale_first_seen_epoch", None)
+        current_last_log = getattr(self, "_stale_last_log_epoch", None)
+        now = time.time()
+        payload_hash = hashlib.sha256(frame_bytes).hexdigest()
+        if current_table == table_name and current_hash == payload_hash:
+            self._stale_repeat_count = current_repeat_count + 1
+            self._stale_last_seen_epoch = now
+        else:
+            self._stale_table_name = table_name
+            self._stale_payload_hash = payload_hash
+            self._stale_repeat_count = 1
+            self._stale_first_seen_epoch = now
+            self._stale_last_seen_epoch = now
+            self._stale_last_log_epoch = None
+            return
+
+        first_seen = current_first_seen if current_first_seen is not None else self._stale_first_seen_epoch
+        if first_seen is None:
+            self._stale_first_seen_epoch = now
+            return
+
+        elapsed_s = now - first_seen
+        threshold_repeats = 120
+        threshold_elapsed_s = 180.0
+        if self._stale_repeat_count < threshold_repeats or elapsed_s < threshold_elapsed_s:
+            return
+
+        cooldown_s = 120.0
+        last_log = current_last_log
+        if last_log is not None and (now - last_log) < cooldown_s:
+            return
+
+        self._stale_last_log_epoch = now
+        logger.warning(
+            "⚠️ STALE_STREAM detected: table=%s repeats=%s elapsed_s=%.1f hash=%s peer=%s",
+            table_name,
+            self._stale_repeat_count,
+            elapsed_s,
+            payload_hash[:12],
+            self._active_box_peer,
+        )
+
     def _extract_device_and_table(
         self, parsed: dict[str, Any] | None
     ) -> tuple[str | None, str | None]:
@@ -614,6 +713,9 @@ class OIGProxy:
             return
         self.device_id = device_id
         self.mqtt_publisher.device_id = device_id
+        twin = getattr(self, "_twin", None)
+        if twin is not None:
+            await twin.set_device_id(device_id)
         self.mqtt_publisher.discovery_sent.clear()
         self.mqtt_publisher.publish_availability()
         logger.info("🔑 Device ID detected: %s", device_id)
@@ -635,6 +737,8 @@ class OIGProxy:
             device_id = self._infer_device_id(frame)
         if device_id:
             await self._maybe_autodetect_device_id(device_id)
+
+        self._update_stale_frame_detector(frame_bytes=frame_bytes, table_name=table_name)
 
         self._tc.record_frame_direction("box_to_proxy")
         if table_name in ("ACK", "END", "NACK", "IsNewSet", "IsNewWeather", "IsNewFW"):
@@ -728,6 +832,28 @@ class OIGProxy:
             conn_id=conn_id,
             box_writer=box_writer,
         )
+
+    async def _maybe_deactivate_session_twin_mode_if_idle(self, *, conn_id: int) -> None:
+        if not self._twin_mode_active:
+            return
+        if self._pending_twin_activation:
+            return
+        if self._twin is None:
+            self._twin_mode_active = False
+            return
+        if self._hm.should_route_settings_via_twin():
+            return
+
+        inflight = await self._twin.get_inflight()
+        if inflight is not None:
+            return
+
+        queue_len = await self._twin.get_queue_length()
+        if queue_len > 0:
+            return
+
+        self._twin_mode_active = False
+        logger.info("TWIN: Session twin mode deactivated (idle, conn=%s)", conn_id)
 
     async def _route_box_frame_by_mode(
         self,
@@ -856,6 +982,8 @@ class OIGProxy:
         self._tc.force_logs_this_window = False
         current_mode = await self._hm.get_current_mode()
 
+        await self._maybe_deactivate_session_twin_mode_if_idle(conn_id=conn_id)
+
         if await self._maybe_handle_local_control_poll(
             table_name=table_name,
             conn_id=conn_id,
@@ -953,14 +1081,15 @@ class OIGProxy:
         )
 
         ack_response = build_offline_ack_frame(table_name)
-        if conn_id is not None:
-            self._tc.record_response(
-                ack_response.decode("utf-8", errors="replace"),
-                source="local",
-                conn_id=conn_id,
-            )
         box_writer.write(ack_response)
         await box_writer.drain()
+        if conn_id is not None:
+            self._record_proxy_to_box_frame(
+                frame_bytes=ack_response,
+                table_name=table_name,
+                conn_id=conn_id,
+                source="local",
+            )
         self.stats["acks_local"] += 1
 
     async def _handle_frame_local_offline(
@@ -1087,10 +1216,12 @@ class OIGProxy:
             box_writer.write(frame_bytes)
             await box_writer.drain()
             self.stats["acks_local"] += 1
-            self._tc.record_response(
-                response.frame_data,
-                source="twin",
+            self._record_proxy_to_box_frame(
+                frame_bytes=frame_bytes,
+                table_name=table_name,
                 conn_id=conn_id,
+                source="twin",
+                tx_id=getattr(response, "tx_id", None),
             )
             logger.info(
                 "TWIN: Delivered setting via twin (table=%s, conn=%s)",
@@ -1101,13 +1232,15 @@ class OIGProxy:
 
         if table_name in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             end_frame = build_end_time_frame().decode("utf-8", errors="strict")
-            box_writer.write(end_frame.encode("utf-8", errors="strict"))
+            end_frame_bytes = end_frame.encode("utf-8", errors="strict")
+            box_writer.write(end_frame_bytes)
             await box_writer.drain()
             self.stats["acks_local"] += 1
-            self._tc.record_response(
-                end_frame,
-                source="twin",
+            self._record_proxy_to_box_frame(
+                frame_bytes=end_frame_bytes,
+                table_name=table_name,
                 conn_id=conn_id,
+                source="twin",
             )
             logger.debug(
                 "TWIN: Poll handled with END (table=%s, conn=%s)",
@@ -1161,9 +1294,37 @@ class OIGProxy:
             result = await self._twin.on_ack(dto)
             if result is not None:
                 if not has_end:
-                    box_writer.write(build_end_time_frame())
+                    end_frame = build_end_time_frame()
+                    box_writer.write(end_frame)
+
+                    async def _flush_end_frame() -> None:
+                        try:
+                            await box_writer.drain()
+                        except asyncio.CancelledError:
+                            logger.debug(
+                                "TWIN: END flush cancelled for tx_id=%s (conn=%s)",
+                                inflight.tx_id,
+                                conn_id,
+                            )
+                            raise
+                        except Exception as exc:
+                            logger.debug(
+                                "TWIN: END flush failed for tx_id=%s (conn=%s): %s",
+                                inflight.tx_id,
+                                conn_id,
+                                exc,
+                            )
+                            return
+                        self._record_proxy_to_box_frame(
+                            frame_bytes=end_frame,
+                            table_name="END",
+                            conn_id=conn_id,
+                            source="twin_ack",
+                            tx_id=inflight.tx_id,
+                        )
+
                     try:
-                        task = asyncio.create_task(box_writer.drain())
+                        task = asyncio.create_task(_flush_end_frame())
                         self._background_tasks.add(task)
                         task.add_done_callback(self._background_tasks.discard)
                     except Exception as exc:

@@ -71,6 +71,7 @@ def _make_proxy_and_cf():
     proxy._hm.force_offline_enabled = MagicMock(return_value=False)
     proxy._process_frame_offline = AsyncMock()
     proxy._respond_local_offline = AsyncMock()
+    proxy._record_proxy_to_box_frame = MagicMock()
     proxy.stats = {"frames_forwarded": 0, "acks_local": 0, "acks_cloud": 0}
 
     cf = CloudForwarder.__new__(CloudForwarder)
@@ -244,6 +245,7 @@ async def test_handle_cloud_timeout_hybrid_end(monkeypatch):
     assert reader is not None
     assert writer is not None
     assert proxy.stats["acks_local"] == 1
+    proxy._record_proxy_to_box_frame.assert_called_once()
 
 
 @pytest.mark.asyncio

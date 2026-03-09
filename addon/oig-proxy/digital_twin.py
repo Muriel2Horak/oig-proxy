@@ -267,6 +267,11 @@ class TwinMQTTHandler:
                 if data.get("received_at") is not None
                 else None
             ),
+            raw_frame=(
+                str(data.get("raw_frame")).strip()
+                if data.get("raw_frame") is not None
+                else None
+            ),
         )
 
     async def _handle_legacy_control_message(self, *, topic: str, payload: bytes) -> None:
@@ -392,6 +397,13 @@ class DigitalTwin:
             self.session_id,
         )
         await self._publish_state()
+
+    async def set_device_id(self, device_id: str) -> None:
+        """Update device identity used by generated setting frames."""
+        if not device_id:
+            return
+        async with self._lock:
+            self.config.device_id = device_id
 
     def attach_cloud_forwarder(
         self,
@@ -609,6 +621,7 @@ class DigitalTwin:
             tbl_item=dto.tbl_item,
             new_value=dto.new_value,
             confirm=dto.confirm,
+            raw_frame=dto.raw_frame,
         )
 
     def _enqueue_setting_dto(self, dto: QueueSettingDTO) -> None:
@@ -1311,8 +1324,9 @@ class DigitalTwin:
         """Handle poll request with IsNewSet delivery.
 
         Poll-Driven Queue Delivery:
-        - On IsNewSet poll: deliver pending setting if available
-        - On other polls or idle: return END
+        - On IsNew* poll: deliver pending setting if available
+        - On other polls: no frame
+        - On IsNew* idle: return END
 
         No unsolicited command push is allowed.
         """
@@ -1323,7 +1337,7 @@ class DigitalTwin:
             table_name,
         )
 
-        if table_name != "IsNewSet":
+        if table_name not in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             return PollResponseDTO(
                 tx_id=tx_id,
                 conn_id=conn_id,
@@ -1332,14 +1346,15 @@ class DigitalTwin:
                 frame_data=None,
             )
 
-        return await self._deliver_on_is_new_set(tx_id, conn_id)
+        return await self._deliver_on_is_new_set(tx_id, conn_id, table_name)
 
     async def _deliver_on_is_new_set(
         self,
         tx_id: str | None,
         conn_id: int,
+        table_name: str,
     ) -> PollResponseDTO:
-        """Deliver pending setting on IsNewSet poll.
+        """Deliver pending setting on IsNew* poll.
 
         This implements the poll-driven delivery:
         1. If queue has items and no inflight, start inflight
@@ -1371,6 +1386,7 @@ class DigitalTwin:
                     tbl_item=dto.tbl_item,
                     new_value=dto.new_value,
                     confirm=dto.confirm,
+                    raw_frame=dto.raw_frame,
                     stage=SettingStage.ACCEPTED,
                     replay_count=replay_count,
                 )
@@ -1391,18 +1407,18 @@ class DigitalTwin:
                 )
 
             if self._inflight is not None:
-                return self._build_delivery_response(conn_id)
+                return self._build_delivery_response(conn_id, table_name)
 
             end_frame = build_end_time_frame().decode("utf-8", errors="strict")
             return PollResponseDTO(
                 tx_id=tx_id,
                 conn_id=conn_id,
-                table_name="IsNewSet",
+                table_name=table_name,
                 ack=True,
                 frame_data=end_frame,
             )
 
-    def _build_delivery_response(self, conn_id: int) -> PollResponseDTO:
+    def _build_delivery_response(self, conn_id: int, table_name: str) -> PollResponseDTO:
         """Build delivery response with setting frame.
 
         Updates delivered_conn_id for INV-1 validation.
@@ -1419,7 +1435,7 @@ class DigitalTwin:
             return PollResponseDTO(
                 tx_id=None,
                 conn_id=conn_id,
-                table_name="IsNewSet",
+                table_name=table_name,
                 ack=True,
                 frame_data=end_frame,
             )
@@ -1429,7 +1445,7 @@ class DigitalTwin:
             return PollResponseDTO(
                 tx_id=None,
                 conn_id=conn_id,
-                table_name="IsNewSet",
+                table_name=table_name,
                 ack=True,
                 frame_data=end_frame,
             )
@@ -1457,7 +1473,7 @@ class DigitalTwin:
         return PollResponseDTO(
             tx_id=new_pending.tx_id,
             conn_id=conn_id,
-            table_name="IsNewSet",
+            table_name=table_name,
             ack=True,
             frame_data=frame_data,
         )
@@ -1473,6 +1489,12 @@ class DigitalTwin:
         Returns:
             Frame string with CRC
         """
+        if pending.raw_frame:
+            frame = pending.raw_frame
+            if not frame.endswith("\r\n"):
+                frame = frame.rstrip("\r\n") + "\r\n"
+            return frame
+
         msg_id = pending.msg_id or secrets.randbelow(90_000_000) + 10_000_000
         id_set = pending.id_set or int(time.time())
         now_local = datetime.now()

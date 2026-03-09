@@ -54,6 +54,7 @@ class QueueSettingDTO:
     confirm: str = "New"
     request_key: str | None = None
     received_at: str | None = None
+    raw_frame: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for compatibility with existing code."""
@@ -66,6 +67,7 @@ class QueueSettingDTO:
             "confirm": self.confirm,
             "request_key": self.request_key,
             "received_at": self.received_at,
+            "raw_frame": self.raw_frame,
         }
 
 
@@ -221,6 +223,7 @@ class PendingSettingState:
     attempts: int = 0
     max_attempts: int = 5
     replay_count: int = 0
+    raw_frame: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for compatibility with existing code."""
@@ -240,6 +243,7 @@ class PendingSettingState:
             "attempts": self.attempts,
             "max_attempts": self.max_attempts,
             "replay_count": self.replay_count,
+            "raw_frame": self.raw_frame,
         }
 
     @classmethod
@@ -267,6 +271,7 @@ class PendingSettingState:
             attempts=int(data.get("attempts", 0)),
             max_attempts=int(data.get("max_attempts", 5)),
             replay_count=int(data.get("replay_count", 0)),
+            raw_frame=data.get("raw_frame"),
         )
 
     # ------------------------------------------------------------------

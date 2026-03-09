@@ -1,6 +1,6 @@
-"""Tests for Poll-Driven Queue Delivery (IsNewSet).
+"""Tests for Poll-Driven Queue Delivery (IsNew*).
 
-Task 6: Twin delivers command only on IsNewSet path and emits END when idle.
+Task 6: Twin delivers command on IsNew* path and emits END when idle.
 No unsolicited command push is allowed.
 
 Verification:
@@ -41,7 +41,7 @@ def make_queue_dto(
 
 @pytest.mark.asyncio
 class TestPollDrivenDelivery:
-    """Tests for IsNewSet poll-driven delivery."""
+    """Tests for IsNew* poll-driven delivery."""
 
     async def test_on_poll_returns_end_when_idle(self):
         """
@@ -106,19 +106,38 @@ class TestPollDrivenDelivery:
         assert pending.delivered_conn_id == 5
         assert pending.stage == SettingStage.SENT_TO_BOX
 
-    async def test_on_poll_non_is_new_set_returns_no_frame(self):
+    async def test_on_poll_isnewweather_delivers_pending_setting(self):
         """
         GIVEN: Twin with queued setting
-        WHEN: on_poll is called with non-IsNewSet table
-        THEN: Returns ack but no frame_data (no delivery)
+        WHEN: on_poll is called with IsNewWeather
+        THEN: Returns Setting frame (delivery)
         """
         twin = DigitalTwin(session_id="test-session")
 
-        dto = make_queue_dto(tx_id="tx-non-isnewset")
+        dto = make_queue_dto(tx_id="tx-isnewweather")
         await twin.queue_setting(dto)
 
         response = await twin.on_poll(
             tx_id=None, conn_id=1, table_name="IsNewWeather"
+        )
+
+        assert response.ack is True
+        assert response.frame_data is not None
+        assert "<Reason>Setting</Reason>" in response.frame_data
+
+    async def test_on_poll_non_isnew_returns_no_frame(self):
+        """
+        GIVEN: Twin with queued setting
+        WHEN: on_poll is called with non-IsNew table
+        THEN: Returns ack but no frame_data
+        """
+        twin = DigitalTwin(session_id="test-session")
+
+        dto = make_queue_dto(tx_id="tx-non-isnew")
+        await twin.queue_setting(dto)
+
+        response = await twin.on_poll(
+            tx_id=None, conn_id=1, table_name="tbl_actual"
         )
 
         assert response.ack is True
@@ -196,25 +215,18 @@ class TestNoUnsolicitedPush:
         pending = await twin.get_inflight()
         assert pending is None
 
-    async def test_setting_only_delivered_on_is_new_set(self):
+    async def test_setting_delivered_on_all_isnew_polls(self):
         """
         GIVEN: Twin with queued setting
-        WHEN: Multiple non-IsNewSet polls occur
-        THEN: Setting stays in queue
+        WHEN: IsNewSet/IsNewWeather/IsNewFW polls occur
+        THEN: Setting is delivered on each IsNew* poll type
         """
-        twin = DigitalTwin(session_id="test-session")
-
-        dto = make_queue_dto(tx_id="tx-poll-type")
-        await twin.queue_setting(dto)
-
-        for table_name in ["IsNewWeather", "IsNewFW", "tbl_actual"]:
-            response = await twin.on_poll(
-                tx_id=None, conn_id=1, table_name=table_name
-            )
-            assert response.frame_data is None
-
-        queue_len = await twin.get_queue_length()
-        assert queue_len == 1
+        for idx, table_name in enumerate(["IsNewSet", "IsNewWeather", "IsNewFW"], start=1):
+            twin = DigitalTwin(session_id=f"test-session-{table_name}")
+            await twin.queue_setting(make_queue_dto(tx_id=f"tx-poll-type-{idx}"))
+            response = await twin.on_poll(tx_id=None, conn_id=1, table_name=table_name)
+            assert response.frame_data is not None
+            assert "<Reason>Setting</Reason>" in response.frame_data
 
     async def test_delivery_requires_explicit_poll(self):
         """
@@ -315,6 +327,58 @@ class TestFrameBuilding:
         response = await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
 
         assert "<Reason>Setting</Reason>" in response.frame_data
+
+    async def test_frame_uses_raw_frame_when_provided(self):
+        config = DigitalTwinConfig(device_id="12345")
+        twin = DigitalTwin(session_id="test-session", config=config)
+        raw = (
+            "<Frame><ID>13782494</ID><ID_Device>2206237016</ID_Device>"
+            "<ID_Set>1772983800</ID_Set><ID_SubD>0</ID_SubD>"
+            "<DT>08.03.2026 16:30:00</DT><NewValue>0</NewValue><Confirm>New</Confirm>"
+            "<TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><ID_Server>5</ID_Server>"
+            "<mytimediff>0</mytimediff><Reason>Setting</Reason>"
+            "<TSec>2026-03-08 15:30:18</TSec><ver>04858</ver><CRC>21427</CRC></Frame>\r\n"
+        )
+
+        dto = QueueSettingDTO(
+            tx_id="tx-raw",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="1",
+            raw_frame=raw,
+        )
+        await twin.queue_setting(dto)
+
+        response = await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
+
+        assert response.frame_data == raw
+
+    async def test_frame_uses_raw_frame_adds_crlf_when_missing(self):
+        config = DigitalTwinConfig(device_id="12345")
+        twin = DigitalTwin(session_id="test-session", config=config)
+        raw_no_crlf = (
+            "<Frame><ID>13782494</ID><ID_Device>2206237016</ID_Device>"
+            "<ID_Set>1772983800</ID_Set><ID_SubD>0</ID_SubD>"
+            "<DT>08.03.2026 16:30:00</DT><NewValue>0</NewValue><Confirm>New</Confirm>"
+            "<TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><ID_Server>5</ID_Server>"
+            "<mytimediff>0</mytimediff><Reason>Setting</Reason>"
+            "<TSec>2026-03-08 15:30:18</TSec><ver>04858</ver><CRC>21427</CRC></Frame>"
+        )
+
+        dto = QueueSettingDTO(
+            tx_id="tx-raw-nocrlf",
+            conn_id=1,
+            tbl_name="tbl_box_prms",
+            tbl_item="MODE",
+            new_value="0",
+            raw_frame=raw_no_crlf,
+        )
+        await twin.queue_setting(dto)
+
+        response = await twin.on_poll(tx_id=None, conn_id=1, table_name="IsNewSet")
+
+        assert response.frame_data == raw_no_crlf + "\r\n"
 
 
 @pytest.mark.asyncio

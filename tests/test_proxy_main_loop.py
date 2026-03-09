@@ -4,6 +4,7 @@
 
 # pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
 
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -70,7 +71,13 @@ def _make_proxy():
 @pytest.mark.asyncio
 async def test_respond_local_offline_sends_ack(monkeypatch):
     proxy = _make_proxy()
+    captured = []
     monkeypatch.setattr(proxy_module, "build_offline_ack_frame", lambda _tbl: b"ACK")
+    monkeypatch.setattr(
+        proxy_module,
+        "capture_payload",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
+    )
     writer = DummyWriter()
 
     await proxy._respond_local_offline(
@@ -84,6 +91,8 @@ async def test_respond_local_offline_sends_ack(monkeypatch):
 
     assert writer.buffer == [b"ACK"]
     assert proxy.stats["acks_local"] == 1
+    assert captured[-1][1]["direction"] == "proxy_to_box"
+    assert captured[-1][0][1] == "tbl"
 
 
 @pytest.mark.asyncio
@@ -171,6 +180,54 @@ async def test_handle_box_connection_processing_error_is_guarded():
     )
 
     proxy._cf.forward_frame.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_session_twin_mode_deactivates_when_idle():
+    proxy = _make_proxy()
+    proxy._twin_mode_active = True
+    proxy._pending_twin_activation = False
+    proxy._hm.should_route_settings_via_twin = MagicMock(return_value=False)
+    proxy._twin = SimpleNamespace(
+        get_inflight=AsyncMock(return_value=None),
+        get_queue_length=AsyncMock(return_value=0),
+    )
+
+    await proxy._maybe_deactivate_session_twin_mode_if_idle(conn_id=7)
+
+    assert proxy._twin_mode_active is False
+
+
+@pytest.mark.asyncio
+async def test_session_twin_mode_kept_when_inflight_exists():
+    proxy = _make_proxy()
+    proxy._twin_mode_active = True
+    proxy._pending_twin_activation = False
+    proxy._hm.should_route_settings_via_twin = MagicMock(return_value=False)
+    proxy._twin = SimpleNamespace(
+        get_inflight=AsyncMock(return_value=SimpleNamespace(tx_id="tx-1")),
+        get_queue_length=AsyncMock(return_value=0),
+    )
+
+    await proxy._maybe_deactivate_session_twin_mode_if_idle(conn_id=8)
+
+    assert proxy._twin_mode_active is True
+
+
+@pytest.mark.asyncio
+async def test_session_twin_mode_kept_when_queue_not_empty():
+    proxy = _make_proxy()
+    proxy._twin_mode_active = True
+    proxy._pending_twin_activation = False
+    proxy._hm.should_route_settings_via_twin = MagicMock(return_value=False)
+    proxy._twin = SimpleNamespace(
+        get_inflight=AsyncMock(return_value=None),
+        get_queue_length=AsyncMock(return_value=2),
+    )
+
+    await proxy._maybe_deactivate_session_twin_mode_if_idle(conn_id=9)
+
+    assert proxy._twin_mode_active is True
 
 
 @pytest.mark.asyncio
@@ -288,3 +345,58 @@ async def test_control_settings_queue_setting_arms_twin_session_activation_flags
     assert result["ok"] is True
     assert proxy._pending_twin_activation is True
     assert proxy._twin_mode_active is True
+
+
+def test_stale_frame_detector_emits_warning_after_threshold(monkeypatch):
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy._active_box_peer = "10.0.0.166:1972"
+    proxy._stale_table_name = None
+    proxy._stale_payload_hash = None
+    proxy._stale_first_seen_epoch = None
+    proxy._stale_last_seen_epoch = None
+    proxy._stale_repeat_count = 0
+    proxy._stale_last_log_epoch = None
+
+    calls = []
+
+    def fake_warning(msg, *args):
+        calls.append(msg % args)
+
+    monkeypatch.setattr(proxy_module.logger, "warning", fake_warning)
+
+    base = 1_000_000.0
+    ts = [base + i * 2.0 for i in range(121)]
+    it = iter(ts)
+    monkeypatch.setattr(proxy_module.time, "time", lambda: next(it))
+
+    frame = b"<Frame><TblName>tbl_dc_in</TblName><FV_P1>478</FV_P1></Frame>"
+    for _ in range(121):
+        proxy._update_stale_frame_detector(frame_bytes=frame, table_name="tbl_dc_in")
+
+    assert len(calls) == 1
+    assert "STALE_STREAM detected" in calls[0]
+    expected_hash = hashlib.sha256(frame).hexdigest()[:12]
+    assert expected_hash in calls[0]
+
+
+def test_stale_frame_detector_resets_on_payload_change(monkeypatch):
+    proxy = proxy_module.OIGProxy.__new__(proxy_module.OIGProxy)
+    proxy._active_box_peer = "10.0.0.166:1972"
+    proxy._stale_table_name = None
+    proxy._stale_payload_hash = None
+    proxy._stale_first_seen_epoch = None
+    proxy._stale_last_seen_epoch = None
+    proxy._stale_repeat_count = 0
+    proxy._stale_last_log_epoch = None
+
+    monkeypatch.setattr(proxy_module.logger, "warning", lambda *_args: None)
+    now = 2_000_000.0
+    monkeypatch.setattr(proxy_module.time, "time", lambda: now)
+
+    proxy._update_stale_frame_detector(frame_bytes=b"A", table_name="tbl_dc_in")
+    assert proxy._stale_repeat_count == 1
+    first_hash = proxy._stale_payload_hash
+
+    proxy._update_stale_frame_detector(frame_bytes=b"B", table_name="tbl_dc_in")
+    assert proxy._stale_repeat_count == 1
+    assert proxy._stale_payload_hash != first_hash
