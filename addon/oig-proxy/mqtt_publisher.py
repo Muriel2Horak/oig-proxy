@@ -880,6 +880,14 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         publish_data, mapped_count = self._map_data_for_publish(
             data, table=str(table) if table else None, target_device_id=target_device_id)
 
+        if not publish_data:
+            logger.debug(
+                "MQTT: Skip publish of empty state payload (table=%s device=%s)",
+                table,
+                target_device_id,
+            )
+            return False
+
         topic = self._state_topic(
             target_device_id,
             str(table) if table else None)

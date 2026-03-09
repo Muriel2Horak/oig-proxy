@@ -6,6 +6,7 @@
 import asyncio
 import datetime
 import json
+from unittest.mock import MagicMock
 
 from models import SensorConfig
 import mqtt_publisher
@@ -304,6 +305,41 @@ def test_publish_data_online_failure_queues(monkeypatch):
         assert publisher.publish_count == 1
         assert publisher.publish_failed == 1
         assert len(publisher.queue.added) == 1
+
+    asyncio.run(run())
+
+
+def test_publish_data_skips_empty_mapped_payload(monkeypatch):
+    class DummyQueue:
+        def __init__(self, *args, **kwargs) -> None:
+            self.added = []
+
+        async def add(
+                self,
+                topic: str,
+                payload: str,
+                retain: bool = False) -> bool:
+            self.added.append((topic, payload, retain))
+            return True
+
+        def size(self) -> int:
+            return len(self.added)
+
+    monkeypatch.setattr(mqtt_publisher, "MQTTQueue", DummyQueue)
+    monkeypatch.setattr(
+        mqtt_publisher,
+        "get_sensor_config",
+        lambda sensor_id, table=None: (None, sensor_id),
+    )
+    publisher = mqtt_publisher.MQTTPublisher(device_id="DEV1")
+    publisher.client = MagicMock()
+    publisher.connected = True
+
+    async def run():
+        ok = await publisher.publish_data({"_table": "tbl_actual"})
+        assert ok is False
+        assert publisher.client.publish.call_count == 0
+        assert publisher.queue.size() == 0
 
     asyncio.run(run())
 
