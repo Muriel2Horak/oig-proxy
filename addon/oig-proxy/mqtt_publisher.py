@@ -57,6 +57,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self.connected = False
         self.discovery_sent: set[str] = set()
         self._last_payload_by_topic: dict[str, str] = {}
+        self._last_publish_time_by_topic: dict[str, float] = {}
         self._local_tzinfo = datetime.datetime.now(
         ).astimezone().tzinfo or datetime.timezone.utc
         self._message_handlers: dict[str, tuple[int,
@@ -172,6 +173,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             self.connected = True
             self.reconnect_attempts = 0
             self._last_payload_by_topic.clear()
+            self._last_publish_time_by_topic.clear()
 
             # Availability online
             client.publish(
@@ -227,6 +229,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         was_connected = self.connected
         self.connected = False
         self._last_payload_by_topic.clear()
+        self._last_publish_time_by_topic.clear()
 
         if rc == 0:
             logger.info("MQTT: Disconnected (clean disconnect)")
@@ -485,6 +488,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
             "value_template": f"{{{{ value_json.{self._json_key(sensor_id)} }}}}",
             "availability": [{"topic": availability_topic}],
             "default_entity_id": f"{component}.{base_object_id}",
+            "force_update": True,
             "device": {
                 "identifiers": [device_identifier],
                 "name": full_device_name,
@@ -553,9 +557,14 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         return self.device_id
 
     def _check_payload_deduplication(self, topic: str, payload: str) -> bool:
+        now = time.time()
+        last_publish = self._last_publish_time_by_topic.get(topic, 0)
+        # Povolit publikaci pokud se payload zmenil NEBO uplynulo 60 sekund
         if self._last_payload_by_topic.get(topic) == payload:
-            return True
+            if now - last_publish < 60:
+                return True  # Stejny payload a jeste neuplynulo 60s
         self._last_payload_by_topic[topic] = payload
+        self._last_publish_time_by_topic[topic] = now
         return False
 
     def _handle_offline_queueing(
@@ -629,9 +638,6 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
 
         if not self.is_ready():
             return self._handle_offline_queueing(topic, payload)
-
-        if self._check_payload_deduplication(topic, payload):
-            return True
 
         return self._execute_publish(topic, payload, mapped_count)
 
