@@ -561,6 +561,19 @@ class CloudForwarder:
                     cloud_writer=cloud_writer,
                 )
 
+            # Zpracovat ACK odpověď pro MQTT (tbl_* data přicházejí v odpovědi od cloudu)
+            try:
+                ack_str = ack_data.decode("utf-8", errors="replace")
+                parsed_ack = self._proxy.parser.parse_xml_frame(ack_str)
+                if parsed_ack:
+                    ack_table = parsed_ack.get("_table")
+                    ack_device = parsed_ack.get("_device_id")
+                    if ack_table and ack_table.startswith("tbl_"):
+                        logger.info("CLOUD_ACK: Publishing table=%s, device=%s", ack_table, ack_device)
+                        await self._proxy.mqtt_publisher.publish_data(parsed_ack)
+            except Exception as exc:
+                logger.debug("CLOUD_ACK: Failed to parse/publish ACK: %s", exc)
+            
             await self.forward_ack_to_box(
                 ack_data=ack_data,
                 table_name=table_name,
