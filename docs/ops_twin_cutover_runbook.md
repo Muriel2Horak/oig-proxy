@@ -1,7 +1,7 @@
 # Twin Cutover Ops Runbook
 
 This runbook covers rolling out the Twin Architecture to production, verifying it's healthy,
-and rolling back cleanly if something goes wrong.
+rolling back cleanly if something goes wrong, and running a canary deployment.
 
 Target audience: operators with SSH access to the Home Assistant host.
 
@@ -502,8 +502,272 @@ ha addons restart d7b5d5b1_oig_proxy
 
 ---
 
+## Part 6: Sidecar Activation Policy
+
+This section defines exactly when the session twin sidecar activates and deactivates, and what thresholds trigger mode changes.
+
+### 6.1 Activation
+
+The sidecar activates on the first BOX frame when `SIDECAR_ACTIVATION=true`. No manual trigger required.
+
+Check current sidecar state:
+
+```bash
+mosquitto_sub -h core-mosquitto -u oig -P oig \
+  -t "oig_local/oig_proxy/twin_state/state" \
+  -C 1 -W 10 \
+  | python3 -c "import sys,json; s=json.loads(sys.stdin.read()); print('sidecar mode:', s.get('mode'), '| session_active:', s.get('session_active'))"
+```
+
+Expected output when sidecar is active: `sidecar mode: twin | session_active: false` (false is normal when idle between BOX sessions).
+
+### 6.2 Deactivation thresholds
+
+The sidecar only deactivates after a **300-second (5-minute) hysteresis window** with no cloud failures. This prevents flapping during brief connectivity gaps.
+
+| Condition | Effect on deactivation timer |
+|-----------|------------------------------|
+| All idle (no inflight, empty queue, no cloud errors) | Timer starts (if first success already received) |
+| Cloud `connect_failed`, `cloud_eof`, `ack_timeout`, or `cloud_error` | Timer resets to zero |
+| Timer reaches 0 s | Sidecar deactivates |
+
+**You cannot bypass the hysteresis window.** If the sidecar deactivates unexpectedly sooner, check for cloud errors in the logs:
+
+```bash
+ha addons logs d7b5d5b1_oig_proxy | grep -E "connect_failed|cloud_eof|ack_timeout|cloud_error"
+```
+
+### 6.3 Cloud failure thresholds (OFFLINE mode)
+
+Proxy moves to OFFLINE after a configurable number of consecutive cloud failures.
+
+| Variable | Default | Recommended (production) |
+|----------|---------|--------------------------|
+| `HYBRID_FAIL_THRESHOLD` | `1` | `3` |
+| `CLOUD_ACK_TIMEOUT` | `1800 s` | `1800 s` |
+| `HYBRID_RETRY_INTERVAL` | `60 s` | `60 s` |
+| `HYBRID_CONNECT_TIMEOUT` | `10 s` | `10 s` |
+| Sidecar deactivation hysteresis | n/a (code constant) | `300 s` |
+
+With `HYBRID_FAIL_THRESHOLD=3`, the proxy tolerates two transient failures before going OFFLINE. One successful cloud ACK resets the counter to zero.
+
+**State machine:**
+
+```
+ONLINE (fail_count=0)
+  ├─[failure]─> fail_count=1
+  │               ├─[failure]─> fail_count=2
+  │               │               ├─[failure]─> fail_count=3 ──> OFFLINE
+  │               │               └─[success]─> ONLINE (reset)
+  │               └─[success]─> ONLINE (reset)
+  └─[success]─> ONLINE (no change)
+
+OFFLINE
+  ├─[success]─> ONLINE (reset, fail_count=0)
+  └─[failure]─> stays OFFLINE, retry after HYBRID_RETRY_INTERVAL
+```
+
+---
+
+## Part 7: Canary Deployment
+
+Run a canary before full production cutover to catch regressions early.
+
+### 7.1 Prepare
+
+```bash
+ssh ha
+
+# Backup current data and config
+docker cp addon_d7b5d5b1_oig_proxy:/data/payloads.db /backup/payloads_pre_canary_$(date +%Y%m%d).db
+ha addons info d7b5d5b1_oig_proxy > /backup/addon_info_pre_canary_$(date +%Y%m%d).yaml
+
+# Tag the current image as rollback target
+docker tag $(docker inspect addon_d7b5d5b1_oig_proxy --format '{{.Image}}') oig-proxy:canary-rollback
+```
+
+### 7.2 Deploy canary version
+
+Use a separate port (5711) so the existing proxy keeps serving the BOX during testing.
+
+```bash
+docker run -d \
+  --name oig-proxy-canary \
+  --restart unless-stopped \
+  -p 5711:5710 \
+  -e TARGET_SERVER=oigservis.cz \
+  -e TARGET_PORT=5710 \
+  -e PROXY_PORT=5710 \
+  -e MQTT_HOST=core-mosquitto \
+  -e MQTT_PORT=1883 \
+  -e MQTT_USERNAME=<username> \
+  -e MQTT_PASSWORD=<password> \
+  -e SIDECAR_ACTIVATION=false \
+  -e THIN_PASS_THROUGH=false \
+  -e LEGACY_FALLBACK=true \
+  -e LOG_LEVEL=DEBUG \
+  -v /addon_configs/d7b5d5b1_oig_proxy/data:/data \
+  ghcr.io/muriel2horak/oig-proxy:<canary-tag>
+
+docker logs -f oig-proxy-canary | head -30
+```
+
+Expected within 10 seconds: `🚀 OIG Proxy naslouchá na 0.0.0.0:5710`
+
+### 7.3 Canary smoke test
+
+Point one test client at the canary port and verify a full roundtrip:
+
+```bash
+# Temporarily redirect a single client (not the BOX) to the canary
+curl -s "http://$HA_IP:8099/api/health"   # original proxy still healthy?
+
+# Health check on canary (if Control API is running)
+curl -s "http://$HA_IP:8100/api/health"
+```
+
+Watch canary logs for 30 minutes:
+
+```bash
+docker logs -f oig-proxy-canary | grep -E "Mode:|ERROR|Traceback|cloud_queue:|mqtt_queue:"
+```
+
+Canary is healthy if:
+- No `ERROR` or `Traceback` lines
+- `Mode: ONLINE` appears (or `OFFLINE` only during real cloud gaps)
+- `cloud_queue: 0` most of the time
+
+### 7.4 Canary gate decision
+
+After the observation period (minimum 30 minutes, recommended 24 hours):
+
+| Check | Pass condition | Action if fails |
+|-------|---------------|-----------------|
+| No errors in logs | Zero `ERROR`/`Traceback` lines | Stop canary; investigate before proceeding |
+| Mode stability | `ONLINE` > 95% of log lines | Check `HYBRID_FAIL_THRESHOLD` and cloud connectivity |
+| MQTT data flow | Sensor topics arriving | Check MQTT credentials and sensor_map.json |
+| Startup time | Banner within 10 s | Check resource constraints; rebuild image |
+
+If all checks pass, promote the canary to production (see Part 1.2). If any check fails, stop the canary and do not promote:
+
+```bash
+docker stop oig-proxy-canary
+docker rm oig-proxy-canary
+# The original proxy was running throughout; BOX never lost connectivity.
+```
+
+---
+
+## Part 8: Incident Response
+
+Use this section when the proxy is in an abnormal state and you need to act quickly.
+
+### 8.1 Proxy stuck in OFFLINE > 30 minutes
+
+**Symptoms:** `Mode: OFFLINE` in logs; BOX data stops updating in HA; cloud queue growing.
+
+**Triage:**
+
+```bash
+# Is the cloud reachable?
+docker exec addon_d7b5d5b1_oig_proxy ping -c 3 oigservis.cz
+
+# Can we establish a TCP connection?
+nc -zv oigservis.cz 5710
+
+# Check fail counter in logs
+ha addons logs d7b5d5b1_oig_proxy | grep -E "fail_count|OFFLINE|ONLINE" | tail -20
+```
+
+**Actions:**
+
+1. If cloud is unreachable: wait for ISP/cloud recovery. Proxy will auto-transition to ONLINE after the first successful ACK.
+2. If cloud is reachable but proxy stays OFFLINE: restart the add-on to force a fresh connection attempt.
+   ```bash
+   ha addons restart d7b5d5b1_oig_proxy
+   ```
+3. If cloud queue exceeds 10,000 frames and you want to discard it (data loss):
+   ```bash
+   docker exec addon_d7b5d5b1_oig_proxy sqlite3 /data/cloud_queue.db "DELETE FROM frames;"
+   ha addons restart d7b5d5b1_oig_proxy
+   ```
+   This is irreversible. Do this only if the queue is stale and replay is no longer needed.
+
+### 8.2 MQTT queue growing (> 100 messages)
+
+**Symptoms:** `mqtt_queue: >100` in logs; HA entities showing stale values.
+
+```bash
+# Check MQTT broker connectivity
+ha addons logs d7b5d5b1_oig_proxy | grep -i "mqtt\|broker" | tail -20
+
+# Verify broker is accepting connections
+mosquitto_pub -h core-mosquitto -u <username> -P <password> \
+  -t "test/ping" -m "ok" && echo "MQTT OK"
+```
+
+**Actions:**
+1. If MQTT broker is down: restart Mosquitto add-on.
+   ```bash
+   ha addons restart core_mosquitto
+   ```
+2. If broker is up but queue keeps growing: restart the proxy to re-establish MQTT connection.
+   ```bash
+   ha addons restart d7b5d5b1_oig_proxy
+   ```
+
+### 8.3 BOX reconnecting repeatedly (flapping)
+
+**Symptoms:** Repeated `BOX připojen` / `BOX disconnected` pairs in logs, less than 60 seconds apart.
+
+```bash
+ha addons logs d7b5d5b1_oig_proxy | grep -E "BOX připojen|disconnected" | tail -30
+```
+
+**Actions:**
+1. Check if the BOX is resolving `oigservis.cz` to the HA IP (DNS override still active).
+2. If the sidecar is active and sending setting frames, verify the BOX isn't rejecting them (NACK or framing error). See [Branch E](#branch-e-delivery-frame-failed).
+3. If flapping started after a proxy update, roll back immediately (see [Part 3: Rollback](#part-3-rollback)).
+
+### 8.4 Emergency: stop all writes to BOX
+
+If the sidecar is writing incorrect settings and you need to stop all writes without full rollback:
+
+```bash
+# Disable sidecar activation; restart to apply
+ha addons config d7b5d5b1_oig_proxy --set SIDECAR_ACTIVATION=false
+ha addons restart d7b5d5b1_oig_proxy
+```
+
+The proxy continues forwarding telemetry in transport mode. No settings flow to the BOX until `SIDECAR_ACTIVATION=true` is restored.
+
+### 8.5 Transport-only emergency mode
+
+If you need the proxy to forward traffic with zero processing (maximum compatibility), switch to transport-only mode:
+
+```bash
+ha addons config d7b5d5b1_oig_proxy --set THIN_PASS_THROUGH=true
+ha addons restart d7b5d5b1_oig_proxy
+```
+
+In this mode:
+- No MQTT publishing
+- No sensor_map parsing
+- No session twin
+- Frames forwarded byte-for-byte
+
+This is a diagnostic/emergency mode only. HA entities will stop updating. Restore normal mode after investigation:
+
+```bash
+ha addons config d7b5d5b1_oig_proxy --set THIN_PASS_THROUGH=false
+ha addons restart d7b5d5b1_oig_proxy
+```
+
+---
+
 ## Changelog
 
 | Date | Change |
 |------|--------|
+| 2026-03-10 | Add sidecar activation policy, rollback thresholds, canary guide, incident section |
 | 2026-03-07 | Initial runbook for Twin cutover |

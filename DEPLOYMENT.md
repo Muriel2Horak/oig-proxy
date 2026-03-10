@@ -290,6 +290,9 @@ docker start old-oig-proxy
 docker logs oig-proxy > /tmp/proxy_failure.log
 ```
 
+Viz také kompletní rollback postup v runbooku:
+[docs/ops_twin_cutover_runbook.md – Part 3: Rollback](docs/ops_twin_cutover_runbook.md)
+
 ---
 
 ## 📊 Monitoring po nasazení
@@ -443,8 +446,68 @@ docker restart oig-proxy
 - [ ] DATA_DIR volume je vytvořený s write permissions
 - [ ] Port 5003 je volný (nebo jiný port v konfiguraci)
 - [ ] Backup současného proxy (pokud běží)
-- [ ] Rollback plán je připravený
+- [ ] Rollback plán je připravený (viz [rollback kroky](docs/ops_twin_cutover_runbook.md#part-3-rollback))
 - [ ] Monitoring v HA je nakonfigurovaný
+- [ ] `HYBRID_FAIL_THRESHOLD=3` nastaveno pro produkci (default je 1, příliš agresivní)
+- [ ] `SIDECAR_ACTIVATION` zvolen záměrně (default: `false` = žádný twin)
+
+---
+
+## 🐤 Canary nasazení
+
+Před přepnutím produkce doporučujeme canary test. Kompletní postup je v runbooku:
+[docs/ops_twin_cutover_runbook.md – Part 7: Canary Deployment](docs/ops_twin_cutover_runbook.md)
+
+Zkrácený přehled:
+
+1. Spusť nový proxy na alternativním portu (např. 5004) s `LOG_LEVEL=DEBUG` a `SIDECAR_ACTIVATION=false`.
+2. Sleduj logy 30 minut až 24 hodin. Čekej `Mode: ONLINE`, žádné `ERROR`.
+3. Pokud OK: zastav starý proxy, přepni nový na port 5003.
+4. Pokud ne OK: zastav canary – původní proxy nikdy nepřestal běžet.
+
+---
+
+## ⚙️ Feature flags (nová architektura)
+
+---
+
+## ⚙️ Feature flags (nová architektura)
+
+Nová architektura zavádí tři feature flags pro bezpečnou migraci. Všechny mají bezpečné výchozí hodnoty.
+
+| Proměnná | Výchozí | Popis |
+|----------|---------|-------|
+| `THIN_PASS_THROUGH` | `false` | Transport-only mode – přeposílá rámce bez parsování. Bez MQTT, bez twin. |
+| `SIDECAR_ACTIVATION` | `false` | Povolí session twin sidecar (doručování nastavení do BOXu). |
+| `LEGACY_FALLBACK` | `true` | Zachová zpětnou kompatibilitu. Nevypínej bez testování. |
+| `HYBRID_FAIL_THRESHOLD` | `1` | Počet selhání cloudu před OFFLINE. **Nastav na 3 v produkci.** |
+
+**Rollback pořadí** – pokud je potřeba vše vrátit:
+```bash
+# Krok 1: Zpět na plnou zpětnou kompatibilitu
+LEGACY_FALLBACK=true
+
+# Krok 2: Vypni sidecar
+SIDECAR_ACTIVATION=false
+
+# Krok 3: Přepni na transport-only (nouzový stav)
+THIN_PASS_THROUGH=true  # Pouze pokud ostatní kroky nestačí
+```
+
+### Aktivační politika sidecaru
+
+Sidecar se aktivuje na prvním rámci od BOXu (pokud `SIDECAR_ACTIVATION=true`).
+Deaktivuje se po **300 sekundách (5 minut)** stabilního cloudu bez výpadku.
+Jakékoli selhání cloudu resetuje odpočet.
+
+Pro nouzové zastavení všech zápisů do BOXu bez restartu:
+```bash
+# Env změna + restart
+export SIDECAR_ACTIVATION=false
+docker restart oig-proxy
+```
+
+Viz detailní politiku: [docs/ops_twin_cutover_runbook.md – Part 6](docs/ops_twin_cutover_runbook.md)
 
 ---
 

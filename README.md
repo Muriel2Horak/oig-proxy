@@ -4,11 +4,13 @@ TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA a
 
 ## Klíčové funkce
 - 🔄 **Multi‑mode proxy**: ONLINE (forward) / OFFLINE (lokální ACK + queue) / REPLAY (vyprazdňování fronty)
+- 🚇 **Transport-only mode** (`THIN_PASS_THROUGH=true`): minimální proxy bez zpracování – přeposílá XML rámce 1:1, bez MQTT a bez session twin
 - 💾 **Persistentní fronty**: SQLite fronta pro cloud (frames) i MQTT (messages)
 - 🔌 **Odolnost vůči výpadkům**: automatická detekce výpadku cloudu, lokální ACK generování
 - 📡 **MQTT autodiscovery**: entity se zakládají přes `homeassistant/.../config` (retain)
-- 🧭 **Diagnostika komunikace**: samostatné zařízení „OIG Proxy“ se stavovými senzory (stav, fronty, poslední data, IsNewSet telemetrie)
+- 🧭 **Diagnostika komunikace**: samostatné zařízení „OIG Proxy" se stavovými senzory (stav, fronty, poslední data, IsNewSet telemetrie)
 - 🧾 **Eventy**: `tbl_events` se publikuje a mapuje do HA (Type/Confirm/Content)
+- 🤝 **Session twin** (sidecar): volitelný sidecar process pro doručování nastavení BOXu, aktivuje se automaticky po detekci stabilního cloudu
 
 ## Struktura
 - `proxy/` – hlavní Python proxy (`main.py`), načítá mapping ze sdíleného `sensor_map.json`, dekóduje warning bity (`ERR_*`).
@@ -39,12 +41,23 @@ OIG Box  --DNS override-->  HA host (addon OIG Proxy, port 5710)  --TCP-->  oigs
    |                             |
    |  XML frame                  |  Parse + map + warnings decode
    |---------------------------->|  Publish state to MQTT: oig_local/<device_id>/<table>/state
-                                 |  Send HA discovery: homeassistant/sensor/.../config
-                                 |  Availability: oig_local/<device_id>/availability
+                                  |  Send HA discovery: homeassistant/sensor/.../config
+                                  |  Availability: oig_local/<device_id>/availability
 MQTT Broker (mosquitto addon) <--+
    |
    v
 Home Assistant (entities vytvářené z discovery)
+```
+
+Pokud je aktivní transport-only mode (`THIN_PASS_THROUGH=true`), proxy přeposílá rámce přímo bez parsování, MQTT publikování nebo session twin zpracování. Vhodné pro debugging nebo výpadek mapování.
+
+```
+OIG Box  --DNS override-->  HA host (addon OIG Proxy, port 5710)  --TCP-->  oigservis.cz (cloud)
+   |                             |                                                     |
+   |  XML frame (raw)            |  Forward bytes 1:1 (no parsing, no MQTT)            |
+   |---------------------------->|---------------------------------------------------->|
+                                  |  ACK (raw)                                          |
+   <--------------------------------<--------------------------------------------------
 ```
 
 ## Zařízení a entity v HA (MQTT discovery)
@@ -178,6 +191,61 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 - `UNKNOWN_SENSORS_PATH` (default `/data/unknown_sensors.json`).
 - `CAPTURE_PAYLOADS` (default `false`) – ukládá všechny frames do `/data/payloads.db`.
 - `CAPTURE_RAW_BYTES` (default `false`) – ukládá i hrubé bajty (`raw_b64`) pro low-level analýzu.
+
+### Feature flags (migrace a rollback)
+
+| Proměnná | Default | Popis |
+|----------|---------|-------|
+| `THIN_PASS_THROUGH` | `false` | Transport-only mode – přeposílá rámce bez parsování a bez MQTT. Žádný session twin. |
+| `SIDECAR_ACTIVATION` | `false` | Povolí session twin sidecar. Viz [Sidecar activation policy](#sidecar-activation-policy). |
+| `LEGACY_FALLBACK` | `true` | Zachová zpětnou kompatibilitu pro edge case chování. Vypínej až po ověření nového chování. |
+| `HYBRID_FAIL_THRESHOLD` | `1` | Počet po sobě jdoucích selhání cloudu před přechodem do OFFLINE. Doporučeno: `3`. |
+| `HYBRID_RETRY_INTERVAL` | `60.0` | Sekundy mezi pokusy o obnovení spojení v OFFLINE módu. |
+| `HYBRID_CONNECT_TIMEOUT` | `10.0` | TCP timeout pro připojení k cloudu (sekundy). |
+| `CLOUD_ACK_TIMEOUT` | `1800.0` | Max čekání na ACK od cloudu (sekundy). |
+
+**Rollback pořadí** (od nejvyšší k nejnižší prioritě):
+```
+LEGACY_FALLBACK=true → SIDECAR_ACTIVATION=false → THIN_PASS_THROUGH=false
+```
+
+## Sidecar activation policy
+
+Session twin sidecar (`SIDECAR_ACTIVATION=true`) doručuje nastavení přímo do BOXu. Aktivace a deaktivace se řídí přísnou politikou, aby se předešlo nestabilitě.
+
+### Aktivace sidecaru
+
+Sidecar se **aktivuje automaticky** při prvním příchodu rámce od BOXu, pokud `SIDECAR_ACTIVATION=true`. Nevyžaduje ruční zásah.
+
+### Deaktivační hystereze (anti-flap)
+
+Sidecar se deaktivuje, jen pokud jsou splněny všechny tyto podmínky **po dobu 300 sekund (5 minut) bez přerušení**:
+
+1. Žádný inflight request (fronta prázdná)
+2. Cloud bez výpadku (žádné `connect_failed`, `cloud_eof`, `ack_timeout`, `cloud_error`)
+3. Žádné routování přes twin
+
+Jakýkoli výpadek cloudu **resetuje odpočet** na nulu. To zabraňuje zbytečnému přepínání při krátkých výpadcích.
+
+```
+Idle detekován
+    │
+    ▼ (timer spustí se, pokud first_success_received=True)
+Odpočet 300 s
+    │                         │
+    │  výpadek cloudu         │  300 s bez výpadku
+    ▼                         ▼
+Timer reset               Sidecar deaktivován
+```
+
+### Prahové hodnoty (výpadek cloudu → OFFLINE)
+
+| Parametr | Výchozí | Doporučeno (prod) |
+|----------|---------|-------------------|
+| `HYBRID_FAIL_THRESHOLD` | 1 | **3** |
+| Hysterezní okno deaktivace | n/a | **300 s (5 min)** |
+
+Po 3 po sobě jdoucích selhání cloudu přechází proxy do OFFLINE módu a začíná generovat lokální ACK. Po obnovení cloudu přechází do REPLAY a vyprazdňuje frontu.
 
 ## Bateriové banky (SubD architektura)
 
