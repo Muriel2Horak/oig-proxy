@@ -387,6 +387,175 @@ async def test_route_box_frame_by_mode_non_break_path_returns_false():
 
 
 @pytest.mark.asyncio
+async def test_route_box_frame_by_mode_default_transport_path_when_legacy_fallback_off():
+    proxy = _mk_proxy()
+    proxy._legacy_fallback_enabled = False
+    proxy._handle_frame_local_offline = AsyncMock(return_value=(None, None))
+    proxy._cf.forward_frame = AsyncMock(return_value=("r", object()))
+
+    _, _, should_break = await proxy._route_box_frame_by_mode(
+        frame_bytes=b"x",
+        table_name="tbl",
+        device_id="DEV1",
+        conn_id=1,
+        box_writer=DummyWriter(),
+        cloud_reader=None,
+        cloud_writer=None,
+        cloud_connect_timeout_s=1.0,
+        current_mode=ProxyMode.OFFLINE,
+    )
+
+    assert should_break is False
+    proxy._cf.forward_frame.assert_awaited_once()
+    proxy._handle_frame_local_offline.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_transport_only_forward_ignores_twin_unavailable_and_continues():
+    proxy = _mk_proxy()
+    proxy._twin = None
+    proxy._cf.forward_frame = AsyncMock(return_value=("r", object()))
+
+    _, _, should_break = await proxy._transport_only_forward(
+        frame_bytes=b"x",
+        table_name="tbl",
+        device_id="DEV1",
+        conn_id=1,
+        box_writer=DummyWriter(),
+        cloud_reader=None,
+        cloud_writer=None,
+        cloud_connect_timeout_s=1.0,
+    )
+
+    assert should_break is False
+    proxy._cf.forward_frame.assert_awaited_once()
+
+
+def test_process_box_frame_common_telemetry_failure_is_fail_open(monkeypatch, caplog):
+    proxy = _mk_proxy()
+    proxy.stats["acks_cloud"] = 0
+    proxy.parser = SimpleNamespace(parse_xml_frame=lambda _f: {"_table": "tbl_actual"})
+    proxy._extract_device_and_table = MagicMock(return_value=("DEV1", "tbl_actual"))
+    proxy._maybe_autodetect_device_id = AsyncMock()
+    proxy._cs.handle_setting_event = AsyncMock()
+    proxy._maybe_handle_twin_event = AsyncMock()
+    proxy._mp.maybe_process_mode = AsyncMock()
+    proxy.mqtt_publisher.publish_data = AsyncMock(side_effect=RuntimeError("mqtt down"))
+    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    caplog.set_level("WARNING")
+
+    async def _run():
+        return await proxy._process_box_frame_common(
+            frame_bytes=b"<Frame><TblName>tbl_actual</TblName></Frame>",
+            frame="<Frame><TblName>tbl_actual</TblName></Frame>",
+            conn_id=41,
+        )
+
+    device_id, table_name = asyncio.run(_run())
+
+    assert (device_id, table_name) == ("DEV1", "tbl_actual")
+    assert "TELEMETRY: publish_data failed (transport fail-open" in caplog.text
+    proxy._mp.maybe_process_mode.assert_awaited_once()
+
+
+def test_process_box_frame_common_twin_failure_is_fail_open(monkeypatch, caplog):
+    proxy = _mk_proxy()
+    proxy.stats["acks_cloud"] = 0
+    proxy.parser = SimpleNamespace(parse_xml_frame=lambda _f: {"_table": "tbl_actual"})
+    proxy._extract_device_and_table = MagicMock(return_value=("DEV1", "tbl_actual"))
+    proxy._maybe_autodetect_device_id = AsyncMock()
+    proxy._cs.handle_setting_event = AsyncMock()
+    proxy._maybe_handle_twin_event = AsyncMock(side_effect=RuntimeError("twin down"))
+    proxy._mp.maybe_process_mode = AsyncMock()
+    proxy.mqtt_publisher.publish_data = AsyncMock()
+    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+    caplog.set_level("WARNING")
+
+    async def _run():
+        return await proxy._process_box_frame_common(
+            frame_bytes=b"<Frame><TblName>tbl_actual</TblName></Frame>",
+            frame="<Frame><TblName>tbl_actual</TblName></Frame>",
+            conn_id=42,
+        )
+
+    device_id, table_name = asyncio.run(_run())
+
+    assert (device_id, table_name) == ("DEV1", "tbl_actual")
+    assert "TWIN: Sidecar dependency failure ignored (transport fail-open" in caplog.text
+    proxy.mqtt_publisher.publish_data.assert_awaited_once()
+
+
+def test_telemetry_down_still_returns_cloud_ack_when_legacy_fallback_off(monkeypatch):
+    proxy = _mk_proxy()
+    proxy._legacy_fallback_enabled = False
+    proxy.stats["acks_cloud"] = 0
+    proxy.parser = SimpleNamespace(parse_xml_frame=lambda _f: {"_table": "tbl_actual"})
+    proxy._extract_device_and_table = MagicMock(return_value=("DEV1", "tbl_actual"))
+    proxy._maybe_autodetect_device_id = AsyncMock()
+    proxy._cs.handle_setting_event = AsyncMock()
+    proxy._maybe_handle_twin_event = AsyncMock()
+    proxy._mp.maybe_process_mode = AsyncMock()
+    proxy.mqtt_publisher.publish_data = AsyncMock(side_effect=RuntimeError("mqtt down"))
+    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+
+    async def _forward(**_kwargs):
+        proxy.stats["acks_cloud"] += 1
+        return None, object()
+
+    proxy._cf.forward_frame = AsyncMock(side_effect=_forward)
+
+    async def _run():
+        return await proxy._handle_box_frame_iteration(
+            data=b"<Frame><TblName>tbl_actual</TblName></Frame>",
+            conn_id=43,
+            box_writer=DummyWriter(),
+            cloud_reader=None,
+            cloud_writer=None,
+            cloud_connect_timeout_s=1.0,
+        )
+
+    _, _, should_break = asyncio.run(_run())
+
+    assert should_break is False
+    assert proxy.stats["acks_cloud"] == 1
+
+
+def test_twin_down_has_no_transport_impact_when_cloud_healthy(monkeypatch):
+    proxy = _mk_proxy()
+    proxy._legacy_fallback_enabled = False
+    proxy.stats["acks_cloud"] = 0
+    proxy.parser = SimpleNamespace(parse_xml_frame=lambda _f: {"_table": "tbl_actual"})
+    proxy._extract_device_and_table = MagicMock(return_value=("DEV1", "tbl_actual"))
+    proxy._maybe_autodetect_device_id = AsyncMock()
+    proxy._cs.handle_setting_event = AsyncMock()
+    proxy._maybe_handle_twin_event = AsyncMock(side_effect=RuntimeError("twin down"))
+    proxy._mp.maybe_process_mode = AsyncMock()
+    proxy.mqtt_publisher.publish_data = AsyncMock()
+    monkeypatch.setattr(proxy_module, "capture_payload", lambda *_args, **_kwargs: None)
+
+    async def _forward(**_kwargs):
+        proxy.stats["acks_cloud"] += 1
+        return None, object()
+
+    proxy._cf.forward_frame = AsyncMock(side_effect=_forward)
+
+    async def _run():
+        return await proxy._handle_box_frame_iteration(
+            data=b"<Frame><TblName>tbl_actual</TblName></Frame>",
+            conn_id=44,
+            box_writer=DummyWriter(),
+            cloud_reader=None,
+            cloud_writer=None,
+            cloud_connect_timeout_s=1.0,
+        )
+
+    _, _, should_break = asyncio.run(_run())
+
+    assert should_break is False
+    assert proxy.stats["acks_cloud"] == 1
+
+
+@pytest.mark.asyncio
 async def test_activate_session_twin_mode_pending_and_callable_guards():
     proxy = _mk_proxy()
     proxy._pending_twin_activation = True
@@ -453,6 +622,90 @@ async def test_handle_box_frame_iteration_short_circuit_paths():
         cloud_connect_timeout_s=1.0,
     )
     assert should_break is False
+
+
+@pytest.mark.asyncio
+async def test_handle_box_frame_iteration_cloud_healthy_skips_twin_state_queries():
+    proxy = _mk_proxy()
+    proxy._process_box_frame_with_guard = AsyncMock(
+        return_value=("DEV1", "tbl_actual", False)
+    )
+    proxy._route_box_frame_by_mode = AsyncMock(return_value=(None, object(), False))
+    proxy._twin = SimpleNamespace(
+        get_inflight=AsyncMock(return_value=None),
+        get_queue_length=AsyncMock(return_value=0),
+    )
+
+    _, _, should_break = await proxy._handle_box_frame_iteration(
+        data=b"<Frame><TblName>tbl_actual</TblName></Frame>",
+        conn_id=11,
+        box_writer=DummyWriter(),
+        cloud_reader=None,
+        cloud_writer=None,
+        cloud_connect_timeout_s=1.0,
+    )
+
+    assert should_break is False
+    proxy._route_box_frame_by_mode.assert_awaited_once()
+    proxy._twin.get_inflight.assert_not_awaited()
+    proxy._twin.get_queue_length.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_box_frame_iteration_setting_ack_queries_twin_inflight_once():
+    proxy = _mk_proxy()
+    proxy._process_box_frame_with_guard = AsyncMock(
+        return_value=("DEV1", "tbl_actual", False)
+    )
+    proxy._route_box_frame_by_mode = AsyncMock(return_value=(None, object(), False))
+    proxy._twin = SimpleNamespace(
+        get_inflight=AsyncMock(
+            return_value=SimpleNamespace(tx_id="tx-1", delivered_conn_id=11)
+        ),
+        on_ack=AsyncMock(return_value=SimpleNamespace(tx_id="tx-1")),
+    )
+
+    _, _, should_break = await proxy._handle_box_frame_iteration(
+        data=b"<Frame><Reason>Setting</Reason><Result>ACK</Result></Frame>",
+        conn_id=11,
+        box_writer=DummyWriter(),
+        cloud_reader=None,
+        cloud_writer=None,
+        cloud_connect_timeout_s=1.0,
+    )
+
+    assert should_break is False
+    proxy._route_box_frame_by_mode.assert_not_called()
+    proxy._twin.get_inflight.assert_awaited_once()
+    proxy._twin.on_ack.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_box_frame_iteration_legacy_fallback_off_bypasses_twin_logic():
+    proxy = _mk_proxy()
+    proxy._legacy_fallback_enabled = False
+    proxy._process_box_frame_with_guard = AsyncMock(
+        return_value=("DEV1", "tbl_actual", False)
+    )
+    proxy._route_box_frame_by_mode = AsyncMock(return_value=(None, object(), False))
+    proxy._maybe_handle_twin_ack = AsyncMock(return_value=False)
+    proxy._maybe_handle_local_control_poll = AsyncMock(return_value=False)
+    proxy._maybe_deactivate_session_twin_mode_if_idle = AsyncMock()
+
+    _, _, should_break = await proxy._handle_box_frame_iteration(
+        data=b"<Frame><TblName>tbl_actual</TblName></Frame>",
+        conn_id=12,
+        box_writer=DummyWriter(),
+        cloud_reader=None,
+        cloud_writer=None,
+        cloud_connect_timeout_s=1.0,
+    )
+
+    assert should_break is False
+    proxy._route_box_frame_by_mode.assert_awaited_once()
+    proxy._maybe_handle_twin_ack.assert_not_called()
+    proxy._maybe_handle_local_control_poll.assert_not_called()
+    proxy._maybe_deactivate_session_twin_mode_if_idle.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,25 @@ import proxy as proxy_module
 from models import ProxyMode
 
 
+class SidecarPolicyStub:
+    def __init__(self, threshold: int = 3):
+        self.threshold = threshold
+        self.fail_count = 0
+        self.activations = 0
+
+    def record_failure(self, *, reason=None):
+        self.fail_count += 1
+
+    def record_success(self):
+        self.fail_count = 0
+
+    async def check_and_activate(self):
+        if self.fail_count >= self.threshold and self.activations == 0:
+            self.activations += 1
+            return True
+        return False
+
+
 class DummyWriter:
     def __init__(self):
         self.buffer = []
@@ -66,6 +85,32 @@ def _make_proxy():
     proxy._twin = None
     proxy.stats = {"acks_local": 0, "frames_forwarded": 0, "frames_received": 0}
     return proxy
+
+
+def _configure_proxy_for_process_frame(proxy, *, twin_down: bool = False, mqtt_down: bool = False):
+    proxy._legacy_fallback_enabled = False
+    proxy._touch_last_data = MagicMock()
+    proxy.parser = SimpleNamespace(parse_xml_frame=lambda _frame: {"_table": "tbl_actual"})
+    proxy._extract_device_and_table = MagicMock(return_value=("DEV1", "tbl_actual"))
+    proxy._maybe_autodetect_device_id = AsyncMock()
+    proxy._update_stale_frame_detector = MagicMock()
+    proxy._tc.record_frame_direction = MagicMock()
+    proxy._tc.record_signal_class = MagicMock()
+    proxy._tc.record_end_frame = MagicMock()
+    proxy._tc.record_request = MagicMock()
+    proxy._mp = MagicMock()
+    proxy._mp.maybe_persist_table_state = MagicMock()
+    proxy._mp.maybe_process_mode = AsyncMock()
+    proxy._cs = MagicMock()
+    proxy._cs.handle_setting_event = AsyncMock()
+    proxy._maybe_handle_twin_event = AsyncMock(
+        side_effect=RuntimeError("twin down") if twin_down else None
+    )
+    proxy.mqtt_publisher = MagicMock()
+    proxy.mqtt_publisher.publish_data = AsyncMock(
+        side_effect=RuntimeError("mqtt down") if mqtt_down else None
+    )
+    proxy._cf.forward_frame = AsyncMock(return_value=(None, object()))
 
 
 @pytest.mark.asyncio
@@ -400,3 +445,68 @@ def test_stale_frame_detector_resets_on_payload_change(monkeypatch):
     proxy._update_stale_frame_detector(frame_bytes=b"B", table_name="tbl_dc_in")
     assert proxy._stale_repeat_count == 1
     assert proxy._stale_payload_hash != first_hash
+
+
+@pytest.mark.asyncio
+async def test_cloud_flap_threshold_policy_is_deterministic_without_extra_oscillation():
+    proxy = _make_proxy()
+    proxy._sidecar_adapter = SidecarPolicyStub(threshold=3)
+
+    sequence = [
+        "connect_failed",
+        "ack_timeout",
+        "success",
+        "connect_failed",
+        "ack_timeout",
+        "connect_failed",
+        "success",
+        "connect_failed",
+        "ack_timeout",
+        "connect_failed",
+    ]
+
+    for step in sequence:
+        if step == "success":
+            proxy._sidecar_adapter.record_success()
+            continue
+        proxy._sidecar_adapter.record_failure(reason=step)
+        await proxy._sidecar_adapter.check_and_activate()
+
+    assert proxy._sidecar_adapter.activations == 1
+    assert proxy._sidecar_adapter.fail_count == 3
+
+
+@pytest.mark.asyncio
+async def test_twin_down_cloud_healthy_transport_keeps_forwarding(monkeypatch):
+    proxy = _make_proxy()
+    _configure_proxy_for_process_frame(proxy, twin_down=True, mqtt_down=False)
+    proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
+    proxy._read_box_bytes = AsyncMock(side_effect=[b"frame-1", b"frame-2", None])
+
+    monkeypatch.setattr(proxy_module, "capture_payload", lambda *args, **kwargs: None)
+
+    await proxy._handle_box_connection(
+        box_reader=MagicMock(),
+        box_writer=DummyWriter(),
+        conn_id=51,
+    )
+
+    assert proxy._cf.forward_frame.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_mqtt_down_transport_is_fail_open_and_cloud_path_continues(monkeypatch):
+    proxy = _make_proxy()
+    _configure_proxy_for_process_frame(proxy, twin_down=False, mqtt_down=True)
+    proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
+    proxy._read_box_bytes = AsyncMock(side_effect=[b"frame-1", b"frame-2", None])
+
+    monkeypatch.setattr(proxy_module, "capture_payload", lambda *args, **kwargs: None)
+
+    await proxy._handle_box_connection(
+        box_reader=MagicMock(),
+        box_writer=DummyWriter(),
+        conn_id=52,
+    )
+
+    assert proxy._cf.forward_frame.call_count == 2

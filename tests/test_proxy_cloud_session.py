@@ -73,6 +73,7 @@ def _make_proxy_and_cf():
     proxy._respond_local_offline = AsyncMock()
     proxy._record_proxy_to_box_frame = MagicMock()
     proxy.stats = {"frames_forwarded": 0, "acks_local": 0, "acks_cloud": 0}
+    proxy._sidecar_adapter = None
 
     cf = CloudForwarder.__new__(CloudForwarder)
     cf._proxy = proxy
@@ -86,6 +87,25 @@ def _make_proxy_and_cf():
     cf.rx_buf = bytearray()
     proxy._cf = cf
     return proxy, cf
+
+
+class SidecarAdapterStub:
+    def __init__(self, threshold: int = 3):
+        self.threshold = threshold
+        self.fail_count = 0
+        self.activations = 0
+
+    def record_failure(self, *, reason=None):
+        self.fail_count += 1
+
+    async def check_and_activate(self):
+        if self.fail_count >= self.threshold and self.activations == 0:
+            self.activations += 1
+            return True
+        return False
+
+    def record_success(self):
+        self.fail_count = 0
 
 
 @pytest.mark.asyncio
@@ -339,3 +359,30 @@ async def test_send_frame_to_cloud_eof(monkeypatch):
             table_name="tbl",
             conn_id=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_sidecar_activation_triggers_on_third_consecutive_fail_event():
+    proxy, cf = _make_proxy_and_cf()
+    proxy._sidecar_adapter = SidecarAdapterStub(threshold=3)
+
+    await cf.note_failure(reason="connect_failed", local_ack=False)
+    assert proxy._sidecar_adapter.activations == 0
+    await cf.note_failure(reason="ack_timeout", local_ack=False)
+    assert proxy._sidecar_adapter.activations == 0
+    await cf.note_failure(reason="connect_failed", local_ack=False)
+    assert proxy._sidecar_adapter.activations == 1
+
+
+@pytest.mark.asyncio
+async def test_sidecar_failure_counter_resets_on_success():
+    proxy, cf = _make_proxy_and_cf()
+    proxy._sidecar_adapter = SidecarAdapterStub(threshold=3)
+
+    await cf.note_failure(reason="connect_failed", local_ack=False)
+    await cf.note_failure(reason="ack_timeout", local_ack=False)
+    assert proxy._sidecar_adapter.fail_count == 2
+    cf.note_success()
+    assert proxy._sidecar_adapter.fail_count == 0
+    await cf.note_failure(reason="connect_failed", local_ack=False)
+    assert proxy._sidecar_adapter.activations == 0

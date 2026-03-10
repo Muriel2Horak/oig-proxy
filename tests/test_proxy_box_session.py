@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import cloud_forwarder as cf_module
 import proxy as proxy_module
 from cloud_forwarder import CloudForwarder
 from models import ProxyMode
@@ -171,3 +172,75 @@ async def test_fallback_offline_from_cloud_issue():
 
     proxy._tc.record_cloud_session_end.assert_called_once()
     proxy._respond_local_offline.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_connection_failed_skips_legacy_fallback_when_flag_off(monkeypatch):
+    proxy = _make_proxy()
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
+    proxy._hm.record_failure = MagicMock()
+
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    cf.fallback_offline = AsyncMock(return_value=(None, None))
+
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", False)
+
+    await cf.handle_connection_failed(
+        conn_id=10,
+        table_name="tbl_actual",
+        frame_bytes=b"x",
+        device_id="DEV1",
+        box_writer=DummyWriter(),
+        cloud_writer=DummyWriter(),
+        cloud_attempted=True,
+    )
+
+    cf.fallback_offline.assert_not_awaited()
+    proxy._hm.record_failure.assert_not_called()
+    proxy._tc.record_timeout.assert_called_once_with(conn_id=10)
+
+
+@pytest.mark.asyncio
+async def test_handle_connection_failed_uses_legacy_fallback_when_flag_on(monkeypatch):
+    proxy = _make_proxy()
+    proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
+    proxy._hm.record_failure = MagicMock()
+
+    cf = CloudForwarder.__new__(CloudForwarder)
+    cf._proxy = proxy
+    cf.connects = 0
+    cf.disconnects = 0
+    cf.timeouts = 0
+    cf.errors = 0
+    cf.session_connected = False
+    cf.connected_since_epoch = None
+    cf.peer = None
+    cf.rx_buf = bytearray()
+    cf.fallback_offline = AsyncMock(return_value=(None, None))
+
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
+
+    await cf.handle_connection_failed(
+        conn_id=11,
+        table_name="tbl_actual",
+        frame_bytes=b"x",
+        device_id="DEV1",
+        box_writer=DummyWriter(),
+        cloud_writer=DummyWriter(),
+        cloud_attempted=True,
+    )
+
+    cf.fallback_offline.assert_awaited_once()
+    proxy._hm.record_failure.assert_called_once_with(
+        reason="connect_failed", local_ack=True
+    )
+    proxy._tc.record_timeout.assert_not_called()
