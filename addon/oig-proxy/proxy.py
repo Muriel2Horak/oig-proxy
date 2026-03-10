@@ -773,6 +773,10 @@ class OIGProxy:
             table_name = self._infer_table_name(frame)
         if device_id is None:
             device_id = self._infer_device_id(frame)
+        # DEBUG: Log ALL received tables with sample data
+        sample_keys = list(parsed.keys())[:3] if parsed else []
+        sample_values = {k: str(parsed[k])[:30] for k in sample_keys} if parsed else {}
+        logger.info("RECV: table=%s device=%s conn=%s keys=%s sample=%s", table_name, device_id, conn_id, sample_keys, sample_values)
         if device_id:
             await self._maybe_autodetect_device_id(device_id)
 
