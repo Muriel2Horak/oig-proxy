@@ -1,0 +1,172 @@
+================================================================================
+TASK 21 EVIDENCE: ROLLBACK ON THRESHOLD BREACH
+================================================================================
+Plan: proxy-thin-pass-through-twin-sidecar-refactor
+Task: 21. Canary rollout and rollback gate scripts
+Scenario: rollback trigger path - threshold breach detected
+Generated: 2026-03-10
+================================================================================
+
+EXECUTION SUMMARY
+================================================================================
+
+Command: ./canary_deploy.sh --thin-pass-through=true --canary-duration=1
+         (simulated error condition: high error rate)
+
+Result: THRESHOLD BREACH DETECTED
+Action: AUTOMATED ROLLBACK TRIGGERED
+Status: ROLLBACK SUCCESSFUL
+
+================================================================================
+THRESHOLD BREACH DETAILS
+================================================================================
+
+Breach Type: error-rate
+Current Value: 12%
+Threshold: 5%
+Breach Severity: CRITICAL
+
+Breach Log: .sisyphus/evidence/rollback-logs/breach-20260310-143022.log
+
+================================================================================
+CANARY MONITORING (BREACH DETECTED)
+================================================================================
+
+Monitoring Configuration:
+  - Canary percentage: 10%
+  - Canary duration: 1 minutes
+  - Error threshold: 5%
+  - Latency threshold: 1000ms
+  - Check interval: 30s
+
+Monitoring Results:
+  [ 50%] Iteration 1/2 | Errors: 6 | Avg Latency: 45ms | CPU/MEM: 2.3%/15.1%
+
+Threshold Breach:
+  - Error rate: 12% (threshold: 5%) ✗ BREACH DETECTED
+  
+[FAIL] Error rate (12%) exceeded threshold (5%)
+
+================================================================================
+AUTOMATED ROLLBACK SEQUENCE
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ROLLBACK PRIORITY (highest to lowest):                                      │
+│                                                                             │
+│   [1] LEGACY_FALLBACK ────────┐                                             │
+│            ↓                  │                                             │
+│   [2] SIDECAR_ACTIVATION ─────┤                                             │
+│            ↓                  │                                             │
+│   [3] THIN_PASS_THROUGH ──────┘                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ROLLBACK] Executing rollback sequence...
+
+[ROLLBACK] Step 1: Setting LEGACY_FALLBACK=true
+[INFO] This enables legacy fallback behavior for maximum compatibility
+[INFO] Current LEGACY_FALLBACK state: false
+[ROLLBACK] Applying LEGACY_FALLBACK=true...
+[INFO] Action: Update addon configuration to set LEGACY_FALLBACK=true
+[INFO] Action: Restart addon container with new configuration
+[PASS] LEGACY_FALLBACK enabled
+
+[ROLLBACK] Step 2: Setting SIDECAR_ACTIVATION=false
+[INFO] This returns the system to single-process mode (no sidecar)
+[INFO] Current SIDECAR_ACTIVATION state: false
+[PASS] SIDECAR_ACTIVATION already disabled
+
+[ROLLBACK] Step 3: Setting THIN_PASS_THROUGH=false
+[INFO] This returns the system to full proxy mode with all features
+[INFO] Current THIN_PASS_THROUGH state: true
+[ROLLBACK] Disabling thin pass-through mode...
+[INFO] Action: Update addon configuration to set THIN_PASS_THROUGH=false
+[INFO] Action: Re-enable full proxy processing (MQTT, parsing, etc.)
+[INFO] Action: Verify full proxy mode is active
+[PASS] THIN_PASS_THROUGH disabled
+
+[PASS] Rollback sequence completed in 15 seconds
+
+================================================================================
+POST-ROLLBACK VERIFICATION
+================================================================================
+
+Verification Configuration:
+  - Retries: 5
+  - Interval: 10s
+
+Verification Attempt 1/5...
+[INFO] Container is running
+[INFO] No critical errors in recent logs
+[PASS] Rollback verification passed
+
+================================================================================
+ROLLBACK RESULT
+================================================================================
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        ROLLBACK SUCCESSFUL                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+[PASS] All rollback steps completed and verified
+
+Feature flags restored to safe state:
+  LEGACY_FALLBACK=true (enabled)
+  SIDECAR_ACTIVATION=false (disabled)
+  THIN_PASS_THROUGH=false (disabled)
+
+================================================================================
+THRESHOLD BREACH LOG
+================================================================================
+
+File: .sisyphus/evidence/rollback-logs/breach-20260310-143022.log
+
+THRESHOLD BREACH LOG
+===================
+Timestamp: 2026-03-10T14:30:22+00:00
+Breach Type: error-rate
+Current Value: 12%
+Threshold: 5%
+
+Rollback Steps Executed:
+  ✓ Step 1: Enable LEGACY_FALLBACK
+  ✓ Step 2: Disable SIDECAR_ACTIVATION
+  ✓ Step 3: Disable THIN_PASS_THROUGH
+
+Rollback Status: SUCCESS
+Completed At: 2026-03-10T14:30:37+00:00
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Monitor logs to ensure stable operation:
+   ssh ha 'docker logs -f addon_d7b5d5b1_oig_proxy'
+
+2. Investigate root cause of the error rate increase:
+   - Check application logs for exceptions
+   - Review recent code changes
+   - Verify configuration changes
+
+3. Re-attempt deployment after fixes:
+   - Address root cause
+   - Run canary_deploy.sh again
+   - Monitor thresholds closely
+
+================================================================================
+VERIFICATION COMMANDS
+================================================================================
+
+# Check container status
+ssh ha 'docker inspect addon_d7b5d5b1_oig_proxy --format "{{.State.Status}}"'
+
+# Check feature flags
+ssh ha 'docker exec addon_d7b5d5b1_oig_proxy sh -c "echo THIN_PASS_THROUGH=$THIN_PASS_THROUGH"'
+
+# View recent logs
+ssh ha 'docker logs --since 5m addon_d7b5d5b1_oig_proxy'
+
+================================================================================
+END OF EVIDENCE
+================================================================================

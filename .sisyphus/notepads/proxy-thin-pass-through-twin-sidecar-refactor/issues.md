@@ -1,0 +1,7 @@
+- 2026-03-10: Running pytest with system python lacked async plugin in this environment; switched to `.venv/bin/python -m pytest` to execute asyncio-marked tests successfully.
+- 2026-03-10: Direct `python3 -m pytest` in this container misses `pytest-asyncio`; task evidence and regressions were validated with `.venv/bin/python -m pytest` after installing `requirements-dev.txt` in `.venv`.
+- 2026-03-10: Existing `_handle_box_frame_iteration` tests did not assert twin-query call counts in cloud-healthy path; added explicit assertions to prevent regressions in transport-only decoupling.
+- 2026-03-10: System python in this environment cannot install packages globally (PEP 668); test execution for this task used `.venv/bin/python` with `PYTHONPATH=addon/oig-proxy`.
+- 2026-03-10: Repository contains async tests requiring pytest-asyncio plugin; for this task evidence uses synchronous wrapper tests (`asyncio.run`) to keep validation runnable with `python3 -m pytest` in current container.
+- 2026-03-10: `tests/test_proxy_uncovered_paths.py` already contains many async tests without markers, so this task validates focused scenarios via new sync-wrapper tests and targeted `-k` runs to avoid unrelated environment/plugin failures.
+- 2026-03-10: Task 17 targeted re-runs became blocked by unrelated `IndentationError` in `addon/oig-proxy/digital_twin.py` line 909 during import; this prevented full post-change pytest execution in current workspace snapshot.

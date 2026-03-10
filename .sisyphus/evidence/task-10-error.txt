@@ -1,0 +1,14 @@
+Task 10 evidence: twin logic only on explicit activation/ack path
+
+Command:
+PYTHONPATH=addon/oig-proxy .venv/bin/python -m pytest -q tests/test_proxy_uncovered_paths.py -k setting_ack_queries_twin_inflight_once
+
+Result:
+1 passed, 36 deselected
+
+Assertion coverage:
+- Twin decision logic is invoked only for explicit setting ACK activation path.
+- On `<Reason>Setting</Reason><Result>ACK</Result>` frame:
+  - `twin.get_inflight()` call count = 1
+  - `twin.on_ack()` call count = 1
+- Normal transport routing is not invoked for this explicit activation/ack branch.

@@ -1,0 +1,10 @@
+- 2026-03-10: Added `_transport_only_forward()` as a pure transport delegate that only calls `CloudForwarder.forward_frame` and handles cloud failure disconnect semantics.
+- 2026-03-10: Gated routing with `THIN_PASS_THROUGH` + `LEGACY_FALLBACK` so default behavior remains legacy-compatible while enabling explicit thin transport mode.
+- 2026-03-10: Implemented `LEGACY_FALLBACK` check in `CloudForwarder` hybrid failure handlers (`connect_failed`, `cloud_eof`, `ack_timeout`, `cloud_error`) with default `True` to preserve backward compatibility and explicit info logging when fallback is skipped.
+- 2026-03-10: Kept twin activation hooks at connection start and pending-activation transitions, but stopped unconditional per-frame activation checks to decouple cloud-healthy steady-state from twin state polling.
+- 2026-03-10: Preserved backward-compatible activation/deactivation behavior by running idle deactivation only after explicit twin-related handling (ACK/poll), not on every normal frame.
+- 2026-03-10: Wired `CloudForwarder` cloud fail/success events into `ProxySidecarAdapter` so sidecar activation is event-driven from cloud failure policy, while preserving `HybridModeManager` behavior.
+- 2026-03-10: Added `ISidecarOrchestrator.get_fail_count()` and switched adapter activation checks to orchestrator-owned counter instead of `HybridModeManager.fail_count`.
+- 2026-03-10: Task 13 deactivation now delegates to `ProxySidecarAdapter.check_and_deactivate()` so sidecar turns off only after 300s stable cloud since first success and resets on fail events.
+- 2026-03-10: Task 16 implemented fail-open at proxy frame processing boundary (not in CloudForwarder) so telemetry/twin side effects cannot raise into transport routing but still emit explicit warning logs.
+- 2026-03-10: Task 17 removed `_thin_pass_through` routing gates from `proxy.py` critical path; transport-first is now default and legacy local fallback is reachable only behind `LEGACY_FALLBACK` guard.

@@ -1,0 +1,13 @@
+Task 16 Evidence - twin down, no transport impact
+Date: 2026-03-10
+
+Command:
+pytest tests/test_proxy_uncovered_paths.py -q -k "twin_down_has_no_transport_impact_when_cloud_healthy"
+
+Output:
+.                                                                        [100%]
+1 passed, 40 deselected in 0.26s
+
+Assertion covered:
+- twin dependency exception is logged and ignored
+- transport path still forwards to cloud and returns ACK

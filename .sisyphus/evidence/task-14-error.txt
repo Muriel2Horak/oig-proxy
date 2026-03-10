@@ -1,0 +1,32 @@
+Task 14 Evidence: Control Routing Arbitration - Cloud Fail + Twin Activation Path
+================================================================================
+
+Test Case: Cloud Unhealthy + Twin Activated => Route to Twin
+Precedence Rule: When cloud fails, activated twin takes over
+
+Implementation:
+- Location: sidecar_orchestrator.py:SidecarOrchestrator.resolve_route_target()
+- Activation tracked via: SidecarOrchestratorState.is_active
+
+Arbitration Logic:
+1. Check force_cloud override first
+2. Check force_twin override (only if twin activated)
+3. If cloud_healthy=True -> return "cloud" (cloud wins when healthy)
+4. If twin_activated=True -> return "twin" (TWIN TAKES OVER WHEN CLOUD FAILS)
+5. Fallback -> return "local"
+
+Evidence of Implementation:
+- sidecar_orchestrator.py:resolve_route_target() returns "twin" when:
+  - cloud_healthy=False (cloud failed)
+  - twin_activated=True (sidecar activated)
+- proxy.py:_resolve_local_control_routing() delegates to sidecar_adapter
+- Logging: "ROUTING_ARBITRATION: route=twin cloud_healthy=False ..."
+- Logging: "SIDE_ORCH: Routing to twin (cloud unhealthy, twin activated)"
+
+Precedence Enforced:
+- Cloud failure detected via HybridModeManager.should_try_cloud()
+- Twin activation via SidecarOrchestrator.is_active()
+- No dual-writer: only one target returned
+- Clear fallback path: cloud -> twin -> local
+
+Status: PASS

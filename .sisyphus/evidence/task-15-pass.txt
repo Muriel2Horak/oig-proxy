@@ -1,0 +1,115 @@
+Task 15: Correlation ID Propagation - PASS Evidence
+=====================================================
+
+Test: Correlation ID visible in all 3 layers for same transaction
+------------------------------------------------------------------
+
+1. PROXY LAYER (Frame Entry):
+   - File: addon/oig-proxy/proxy.py
+   - Location: _handle_box_frame_iteration() method
+   - Implementation: correlation_id_context_frame() context manager
+   - Log Format: "PROXY_TO_BOX: ... cid=<correlation_id> ..."
+   - Evidence: Correlation ID generated at frame entry and propagated
+
+2. TELEMETRY LAYER:
+   - File: addon/oig-proxy/telemetry_collector.py
+   - Location: record_response() method
+   - Implementation: correlation_id parameter added
+   - Log Format: "TELEMETRY: Response recorded with cid=<correlation_id>"
+   - Evidence: Correlation ID logged at key decision points
+
+   - File: addon/oig-proxy/telemetry_tap.py
+   - Location: publish() method
+   - Implementation: get_correlation_id() called for logging
+   - Log Format: "TelemetryTap: scheduled <name> (cid=<correlation_id>)"
+   - Evidence: Correlation ID visible in telemetry tap operations
+
+3. TWIN LAYER:
+   - File: addon/oig-proxy/digital_twin.py
+   - Location: queue_setting(), _log_cloud_aligned_ack_received()
+   - Implementation: correlation_id propagated through DTOs
+   - Log Format: "TWIN_MARKER: ... cid=<correlation_id>"
+   - Evidence: Correlation ID visible in twin operations
+
+   - File: addon/oig-proxy/sidecar_orchestrator.py
+   - Location: record_activation(), record_deactivation()
+   - Implementation: get_correlation_id() for logging
+   - Log Format: "SIDE_ORCH: Twin mode activated (cid=<correlation_id>)"
+   - Evidence: Correlation ID logged at activation/deactivation
+
+Test: ID survives retry/failover
+---------------------------------
+- Context variable uses contextvars.ContextVar (async-safe)
+- Correlation ID persists across async context switches
+- Verified by test_correlation_id_survives_context_switch
+- Verified by test_correlation_id_survives_retry
+- Verified by test_correlation_id_in_async_context
+
+Test: Auto-generated ID on missing
+-----------------------------------
+- File: addon/oig-proxy/correlation_id.py
+- Function: get_correlation_id()
+- Behavior: Auto-generates correlation ID if not set
+- Format: oig_<timestamp>_<random_hex>
+- Verified by test_get_correlation_id_auto_generates
+- Verified by test_correlation_id_auto_generation_on_missing
+
+Files Modified:
+--------------
+1. addon/oig-proxy/correlation_id.py (NEW)
+   - Correlation ID generation and propagation utilities
+   - Context manager for frame-level correlation
+   - Helper functions for logging and dictionary propagation
+
+2. addon/oig-proxy/proxy.py
+   - Added correlation_id imports
+   - Added _handle_box_frame_with_cid() method
+   - Modified _record_proxy_to_box_frame() to include CID
+
+3. addon/oig-proxy/telemetry_collector.py
+   - Added correlation_id parameter to record_response()
+   - Added CID logging at key decision points
+
+4. addon/oig-proxy/telemetry_tap.py
+   - Added get_correlation_id() import
+   - Added CID logging in publish() method
+
+5. addon/oig-proxy/sidecar_orchestrator.py
+   - Added get_correlation_id() import
+   - Added CID logging in record_activation()
+   - Added CID logging in record_deactivation()
+
+6. addon/oig-proxy/digital_twin.py
+   - Added get_correlation_id() import
+   - Added CID propagation in queue_setting()
+   - Added CID logging in _log_cloud_aligned_ack_received()
+
+7. addon/oig-proxy/twin_state.py
+   - Added correlation_id field to QueueSettingDTO
+   - Added correlation_id field to PollResponseDTO
+   - Added correlation_id field to OnAckDTO
+   - Added correlation_id field to TransactionResultDTO
+
+8. addon/oig-proxy/cloud_forwarder.py
+   - Added get_correlation_id() import
+   - Added CID propagation in forward_ack_to_box()
+
+9. addon/oig-proxy/utils.py
+   - Added correlation_id parameter to capture_payload()
+
+Test Results:
+-------------
+- test_correlation_id.py: 19/19 tests PASSED
+- test_digital_twin.py: All tests PASSED (137 warnings about deprecated utcnow)
+- test_sidecar_deactivation_hysteresis.py: All tests PASSED
+- test_telemetry_collector.py: All tests PASSED
+
+Sample Correlation ID Flow:
+----------------------------
+1. Frame enters proxy: cid=oig_1704067200_a3f7b2d9
+2. Proxy logs: "PROXY_TO_BOX: ... cid=oig_1704067200_a3f7b2d9 ..."
+3. Telemetry logs: "TELEMETRY: Response recorded with cid=oig_1704067200_a3f7b2d9"
+4. Twin logs: "TWIN_MARKER: ... cid=oig_1704067200_a3f7b2d9"
+5. Sidecar logs: "SIDE_ORCH: Twin mode activated (cid=oig_1704067200_a3f7b2d9)"
+
+Conclusion: Correlation ID successfully propagated through all 3 layers

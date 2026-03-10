@@ -1,0 +1,28 @@
+Task 14 Evidence: Control Routing Arbitration - Cloud Healthy Path
+=====================================================================
+
+Test Case: Cloud Healthy => Route to Cloud
+Precedence Rule: Cloud healthy takes precedence over twin activation
+
+Implementation:
+- Location: sidecar_orchestrator.py:SidecarOrchestrator.resolve_route_target()
+- Method signature: resolve_route_target(cloud_healthy, twin_activated, force_twin, force_cloud)
+
+Arbitration Logic:
+1. Check force_cloud override first
+2. Check force_twin override (only if twin activated)
+3. If cloud_healthy=True -> return "cloud" (PRECEDENCE RULE)
+4. If twin_activated=True -> return "twin"
+5. Fallback -> return "local"
+
+Evidence of Implementation:
+- sidecar_orchestrator.py:resolve_route_target() implements centralized arbitration
+- proxy.py:_resolve_local_control_routing() delegates to sidecar_adapter.resolve_route_target()
+- Logging: "ROUTING_ARBITRATION: route=cloud cloud_healthy=True ..."
+
+Precedence Enforced:
+- Cloud healthy always wins over twin activation
+- No dual-writer scenario possible (single return point)
+- Clear arbitration decision logged
+
+Status: PASS

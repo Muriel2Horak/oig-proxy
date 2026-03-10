@@ -1,0 +1,52 @@
+# Task 6 RED Tests Evidence
+
+## Test Execution Summary
+All 31 new tests FAIL as expected (RED state) before implementation.
+
+## Test Results
+
+### test_transport_only.py (10 tests - all FAILED)
+- test_transport_factory_creates_tcp_transport: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_transport_factory_creates_udp_transport: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_tcp_transport_connect: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_tcp_transport_send: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_tcp_transport_receive: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_tcp_transport_close: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_transport_connection_timeout: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_transport_reconnect_on_failure: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_transport_tracks_bytes_sent: FAILED (ModuleNotFoundError: No module named 'transport')
+- test_transport_tracks_bytes_received: FAILED (ModuleNotFoundError: No module named 'transport')
+
+### test_telemetry_tap.py (10 tests - all FAILED)
+- test_telemetry_tap_factory_creates_tap: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_records_metric: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_records_event: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_records_trace: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_filters_by_metric_name: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_filters_by_labels: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_exports_to_prometheus: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_exports_to_json: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_hooks_into_proxy: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+- test_telemetry_tap_auto_records_proxy_events: FAILED (ImportError: cannot import name 'TelemetryTapFactory')
+
+### test_twin_sidecar.py (11 tests - all FAILED)
+- test_twin_sidecar_factory_creates_sidecar: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_starts_twin_process: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_stops_twin_process: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_sends_message: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_receives_message: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_message_queue: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_activates_on_startup: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_guards_activation: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_blocks_without_prerequisites: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_health_check: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+- test_twin_sidecar_restarts_on_failure: FAILED (ModuleNotFoundError: No module named 'twin_sidecar')
+
+## Verification Command
+pytest tests/test_transport_only.py tests/test_telemetry_tap.py tests/test_twin_sidecar.py -v -m "transport or telemetry or twin_activation"
+
+## Expected Behavior
+These tests will pass (GREEN) once the following implementations are complete:
+- Wave 2: transport module extraction
+- Wave 2: telemetry_tap module extraction
+- Wave 3: twin_sidecar module extraction

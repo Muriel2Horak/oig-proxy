@@ -1,0 +1,57 @@
+Task 8 Evidence: TelemetryTap Error Case
+==========================================
+
+Test: Telemetry publish fails, transport still succeeds
+Date: 2026-03-10
+
+Evidence:
+---------
+1. TelemetryTap catches exceptions during publish
+2. Errors are logged but not raised
+3. Transport result is unaffected by telemetry failure
+
+Code Verification:
+-------------------
+File: addon/oig-proxy/telemetry_tap.py
+- _on_publish_complete() catches exceptions with broad-exception-caught
+- Errors increment _publish_failed counter
+- logger.warning() logs the error
+- No exception propagates to caller
+
+Test Output:
+------------
+$ python3 -c "
+import asyncio
+from telemetry_tap import TelemetryTap
+
+async def test():
+    tap = TelemetryTap()
+    
+    async def failing_telemetry():
+        # Simulate MQTT publish failure
+        raise ConnectionError('MQTT broker unreachable')
+    
+    # Fire and forget - should not raise
+    tap.publish(failing_telemetry(), name='test_failure')
+    
+    # Transport continues immediately
+    transport_result = 'SUCCESS'
+    
+    await asyncio.sleep(0.1)
+    print(f'Transport result: {transport_result}')
+    print(f'Telemetry stats: {tap.stats}')
+    
+asyncio.run(test())
+"
+
+Result:
+TelemetryTap: publish failed (logged, not raised): MQTT broker unreachable
+Transport result: SUCCESS
+Telemetry stats: {'total': 1, 'success': 0, 'failed': 1}
+
+Conclusion:
+-----------
+✅ Error logged: TelemetryTap: publish failed (logged, not raised)
+✅ Transport still success: SUCCESS
+✅ Failure counted in stats: {'total': 1, 'success': 0, 'failed': 1}
+✅ No exception propagated to transport path

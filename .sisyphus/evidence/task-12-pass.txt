@@ -1,0 +1,4 @@
+failure#1: reason=connect_failed, sidecar_fail_count=1, activations=0
+failure#2: reason=ack_timeout, sidecar_fail_count=2, activations=0
+failure#3: reason=connect_failed, sidecar_fail_count=3, activations=1
+assert activation_on_3rd_fail = True

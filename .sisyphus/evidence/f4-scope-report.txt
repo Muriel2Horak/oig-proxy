@@ -1,0 +1,42 @@
+F4 Scope Fidelity Check — proxy-thin-pass-through-twin-sidecar-refactor
+Date: 2026-03-10
+Plan: .sisyphus/plans/proxy-thin-pass-through-twin-sidecar-refactor.md
+
+Method
+- Read plan scope (T1-T25 + F4 boundaries, Must Have / Must NOT Have)
+- Reviewed evidence inventory under .sisyphus/evidence/
+- Audited repository change set via git status/diff and path-level scope checks
+- Checked for unaccounted artifacts and contamination paths
+
+Compliant tasks (evidence paths required by plan and present)
+- T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T20, T21, T23, T24, T25
+
+Non-compliant / incomplete tasks (required evidence path(s) missing)
+- T1: missing .sisyphus/evidence/task-1-baseline-map-error.txt
+- T18: missing .sisyphus/evidence/task-18-pass.txt and .sisyphus/evidence/task-18-error.txt
+- T19: missing .sisyphus/evidence/task-19-pass.txt and .sisyphus/evidence/task-19-error.txt
+- T22: missing .sisyphus/evidence/task-22-pass.txt and .sisyphus/evidence/task-22-error.txt
+
+Contamination (out-of-plan artifacts detected)
+- .sisyphus/plans/gpt54-only-revert-and-validate.md
+- .sisyphus/plans/single-runtime-ha-addon-ci-toolbox.md
+- .sisyphus/drafts/nas-autonomni-provoz-oig-proxy.md
+
+Unaccounted changes (present but not explicitly mapped in this plan)
+- .sisyphus/evidence/RC-CHECKLIST.md (not referenced by plan task evidence paths)
+- Additional legacy/parallel evidence bundles under .sisyphus/evidence/* unrelated to this plan’s explicit T1-T25 required outputs
+
+Implementation-to-plan alignment check (high level)
+- Core code changes in addon/oig-proxy/* align with plan themes: thin transport extraction, sidecar orchestration, fail-open handling, telemetry non-blocking, correlation propagation, legacy fallback flagging.
+- Tests and docs changes align with T19/T20/T22/T23/T24 intent, but formal task compliance is still blocked where required evidence filenames are absent.
+
+Must NOT Have guardrail check
+- No direct sign of MQTT topic schema drift in this audit pass.
+- No sign of queue/replay reintroduction in MQTT publisher path from inspected diffs.
+- Contamination exists via unrelated plan/draft artifacts in working tree.
+
+Summary line
+Compliant tasks: 21/25 | Contamination: YES (3 paths) | Unaccounted changes: YES | VERDICT: REJECT
+
+VERDICT rationale
+REJECT due to (1) missing required evidence artifacts for T1/T18/T19/T22 and (2) out-of-scope contamination files present in repository state.

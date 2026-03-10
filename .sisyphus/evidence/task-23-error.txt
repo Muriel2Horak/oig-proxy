@@ -1,0 +1,16 @@
+Task 23 ERROR-path evidence - twin unavailable with cloud healthy
+
+Date: 2026-03-10
+Repo: /repos/oig-proxy
+
+Command:
+PYTHONPATH=addon/oig-proxy pytest -q tests/test_proxy_main_loop.py -k "twin_down_cloud_healthy_transport_keeps_forwarding"
+
+Result:
+.                                                                        [100%]
+1 passed, 19 deselected in 0.19s
+
+Assertions covered:
+- twin unavailable does not block cloud-healthy transport
+- frames continue forwarding on cloud path (fail-open transport guarantee)
+- sidecar/twin dependency failure remains non-fatal for main loop

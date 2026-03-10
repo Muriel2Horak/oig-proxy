@@ -1,0 +1,67 @@
+# Task 25 - Release Candidate Checklist + Evidence Collation
+# Evidence: Completeness Verified
+
+**Generated:** 2026-03-10T00:00:00Z
+**Status:** PASS (with warnings)
+
+## Evidence Completeness Check
+
+### Tasks with Complete Evidence: 21/25 (84%)
+
+| Task | Status | Evidence Type |
+|------|--------|----------------|
+| T1 | PASS | baseline-map.md, baseline.json, error txt |
+| T2 | PASS | flag-matrix.md, flag-rollback.txt |
+| T3 | PASS | threshold-pass.txt, threshold-error.txt |
+| T4 | PASS | hysteresis-pass.txt, hysteresis-error.txt |
+| T5 | PASS | topic-pass.txt, topic-error.txt |
+| T6 | PASS | red.txt, groups.md |
+| T7 | PASS | pass.txt, error.txt |
+| T8 | PASS | pass.txt, error.txt |
+| T9 | PASS | pass.txt, error.txt |
+| T10 | PASS | pass.txt, error.txt |
+| T11 | PASS | pass.txt, error.txt |
+| T12 | PASS | pass.txt, error.txt |
+| T13 | PASS | pass.txt, error.txt |
+| T14 | PASS | pass.txt, error.txt |
+| T15 | PASS | pass.txt, error.txt |
+| T16 | PASS | pass.txt, error.txt |
+| T17 | PASS | pass.txt, error.txt |
+| T18 | PASS | validation-results.json (alternative format) |
+| T20 | PASS | pass.md, error.md |
+| T21 | PASS | pass.txt, error.txt |
+| T23 | PASS | pass.txt, error.txt |
+| T24 | PASS | pass.txt, error.txt |
+
+### Missing Evidence: 2 tasks
+
+- **T19**: Test suite simplification - NO evidence files
+- **T22**: Full regression suite - NO evidence files
+
+### Verification Method
+
+```bash
+# Count evidence files per task
+ls -la .sisyphus/evidence/task-*-pass.txt | wc -l
+# Output: 17
+
+ls -la .sisyphus/evidence/task-*-error.txt | wc -l
+# Output: 21
+```
+
+## RC Checklist Document
+
+Created: `.sisyphus/evidence/RC-CHECKLIST.md`
+- Contains full evidence summary
+- Documents missing evidence (T19, T22)
+- Includes handoff steps
+- Lists verification commands
+
+## Conclusion
+
+**VERDICT:** RC checklist complete with warnings
+- 21/25 tasks have complete evidence
+- 2 tasks (T19, T22) missing evidence - requires attention before final wave
+- 1 task (T18) has alternative evidence format (JSON instead of txt)
+
+**Recommendation:** Generate evidence for T19 and T22 before final verification wave

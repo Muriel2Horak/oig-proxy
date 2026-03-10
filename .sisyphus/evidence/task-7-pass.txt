@@ -1,0 +1,13 @@
+Task 7 evidence: pass-through happy path
+
+Command:
+PYTHONPATH=addon/oig-proxy .venv/bin/python -m pytest -q tests/test_proxy_uncovered_paths.py -k thin_pass_through_uses_transport_forward
+
+Result:
+1 passed, 33 deselected
+
+Assertion coverage:
+- _route_box_frame_by_mode enters transport-only path when THIN_PASS_THROUGH=true and LEGACY_FALLBACK=false.
+- _cf.forward_frame is awaited.
+- Offline local handler is not called.
+- should_break is False in cloud-healthy path.

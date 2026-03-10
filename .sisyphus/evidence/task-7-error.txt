@@ -1,0 +1,12 @@
+Task 7 evidence: twin unavailable does not block transport
+
+Command:
+PYTHONPATH=addon/oig-proxy .venv/bin/python -m pytest -q tests/test_proxy_uncovered_paths.py -k transport_only_forward_ignores_twin_unavailable_and_continues
+
+Result:
+1 passed, 33 deselected
+
+Assertion coverage:
+- _transport_only_forward executes without accessing twin internals.
+- With proxy._twin = None, cloud forward path still runs.
+- _cf.forward_frame is awaited and should_break is False (cloud-healthy transport continues).

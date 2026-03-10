@@ -1,0 +1,21 @@
+Task 17 evidence: fallback reachable only with LEGACY_FALLBACK=true
+
+Behavioral contract after refactor:
+- Default transport path is always `_transport_only_forward(...)`.
+- Local offline fallback branch in proxy critical path is reachable only when:
+  - `LEGACY_FALLBACK=true` (stored as `self._legacy_fallback_enabled`), and
+  - mode conditions are met (OFFLINE or HYBRID with `not should_try_cloud()`).
+
+Static branch proof (proxy critical path):
+- `addon/oig-proxy/proxy.py:_route_box_frame_by_mode`
+  - `if legacy_fallback_enabled and current_mode == ProxyMode.OFFLINE: ...`
+  - `if legacy_fallback_enabled and current_mode == ProxyMode.HYBRID and not self._hm.should_try_cloud(): ...`
+  - unconditional default: `return await self._transport_only_forward(...)`
+
+Related runtime guard already covered by existing tests in this repository:
+- `tests/test_proxy_box_session.py::test_handle_connection_failed_skips_legacy_fallback_when_flag_off`
+- `tests/test_proxy_box_session.py::test_handle_connection_failed_uses_legacy_fallback_when_flag_on`
+
+Execution note:
+- Re-running these tests in the current workspace was blocked by unrelated import-time syntax error in `addon/oig-proxy/digital_twin.py` (IndentationError line 909).
+- The proxy-side branch guard implementation itself is present and isolated to Task 17 files.

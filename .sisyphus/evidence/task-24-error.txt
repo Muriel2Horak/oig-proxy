@@ -1,0 +1,55 @@
+======================================================================
+TASK 24: PERFORMANCE SANITY GUARD REPORT - REGRESSION BREACH DETECTION
+======================================================================
+
+## Test Configuration
+  Sample Size: 1000 frames
+  Warmup Iterations: 100
+  P50 Tolerance: 2.0 ms
+  P95 Tolerance: 5.0 ms
+
+## Simulated Baseline (Legacy Transport Path)
+  P50: 2.000 ms
+  P95: 3.000 ms
+  Mean: 2.500 ms
+  StdDev: 0.500 ms
+
+## Simulated Refactor (Thin Transport Pass-Through with Regression)
+  P50: 5.500 ms
+  P95: 9.500 ms
+  Mean: 6.000 ms
+  StdDev: 1.200 ms
+
+## Delta (Refactor - Baseline)
+  P50 Delta: +3.500 ms
+  P95 Delta: +6.500 ms
+
+## Tolerance Check
+  P50 Tolerance: 2.0 ms
+  P50 Regression: 3.500 ms
+  P50 Status: FAIL
+  P95 Tolerance: 5.0 ms
+  P95 Regression: 6.500 ms
+  P95 Status: FAIL
+
+## VERDICT
+  STATUS: FAIL - Performance regression detected
+  Thin transport refactor exceeds tolerance thresholds
+
+## Breach Details
+  P50 regression (3.500 ms) exceeds tolerance (2.0 ms) by 1.500 ms
+  P95 regression (6.500 ms) exceeds tolerance (5.0 ms) by 1.500 ms
+
+## Action Required
+  1. Review thin transport implementation for added overhead
+  2. Check for unnecessary processing in critical path
+  3. Verify telemetry tap is truly non-blocking
+  4. Ensure sidecar orchestrator doesn't block transport
+
+======================================================================
+END OF REPORT - REGRESSION BREACH DETECTED
+======================================================================
+
+Note: This is a simulated error scenario demonstrating the
+regression breach detection mechanism. The actual refactor
+implementation shows improvement, not regression.

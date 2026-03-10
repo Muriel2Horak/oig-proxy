@@ -1,0 +1,13 @@
+Task 16 Evidence - telemetry down, transport still works
+Date: 2026-03-10
+
+Command:
+pytest tests/test_proxy_uncovered_paths.py -q -k "telemetry_down_still_returns_cloud_ack_in_thin_pass_through"
+
+Output:
+.                                                                        [100%]
+1 passed, 40 deselected in 0.26s
+
+Assertion covered:
+- telemetry publish failure does not stop transport forwarding
+- cloud ACK counter still increments under telemetry failure

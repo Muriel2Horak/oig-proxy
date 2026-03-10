@@ -1,0 +1,41 @@
+======================================================================
+TASK 24: PERFORMANCE SANITY GUARD REPORT
+======================================================================
+
+## Test Configuration
+  Sample Size: 1000 frames
+  Warmup Iterations: 100
+  P50 Tolerance: 2.0 ms
+  P95 Tolerance: 5.0 ms
+
+## Baseline (Legacy Transport Path)
+  P50: 4.792 ms
+  P95: 5.792 ms
+  Mean: 4.998 ms
+  StdDev: 0.820 ms
+
+## Refactor (Thin Transport Pass-Through)
+  P50: 2.392 ms
+  P95: 3.051 ms
+  Mean: 2.539 ms
+  StdDev: 0.736 ms
+
+## Delta (Refactor - Baseline)
+  P50 Delta: -2.400 ms
+  P95 Delta: -2.741 ms
+
+## Tolerance Check
+  P50 Tolerance: 2.0 ms
+  P50 Regression: 0.000 ms
+  P50 Status: PASS
+  P95 Tolerance: 5.0 ms
+  P95 Regression: 0.000 ms
+  P95 Status: PASS
+
+## VERDICT
+  STATUS: PASS - No performance regression detected
+  Thin transport refactor does not worsen latency
+
+======================================================================
+END OF REPORT
+======================================================================

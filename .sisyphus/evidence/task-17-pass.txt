@@ -1,0 +1,22 @@
+Task 17 evidence: reduced branching in proxy critical path
+
+Summary of change:
+- `OIGProxy._route_box_frame_by_mode` now has transport-first flow:
+  - legacy fallback OFFLINE/HYBRID branches are guarded behind `self._legacy_fallback_enabled`
+  - all other paths return via `_transport_only_forward(...)`
+- Removed dead/non-default mode branching from normal path:
+  - removed `_thin_pass_through` gate from routing
+  - removed duplicate direct `CloudForwarder.forward_frame(...)` branch in `_route_box_frame_by_mode`
+  - removed per-frame thin-pass-through branch in `_handle_box_frame_with_cid`; normal bypass now keyed to `LEGACY_FALLBACK` only
+
+Code verification points:
+- `addon/oig-proxy/proxy.py`:
+  - `_route_box_frame_by_mode` contains only:
+    1) `legacy_fallback_enabled and current_mode == ProxyMode.OFFLINE` => local fallback
+    2) `legacy_fallback_enabled and current_mode == ProxyMode.HYBRID and not should_try_cloud()` => local fallback
+    3) default => `_transport_only_forward(...)`
+
+Targeted runtime validation status:
+- Attempted to rerun targeted pytest after implementation.
+- Current repository state has unrelated syntax failure in `addon/oig-proxy/digital_twin.py` (IndentationError at line 909), which blocks importing `proxy` in this workspace snapshot.
+- This blocker is outside Task 17 scope and pre-exists in concurrently modified files.

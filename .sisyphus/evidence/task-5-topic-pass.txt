@@ -1,0 +1,93 @@
+# Golden Topic Assertions - Task 5
+# These topic patterns MUST match the telemetry contract
+
+# ============================================================================
+# VALID TOPIC PATTERNS (Contract Compliant)
+# ============================================================================
+
+# Table state topics (tbl_*)
+oig_local/12345/tbl_actual/state
+oig_local/12345/tbl_batt_prms/state
+oig_local/12345/tbl_box_prms/state
+oig_local/12345/tbl_inverter/state
+oig_local/12345/tbl_grid_prms/state
+oig_local/12345/tbl_solar_prms/state
+oig_local/12345/tbl_load_prms/state
+oig_local/ABCDEF/tbl_actual/state
+oig_local/ABCDEF/tbl_batt_prms/state
+
+# Events topic (tbl_events) - uses proxy_device_id
+oig_local/oig_proxy/tbl_events/state
+
+# Proxy status topic - uses proxy_device_id
+oig_local/oig_proxy/proxy_status/state
+
+# Availability topics
+oig_local/12345/availability
+oig_local/oig_proxy/availability
+oig_local/ABCDEF/availability
+
+# ============================================================================
+# REGEX PATTERNS FOR VALIDATION
+# ============================================================================
+
+# Table state: oig_local/<device_id>/<tbl_name>/state
+# Matches: oig_local/12345/tbl_actual/state
+^oig_local/[^/]+/tbl_[a-z_]+/state$
+
+# Events: oig_local/oig_proxy/tbl_events/state
+# Matches: oig_local/oig_proxy/tbl_events/state
+^oig_local/oig_proxy/tbl_events/state$
+
+# Proxy status: oig_local/oig_proxy/proxy_status/state
+# Matches: oig_local/oig_proxy/proxy_status/state
+^oig_local/oig_proxy/proxy_status/state$
+
+# Availability: oig_local/<device_id>/availability
+# Matches: oig_local/12345/availability
+^oig_local/[^/]+/availability$
+
+# ============================================================================
+# SOURCE CODE VERIFICATION
+# ============================================================================
+
+# File: addon/oig-proxy/mqtt_publisher.py
+# Method: _state_topic() - lines 383-387
+# Pattern: f"{MQTT_NAMESPACE}/{dev_id}/{table}/state"
+
+# File: addon/oig-proxy/mqtt_publisher.py
+# Method: _determine_target_device_id() - lines 550-553
+# Routes tbl_events and proxy_status to proxy_device_id
+
+# File: addon/oig-proxy/config.py
+# MQTT_NAMESPACE = "oig_local" (default)
+# PROXY_DEVICE_ID = "oig_proxy" (default)
+# MQTT_STATE_RETAIN = true (default)
+
+# ============================================================================
+# PAYLOAD STRUCTURE VERIFICATION
+# ============================================================================
+
+# Valid JSON payload example:
+{
+  "tbl_actual:GridPower": -1234,
+  "tbl_actual:BattPower": 567,
+  "tbl_actual:SolarPower": 890,
+  "tbl_actual:Timestamp": "2026-03-10T10:30:00+01:00"
+}
+
+# Key format: <table_name>:<sensor_id>
+# Example: tbl_actual:GridPower
+
+# ============================================================================
+# CONTRACT COMPLIANCE CHECKS
+# ============================================================================
+
+# [PASS] Topic pattern: oig_local/<device_id>/<tbl_name>/state
+# [PASS] Namespace: oig_local
+# [PASS] Events use proxy_device_id: oig_proxy
+# [PASS] Proxy status uses proxy_device_id: oig_proxy
+# [PASS] Retained messages: true (default)
+# [PASS] QoS: 1 (default)
+# [PASS] JSON payload format
+# [PASS] Key naming: <table>:<sensor_id>

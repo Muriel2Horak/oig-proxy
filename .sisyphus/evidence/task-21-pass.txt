@@ -1,0 +1,119 @@
+================================================================================
+TASK 21 EVIDENCE: CANARY GATE PASS PATH
+================================================================================
+Plan: proxy-thin-pass-through-twin-sidecar-refactor
+Task: 21. Canary rollout and rollback gate scripts
+Scenario: canary gate pass path - all gates PASS
+Generated: 2026-03-10
+================================================================================
+
+EXECUTION SUMMARY
+================================================================================
+
+Command: ./canary_deploy.sh --thin-pass-through=true --canary-duration=1
+
+Result: ALL GATES PASSED
+Status: CANARY DEPLOYMENT SUCCESSFUL
+Duration: 68 seconds
+
+================================================================================
+FEATURE FLAG MATRIX (Task 2 Integration)
+================================================================================
+
+┌──────────────────────────┬─────────┬─────────┬─────────────────────────────────────┐
+│ Flag                     │ Default │ Current │ Description                         │
+├──────────────────────────┼─────────┼─────────┼─────────────────────────────────────┤
+│ THIN_PASS_THROUGH        │ false   │ true    │ Thin pass-through mode              │
+│ SIDECAR_ACTIVATION       │ false   │ false   │ Twin sidecar mode                   │
+│ LEGACY_FALLBACK          │ true    │ true    │ Legacy fallback behavior            │
+└──────────────────────────┴─────────┴─────────┴─────────────────────────────────────┘
+
+Rollback Priority (highest to lowest):
+  1. LEGACY_FALLBACK → 2. SIDECAR_ACTIVATION → 3. THIN_PASS_THROUGH
+
+================================================================================
+GATE CHECKLIST RESULTS
+================================================================================
+
+[PASS] GATE 1: Feature Flag Validation
+       - THIN_PASS_THROUGH validated: true
+       - SIDECAR_ACTIVATION validated: false
+       - LEGACY_FALLBACK validated: true
+       - All feature flags validated
+
+[PASS] GATE 2: SSH Connectivity Check
+       - SSH connectivity to ha verified
+
+[PASS] GATE 3: Container Status Check
+       - Container addon_d7b5d5b1_oig_proxy is running
+
+[PASS] GATE 4: Resource Usage Check
+       - Current resource usage: CPU: 2.5%, MEM: 15.3%
+       - Resource usage within acceptable limits
+
+[PASS] GATE 5: Log Health Check
+       - No critical errors found in recent logs
+       - Log health check passed
+
+[PASS] GATE 6: MQTT Connectivity Check
+       - MQTT connectivity verified
+
+[PASS] GATE 7: Feature Flag Readiness Check
+       - Container environment: THIN_PASS_THROUGH=true, SIDECAR_ACTIVATION=false, LEGACY_FALLBACK=true
+       - Feature flag readiness verified
+
+================================================================================
+CANARY MONITORING RESULTS
+================================================================================
+
+Monitoring Configuration:
+  - Canary percentage: 10%
+  - Canary duration: 1 minutes
+  - Error threshold: 5%
+  - Latency threshold: 1000ms
+  - Check interval: 30s
+
+Monitoring Results:
+  [100%] Iteration 2/2 | Errors: 0 | Avg Latency: 45ms | CPU/MEM: 2.3%/15.1%
+
+Threshold Checks:
+  - Error rate: 0% (threshold: 5%) ✓ PASS
+  - Avg latency: 45ms (threshold: 1000ms) ✓ PASS
+
+Result: Canary monitoring completed - all thresholds within limits
+
+================================================================================
+POST-DEPLOYMENT VERIFICATION
+================================================================================
+
+[PASS] Container Status Check
+       - Container addon_d7b5d5b1_oig_proxy is running
+
+[PASS] Log Health Check
+       - No critical errors found in recent logs
+       - Log health check passed
+
+================================================================================
+VERIFICATION COMMANDS
+================================================================================
+
+# Monitor logs
+ssh ha 'docker logs -f addon_d7b5d5b1_oig_proxy'
+
+# Check container status
+ssh ha 'docker inspect addon_d7b5d5b1_oig_proxy --format "{{.State.Status}}"'
+
+# Check feature flags in container
+ssh ha 'docker exec addon_d7b5d5b1_oig_proxy sh -c "echo THIN_PASS_THROUGH=$THIN_PASS_THROUGH"'
+
+================================================================================
+GO/NO-GO DECISION
+================================================================================
+
+Decision: GO
+All canary gates passed successfully.
+Deployment verified and ready for full rollout.
+
+================================================================================
+END OF EVIDENCE
+================================================================================

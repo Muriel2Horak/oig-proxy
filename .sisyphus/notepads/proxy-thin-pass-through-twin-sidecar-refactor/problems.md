@@ -1,0 +1,2 @@
+- 2026-03-10: No unresolved blockers in Task 7 implementation; broader full-suite verification remains outside this task scope.
+- 2026-03-10: No unresolved blockers for Task 13; full async-suite environment parity (pytest-asyncio availability) remains an external tooling concern.

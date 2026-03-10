@@ -1,0 +1,97 @@
+================================================================================
+FEATURE FLAG ROLLBACK EVIDENCE - Task 2
+================================================================================
+Generated: 2026-03-10
+Plan: proxy-thin-pass-through-twin-sidecar-refactor
+
+================================================================================
+ROLLBACK PATH VISUALIZATION
+================================================================================
+
+Priority Order (highest to lowest):
+  [1] LEGACY_FALLBACK
+       ↓
+  [2] SIDECAR_ACTIVATION
+       ↓
+  [3] THIN_PASS_THROUGH
+
+================================================================================
+SCENARIO 1: Full Rollback (All Flags Disabled)
+================================================================================
+
+THIN_PASS_THROUGH=false → Full proxy mode (all features)
+SIDECAR_ACTIVATION=false → Single-process mode (no sidecar)
+LEGACY_FALLBACK=true → Legacy fallback enabled
+
+Result: Original behavior preserved, no new features active
+
+================================================================================
+SCENARIO 2: Sidecar Only (No Thin Pass-Through)
+================================================================================
+
+THIN_PASS_THROUGH=false → Full proxy mode
+SIDECAR_ACTIVATION=true → Twin sidecar mode active
+LEGACY_FALLBACK=true → Legacy fallback enabled
+
+Result: Sidecar active, full proxy features available
+
+================================================================================
+SCENARIO 3: Thin Pass-Through Only (No Sidecar)
+================================================================================
+
+THIN_PASS_THROUGH=true → Thin pass-through mode
+SIDECAR_ACTIVATION=false → Single-process mode
+LEGACY_FALLBACK=true → Legacy fallback enabled
+
+Result: Minimal proxy, no sidecar, legacy fallback active
+
+================================================================================
+SCENARIO 4: Modern Mode (No Legacy Fallback)
+================================================================================
+
+THIN_PASS_THROUGH=true → Thin pass-through mode
+SIDECAR_ACTIVATION=true → Twin sidecar mode active
+LEGACY_FALLBACK=false → Legacy fallback disabled
+
+Result: All new features, no legacy compatibility
+
+================================================================================
+ENVIRONMENT VARIABLE MAPPING
+================================================================================
+
+Flag                  | Env Variable        | Default | Type
+----------------------|---------------------|---------|------
+THIN_PASS_THROUGH     | THIN_PASS_THROUGH   | false   | bool
+SIDECAR_ACTIVATION    | SIDECAR_ACTIVATION  | false   | bool
+LEGACY_FALLBACK       | LEGACY_FALLBACK     | true    | bool
+
+================================================================================
+ROLLBACK SEQUENCE EXECUTION
+================================================================================
+
+Step 1: Check LEGACY_FALLBACK
+  - If true: Enable legacy fallback behavior
+  - If false: Skip to Step 2
+
+Step 2: Check SIDECAR_ACTIVATION
+  - If true: Enable twin sidecar mode
+  - If false: Use inline single-process mode
+
+Step 3: Check THIN_PASS_THROUGH
+  - If true: Enable thin pass-through (minimal processing)
+  - If false: Use full proxy mode
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+[✓] THIN_PASS_THROUGH flag defined with default=false
+[✓] SIDECAR_ACTIVATION flag defined with default=false
+[✓] LEGACY_FALLBACK flag defined with default=true
+[✓] Rollback sequence documented: LEGACY_FALLBACK → SIDECAR_ACTIVATION → THIN_PASS_THROUGH
+[✓] Environment variable names specified
+[✓] Reference to existing config.py patterns included
+
+================================================================================
+END OF EVIDENCE
+================================================================================

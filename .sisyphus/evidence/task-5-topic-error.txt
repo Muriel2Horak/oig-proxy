@@ -1,0 +1,138 @@
+# Drift Detection Scenarios - Task 5
+# These topic patterns VIOLATE the telemetry contract
+
+# ============================================================================
+# INVALID TOPIC PATTERNS (Contract Violations)
+# ============================================================================
+
+# WRONG: Missing namespace prefix
+# Expected: oig_local/<device_id>/<table>/state
+# Got: <device_id>/<table>/state
+12345/tbl_actual/state
+
+# WRONG: Wrong namespace
+# Expected: oig_local
+# Got: homeassistant, mqtt, oig, etc.
+homeassistant/12345/tbl_actual/state
+mqtt/12345/tbl_actual/state
+oig/12345/tbl_actual/state
+
+# WRONG: Missing /state suffix
+# Expected: oig_local/<device_id>/<table>/state
+# Got: oig_local/<device_id>/<table>
+oig_local/12345/tbl_actual
+oig_local/12345/tbl_batt_prms
+
+# WRONG: Wrong topic structure
+# Expected: oig_local/<device_id>/<table>/state
+# Got: oig_local/<device_id>/state/<table>
+oig_local/12345/state/tbl_actual
+
+# WRONG: tbl_events with wrong device_id
+# Expected: oig_local/oig_proxy/tbl_events/state
+# Got: oig_local/12345/tbl_events/state (should use proxy_device_id)
+oig_local/12345/tbl_events/state
+
+# WRONG: proxy_status with wrong device_id
+# Expected: oig_local/oig_proxy/proxy_status/state
+# Got: oig_local/12345/proxy_status/state (should use proxy_device_id)
+oig_local/12345/proxy_status/state
+
+# WRONG: Using different proxy_device_id
+# Expected: oig_local/oig_proxy/tbl_events/state
+# Got: oig_local/my_proxy/tbl_events/state
+oig_local/my_proxy/tbl_events/state
+
+# WRONG: Uppercase table name
+# Expected: tbl_actual (lowercase)
+# Got: Tbl_Actual
+oig_local/12345/Tbl_actual/state
+oig_local/12345/TBL_ACTUAL/state
+
+# WRONG: Table name with different separator
+# Expected: tbl_actual
+# Got: tbl-actual, tbl.actual
+oig_local/12345/tbl-actual/state
+oig_local/12345/tbl.actual/state
+
+# WRONG: Extra path components
+# Expected: oig_local/<device_id>/<table>/state
+# Got: oig_local/<device_id>/<table>/state/extra
+oig_local/12345/tbl_actual/state/extra
+oig_local/12345/tbl_actual/state/1
+
+# ============================================================================
+# PAYLOAD STRUCTURE VIOLATIONS
+# ============================================================================
+
+# WRONG: Non-JSON payload
+# Expected: {"key": "value"}
+# Got: plain text
+plain text payload
+
+# WRONG: Wrong key format
+# Expected: tbl_actual:GridPower
+# Got: GridPower (missing table prefix)
+{"GridPower": -1234}
+
+# WRONG: Wrong key format
+# Expected: tbl_actual:GridPower
+# Got: grid_power (snake_case instead of original)
+{"grid_power": -1234}
+
+# WRONG: Array instead of object
+# Expected: {"key": "value"}
+# Got: [{"key": "value"}]
+[{"tbl_actual:GridPower": -1234}]
+
+# ============================================================================
+# RETENTION VIOLATIONS
+# ============================================================================
+
+# WRONG: State messages not retained (when MQTT_STATE_RETAIN=true)
+# Expected: retain=true
+# Got: retain=false
+# Note: This would cause state loss on broker restart
+
+# ============================================================================
+# DETECTION REGEX PATTERNS
+# ============================================================================
+
+# Detect missing namespace: ^[^/]+/[^/]+/state$
+# Matches: 12345/tbl_actual/state (BAD - missing oig_local)
+
+# Detect wrong namespace: ^(homeassistant|mqtt|oig)/
+# Matches: homeassistant/12345/tbl_actual/state (BAD)
+
+# Detect missing /state: /[^/]+$
+# Matches: oig_local/12345/tbl_actual (BAD - no /state)
+
+# Detect tbl_events with wrong device: oig_local/[^/]+/tbl_events/state
+# Matches: oig_local/12345/tbl_events/state (BAD - should be oig_proxy)
+
+# Detect proxy_status with wrong device: oig_local/[^/]+/proxy_status/state
+# Matches: oig_local/12345/proxy_status/state (BAD - should be oig_proxy)
+
+# ============================================================================
+# CONTRACT VIOLATION SUMMARY
+# ============================================================================
+
+# [ERROR] Namespace must be "oig_local" (configurable via MQTT_NAMESPACE)
+# [ERROR] Topic must end with "/state"
+# [ERROR] tbl_events must use proxy_device_id (default: "oig_proxy")
+# [ERROR] proxy_status must use proxy_device_id (default: "oig_proxy")
+# [ERROR] Table names must be lowercase: tbl_actual, tbl_batt_prms, etc.
+# [ERROR] Payload must be valid JSON
+# [ERROR] Keys must follow format: <table>:<sensor_id>
+# [ERROR] State messages should be retained (configurable via MQTT_STATE_RETAIN)
+
+# ============================================================================
+# REMEDIATION
+# ============================================================================
+
+# If drift is detected:
+# 1. Check MQTT_NAMESPACE environment variable
+# 2. Check PROXY_DEVICE_ID environment variable
+# 3. Verify _state_topic() method in mqtt_publisher.py
+# 4. Verify _determine_target_device_id() method in mqtt_publisher.py
+# 5. Check config.py for default values

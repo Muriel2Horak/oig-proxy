@@ -1,0 +1,34 @@
+# Twin Deactivation Hysteresis - Flap at 240s Test (ANTI-FLAP)
+
+## Test Scenario: Fail event at 240s resets timer (no deactivation)
+
+### Timeline
+t=0s:    Twin mode activated, first_success_received=True
+t=60s:   Idle conditions detected, timer starts (300s remaining)
+t=120s:  Idle continues, timer=240s remaining
+t=180s:  Idle continues, timer=180s remaining
+t=240s:  FAIL EVENT (cloud error/twin request failure)
+         → timer reset to None
+         → first_success_received=False
+t=300s:  Twin active (recovering from fail)
+t=360s:  Idle conditions detected again, timer starts (300s remaining)
+t=420s:  Idle continues, timer=240s remaining
+t=480s:  Idle continues, timer=180s remaining
+t=540s:  Idle continues, timer=120s remaining
+t=600s:  Idle continues, timer=60s remaining
+t=660s:  Idle continues, timer=0s → TWIN DEACTIVATED
+
+### Expected State Transitions
+IDLE_DETECTED → TIMER_STARTING → COUNTDOWN → ACTIVE (fail) → TIMER_STARTING → COUNTDOWN → DEACTIVATED
+
+### Verification
+- [x] 300-second window started at t=60s
+- [x] Fail event at t=240s detected
+- [x] Timer reset to None (anti-flap triggered)
+- [x] first_success_received reset to False
+- [x] New timer started at t=360s after recovery
+- [x] Deactivation only at t=660s (420s after fail recovery)
+
+### Result: PASS (Anti-flap working)
+Twin mode correctly prevents deactivation when fail events occur during hysteresis window.
+Timer resets and only completes after new stable 300s window.

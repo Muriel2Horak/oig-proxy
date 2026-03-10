@@ -1,0 +1,16 @@
+Task 23 PASS evidence - cloud flap + mqtt down fault injection
+
+Date: 2026-03-10
+Repo: /repos/oig-proxy
+
+Command:
+PYTHONPATH=addon/oig-proxy pytest -q tests/test_proxy_main_loop.py -k "cloud_flap_threshold_policy_is_deterministic_without_extra_oscillation or mqtt_down_transport_is_fail_open_and_cloud_path_continues"
+
+Result:
+..                                                                       [100%]
+2 passed, 18 deselected in 0.21s
+
+Assertions covered:
+- cloud flap sequence is deterministic and activates sidecar policy exactly once at threshold
+- no oscillation beyond policy threshold (single activation, fail_count expected terminal value)
+- mqtt down does not interrupt transport forwarding (fail-open behavior)

@@ -1,0 +1,60 @@
+# Test Scenario: 3 Consecutive Failures → Offline Activation
+# ============================================================
+# This test verifies that after 3 consecutive failures,
+# the HYBRID mode switches to offline.
+
+## Configuration
+HYBRID_FAIL_THRESHOLD=3
+HYBRID_RETRY_INTERVAL=60.0
+
+## Initial State
+- Mode: HYBRID
+- fail_count: 0
+- in_offline: False
+- state: "online"
+
+## Test Steps
+
+### Step 1: First Failure (connect_failed)
+Action:
+  - Simulate: cloud_forwarder.handle_connection_failed()
+  - Call: hybrid_mode.record_failure(reason="connect_failed")
+
+Expected:
+  - fail_count: 1
+  - in_offline: False
+  - state: "online"
+  - Log: "HYBRID: 1 failures → switching to offline mode" (NOT YET)
+
+### Step 2: Second Failure (ack_timeout)
+Action:
+  - Simulate: cloud_forwarder.handle_timeout()
+  - Call: hybrid_mode.record_failure(reason="ack_timeout")
+
+Expected:
+  - fail_count: 2
+  - in_offline: False
+  - state: "online"
+  - Log: "HYBRID: 2 failures → switching to offline mode" (NOT YET)
+
+### Step 3: Third Failure (cloud_eof)
+Action:
+  - Simulate: cloud_forwarder.handle_eof()
+  - Call: hybrid_mode.record_failure(reason="cloud_eof")
+
+Expected:
+  - fail_count: 3
+  - in_offline: True
+  - state: "offline"
+  - Log: "HYBRID: 3 failures → switching to offline mode"
+  - Event: mode_change(from_state="online", to_state="offline", reason="cloud_eof")
+
+## Verification
+PASS: After 3 consecutive failures, in_offline == True
+PASS: state == "offline"
+PASS: fail_count >= fail_threshold (3 >= 3)
+
+## Time Simulator Notes
+- Use time.monotonic() for consistent timing
+- Patch time.time() for retry interval testing
+- Each record_failure() call should be separated by test delays

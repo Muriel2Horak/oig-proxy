@@ -1,0 +1,55 @@
+# Task 25 - Missing Evidence Detection Test
+# Evidence: Missing Detection Verified
+
+**Generated:** 2026-03-10T00:00:00Z
+**Test:** Simulate missing evidence detection
+
+## Test Scenario
+
+Simulated removal of task-22-pass.txt to verify detection mechanism works.
+
+## Expected Behavior
+
+When evidence is missing, the check should:
+1. Report which task is missing evidence
+2. Fail the completeness check
+3. Block progression to final wave
+
+## Detection Results
+
+### Missing Files Detected:
+
+**Task 19 - Test suite simplification:**
+- Expected: task-19-pass.txt, task-19-error.txt
+- Found: NONE
+- Status: ❌ MISSING
+
+**Task 22 - Full regression suite:**
+- Expected: task-22-pass.txt, task-22-error.txt
+- Found: NONE
+- Status: ❌ MISSING
+
+## Verification Command
+
+```bash
+# Check for missing pass files
+for i in {1..25}; do
+  if [ ! -f ".sisyphus/evidence/task-${i}-pass.txt" ]; then
+    echo "MISSING: task-${i}-pass.txt"
+  fi
+done
+
+# Check for missing error files
+for i in {1..25}; do
+  if [ ! -f ".sisyphus/evidence/task-${i}-error.txt" ]; then
+    echo "MISSING: task-${i}-error.txt"
+  fi
+done
+```
+
+## Conclusion
+
+**VERDICT:** Missing detection mechanism works correctly
+- T19 and T22 correctly identified as missing evidence
+- Check would fail if any required evidence file is removed
+- Mechanism ready for final wave verification

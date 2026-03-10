@@ -1,0 +1,4 @@
+before_success: sidecar_fail_count=2, activations=0
+after_success: sidecar_fail_count=0, activations=0
+after_next_failure: sidecar_fail_count=1, activations=0
+assert counter_resets_on_success = True

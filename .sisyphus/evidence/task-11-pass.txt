@@ -1,0 +1,9 @@
+.venv/bin/python -m pytest tests/test_proxy_box_session.py -q -k "skips_legacy_fallback_when_flag_off"
+.
+1 passed, 8 deselected in 0.40s
+
+Assertion evidence:
+- LEGACY_FALLBACK=False
+- CloudForwarder.handle_connection_failed() in HYBRID mode does not call fallback_offline()
+- local offline ACK path is not entered (fallback_offline.assert_not_awaited())
+- timeout path is used instead (record_timeout called)

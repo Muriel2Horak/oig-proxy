@@ -1,0 +1,62 @@
+# Test Scenario: 2 Failures → No Offline Activation (Counter Reset)
+# =================================================================
+# This test verifies that with only 2 failures (below threshold),
+# the HYBRID mode stays online and does NOT switch to offline.
+
+## Configuration
+HYBRID_FAIL_THRESHOLD=3
+HYBRID_RETRY_INTERVAL=60.0
+
+## Initial State
+- Mode: HYBRID
+- fail_count: 0
+- in_offline: False
+- state: "online"
+
+## Test Steps
+
+### Step 1: First Failure (connect_failed)
+Action:
+  - Simulate: cloud_forwarder.handle_connection_failed()
+  - Call: hybrid_mode.record_failure(reason="connect_failed")
+
+Expected:
+  - fail_count: 1
+  - in_offline: False
+  - state: "online"
+
+### Step 2: Second Failure (ack_timeout)
+Action:
+  - Simulate: cloud_forwarder.handle_timeout()
+  - Call: hybrid_mode.record_failure(reason="ack_timeout")
+
+Expected:
+  - fail_count: 2
+  - in_offline: False
+  - state: "online"
+
+### Step 3: Success (ACK received from cloud)
+Action:
+  - Simulate: cloud_forwarder.forward_ack_to_box()
+  - Call: hybrid_mode.record_success()
+
+Expected:
+  - fail_count: 0  (RESET)
+  - in_offline: False
+  - state: "online"
+  - Log: "HYBRID: cloud recovered → switching to online mode"
+
+## Verification
+PASS: After success, fail_count == 0 (reset)
+PASS: in_offline == False (never activated)
+PASS: state == "online"
+PASS: fail_count < fail_threshold (0 < 3)
+
+## Key Assertion
+The system should NOT transition to offline with only 2 failures.
+Threshold of 3 must be reached for activation.
+
+## Time Simulator Notes
+- Use time.monotonic() for consistent timing
+- Patch time.time() for retry interval testing
+- record_success() must reset fail_count to 0

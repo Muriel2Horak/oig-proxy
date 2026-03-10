@@ -1,0 +1,58 @@
+Task 15: Correlation ID Propagation - Error Evidence
+=====================================================
+
+Test: Auto-generated ID on missing
+-----------------------------------
+
+When correlation ID is not explicitly set, the system auto-generates one:
+
+File: addon/oig-proxy/correlation_id.py
+Function: get_correlation_id()
+Code:
+    def get_correlation_id() -> str:
+        cid = _correlation_id_var.get()
+        if cid is None:
+            cid = generate_correlation_id()
+            _correlation_id_var.set(cid)
+            logger.debug("CORR_ID: Auto-generated correlation ID: %s", cid)
+        return cid
+
+Auto-Generation Behavior:
+-------------------------
+1. When get_correlation_id() is called without a prior set_correlation_id()
+2. The function detects cid is None
+3. Auto-generates a new correlation ID using generate_correlation_id()
+4. Format: oig_<timestamp>_<random_hex>
+   Example: oig_1704067200_a3f7b2d9
+5. Sets the generated ID in the context variable
+6. Logs the auto-generation event
+
+Evidence from Tests:
+--------------------
+Test: test_get_correlation_id_auto_generates
+- Clears any existing correlation ID
+- Calls get_correlation_id()
+- Verifies returned ID is not None
+- Verifies ID starts with "oig_"
+- Result: PASSED
+
+Test: test_correlation_id_auto_generation_on_missing
+- Clears correlation ID context
+- Calls get_correlation_id()
+- Verifies auto-generated ID follows format
+- Result: PASSED
+
+Log Output Example:
+-------------------
+When auto-generation occurs, the following log is emitted:
+    DEBUG:CORR_ID: Auto-generated correlation ID: oig_1704067200_a3f7b2d9
+
+This ensures that even if a developer forgets to set a correlation ID,
+the system will automatically create one, maintaining traceability.
+
+Error Handling:
+---------------
+- No exceptions thrown on missing correlation ID
+- Graceful fallback to auto-generation
+- Thread-safe and async-safe via contextvars
+- No breaking changes to existing code

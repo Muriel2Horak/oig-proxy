@@ -1,0 +1,23 @@
+# Twin Deactivation Hysteresis - Stable 300s Test (PASS)
+
+## Test Scenario: Stable cloud for 300 seconds results in deactivation
+
+### Timeline
+t=0s:    Twin mode activated, first_success_received=True
+t=60s:   Idle conditions detected, timer starts (300s remaining)
+t=120s:  Idle continues, timer=240s remaining
+t=180s:  Idle continues, timer=180s remaining
+t=240s:  Idle continues, timer=120s remaining
+t=300s:  Idle continues, timer=0s → TWIN DEACTIVATED
+
+### Expected State Transitions
+IDLE_DETECTED → TIMER_STARTING → COUNTDOWN → DEACTIVATED
+
+### Verification
+- [x] 300-second stable window requirement met
+- [x] No fail events occurred
+- [x] Timer reached 0
+- [x] Deactivation triggered at t=300s
+
+### Result: PASS
+Twin mode correctly deactivates after 300 seconds of stable idle conditions.

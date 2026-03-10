@@ -1,0 +1,13 @@
+Task 10 evidence: cloud-healthy path skips twin decision logic
+
+Command:
+PYTHONPATH=addon/oig-proxy .venv/bin/python -m pytest -q tests/test_proxy_uncovered_paths.py -k cloud_healthy_skips_twin_state_queries
+
+Result:
+1 passed, 36 deselected
+
+Assertion coverage:
+- Normal cloud-healthy frame path routes via `_route_box_frame_by_mode`.
+- Twin state decision queries are not executed in this path:
+  - `twin.get_inflight()` call count = 0
+  - `twin.get_queue_length()` call count = 0
