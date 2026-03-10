@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from config import (
     CLOUD_ACK_TIMEOUT,
+    LEGACY_FALLBACK,
     TARGET_PORT,
     TARGET_SERVER,
 )
@@ -26,6 +27,7 @@ from oig_frame import (
     extract_one_xml_frame,
 )
 from utils import capture_payload, resolve_cloud_host
+from correlation_id import get_correlation_id
 
 if TYPE_CHECKING:
     from proxy import OIGProxy
@@ -75,6 +77,19 @@ class CloudForwarder:
         """Record a cloud failure.  In HYBRID mode may switch to offline."""
         logger.debug("☁️ Cloud failure noted: %s", reason)
         self._proxy._hm.record_failure(reason=reason, local_ack=local_ack)
+        sidecar_adapter = getattr(self._proxy, "_sidecar_adapter", None)
+        if sidecar_adapter is None:
+            return
+        sidecar_adapter.record_failure(reason=reason)
+        if reason in {"connect_failed", "ack_timeout"}:
+            await sidecar_adapter.check_and_activate()
+
+    def note_success(self) -> None:
+        self._proxy._hm.record_success()
+        sidecar_adapter = getattr(self._proxy, "_sidecar_adapter", None)
+        if sidecar_adapter is None:
+            return
+        sidecar_adapter.record_success()
 
     # ------------------------------------------------------------------
     # Offline fallback (shared by several error handlers)
@@ -108,6 +123,22 @@ class CloudForwarder:
         if note_cloud_failure:
             await self.note_failure(reason=reason, local_ack=send_box_ack)
         return None, None
+
+    def _legacy_fallback_enabled(self) -> bool:
+        return bool(LEGACY_FALLBACK)
+
+    def _legacy_fallback_allowed(
+        self, *, reason: str, conn_id: int, table_name: str | None
+    ) -> bool:
+        enabled = self._legacy_fallback_enabled()
+        if not enabled:
+            logger.info(
+                "🚫 Legacy offline fallback skipped by flag (reason=%s, conn=%s, table=%s)",
+                reason,
+                conn_id,
+                table_name,
+            )
+        return enabled
 
     # ------------------------------------------------------------------
     # Cloud connection management
@@ -187,18 +218,20 @@ class CloudForwarder:
                 reason="connect_failed",
             )
         if self._proxy._hm.is_hybrid_mode():
-            self._proxy._hm.record_failure(
-                reason="connect_failed", local_ack=True)
-            return await self.fallback_offline(
-                reason="connect_failed",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
+            if self._legacy_fallback_allowed(
+                reason="connect_failed", conn_id=conn_id, table_name=table_name
+            ):
+                await self.note_failure(reason="connect_failed", local_ack=True)
+                return await self.fallback_offline(
+                    reason="connect_failed",
+                    frame_bytes=frame_bytes,
+                    table_name=table_name,
+                    device_id=device_id,
+                    box_writer=box_writer,
+                    cloud_writer=cloud_writer,
+                    note_cloud_failure=False,
+                    conn_id=conn_id,
+                )
         if self.rx_buf:
             self.rx_buf.clear()
         self._proxy._tc.record_timeout(conn_id=conn_id)
@@ -229,23 +262,26 @@ class CloudForwarder:
             event_type="cloud_eof",
             details={"table_name": table_name, "conn_id": conn_id},
         )
-        self._proxy._hm.record_failure(
+        await self.note_failure(
             reason="cloud_eof",
             local_ack=self._proxy._hm.is_hybrid_mode(),
         )
         await self._close_writer(cloud_writer)
         self.rx_buf.clear()
         if self._proxy._hm.is_hybrid_mode():
-            return await self.fallback_offline(
-                reason="cloud_eof",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=None,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
+            if self._legacy_fallback_allowed(
+                reason="cloud_eof", conn_id=conn_id, table_name=table_name
+            ):
+                return await self.fallback_offline(
+                    reason="cloud_eof",
+                    frame_bytes=frame_bytes,
+                    table_name=table_name,
+                    device_id=device_id,
+                    box_writer=box_writer,
+                    cloud_writer=None,
+                    note_cloud_failure=False,
+                    conn_id=conn_id,
+                )
         self._proxy._tc.record_timeout(conn_id=conn_id)
         return None, None
 
@@ -271,7 +307,7 @@ class CloudForwarder:
             event_type="cloud_timeout",
             details={"table_name": table_name, "conn_id": conn_id, "timeout_s": CLOUD_ACK_TIMEOUT},
         )
-        self._proxy._hm.record_failure(
+        await self.note_failure(
             reason="ack_timeout",
             local_ack=self._proxy._hm.is_hybrid_mode(),
         )
@@ -298,16 +334,19 @@ class CloudForwarder:
                 )
                 self._proxy.stats["acks_local"] += 1
                 return cloud_reader, cloud_writer
-            return await self.fallback_offline(
-                reason="ack_timeout",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=cloud_writer,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
+            if self._legacy_fallback_allowed(
+                reason="ack_timeout", conn_id=conn_id, table_name=table_name
+            ):
+                return await self.fallback_offline(
+                    reason="ack_timeout",
+                    frame_bytes=frame_bytes,
+                    table_name=table_name,
+                    device_id=device_id,
+                    box_writer=box_writer,
+                    cloud_writer=cloud_writer,
+                    note_cloud_failure=False,
+                    conn_id=conn_id,
+                )
         if self.session_connected:
             self._proxy._tc.record_cloud_session_end(reason="timeout")
         await self._close_writer(cloud_writer)
@@ -340,23 +379,26 @@ class CloudForwarder:
             event_type="cloud_error",
             details={"table_name": table_name, "conn_id": conn_id, "error": str(error)},
         )
-        self._proxy._hm.record_failure(
+        await self.note_failure(
             reason="cloud_error",
             local_ack=self._proxy._hm.is_hybrid_mode(),
         )
         await self._close_writer(cloud_writer)
         self.rx_buf.clear()
         if self._proxy._hm.is_hybrid_mode():
-            return await self.fallback_offline(
-                reason="cloud_error",
-                frame_bytes=frame_bytes,
-                table_name=table_name,
-                device_id=device_id,
-                box_writer=box_writer,
-                cloud_writer=None,
-                note_cloud_failure=False,
-                conn_id=conn_id,
-            )
+            if self._legacy_fallback_allowed(
+                reason="cloud_error", conn_id=conn_id, table_name=table_name
+            ):
+                return await self.fallback_offline(
+                    reason="cloud_error",
+                    frame_bytes=frame_bytes,
+                    table_name=table_name,
+                    device_id=device_id,
+                    box_writer=box_writer,
+                    cloud_writer=None,
+                    note_cloud_failure=False,
+                    conn_id=conn_id,
+                )
         self._proxy._tc.record_timeout(conn_id=conn_id)
         return None, None
 
@@ -430,9 +472,10 @@ class CloudForwarder:
         box_writer: asyncio.StreamWriter,
         conn_id: int,
     ) -> None:
-        self._proxy._hm.record_success()
+        self.note_success()
         ack_str = ack_data.decode("utf-8", errors="replace")
         self._proxy._tc.cloud_ok_in_window = True
+        cid = get_correlation_id()
         capture_payload(
             None,
             table_name,
@@ -443,9 +486,10 @@ class CloudForwarder:
             length=len(ack_data),
             conn_id=conn_id,
             peer=self._proxy._active_box_peer,
+            correlation_id=cid,
         )
         self._proxy._tc.record_response(
-            ack_str, source="cloud", conn_id=conn_id
+            ack_str, source="cloud", conn_id=conn_id, correlation_id=cid
         )
         self._proxy._tc.record_frame_direction("cloud_to_proxy")
         if table_name in ("ACK", "END", "NACK"):
