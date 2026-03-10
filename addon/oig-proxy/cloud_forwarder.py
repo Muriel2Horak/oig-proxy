@@ -217,10 +217,9 @@ class CloudForwarder:
                 cloud_host=TARGET_SERVER,
                 reason="connect_failed",
             )
-        if self._proxy._hm.is_hybrid_mode():
-            if self._legacy_fallback_allowed(
-                reason="connect_failed", conn_id=conn_id, table_name=table_name
-            ):
+        if self._proxy._hm.is_hybrid_mode() and self._legacy_fallback_allowed(
+            reason="connect_failed", conn_id=conn_id, table_name=table_name
+        ):
                 await self.note_failure(reason="connect_failed", local_ack=True)
                 return await self.fallback_offline(
                     reason="connect_failed",
@@ -268,10 +267,9 @@ class CloudForwarder:
         )
         await self._close_writer(cloud_writer)
         self.rx_buf.clear()
-        if self._proxy._hm.is_hybrid_mode():
-            if self._legacy_fallback_allowed(
-                reason="cloud_eof", conn_id=conn_id, table_name=table_name
-            ):
+        if self._proxy._hm.is_hybrid_mode() and self._legacy_fallback_allowed(
+            reason="cloud_eof", conn_id=conn_id, table_name=table_name
+        ):
                 return await self.fallback_offline(
                     reason="cloud_eof",
                     frame_bytes=frame_bytes,
@@ -385,10 +383,9 @@ class CloudForwarder:
         )
         await self._close_writer(cloud_writer)
         self.rx_buf.clear()
-        if self._proxy._hm.is_hybrid_mode():
-            if self._legacy_fallback_allowed(
-                reason="cloud_error", conn_id=conn_id, table_name=table_name
-            ):
+        if self._proxy._hm.is_hybrid_mode() and self._legacy_fallback_allowed(
+            reason="cloud_error", conn_id=conn_id, table_name=table_name
+        ):
                 return await self.fallback_offline(
                     reason="cloud_error",
                     frame_bytes=frame_bytes,

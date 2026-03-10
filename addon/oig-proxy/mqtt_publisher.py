@@ -306,7 +306,7 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
                 return False
         return len(t_parts) == len(p_parts)
 
-    async def publish_raw(  # pylint: disable=too-many-arguments
+    async def publish_raw( # pylint: disable=too-many-arguments, no-await-async
         self,
         *,
         topic: str,
@@ -558,17 +558,17 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         self._last_payload_by_topic[topic] = payload
         return False
 
-    async def _handle_offline_queueing(
+    def _handle_offline_queueing(
         self,
-        topic: str,
-        payload: str,
+        _topic: str,
+        _payload: str,
     ) -> bool:
         if self.publish_count % 100 == 0:
             logger.warning("MQTT: Offline - data dropped")
         self.publish_failed += 1
         return False
 
-    async def _execute_publish(
+    def _execute_publish(
         self,
         topic: str,
         payload: str,
@@ -628,12 +628,12 @@ class MQTTPublisher:  # pylint: disable=too-many-instance-attributes
         payload = json.dumps(publish_data)
 
         if not self.is_ready():
-            return await self._handle_offline_queueing(topic, payload)
+            return self._handle_offline_queueing(topic, payload)
 
         if self._check_payload_deduplication(topic, payload):
             return True
 
-        return await self._execute_publish(topic, payload, mapped_count)
+        return self._execute_publish(topic, payload, mapped_count)
 
     def map_data_for_publish(
         self,

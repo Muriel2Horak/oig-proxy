@@ -53,10 +53,10 @@ class _Transport:
         self._closed = True
 
     def reconnect(self) -> bool:
-        if self._failed:
-            self._failed = False
-            self._closed = False
-            return True
+        """Attempt to reconnect transport. Returns True if reconnection was needed and successful."""
+        if not self._failed and not self._closed:
+            return False
+        self._failed = False
         self._closed = False
         return True
 

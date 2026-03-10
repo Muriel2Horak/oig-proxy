@@ -1077,6 +1077,8 @@ class OIGProxy:
         correlation_id: str,
     ) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, bool]:
         """Handle frame with correlation ID already set in context."""
+        # Use correlation_id for observability
+        logger.debug("Processing frame with correlation_id=%s", correlation_id)
         frame = data.decode("utf-8", errors="replace")
         processed = await self._process_box_frame_with_guard(
             frame_bytes=data,
