@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from models import ProxyMode
 from telemetry_client import TelemetryClient
+from telemetry_tap import TelemetryTap
 
 if TYPE_CHECKING:
     from proxy import OIGProxy
@@ -34,14 +35,21 @@ ISNEW_STATE_TOPIC_ALIASES = {
 }
 
 
-class TelemetryCollector:  # pylint: disable=too-many-public-methods
+class TelemetryCollector: # pylint: disable=too-many-public-methods
     """Sbírá, agreguje a odesílá telemetrická data pro diagnostiku proxy."""
 
-    def __init__(self, proxy: OIGProxy, *, interval_s: int) -> None:
+    def __init__(
+        self,
+        proxy: OIGProxy,
+        *,
+        interval_s: int,
+        telemetry_tap: TelemetryTap | None = None,
+    ) -> None:
         self._proxy = proxy
         self.client: TelemetryClient | None = None
         self.task: asyncio.Task[Any] | None = None
         self.interval_s: int = interval_s
+        self._tap = telemetry_tap
 
         # Per-window deques
         self.box_sessions: deque[dict[str, Any]] = deque()
@@ -331,11 +339,15 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
         *,
         source: str,
         conn_id: int,
+        correlation_id: str | None = None,
     ) -> None:
         """Zaznamená odpověď a aktualizuje statistiky."""
         table_name, _ = self._get_table_name_from_queue(conn_id)
         mode_value_str = self._resolve_mode_value()
         self._update_response_stats(table_name, source, mode_value_str, response_text)
+        # Task 15: Log correlation ID at key decision points
+        if correlation_id:
+            logger.debug("TELEMETRY: Response recorded with cid=%s", correlation_id)
 
     def record_timeout(self, *, conn_id: int) -> None:
         """Zaznamená timeout při čekání na odpověď z cloudu."""
@@ -536,7 +548,14 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
             metrics = self.collect_metrics()
-            await self.client.send_telemetry(metrics)
+            # Use TelemetryTap if available (non-blocking), otherwise await directly
+            if self._tap is not None:
+                self._tap.publish(
+                    self.client.send_telemetry(metrics),
+                    name="first_telemetry",
+                )
+            else:
+                await self.client.send_telemetry(metrics)
             logger.info("📊 First telemetry sent")
         except Exception as exc:
             logger.debug("First telemetry send failed: %s", exc)
@@ -548,7 +567,13 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             if self.client.device_id == "" and self._proxy.device_id != "AUTO":
                 self.client.device_id = self._proxy.device_id
             metrics = self.collect_metrics()
-            await self.client.send_telemetry(metrics)
+            if self._tap is not None:
+                self._tap.publish(
+                    self.client.send_telemetry(metrics),
+                    name="periodic_telemetry",
+                )
+            else:
+                await self.client.send_telemetry(metrics)
         except Exception as exc:
             logger.debug("Telemetry send failed: %s", exc)
 
@@ -835,6 +860,9 @@ class TelemetryCollector:  # pylint: disable=too-many-public-methods
             self.record_error_context(event_type=event_name, details=kwargs)
         method = getattr(self.client, f"event_{event_name}", None)
         if method:
-            task = asyncio.create_task(method(**kwargs))
-            self._proxy._background_tasks.add(task)  # pylint: disable=protected-access
-            task.add_done_callback(self._proxy._background_tasks.discard)  # pylint: disable=protected-access
+            if self._tap is not None:
+                self._tap.publish(method(**kwargs), name=f"event_{event_name}")
+            else:
+                task = asyncio.create_task(method(**kwargs))
+                self._proxy._background_tasks.add(task) # pylint: disable=protected-access
+                task.add_done_callback(self._proxy._background_tasks.discard) # pylint: disable=protected-access

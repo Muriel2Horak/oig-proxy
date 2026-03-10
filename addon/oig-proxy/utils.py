@@ -714,7 +714,7 @@ def _capture_worker(db_path: str) -> None:
         logger.warning("Capture worker crashed: %s", exc)
 
 
-def capture_payload(  # pylint: disable=too-many-arguments,too-many-positional-arguments,global-statement
+def capture_payload( # pylint: disable=too-many-arguments,too-many-positional-arguments,global-statement
     device_id: str | None,
     table: str | None,
     raw: str,
@@ -724,6 +724,7 @@ def capture_payload(  # pylint: disable=too-many-arguments,too-many-positional-a
     conn_id: int | None = None,
     peer: str | None = None,
     length: int | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Uloží payload do capture databáze."""
     global _capture_queue, _capture_thread, _capture_cols
@@ -767,6 +768,7 @@ def capture_payload(  # pylint: disable=too-many-arguments,too-many-positional-a
             conn_id,
             peer,
             length,
+            correlation_id,
         )
         if _capture_queue is None:
             logger.debug("Capture queue missing; dropping payload")

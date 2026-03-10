@@ -55,6 +55,7 @@ class QueueSettingDTO:
     request_key: str | None = None
     received_at: str | None = None
     raw_frame: str | None = None
+    correlation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for compatibility with existing code."""
@@ -83,6 +84,7 @@ class PollResponseDTO:
     ack: bool
     frame_data: str | None = None
     error: str | None = None
+    correlation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for compatibility with existing code."""
@@ -108,7 +110,7 @@ class OnAckDTO:
         conn_id: Connection identifier for ownership validation
         ack: True for ACK, False for NACK
         delivered_conn_id: The conn_id where setting was delivered
-                           (for INV-1 validation)
+        (for INV-1 validation)
     """
     tx_id: str
     conn_id: int
@@ -116,6 +118,7 @@ class OnAckDTO:
     delivered_conn_id: int | None = None
     result: AckResult = AckResult.ACK
     timestamp: str | None = None
+    correlation_id: str | None = None
 
     def validate_conn_ownership(self) -> bool:
         """Validate INV-1: Connection Ownership invariant.
@@ -576,6 +579,7 @@ class TransactionResultDTO:
     old_value: str | None = None
     attempts: int | None = None
     timestamp: str | None = None
+    correlation_id: str | None = None
 
     def is_success(self) -> bool:
         """Check if the result indicates success."""

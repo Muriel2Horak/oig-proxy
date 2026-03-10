@@ -60,6 +60,7 @@ from twin_state import (
     TransactionResultDTO,
     get_timestamp,
 )
+from correlation_id import get_correlation_id
 from twin_transaction import (
     InvariantViolationError,
     TransactionContext,
@@ -586,18 +587,20 @@ class DigitalTwin:
         """
         async with self._lock:
             tx_id = dto.tx_id or generate_tx_id()
+            cid = dto.correlation_id or get_correlation_id()
             self._create_pending_state_for_queue(tx_id, dto)
             self._enqueue_setting_dto(dto)
             self._log_queued_setting(dto, tx_id)
             # Lifecycle marker: queued
             logger.info(
-                "TWIN_MARKER: queued tx_id=%s tbl=%s/%s stage=queued queue_len=%d",
+                "TWIN_MARKER: queued tx_id=%s tbl=%s/%s stage=queued queue_len=%d cid=%s",
                 tx_id,
                 dto.tbl_name,
                 dto.tbl_item,
                 len(self._queue),
+                cid,
             )
-            result = self._build_accepted_result(tx_id=tx_id, conn_id=dto.conn_id)
+            result = self._build_accepted_result(tx_id=tx_id, conn_id=dto.conn_id, correlation_id=cid)
             self._store_last_result(
                 result,
                 tbl_name=dto.tbl_name,
@@ -635,12 +638,13 @@ class DigitalTwin:
             dto.conn_id,
         )
 
-    def _build_accepted_result(self, *, tx_id: str, conn_id: int) -> TransactionResultDTO:
+    def _build_accepted_result(self, *, tx_id: str, conn_id: int, correlation_id: str | None = None) -> TransactionResultDTO:
         return TransactionResultDTO(
             tx_id=tx_id,
             conn_id=conn_id,
             status="accepted",
             timestamp=get_timestamp(),
+            correlation_id=correlation_id,
         )
 
     async def get_queue_length(self) -> int:
@@ -893,12 +897,14 @@ class DigitalTwin:
         )
 
     def _log_cloud_aligned_ack_received(self, dto: OnAckDTO, delivered_conn_id: int) -> None:
+        cid = dto.correlation_id or get_correlation_id()
         logger.debug(
-            "TWIN: ACK received for tx_id=%s conn_id=%s delivered_conn_id=%s ack=%s",
+            "TWIN: ACK received for tx_id=%s conn_id=%s delivered_conn_id=%s ack=%s cid=%s",
             dto.tx_id,
             dto.conn_id,
             delivered_conn_id,
             dto.ack,
+            cid,
         )
 
     def _is_cloud_aligned_ack_conn_valid(
