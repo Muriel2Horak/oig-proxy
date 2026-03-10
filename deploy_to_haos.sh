@@ -15,40 +15,10 @@ LOCAL_SOURCE="./addon/oig-proxy"
 HOST_ADDON_DIR="/mnt/data/supervisor/addons/git/d7b5d5b1/addon/oig-proxy"
 
 # Python soubory + konfigurace k deployi (vše z addon/oig-proxy)
-DEPLOY_FILES=(
-config.py
-models.py
-utils.py
-oig_parser.py
-cloud_manager.py
-cloud_session.py
-cloud_forwarder.py
-mqtt_publisher.py
-mqtt_state_cache.py
-proxy.py
-proxy_status.py
-telemetry_client.py
-telemetry_collector.py
-control_api.py
-control_pipeline.py
-control_settings.py
-local_oig_crc.py
-oig_frame.py
-main.py
-backoff.py
-db_utils.py
-hybrid_mode.py
-mode_persistence.py
-digital_twin.py
-twin_adapter.py
-twin_state.py
-twin_transaction.py
-config.json
-sensor_map.json
-Dockerfile
-requirements.txt
-run
-)
+# Automaticky najde vsechny .py soubory a konfiguracni soubory
+DEPLOY_FILES=($(ls -1 "$LOCAL_SOURCE"/*.py "$LOCAL_SOURCE"/*.json "$LOCAL_SOURCE"/Dockerfile "$LOCAL_SOURCE"/requirements.txt "$LOCAL_SOURCE"/run 2>/dev/null))
+# Odstranit cesty, ponechat jen nazvy souboru
+DEPLOY_FILES=($(for f in "${DEPLOY_FILES[@]}"; do basename "$f"; done))
 
 # ── Pomocné funkce ───────────────────────────────────────
 

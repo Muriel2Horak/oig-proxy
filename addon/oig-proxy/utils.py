@@ -606,6 +606,7 @@ def init_capture_db() -> tuple[sqlite3.Connection | None, set[str]]:
             ("conn_id", "INTEGER"),
             ("peer", "TEXT"),
             ("length", "INTEGER"),
+            ("correlation_id", "TEXT"),
         ]:
             try:
                 conn.execute(
@@ -703,8 +704,8 @@ def _capture_worker(db_path: str) -> None:
 
         sql = (
             "INSERT INTO frames "
-            "(ts, device_id, table_name, raw, raw_b64, parsed, direction, conn_id, peer, length) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)")
+            "(ts, device_id, table_name, raw, raw_b64, parsed, direction, conn_id, peer, length, correlation_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)")
 
         if _capture_queue is None:
             logger.warning("Capture worker started without queue")

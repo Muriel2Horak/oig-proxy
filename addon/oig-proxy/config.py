@@ -302,8 +302,8 @@ TWIN_CLOUD_ALIGNED = _get_bool_env("TWIN_CLOUD_ALIGNED", False)
 
 CONTROL_TWIN_FIRST_ENABLED = _get_bool_env("CONTROL_TWIN_FIRST_ENABLED", False)
 
-THIN_PASS_THROUGH = _get_bool_env("THIN_PASS_THROUGH", False)
-LEGACY_FALLBACK = _get_bool_env("LEGACY_FALLBACK", True)
+THIN_PASS_THROUGH = _get_bool_env("THIN_PASS_THROUGH", True)
+LEGACY_FALLBACK = _get_bool_env("LEGACY_FALLBACK", False)
 
 
 def validate_startup_guards() -> None:
