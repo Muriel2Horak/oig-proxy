@@ -816,6 +816,9 @@ class OIGProxy:
                     exc,
                 )
             await self._mp.maybe_process_mode(parsed, table_name, device_id)
+            # DEBUG: Log which tables are being published
+            if table_name and table_name.startswith("tbl_"):
+                logger.info("DEBUG: Publishing table=%s, keys=%s", table_name, list(parsed.keys())[:5])
             try:
                 await self.mqtt_publisher.publish_data(parsed)
             except Exception as exc:  # pylint: disable=broad-exception-caught
