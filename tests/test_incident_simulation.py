@@ -57,7 +57,7 @@ def _make_proxy():
     proxy._maybe_handle_local_control_poll = AsyncMock(return_value=False)
     proxy._handle_frame_local_offline = AsyncMock(return_value=(None, None))
     proxy._cf = MagicMock()
-    proxy._cf.forward_frame = AsyncMock(return_value=(None, None))
+    proxy._cf.forward_frame = AsyncMock(return_value=(MagicMock(), MagicMock()))
     proxy._cf.session_connected = True
     proxy._cf.rx_buf = []
     proxy._pending_twin_activation = False

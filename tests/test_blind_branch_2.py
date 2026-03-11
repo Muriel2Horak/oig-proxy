@@ -19,24 +19,28 @@ async def test_on_ack_cloud_aligned_sets_inflight_none():
     twin._inflight_ctx.conn_id = 1
     twin._pending_simple = {}
     twin._lock = AsyncMock()
-    
-    # Create ACK DTO
+    twin._ack_task = None
+    twin._applied_task = None
+    twin._mqtt_publisher = None
+    twin.session_id = "test-session"
+    twin._last_result = None
+
     dto = OnAckDTO(
         tx_id="test-1",
         conn_id=1,
         ack=True,
     )
-    
-    # Mock _get_matching_inflight_for_ack to return the inflight
+
     with patch.object(twin, '_get_matching_inflight_for_ack', return_value=twin._inflight):
         with patch.object(twin, '_resolve_delivered_conn_id', return_value=1):
             with patch.object(twin, '_is_cloud_aligned_ack_conn_valid', return_value=True):
-                with patch.object(twin, '_finish_inflight_locked', return_value=MagicMock()) as mock_finish:
-                    # Simulate ACK Applied response
-                    await twin._on_ack_cloud_aligned(dto)
-                    
-                    # Verify finish was called
-                    mock_finish.assert_called_once()
+                with patch.object(twin, '_schedule_applied_timeout_after_ack'):
+                    with patch.object(twin, '_apply_cloud_aligned_ack_state', return_value=twin._inflight):
+                        # Simulate ACK Applied response
+                        result = await twin._on_ack_cloud_aligned(dto)
+
+                        assert result is not None
+                        assert result.tx_id == "test-1"
 
 
 @pytest.mark.asyncio
@@ -48,21 +52,24 @@ async def test_on_ack_legacy_sets_inflight_none():
     twin._inflight_ctx = MagicMock()
     twin._inflight_ctx.conn_id = 1
     twin._lock = AsyncMock()
-    
-    # Create ACK DTO
+    twin._ack_task = None
+    twin._applied_task = None
+    twin._mqtt_publisher = None
+    twin.session_id = "test-session"
+    twin._last_result = None
+
     dto = OnAckDTO(
         tx_id="test-1",
         conn_id=1,
         ack=True,
     )
-    
-    # Mock methods
-    with patch.object(twin, '_finish_inflight_locked', return_value=MagicMock()) as mock_finish:
-        # Simulate legacy ACK
-        await twin._on_ack_legacy(dto)
-        
-        # Verify finish was called
-        mock_finish.assert_called_once()
+
+    with patch.object(twin, '_applied_timeout_handler', new_callable=AsyncMock):
+        result = await twin._on_ack_legacy(dto)
+
+        assert result is not None
+        assert result.tx_id == "test-1"
+        assert result.status == "box_ack"
 
 
 @pytest.mark.asyncio

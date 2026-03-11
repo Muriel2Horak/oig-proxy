@@ -176,6 +176,11 @@ def make_proxy(tmp_path):
     proxy._local_getactual_task = None
     proxy._full_refresh_interval_h = 1
     proxy._full_refresh_task = None
+    proxy._pending_twin_activation = False
+    proxy._twin_mode_active = False
+    proxy._twin = None
+    proxy._pending_twin_activation_since = None
+    proxy._box_watchdog_task = None
     cs = ControlSettings.__new__(ControlSettings)
     cs._proxy = proxy
     cs.pending = None
@@ -717,10 +722,11 @@ def test_forward_frame_no_intercept_without_pending(tmp_path, monkeypatch):
 
 def test_forward_frame_online_ack_eof(tmp_path, monkeypatch):
     """In HYBRID mode (after threshold), cloud EOF triggers fallback to local ACK."""
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
     proxy = make_proxy(tmp_path)
-    proxy._hm.configured_mode = "hybrid"  # HYBRID mode does fallback
+    proxy._hm.configured_mode = "hybrid"
     proxy._hm.is_hybrid_mode.return_value = True
-    proxy._hm.in_offline = True  # Already reached threshold
+    proxy._hm.in_offline = True
     box_writer = DummyWriter()
     cloud_reader = DummyReader([b""])
     cloud_writer = DummyWriter()
@@ -818,7 +824,7 @@ def test_handle_box_connection_offline(tmp_path):
     proxy._process_box_frame_common = fake_process
     proxy._cs.maybe_handle_ack = fake_ack
     proxy._hm.get_current_mode = fake_mode
-    proxy._cf.handle_frame_offline_mode = fake_offline
+    proxy._handle_frame_local_offline = fake_offline
 
     asyncio.run(proxy._handle_box_connection(reader, writer, conn_id=2))
     assert called == ["offline"]
