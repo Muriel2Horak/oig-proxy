@@ -91,8 +91,9 @@ PROXY_STATUS_ATTRS_TOPIC = os.getenv(
 )
 LOCAL_GETACTUAL_ENABLED = os.getenv(
     "LOCAL_GETACTUAL_ENABLED",
-    "false").lower() == "true"
+    "true").lower() == "true"
 LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 30.0)
+BOX_WATCHDOG_TIMEOUT_S = _get_float_env("BOX_WATCHDOG_TIMEOUT_S", 300.0)
 FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
 
 # ============================================================================
@@ -116,7 +117,7 @@ HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
 TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
 TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
 # ACK timeout — how long to wait for cloud ACK before treating cloud as down
-CLOUD_ACK_TIMEOUT = _get_float_env("CLOUD_ACK_TIMEOUT", 1800.0)
+CLOUD_ACK_TIMEOUT = _get_float_env("CLOUD_ACK_TIMEOUT", 60.0)
 
 # ============================================================================
 # Proxy Configuration

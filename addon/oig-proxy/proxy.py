@@ -27,6 +27,7 @@ from control_pipeline import ControlPipeline
 from mode_persistence import ModePersistence
 from proxy_status import ProxyStatusReporter
 from config import (
+    BOX_WATCHDOG_TIMEOUT_S,
     CONTROL_API_HOST,
     CONTROL_API_PORT,
     LOCAL_GETACTUAL_ENABLED,
@@ -132,6 +133,7 @@ class OIGProxy:
         self._local_getactual_task: asyncio.Task[Any] | None = None
         self._full_refresh_interval_h: int = int(FULL_REFRESH_INTERVAL_H)
         self._full_refresh_task: asyncio.Task[Any] | None = None
+        self._box_watchdog_task: asyncio.Task[Any] | None = None
 
         # Telemetry to diagnostic server (muriel-cz.cz)
         self._telemetry_task: asyncio.Task[Any] | None = None
@@ -349,6 +351,9 @@ class OIGProxy:
         if self._full_refresh_task is None or self._full_refresh_task.done():
             self._full_refresh_task = asyncio.create_task(
                 self._full_refresh_loop())
+        if self._box_watchdog_task is None or self._box_watchdog_task.done():
+            self._box_watchdog_task = asyncio.create_task(
+                self._box_watchdog_loop())
 
         if not TELEMETRY_ENABLED:
             return
@@ -471,6 +476,25 @@ class OIGProxy:
             except Exception as e:
                 logger.debug("GetActual poll failed (conn=%s): %s", conn_id, e)
             await asyncio.sleep(self._local_getactual_interval_s)
+
+    async def _box_watchdog_loop(self) -> None:
+        while True:
+            await asyncio.sleep(60.0)
+            if self.box_connected:
+                continue
+            last_data = self._last_data_epoch
+            now = time.time()
+            reference = last_data if last_data is not None else self._start_time
+            elapsed = now - reference
+            if elapsed >= BOX_WATCHDOG_TIMEOUT_S:
+                logger.warning(
+                    "🐕 BOX WATCHDOG: box not connected for %.0fs "
+                    "(last_data=%.0fs ago, timeout=%.0fs). "
+                    "Check box power, network and DNS redirect.",
+                    elapsed,
+                    now - last_data if last_data else -1,
+                    BOX_WATCHDOG_TIMEOUT_S,
+                )
 
     async def _full_refresh_loop(self) -> None:
         interval_s = max(1, int(self._full_refresh_interval_h)) * 3600
