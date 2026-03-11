@@ -256,10 +256,14 @@ class OIGProxy:
         def _on_mqtt_connected() -> None:
             if self._loop is None:
                 return
-            fut = asyncio.run_coroutine_threadsafe(
-                twin.publish_initial_state(),
-                self._loop,
-            )
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    twin.publish_initial_state(),
+                    self._loop,
+                )
+            except RuntimeError as exc:
+                logger.debug("TWIN: could not schedule publish_initial_state: %s", exc)
+                return
 
             def _consume(_fut: Any) -> None:
                 try:

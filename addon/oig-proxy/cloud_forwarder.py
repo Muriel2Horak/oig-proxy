@@ -409,7 +409,7 @@ class CloudForwarder:
         frame_bytes: bytes,
         cloud_writer: asyncio.StreamWriter,
         cloud_reader: asyncio.StreamReader,
-        table_name: str | None,  # pylint: disable=unused-argument
+        table_name: str | None,
         conn_id: int,  # pylint: disable=unused-argument
     ) -> tuple[bytes | None, bool]:
         cloud_writer.write(frame_bytes)
