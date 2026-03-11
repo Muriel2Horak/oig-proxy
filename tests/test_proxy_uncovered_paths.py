@@ -834,7 +834,7 @@ async def test_dispatch_local_control_via_twin_branches(monkeypatch, caplog):
     )
     assert captured[-1][1]["direction"] == "proxy_to_box"
     assert captured[-1][0][1] == "IsNewSet"
-    assert "source=twin table=IsNewSet conn=1" in caplog.text
+    assert "TWIN: Delivered setting via twin (table=IsNewSet, conn=1)" in caplog.text
 
     proxy._twin.on_poll = AsyncMock(return_value=SimpleNamespace(frame_data=None))
     assert (
