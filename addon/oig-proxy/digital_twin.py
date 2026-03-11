@@ -190,7 +190,9 @@ class TwinMQTTHandler:
     def _extract_new_value(data: dict[str, Any]) -> Any:
         if "new_value" in data:
             return data.get("new_value")
-        return data.get("NewValue")
+        if "NewValue" in data:
+            return data.get("NewValue")
+        return data.get("value")
 
     async def _build_validated_dto(
         self,
@@ -249,7 +251,11 @@ class TwinMQTTHandler:
         if tx_id_raw:
             tx_id = tx_id_raw
         elif tx_id_strategy == "legacy_hash":
-            tx_id = f"legacy-{hashlib.sha1(request_key.encode('utf-8'), usedforsecurity=False).hexdigest()[:16]}"
+            try:
+                _sha1 = hashlib.sha1(request_key.encode("utf-8"), usedforsecurity=False)
+            except TypeError:
+                _sha1 = hashlib.sha1(request_key.encode("utf-8"))  # noqa: S324
+            tx_id = f"legacy-{_sha1.hexdigest()[:16]}"
         else:
             tx_id = generate_tx_id()
 
