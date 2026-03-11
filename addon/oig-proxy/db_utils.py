@@ -15,7 +15,9 @@ def init_sqlite_db(db_path: str, schema_sql: str, indexes_sql: str = "") -> sqli
     Returns:
         SQLite connection object
     """
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.executescript(schema_sql)
     if indexes_sql:

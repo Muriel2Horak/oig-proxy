@@ -57,9 +57,9 @@ class TelemetryBuffer:
 
     def _init_db(self) -> None:
         """Initialize SQLite database."""
-        from db_utils import init_sqlite_db
-
         try:
+            from db_utils import init_sqlite_db
+
             schema_sql = """
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
