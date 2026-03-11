@@ -541,6 +541,7 @@ def test_forward_frame_online_timeout_non_end(tmp_path, monkeypatch):
 
     proxy._cf.ensure_connected = fake_ensure
     proxy._cf.fallback_offline = fake_fallback
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
 
     async def timeout_wait_for(coro, timeout):
         coro.close()
@@ -629,6 +630,7 @@ def test_forward_frame_online_exception(tmp_path, monkeypatch):
 
     proxy._cf.ensure_connected = fake_ensure
     proxy._cf.fallback_offline = fake_fallback
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
     asyncio.run(

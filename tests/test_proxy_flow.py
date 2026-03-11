@@ -448,6 +448,7 @@ def test_forward_frame_online_success_and_eof(tmp_path, monkeypatch):
         return None, None
 
     cf.fallback_offline = fake_fallback
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
 
     async def run_eof():
         return await proxy._cf.forward_frame(

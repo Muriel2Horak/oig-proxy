@@ -19,7 +19,9 @@ import asyncio
 import json
 import os
 import time
+import unittest.mock
 from collections.abc import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -2150,11 +2152,6 @@ class TestInflightFinalization:
         assert inflight_after is None
 
     async def test_inflight_released_on_ack_timeout(self):
-        """
-        GIVEN: Transaction delivered but no ACK received within timeout
-        WHEN: ACK timeout fires
-        THEN: inflight is None after timeout handling
-        """
         twin = DigitalTwin(session_id="test-session")
 
         dto = make_queue_dto(tx_id="tx-timeout-release", conn_id=1)
@@ -2162,29 +2159,22 @@ class TestInflightFinalization:
         await twin.start_inflight("tx-timeout-release", conn_id=1)
         await twin.deliver_pending_setting("tx-timeout-release", conn_id=1)
 
-        # Verify inflight exists before timeout
         inflight_before = await twin.get_inflight()
         assert inflight_before is not None
 
-        # Directly call the timeout handler with proper context
         ctx = TransactionContext(
             tx_id="tx-timeout-release",
             conn_id=1,
             session_id="test-session",
             stage_snapshot=SettingStage.SENT_TO_BOX.value,
         )
-        await twin._ack_timeout_handler(ctx)
+        with unittest.mock.patch("asyncio.sleep", new_callable=AsyncMock):
+            await twin._ack_timeout_handler(ctx)
 
-        # Verify inflight is None after timeout
         inflight_after = await twin.get_inflight()
         assert inflight_after is None
 
     async def test_inflight_released_on_applied_timeout(self):
-        """
-        GIVEN: Transaction in BOX_ACK stage but no tbl_event within timeout
-        WHEN: Applied timeout fires
-        THEN: inflight is None after timeout handling
-        """
         twin = DigitalTwin(session_id="test-session")
 
         dto = make_queue_dto(tx_id="tx-applied-timeout-release", conn_id=1)
@@ -2192,25 +2182,22 @@ class TestInflightFinalization:
         await twin.start_inflight("tx-applied-timeout-release", conn_id=1)
         await twin.deliver_pending_setting("tx-applied-timeout-release", conn_id=1)
 
-        # Transition to BOX_ACK
         ack_dto = make_on_ack_dto(tx_id="tx-applied-timeout-release", conn_id=1, ack=True)
         await twin.on_ack(ack_dto)
 
-        # Verify inflight exists in BOX_ACK stage
         inflight_before = await twin.get_inflight()
         assert inflight_before is not None
         assert inflight_before.stage == SettingStage.BOX_ACK
 
-        # Directly call the applied timeout handler with proper context
         ctx = TransactionContext(
             tx_id="tx-applied-timeout-release",
             conn_id=1,
             session_id="test-session",
             stage_snapshot=SettingStage.BOX_ACK.value,
         )
-        await twin._applied_timeout_handler(ctx)
+        with unittest.mock.patch("asyncio.sleep", new_callable=AsyncMock):
+            await twin._applied_timeout_handler(ctx)
 
-        # Verify inflight is None after applied timeout
         inflight_after = await twin.get_inflight()
         assert inflight_after is None
 

@@ -32,6 +32,7 @@ def _make_proxy() -> proxy_module.OIGProxy:
     proxy._mp = mp
     proxy._status_task = None
     proxy._full_refresh_task = None
+    proxy._box_watchdog_task = None
     proxy._telemetry_task = None
     proxy._control_api = None
     proxy._tc = MagicMock()
@@ -90,7 +91,7 @@ def test_start_background_tasks_skips_telemetry(monkeypatch):
     monkeypatch.setattr(proxy_module, "TELEMETRY_ENABLED", False)
 
     proxy._start_background_tasks()
-    assert len(created) == 2
+    assert len(created) == 3
     proxy._tc.init.assert_not_called()
 
 

@@ -124,13 +124,13 @@ class TestTelemetryBuffer:
         buffer._cleanup()
         assert buffer.count() == 0
 
-    def test_cleanup_excess_messages(self, temp_db):
+    def test_cleanup_excess_messages(self, temp_db, monkeypatch):
+        monkeypatch.setattr(telemetry_client, "BUFFER_MAX_MESSAGES", 10)
         buffer = telemetry_client.TelemetryBuffer(temp_db)
-        # Insert more than BUFFER_MAX_MESSAGES
-        for i in range(telemetry_client.BUFFER_MAX_MESSAGES + 100):
+        for i in range(15):
             buffer.store(f"topic{i}", {"i": i})
         buffer._cleanup()
-        assert buffer.count() <= telemetry_client.BUFFER_MAX_MESSAGES
+        assert buffer.count() <= 10
 
     def test_get_pending_invalid_json(self, temp_db):
         buffer = telemetry_client.TelemetryBuffer(temp_db)

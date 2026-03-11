@@ -38,16 +38,17 @@ async def test_identical_payloads_dropped_when_offline():
 
 def test_dedup_works_when_online():
     """Test that dedup works when MQTT is online."""
+    import time as _time
     mq = mq_module.MQTTPublisher.__new__(mq_module.MQTTPublisher)
     mq.is_ready = MagicMock(return_value=True)  # Online
     mq._last_payload_by_topic = {}
+    mq._last_publish_time_by_topic = {}
 
     payload = {"topic": "test/topic", "payload": "data123"}
 
-    # First publish
     mq._last_payload_by_topic[payload["topic"]] = payload["payload"]
+    mq._last_publish_time_by_topic[payload["topic"]] = _time.time()
 
-    # Same payload again should be deduped
     is_dup = mq._check_payload_deduplication(
         payload["topic"], payload["payload"]
     )

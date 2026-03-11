@@ -195,6 +195,7 @@ async def test_ensure_cloud_connected_failure(monkeypatch):
 async def test_handle_cloud_connection_failed_hybrid(monkeypatch):
     proxy, cf = _make_proxy_and_cf()
     proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
 
     await cf.handle_connection_failed(
         conn_id=1,
@@ -229,9 +230,10 @@ async def test_handle_cloud_connection_failed_non_hybrid():
 
 
 @pytest.mark.asyncio
-async def test_handle_cloud_eof_hybrid():
+async def test_handle_cloud_eof_hybrid(monkeypatch):
     proxy, cf = _make_proxy_and_cf()
     proxy._hm.is_hybrid_mode = MagicMock(return_value=True)
+    monkeypatch.setattr(cf_module, "LEGACY_FALLBACK", True)
 
     await cf.handle_eof(
         conn_id=1,
