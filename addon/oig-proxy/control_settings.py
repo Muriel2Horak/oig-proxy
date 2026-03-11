@@ -194,7 +194,7 @@ class ControlSettings:
 
     def resolve_control_route(self) -> str:
         """Resolve control route: twin-first, legacy only as explicit fallback."""
-        twin_available = self._proxy._twin is not None and not self._proxy._twin_kill_switch
+        twin_available = getattr(self._proxy, "_twin", None) is not None and not getattr(self._proxy, "_twin_kill_switch", False)
         if CONTROL_TWIN_FIRST_ENABLED and twin_available:
             return "twin"
         if not CONTROL_TWIN_FIRST_ENABLED:
@@ -404,6 +404,7 @@ class ControlSettings:
         )
         result = await twin.queue_setting(dto)
         self._proxy._pending_twin_activation = True
+        self._proxy._pending_twin_activation_since = time.time()
         if self._proxy.box_connected:
             self._proxy._twin_mode_active = True
         logger.info(
