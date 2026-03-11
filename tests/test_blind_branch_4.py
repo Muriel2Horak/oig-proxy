@@ -13,9 +13,12 @@ from models import ProxyMode
 class DummyTwin:
     def __init__(self, queue_length=0):
         self._queue_length = queue_length
-    
-    def get_queue_length(self):
+
+    async def get_queue_length(self):
         return self._queue_length
+
+    async def get_inflight(self):
+        return None
 
 
 def _make_proxy():
