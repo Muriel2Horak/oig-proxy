@@ -1,2 +1,5 @@
 - 2026-03-10: No unresolved blockers in Task 7 implementation; broader full-suite verification remains outside this task scope.
 - 2026-03-10: No unresolved blockers for Task 13; full async-suite environment parity (pytest-asyncio availability) remains an external tooling concern.
+- 2026-03-10: Markdown LSP diagnostics could not be executed because configured `marksman` binary is not installed in this environment; verification used file-read/manual inspection plus passing pytest suite.
+- 2026-03-10: No unresolved blockers for Task 22; full regression and coverage gates passed with evidence captured under `.sisyphus/evidence/task-22-*.txt`.
+- 2026-03-10: No unresolved blockers for telemetry TAP coverage task; requested module reached 100% line coverage in targeted run.

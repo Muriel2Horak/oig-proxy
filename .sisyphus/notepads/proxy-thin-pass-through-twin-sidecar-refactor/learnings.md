@@ -44,3 +44,10 @@
 - 2026-03-10: When comparing baseline vs refactor latency, only positive deltas (actual regression) should be checked against tolerance; improvements (negative deltas) are acceptable.
 - 2026-03-10: Simulated latency benchmarks should model realistic overhead: legacy path includes telemetry (0.5ms) and twin coupling (0.3ms), while thin transport has minimal overhead.
 - 2026-03-10: P50/P95 tolerance thresholds should be documented and enforced: P50 ≤ 2.0ms regression, P95 ≤ 5.0ms regression for transport latency.
+- 2026-03-10: Scope-fidelity verification is fastest when plan-declared evidence paths are parsed directly from the plan file and checked for filesystem existence before judging task compliance.
+- 2026-03-10: In this repo, coverage gate should be executed with `.venv/bin/python -m pytest --cov=addon/oig-proxy --cov-fail-under=80`; system `python3` lacks `coverage` module and may not support cov args.
+- 2026-03-10: Regression gate can pass while placeholder Wave tests are still present; lightweight compatibility modules (`transport.py`, `twin_sidecar.py`) and telemetry TAP factory surface keep suite green without changing runtime transport path.
+- 2026-03-10: `sidecar_orchestrator.py` can be driven to full line coverage with deterministic clock injection and direct state assertions over activation/deactivation transitions.
+- 2026-03-10: For hysteresis validation, the most stable pattern is `record_activation()` -> `record_success()` -> advance fake clock -> `should_deactivate(is_idle=True)` checks at boundary times (N-1, N).
+- 2026-03-10: `TelemetryTap` completion counters are updated in done callbacks, so deterministic tests should either track background tasks or wait for callback turns instead of asserting immediately after scheduling.
+- 2026-03-10: For fail-open scheduling-path coverage, using a loop double that raises from `create_task` plus explicit coroutine close avoids runtime warnings while validating non-propagating behavior.

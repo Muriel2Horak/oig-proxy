@@ -66,14 +66,14 @@ async def test_process_box_frame_with_guard_catches_value_error():
     """Test that ValueError in processing is caught and routing continues."""
     proxy = _make_proxy()
     proxy._process_box_frame_common = AsyncMock(side_effect=ValueError("test error"))
-
+    
     # Should not raise - exception is caught
     result = await proxy._process_box_frame_with_guard(
         frame_bytes=b"test",
         frame="test",
         conn_id=1,
     )
-
+    
     # Should return tuple even on error (fail-open)
     assert result is not None
     assert len(result) == 3  # (device_id, table_name, had_error)
@@ -84,14 +84,14 @@ async def test_process_box_frame_with_guard_catches_key_error():
     """Test that KeyError in processing is caught and routing continues."""
     proxy = _make_proxy()
     proxy._process_box_frame_common = AsyncMock(side_effect=KeyError("missing_key"))
-
+    
     # Should not raise
     result = await proxy._process_box_frame_with_guard(
         frame_bytes=b"test",
         frame="test",
         conn_id=1,
     )
-
+    
     assert result is not None
 
 
@@ -100,14 +100,14 @@ async def test_process_box_frame_with_guard_catches_type_error():
     """Test that TypeError in processing is caught and routing continues."""
     proxy = _make_proxy()
     proxy._process_box_frame_common = AsyncMock(side_effect=TypeError("type error"))
-
+    
     # Should not raise
     result = await proxy._process_box_frame_with_guard(
         frame_bytes=b"test",
         frame="test",
         conn_id=1,
     )
-
+    
     assert result is not None
 
 
@@ -116,14 +116,14 @@ async def test_process_box_frame_with_guard_catches_attribute_error():
     """Test that AttributeError in processing is caught and routing continues."""
     proxy = _make_proxy()
     proxy._process_box_frame_common = AsyncMock(side_effect=AttributeError("no attr"))
-
+    
     # Should not raise
     result = await proxy._process_box_frame_with_guard(
         frame_bytes=b"test",
         frame="test",
         conn_id=1,
     )
-
+    
     assert result is not None
 
 
@@ -132,14 +132,14 @@ async def test_process_box_frame_with_guard_logs_warning_on_exception():
     """Test that WARNING is logged when exception occurs."""
     proxy = _make_proxy()
     proxy._process_box_frame_common = AsyncMock(side_effect=ValueError("test error"))
-
+    
     with patch("proxy.logger") as mock_logger:
         await proxy._process_box_frame_with_guard(
             frame_bytes=b"test",
             frame="test",
             conn_id=1,
         )
-
+        
         # Should log warning
         mock_logger.warning.assert_called_once()
 
@@ -149,13 +149,13 @@ async def test_process_box_frame_with_guard_normal_flow_works():
     """Test that normal processing still works without errors."""
     proxy = _make_proxy()
     proxy._process_box_frame_common = AsyncMock(return_value=("DEV1", "tbl_test"))
-
+    
     result = await proxy._process_box_frame_with_guard(
         frame_bytes=b"<OIG><tbl_test>...</tbl_test></OIG>",
         frame="<OIG><tbl_test>...</tbl_test></OIG>",
         conn_id=1,
     )
-
+    
     assert result == ("DEV1", "tbl_test", False)
 
 
@@ -169,13 +169,13 @@ async def test_handle_box_connection_continues_after_processing_error():
         ("DEV1", "tbl_ok"),  # Second frame succeeds
     ])
     proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
-
+    
     await proxy._handle_box_connection(
         box_reader=MagicMock(),
         box_writer=DummyWriter(),
         conn_id=1,
     )
-
+    
     # Should have processed both frames (continued after error)
     assert proxy._process_box_frame_common.call_count == 2
 
@@ -186,16 +186,16 @@ async def test_cloud_forwarder_still_gets_data_on_exception():
     proxy = _make_proxy()
     proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.ONLINE)
     proxy._read_box_bytes = AsyncMock(side_effect=[b"frame", None])
-
+    
     # Simulate processing exception (parsing/MQTT error)
     proxy._process_box_frame_common = AsyncMock(side_effect=ValueError("parse error"))
-
+    
     await proxy._handle_box_connection(
         box_reader=MagicMock(),
         box_writer=DummyWriter(),
         conn_id=1,
     )
-
+    
     # Cloud forwarder should still be called even with partial data
     # because fail-open routing ensures forwarding continues
 
@@ -206,7 +206,7 @@ async def test_exception_does_not_stop_routing():
     proxy = _make_proxy()
     proxy._hm.get_current_mode = AsyncMock(return_value=ProxyMode.OFFLINE)
     proxy._read_box_bytes = AsyncMock(side_effect=[b"frame1", b"frame2", b"frame3", None])
-
+    
     # First frame raises exception, others succeed
     call_count = [0]
     async def side_effect(*args, **kwargs):
@@ -214,14 +214,14 @@ async def test_exception_does_not_stop_routing():
         if call_count[0] == 1:
             raise ValueError("first frame error")
         return ("DEV1", f"tbl_{call_count[0]}")
-
+    
     proxy._process_box_frame_common = AsyncMock(side_effect=side_effect)
-
+    
     await proxy._handle_box_connection(
         box_reader=MagicMock(),
         box_writer=DummyWriter(),
         conn_id=1,
     )
-
+    
     # All 3 frames should be processed (routing didn't stop on first error)
     assert proxy._process_box_frame_common.call_count == 3

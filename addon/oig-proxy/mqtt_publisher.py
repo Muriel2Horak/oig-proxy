@@ -20,6 +20,7 @@ from config import (
     PROXY_DEVICE_ID,
     MQTT_USERNAME,
 )
+from db_utils import init_sqlite_db
 from models import SensorConfig
 from utils import get_sensor_config
 
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 _MQTT_LOG_SUBSCRIBED = "MQTT: Subscribed %s"
 _MQTT_LOG_SUBSCRIBE_FAILED = "MQTT: Subscribe failed %s: %s"
+
+
 
 
 class MQTTPublisher:  # pylint: disable=too-many-instance-attributes

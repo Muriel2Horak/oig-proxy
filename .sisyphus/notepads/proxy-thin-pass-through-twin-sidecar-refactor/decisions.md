@@ -8,3 +8,7 @@
 - 2026-03-10: Task 13 deactivation now delegates to `ProxySidecarAdapter.check_and_deactivate()` so sidecar turns off only after 300s stable cloud since first success and resets on fail events.
 - 2026-03-10: Task 16 implemented fail-open at proxy frame processing boundary (not in CloudForwarder) so telemetry/twin side effects cannot raise into transport routing but still emit explicit warning logs.
 - 2026-03-10: Task 17 removed `_thin_pass_through` routing gates from `proxy.py` critical path; transport-first is now default and legacy local fallback is reachable only behind `LEGACY_FALLBACK` guard.
+- 2026-03-10: F4 verdict policy for this plan run set to strict REJECT if any plan-required evidence artifact is missing or if out-of-plan contamination files are present in repository state.
+- 2026-03-10: Task 22 chose minimal-scope compatibility restoration (routing fallback + TAP factory API + placeholder transport/sidecar modules) to clear regressions exposed by full-suite execution without touching unrelated production flow.
+- 2026-03-10: Added a dedicated `tests/test_sidecar_orchestrator.py` unit suite to cover all sidecar orchestrator public APIs, including `NoOpSidecarOrchestrator` and `ProxySidecarAdapter` integration paths, instead of extending broader proxy integration tests.
+- 2026-03-10: Replaced placeholder telemetry TAP tests with direct unit coverage of `TelemetryTap`, `TelemetryTapAdapter`, and `TelemetryTapFactory`, and validated module-level 100% coverage using `.venv/bin/python -m coverage` in this environment.

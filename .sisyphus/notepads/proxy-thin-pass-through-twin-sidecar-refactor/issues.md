@@ -5,3 +5,7 @@
 - 2026-03-10: Repository contains async tests requiring pytest-asyncio plugin; for this task evidence uses synchronous wrapper tests (`asyncio.run`) to keep validation runnable with `python3 -m pytest` in current container.
 - 2026-03-10: `tests/test_proxy_uncovered_paths.py` already contains many async tests without markers, so this task validates focused scenarios via new sync-wrapper tests and targeted `-k` runs to avoid unrelated environment/plugin failures.
 - 2026-03-10: Task 17 targeted re-runs became blocked by unrelated `IndentationError` in `addon/oig-proxy/digital_twin.py` line 909 during import; this prevented full post-change pytest execution in current workspace snapshot.
+- 2026-03-10: Scope audit found contamination in working tree from unrelated artifacts (`.sisyphus/drafts/*` and extra `.sisyphus/plans/*`), requiring reject verdict despite broad code/task alignment.
+- 2026-03-10: `./.github/scripts/run_tests.sh` completed tests but did not emit a terminal coverage threshold line in this environment; coverage gate evidence for Task 22 was captured via direct `.venv/bin/python -m pytest --cov ... --cov-fail-under=80` run.
+- 2026-03-10: Container system Python lacks pytest-cov/coverage CLI support by default; module coverage execution required repository `.venv` interpreter.
+- 2026-03-10: Initial telemetry tap assertions were flaky because task completion callbacks did not always run after a single loop tick; resolved by waiting for tracked background task set to drain.

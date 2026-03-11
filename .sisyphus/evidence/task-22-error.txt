@@ -40,13 +40,53 @@ tests/test_whitelist_parity_matrix.py: 18 warnings
   /repos/oig-proxy/addon/oig-proxy/twin_state.py:607: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
     return datetime.utcnow().isoformat() + "Z"
 
-tests/test_blind_branch_4.py::test_twin_mode_active_set_after_activation
-  /usr/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'DigitalTwin._applied_timeout_handler' was never awaited
-    def __init__(self, name, parent):
+tests/test_blind_branch_4.py::test_activation_called_during_session_when_pending_and_queue
+  /usr/lib/python3.12/asyncio/coroutines.py:13: RuntimeWarning: coroutine 'DigitalTwin._applied_timeout_handler' was never awaited
+    bool(os.environ.get('PYTHONASYNCIODEBUG')))
   Enable tracemalloc to get traceback where the object was allocated.
   See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.12-final-0 _______________
+
+Name                                      Stmts   Miss  Cover   Missing
+-----------------------------------------------------------------------
+addon/oig-proxy/backoff.py                   16      0   100%
+addon/oig-proxy/cloud_forwarder.py          222     13    94%   236, 258, 285-286, 377, 402-403, 444, 496-498, 502, 558
+addon/oig-proxy/cloud_manager.py              2      2     0%   9-11
+addon/oig-proxy/cloud_session.py            161    161     0%   11-258
+addon/oig-proxy/config.py                   153      5    97%   58, 63, 73, 75, 237
+addon/oig-proxy/control_api.py              143     38    73%   38-43, 61, 68, 87-88, 101-102, 109-116, 156-162, 166-173, 178-193, 234-239
+addon/oig-proxy/control_pipeline.py         106     12    89%   74, 114, 160-161, 165-166, 227, 241-242, 263, 267-268
+addon/oig-proxy/control_settings.py         140     39    72%   80, 108, 204-205, 223-229, 240-268, 331-347, 358-371, 391
+addon/oig-proxy/correlation_id.py            97     28    71%   108, 179, 187-190, 211-226, 242-245, 275, 280-282, 287, 295-296
+addon/oig-proxy/db_utils.py                   9      0   100%
+addon/oig-proxy/digital_twin.py             679     23    97%   217-222, 238-243, 252, 279-281, 394-398, 402-405, 1162-1170, 1739-1741, 1747-1748
+addon/oig-proxy/hybrid_mode.py               96     18    81%   59-60, 77, 79, 90, 92, 95, 108-110, 124, 129-130, 160, 196-199
+addon/oig-proxy/local_oig_crc.py             45      0   100%
+addon/oig-proxy/main.py                      69      2    97%   49, 123
+addon/oig-proxy/mode_persistence.py          91      9    90%   45, 52, 91, 104, 108, 134, 168, 171-173
+addon/oig-proxy/models.py                    18      0   100%
+addon/oig-proxy/mqtt_publisher.py           382    175    54%   83-88, 91-113, 116-119, 123-152, 156-163, 168-217, 221-222, 227-239, 246-250, 273-274, 277-290, 320-328, 336-357, 366-369, 373-374, 380, 387, 391, 395, 399, 456, 516-542, 552, 582-584, 602-607, 634, 646, 678, 685, 689, 709-711
+addon/oig-proxy/mqtt_state_cache.py         163     40    75%   63, 138-153, 160, 168-176, 214, 220, 223, 226-227, 229, 231, 253-254, 280, 282, 285, 288
+addon/oig-proxy/oig_frame.py                 98      6    94%   143-148
+addon/oig-proxy/oig_parser.py                44      0   100%
+addon/oig-proxy/proxy.py                    763     30    96%   187, 333, 543, 690, 712-713, 894, 899, 907-908, 910, 1019, 1039, 1179, 1268-1277, 1300, 1303, 1306-1308, 1419, 1423, 1444-1458
+addon/oig-proxy/proxy_status.py             141      8    94%   46-51, 65, 208, 211, 260-261
+addon/oig-proxy/sidecar_orchestrator.py     198     59    70%   241-263, 290, 301, 330-333, 403-407, 410, 420-437, 446, 458-459, 477, 488, 492, 496, 500, 504, 508, 511, 521, 557-575, 584, 623, 632-633
+addon/oig-proxy/telemetry_client.py         330      6    98%   317, 327, 334-338
+addon/oig-proxy/telemetry_collector.py      460    104    77%   128-129, 149, 151, 163, 230-232, 236, 240, 244, 251-256, 260-265, 269, 273-277, 295, 332, 350, 354-355, 436, 463-473, 502-504, 526-527, 535-542, 545-561, 564-578, 583, 587-597, 693, 708-709, 711, 713, 718, 729-739, 859-868
+addon/oig-proxy/telemetry_tap.py            167     69    59%   60, 65, 73-78, 82-84, 88-95, 113-124, 142-146, 169-178, 201-202, 207, 211, 215, 223-225, 240-242, 253-268, 289, 303, 341, 365
+addon/oig-proxy/transport.py                 50      2    96%   60-61
+addon/oig-proxy/twin_adapter.py              65     21    68%   340-342, 347-349, 368-371, 393-399, 422-426
+addon/oig-proxy/twin_sidecar.py              49      0   100%
+addon/oig-proxy/twin_state.py               178     18    90%   91, 129-131, 135, 167, 195, 233, 255-261, 438, 546, 586, 590
+addon/oig-proxy/twin_transaction.py          75      2    97%   163, 175
+addon/oig-proxy/utils.py                    410      6    99%   322-323, 621-623, 740
+-----------------------------------------------------------------------
+TOTAL                                      5620    896    84%
+Required test coverage of 80% reached. Total coverage: 84.06%
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_control_methods.py:22: async mocking complexity, not priority for SonarCloud
 SKIPPED [1] tests/test_control_methods.py:81: async mocking complexity, not priority for SonarCloud
@@ -77,4 +117,4 @@ SKIPPED [1] tests/test_twin_cloud_parity.py:218: Test only applicable in cloud-a
 SKIPPED [1] tests/test_twin_cloud_parity.py:519: Test only applicable in cloud-aligned mode
 SKIPPED [1] tests/test_twin_cloud_parity.py:608: Test only applicable in cloud-aligned mode
 SKIPPED [1] tests/test_twin_cloud_parity.py:729: Test only applicable in cloud-aligned mode
-929 passed, 29 skipped, 411 warnings in 887.89s (0:14:47)
+929 passed, 29 skipped, 411 warnings in 549.92s (0:09:09)
