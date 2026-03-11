@@ -103,12 +103,6 @@ class HybridModeManager:
             return True
         return False
 
-    def should_route_settings_via_twin(self) -> bool:
-        """Returns True if settings should be routed via twin (offline fallback)."""
-        if self.force_offline_enabled():
-            return True
-        return self.is_hybrid_mode() and self.in_offline
-
     # ------------------------------------------------------------------
     # Hybrid state transitions
     # ------------------------------------------------------------------

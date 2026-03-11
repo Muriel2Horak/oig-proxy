@@ -302,62 +302,6 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
-    "twin_state:queue_length": {
-      "name": "Twin queue length",
-      "name_cs": "Twin - D\u00e9lka fronty",
-      "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": "measurement",
-      "sensor_type_category": "diagnostic",
-      "device_mapping": "proxy",
-      "todo": false,
-      "entity_category": "diagnostic"
-    },
-    "twin_state:inflight_tx": {
-      "name": "Twin inflight transaction",
-      "name_cs": "Twin - Prob\u00edhaj\u00edc\u00ed transakce",
-      "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
-      "sensor_type_category": "diagnostic",
-      "device_mapping": "proxy",
-      "todo": false,
-      "entity_category": "diagnostic"
-    },
-    "twin_state:last_command_status": {
-      "name": "Twin last command status",
-      "name_cs": "Twin - Stav posledn\u00edho p\u0159\u00edkazu",
-      "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
-      "sensor_type_category": "diagnostic",
-      "device_mapping": "proxy",
-      "todo": false,
-      "entity_category": "diagnostic"
-    },
-    "twin_state:session_active": {
-      "name": "Twin session active",
-      "name_cs": "Twin - Relace aktivn\u00ed",
-      "unit_of_measurement": "",
-      "device_class": "connectivity",
-      "state_class": null,
-      "sensor_type_category": "diagnostic",
-      "device_mapping": "proxy",
-      "todo": false,
-      "entity_category": "diagnostic",
-      "is_binary": true
-    },
-    "twin_state:mode": {
-      "name": "Twin mode",
-      "name_cs": "Twin - Re\u017eim",
-      "unit_of_measurement": "",
-      "device_class": null,
-      "state_class": null,
-      "sensor_type_category": "diagnostic",
-      "device_mapping": "proxy",
-      "todo": false,
-      "entity_category": "diagnostic"
-    },
     "FV_V1": {
       "name": "Nap\u011bt\u00ed string 1",
       "name_cs": "FVE - Nap\u011bt\u00ed string 1",
