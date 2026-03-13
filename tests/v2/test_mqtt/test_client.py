@@ -226,11 +226,12 @@ def test_send_discovery_creates_number_command_entity_for_whitelisted_setting():
         device_mapping="battery",
     )
 
-    assert mock_paho.publish.call_count == 2
-    control_topic = mock_paho.publish.call_args_list[1][0][0]
-    control_payload = json.loads(mock_paho.publish.call_args_list[1][0][1])
+    assert mock_paho.publish.call_count == 1
+    control_topic = mock_paho.publish.call_args_list[0][0][0]
+    control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
     assert control_topic == "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_set/config"
     assert control_payload["command_topic"] == "oig_local/DEV01/set/tbl_batt_prms/BAT_MIN"
+    assert control_payload["entity_category"] == "config"
     assert control_payload["min"] == 20
     assert control_payload["max"] == 100
     assert control_payload["step"] == 1
@@ -265,9 +266,32 @@ def test_send_discovery_keeps_raw_template_for_control_number_entity_with_enum()
         enum_map={"0": "Home 1", "1": "Home 2"},
     )
 
-    assert mock_paho.publish.call_count == 2
-    control_payload = json.loads(mock_paho.publish.call_args_list[1][0][1])
+    assert mock_paho.publish.call_count == 1
+    control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
     assert control_payload["value_template"] == "{{ value_json.MODE }}"
+
+
+def test_send_discovery_creates_switch_entity_for_binary_setting():
+    c = make_client(namespace="oig_local")
+    mock_paho = inject_mock_paho(c)
+
+    c.send_discovery(
+        device_id="DEV01",
+        table="tbl_invertor_prm1",
+        sensor_key="BUZ_MUT",
+        sensor_name="Střídač - Ztlumit bzučák",
+        is_binary=True,
+        device_mapping="inverter",
+    )
+
+    assert mock_paho.publish.call_count == 1
+    topic = mock_paho.publish.call_args_list[0][0][0]
+    payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
+    assert topic == "homeassistant/switch/oig_local_dev01_tbl_invertor_prm1_buz_mut_set/config"
+    assert payload["payload_on"] == 1
+    assert payload["payload_off"] == 0
+    assert payload["state_on"] == 1
+    assert payload["state_off"] == 0
 
 
 def test_send_discovery_deduplication():

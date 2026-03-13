@@ -277,6 +277,7 @@ class MQTTClient:
         mapped_device = device_mapping or "inverter"
         device_identifier = f"{self.namespace}_{device_id}_{mapped_device}"
         device_label = DEVICE_NAMES.get(mapped_device, DEVICE_NAMES["inverter"])
+        is_setting = table in CONTROL_WRITE_WHITELIST and sensor_key in CONTROL_WRITE_WHITELIST[table]
         component = "binary_sensor" if is_binary else "sensor"
 
         value_template = f"{{{{ value_json.{sensor_key} }}}}"
@@ -325,52 +326,62 @@ class MQTTClient:
             client = self._client
             if client is None:
                 return False
+            if is_setting:
+                control_unique_id = f"{unique_id}_set"
+                if control_unique_id in self._discovery_sent:
+                    return True
+
+                control_component = "switch" if is_binary else "number"
+                control_payload: dict[str, Any] = {
+                    "name": sensor_name,
+                    "unique_id": control_unique_id,
+                    "state_topic": state_topic,
+                    "value_template": f"{{{{ value_json.{sensor_key} }}}}",
+                    "command_topic": f"{self.namespace}/{device_id}/set/{table}/{sensor_key}",
+                    "availability": [{"topic": availability_topic}],
+                    "device": payload["device"],
+                    "entity_category": "config",
+                }
+
+                if control_component == "number":
+                    control_payload["mode"] = "box"
+                    if unit:
+                        control_payload["unit_of_measurement"] = unit
+                    if device_class:
+                        control_payload["device_class"] = device_class
+                    constraint = SETTING_CONSTRAINTS.get((table, sensor_key))
+                    if constraint is not None:
+                        if constraint.min_value is not None:
+                            control_payload["min"] = constraint.min_value
+                        if constraint.max_value is not None:
+                            control_payload["max"] = constraint.max_value
+                        if constraint.step is not None:
+                            control_payload["step"] = constraint.step
+                else:
+                    control_payload["payload_on"] = 1
+                    control_payload["payload_off"] = 0
+                    control_payload["state_on"] = 1
+                    control_payload["state_off"] = 0
+
+                control_topic = f"homeassistant/{control_component}/{control_unique_id}/config"
+                control_result = client.publish(
+                    control_topic,
+                    json.dumps(control_payload),
+                    retain=True,
+                    qos=1,
+                )
+                if control_result.rc == 0:
+                    self._discovery_sent.add(control_unique_id)
+                    logger.debug("MQTT: Discovery → %s", control_topic)
+                    return True
+                return False
+
             result = client.publish(
                 discovery_topic, json.dumps(payload), retain=True, qos=1
             )
             if result.rc == 0:
                 self._discovery_sent.add(unique_id)
                 logger.debug("MQTT: Discovery → %s", discovery_topic)
-
-                if table in CONTROL_WRITE_WHITELIST and sensor_key in CONTROL_WRITE_WHITELIST[table]:
-                    control_unique_id = f"{unique_id}_set"
-                    if control_unique_id not in self._discovery_sent:
-                        control_payload: dict[str, Any] = {
-                            "name": sensor_name,
-                            "unique_id": control_unique_id,
-                            "state_topic": state_topic,
-                            "value_template": f"{{{{ value_json.{sensor_key} }}}}",
-                            "command_topic": f"{self.namespace}/{device_id}/set/{table}/{sensor_key}",
-                            "availability": [{"topic": availability_topic}],
-                            "mode": "box",
-                            "device": payload["device"],
-                        }
-                        if unit:
-                            control_payload["unit_of_measurement"] = unit
-                        if device_class:
-                            control_payload["device_class"] = device_class
-                        if entity_category:
-                            control_payload["entity_category"] = entity_category
-
-                        constraint = SETTING_CONSTRAINTS.get((table, sensor_key))
-                        if constraint is not None:
-                            if constraint.min_value is not None:
-                                control_payload["min"] = constraint.min_value
-                            if constraint.max_value is not None:
-                                control_payload["max"] = constraint.max_value
-                            if constraint.step is not None:
-                                control_payload["step"] = constraint.step
-
-                        control_topic = f"homeassistant/number/{control_unique_id}/config"
-                        control_result = client.publish(
-                            control_topic,
-                            json.dumps(control_payload),
-                            retain=True,
-                            qos=1,
-                        )
-                        if control_result.rc == 0:
-                            self._discovery_sent.add(control_unique_id)
-                            logger.debug("MQTT: Discovery → %s", control_topic)
                 return True
             return False
         except Exception as exc:  # noqa: BLE001
