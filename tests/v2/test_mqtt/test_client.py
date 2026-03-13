@@ -229,7 +229,7 @@ def test_send_discovery_creates_number_command_entity_for_whitelisted_setting():
     assert mock_paho.publish.call_count == 1
     control_topic = mock_paho.publish.call_args_list[0][0][0]
     control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
-    assert control_topic == "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_set/config"
+    assert control_topic == "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config"
     assert control_payload["command_topic"] == "oig_local/DEV01/set/tbl_batt_prms/BAT_MIN"
     assert control_payload["entity_category"] == "config"
     assert control_payload["min"] == 20
@@ -287,7 +287,7 @@ def test_send_discovery_creates_switch_entity_for_binary_setting():
     assert mock_paho.publish.call_count == 1
     topic = mock_paho.publish.call_args_list[0][0][0]
     payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
-    assert topic == "homeassistant/switch/oig_local_dev01_tbl_invertor_prm1_buz_mut_set/config"
+    assert topic == "homeassistant/switch/oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg/config"
     assert payload["payload_on"] == 1
     assert payload["payload_off"] == 0
     assert payload["state_on"] == 1

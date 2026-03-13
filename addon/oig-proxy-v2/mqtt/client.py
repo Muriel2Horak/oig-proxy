@@ -327,7 +327,7 @@ class MQTTClient:
             if client is None:
                 return False
             if is_setting:
-                control_unique_id = f"{unique_id}_set"
+                control_unique_id = f"{unique_id}_cfg"
                 if control_unique_id in self._discovery_sent:
                     return True
 
