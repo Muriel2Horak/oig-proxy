@@ -13,10 +13,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from config import MQTT_NAMESPACE
+from control_pipeline import ControlPipeline
 from utils import get_sensor_config, save_mode_state, save_prms_state
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ class MqttStateCache:
                 return
             try:
                 payload_text = payload.decode("utf-8", errors="strict")
-            except UnicodeDecodeError:
+            except Exception:
                 payload_text = payload.decode("utf-8", errors="replace")
             self._proxy._loop.call_soon_threadsafe(
                 asyncio.create_task,
@@ -100,7 +100,7 @@ class MqttStateCache:
     def parse_payload(payload_text: str) -> dict[str, Any] | None:
         try:
             payload = json.loads(payload_text)
-        except json.JSONDecodeError:
+        except Exception:
             return None
         if not isinstance(payload, dict):
             return None
@@ -133,26 +133,6 @@ class MqttStateCache:
     # -----------------------------------------------------------------
 
     @staticmethod
-    # pylint: disable=too-many-return-statements
-    def _coerce_value(value: Any) -> Any:
-        if value is None or isinstance(value, (int, float, bool)):
-            return value
-        text = str(value).strip()
-        if text.lower() in ("true", "false"):
-            return text.lower() == "true"
-        if re.fullmatch(r"-?\d+", text):
-            try:
-                return int(text)
-            except ValueError:
-                return value
-        if re.fullmatch(r"-?\d+\.\d+", text):
-            try:
-                return float(text)
-            except ValueError:
-                return value
-        return value
-
-    @staticmethod
     def to_raw_value(
         *, tbl_name: str, tbl_item: str, value: Any
     ) -> Any:
@@ -167,13 +147,13 @@ class MqttStateCache:
                         return idx
                 try:
                     return int(float(text))
-                except ValueError:
+                except Exception:
                     return text
             if isinstance(value, (int, float)):
                 idx = int(value)
                 if 0 <= idx < len(cfg.options):
                     return idx
-        return MqttStateCache._coerce_value(value)
+        return ControlPipeline.coerce_value(value)
 
     def transform_values(
         self,
@@ -223,7 +203,7 @@ class MqttStateCache:
             return
         try:
             mode_int = int(raw_value)
-        except ValueError:
+        except Exception:
             return
         if mode_int < 0 or mode_int > 5:
             return

@@ -134,7 +134,7 @@ class ModePersistence:
             return
         try:
             mode_int = int(new_mode)
-        except (ValueError, TypeError):
+        except Exception:
             return
         if mode_int < 0 or mode_int > 5:
             logger.debug(
