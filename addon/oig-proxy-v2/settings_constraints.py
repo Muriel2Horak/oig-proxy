@@ -5,6 +5,7 @@ from typing import Any
 
 
 CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
+    "proxy_control": {"PROXY_MODE"},
     "tbl_batt_prms": {"FMT_ON", "BAT_MIN", "BAT_GL_MIN", "BAT_AG_MIN"},
     "tbl_boiler_prms": {
         "ISON",
@@ -29,13 +30,10 @@ CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
     "tbl_invertor_prms": {"GRID_PV_ON", "GRID_PV_OFF", "TO_GRID", "PRLL_OUT", "P_ADJ_STRT"},
     "tbl_invertor_prm1": {
         "AAC_MAX_CHRG",
-        "A_MAX_CHRG",
         "V_MIN_AC",
         "V_MAX_AC",
         "F_MIN_AC",
         "F_MAX_AC",
-        "V_CHRG",
-        "V_CHAR_FLO",
         "V_CUT_GRID",
         "V_RE_GRID",
         "A_MAX_DIS_HYB",
@@ -58,6 +56,7 @@ class SettingConstraint:
 
 
 SETTING_CONSTRAINTS: dict[tuple[str, str], SettingConstraint] = {
+    ("proxy_control", "PROXY_MODE"): SettingConstraint(min_value=0, max_value=2, step=1, integer_only=True),
     ("tbl_batt_prms", "FMT_ON"): SettingConstraint(min_value=0, max_value=1, step=1, integer_only=True),
     ("tbl_batt_prms", "BAT_MIN"): SettingConstraint(min_value=20, max_value=100, step=1, integer_only=True),
     ("tbl_batt_prms", "BAT_GL_MIN"): SettingConstraint(min_value=0, max_value=100, step=1, integer_only=True),
@@ -101,6 +100,11 @@ def parse_numeric(value: Any) -> float | None:
         raw = value.strip()
         if not raw:
             return None
+        lowered = raw.lower()
+        if lowered in {"on", "true"}:
+            return 1.0
+        if lowered in {"off", "false"}:
+            return 0.0
         try:
             return float(raw)
         except ValueError:

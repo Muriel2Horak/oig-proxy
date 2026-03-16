@@ -24,6 +24,12 @@ def test_parse_box_ack_end_with_details() -> None:
     }
 
 
+def test_parse_box_ack_with_reason() -> None:
+    xml = b"<Result>ACK</Result><Reason>Setting</Reason>"
+    parsed = parse_box_ack(xml)
+    assert parsed == {"result": "ACK", "reason": "Setting"}
+
+
 def test_parse_box_ack_non_ack_returns_none() -> None:
     assert parse_box_ack(b"<Result>NACK</Result>") is None
 

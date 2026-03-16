@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any, Callable
 
-from settings_constraints import CONTROL_WRITE_WHITELIST, SETTING_CONSTRAINTS
+from settings_constraints import CONTROL_WRITE_WHITELIST, SETTING_CONSTRAINTS, SettingConstraint
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ DEVICE_NAMES: dict[str, str] = {
 }
 
 try:
-    import paho.mqtt.client as _paho_mqtt
+    import paho.mqtt.client as _paho_mqtt  # pyright: ignore[reportMissingImports]
     PAHO_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _paho_mqtt = None  # type: ignore[assignment]
@@ -269,6 +270,7 @@ class MQTTClient:
 
         safe_key = sensor_key.lower()
         unique_id = f"{self.namespace}_{device_id}_{table}_{safe_key}".lower()
+        object_id = self._build_object_id(device_id, table, safe_key)
         if unique_id in self._discovery_sent:
             return True  # Už odesláno
 
@@ -290,6 +292,7 @@ class MQTTClient:
 
         payload: dict[str, Any] = {
             "name": sensor_name,
+            "object_id": object_id,
             "unique_id": unique_id,
             "state_topic": state_topic,
             "value_template": value_template,
@@ -328,12 +331,36 @@ class MQTTClient:
                 return False
             if is_setting:
                 control_unique_id = f"{unique_id}_cfg"
-                if control_unique_id in self._discovery_sent:
+                dual_publish_sensor = table == "tbl_box_prms" and sensor_key == "MODE"
+
+                if control_unique_id in self._discovery_sent and (
+                    not dual_publish_sensor or unique_id in self._discovery_sent
+                ):
                     return True
 
-                control_component = "switch" if is_binary else "number"
+                if dual_publish_sensor and unique_id not in self._discovery_sent:
+                    sensor_result = client.publish(
+                        discovery_topic,
+                        json.dumps(payload),
+                        retain=True,
+                        qos=1,
+                    )
+                    if sensor_result.rc == 0:
+                        self._discovery_sent.add(unique_id)
+                        logger.debug("MQTT: Discovery → %s", discovery_topic)
+                    else:
+                        return False
+
+                constraint = SETTING_CONSTRAINTS.get((table, sensor_key))
+                binary_control = is_binary or self._is_binary_control_constraint(constraint)
+                if self._is_select_control(table, sensor_key, enum_map):
+                    control_component = "select"
+                else:
+                    control_component = "switch" if binary_control else "number"
+                control_object_id = self._build_object_id(device_id, table, safe_key, is_control=True)
                 control_payload: dict[str, Any] = {
                     "name": sensor_name,
+                    "object_id": control_object_id,
                     "unique_id": control_unique_id,
                     "state_topic": state_topic,
                     "value_template": f"{{{{ value_json.{sensor_key} }}}}",
@@ -349,7 +376,6 @@ class MQTTClient:
                         control_payload["unit_of_measurement"] = unit
                     if device_class:
                         control_payload["device_class"] = device_class
-                    constraint = SETTING_CONSTRAINTS.get((table, sensor_key))
                     if constraint is not None:
                         if constraint.min_value is not None:
                             control_payload["min"] = constraint.min_value
@@ -357,11 +383,23 @@ class MQTTClient:
                             control_payload["max"] = constraint.max_value
                         if constraint.step is not None:
                             control_payload["step"] = constraint.step
-                else:
+                elif control_component == "switch":
                     control_payload["payload_on"] = 1
                     control_payload["payload_off"] = 0
                     control_payload["state_on"] = 1
                     control_payload["state_off"] = 0
+                else:
+                    ordered_items = self._ordered_enum_items(enum_map)
+                    state_map = {raw: label for raw, label in ordered_items}
+                    command_map = {label: raw for raw, label in ordered_items}
+                    control_payload["options"] = [label for _raw, label in ordered_items]
+                    control_payload["value_template"] = (
+                        f"{{{{ ({json.dumps(state_map, ensure_ascii=False)}).get((value_json.{sensor_key} | string), "
+                        f"value_json.{sensor_key} | string) }}}}"
+                    )
+                    control_payload["command_template"] = (
+                        f"{{{{ ({json.dumps(command_map, ensure_ascii=False)}).get(value, value) }}}}"
+                    )
 
                 control_topic = f"homeassistant/{control_component}/{control_unique_id}/config"
                 control_result = client.publish(
@@ -387,6 +425,45 @@ class MQTTClient:
         except Exception as exc:  # noqa: BLE001
             logger.error("MQTT: discovery exception: %s", exc)
             return False
+
+    @staticmethod
+    def _build_object_id(device_id: str, table: str, safe_key: str, is_control: bool = False) -> str:
+        """Build deterministic HA object_id for stable entity_id naming."""
+        base = f"{device_id}_{table}_{safe_key}".lower()
+        base = re.sub(r"[^a-z0-9_]+", "_", base)
+        base = re.sub(r"_+", "_", base).strip("_")
+        if is_control:
+            return f"{base}_cfg"
+        return base
+
+    @staticmethod
+    def _is_binary_control_constraint(constraint: SettingConstraint | None) -> bool:
+        if constraint is None:
+            return False
+        return (
+            constraint.integer_only
+            and constraint.min_value == 0
+            and constraint.max_value == 1
+            and (constraint.step is None or constraint.step == 1)
+        )
+
+    @staticmethod
+    def _ordered_enum_items(enum_map: dict[str, str] | None) -> list[tuple[str, str]]:
+        if not enum_map:
+            return []
+        try:
+            return sorted(enum_map.items(), key=lambda item: int(item[0]))
+        except (TypeError, ValueError):
+            return sorted(enum_map.items(), key=lambda item: item[0])
+
+    @staticmethod
+    def _is_select_control(table: str, sensor_key: str, enum_map: dict[str, str] | None) -> bool:
+        if not enum_map:
+            return False
+        return (table, sensor_key) in {
+            ("proxy_control", "PROXY_MODE"),
+            ("tbl_box_prms", "MODE"),
+        }
 
     def send_discovery_for_table(
         self, device_id: str, table: str, data: dict[str, Any]

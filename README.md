@@ -116,11 +116,14 @@ Tento add-on spouští **dnsmasq** (poslouchá na `53/udp` a `53/tcp`) a umí lo
 
 1. V HA v add-onu **OIG Proxy** nastav (Konfigurace):
    - `ha_ip`: IP Home Assistanta v LAN (nebo ponech prázdné – add-on se ji pokusí autodetekovat)
+   - `dns_override_ip`: volitelné, explicitní IP pro `oigservis.cz` DNS override (má prioritu nad `ha_ip`; použij např. pro NAS relay)
    - `dns_upstream`: DNS upstream (default `8.8.8.8`, nebo dej IP tvého routeru/DNS)
 2. Ujisti se, že add-on běží a že port 53 je dostupný z LAN (add-on používá `host_network: true`).
 3. V routeru (DHCP server) nastav jako **DNS server** IP Home Assistanta.
 4. Restartuj BOX (nebo obnov DHCP lease), aby si načetl nový DNS.
 5. Ověř z klienta v LAN: `nslookup oigservis.cz <IP_HA>` → musí vracet IP HA.
+
+Pro relay/sniff scénář (mimo HA proxy path): nastav `dns_override_ip` na IP relay (např. `10.0.0.160`) a ověř `nslookup oigservis.cz <IP_HA_DNS>` vrací relay IP.
 
 Poznámky:
 - Tohle ovlivní **všechny zařízení v LAN**, které používají DNS z DHCP. Pokud nechceš ovlivnit celou síť, nastav DNS jen pro BOX (pokud router umí per‑device DHCP options), nebo použij Variantu A/C.

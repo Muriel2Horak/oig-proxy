@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any
 
 from config import Config
+from capture.frame_capture import FrameCapture
+from capture.pcap_capture import PcapCapture
 from device_id import DeviceIdManager
 from logging_config import configure_logging
 from mqtt.client import MQTTClient
@@ -64,6 +66,8 @@ class ProxyApp:
         self.twin_handler: TwinControlHandler | None = None
         self.status_publisher: ProxyStatusPublisher | None = None
         self.telemetry_collector: TelemetryCollector | None = None
+        self.frame_capture: FrameCapture | None = None
+        self.pcap_capture: PcapCapture | None = None
         self.proxy: ProxyServer | None = None
 
         # Background tasks
@@ -135,6 +139,7 @@ class ProxyApp:
                 mqtt=self.mqtt,
                 twin_queue=self.twin_queue,
                 device_id=mqtt_device_id,
+                namespace=self.config.mqtt_namespace,
                 proxy_control_handler=self._handle_proxy_control,
             )
             await self.twin_handler.start()
@@ -187,10 +192,48 @@ class ProxyApp:
             logger.info("TelemetryCollector disabled")
 
         # 8. Start ProxyServer
+        if self.config.capture_payloads:
+            self.frame_capture = FrameCapture(
+                db_path=self.config.capture_db_path,
+                capture_raw_bytes=self.config.capture_raw_bytes,
+                retention_days=self.config.capture_retention_days,
+            )
+            self.frame_capture.start()
+            logger.info(
+                "Frame payload capture enabled (db=%s raw_bytes=%s)",
+                self.config.capture_db_path,
+                self.config.capture_raw_bytes,
+            )
+        else:
+            logger.warning("Frame payload capture disabled (CAPTURE_PAYLOADS=false)")
+
+        if self.config.capture_pcap:
+            self.pcap_capture = PcapCapture(
+                port=self.config.proxy_port,
+                pcap_path=self.config.capture_pcap_path,
+                interface=self.config.capture_pcap_interface,
+                max_size_mb=self.config.capture_pcap_max_size_mb,
+            )
+            await self.pcap_capture.start_async()
+            logger.info(
+                "PCAP capture enabled (path=%s interface=%s max_size_mb=%s)",
+                self.config.capture_pcap_path,
+                self.config.capture_pcap_interface,
+                self.config.capture_pcap_max_size_mb,
+            )
+        else:
+            logger.warning("PCAP capture disabled (CAPTURE_PCAP=false)")
+
+        if self.config.log_level == "TRACE" and not self.config.capture_pcap:
+            logger.warning(
+                "TRACE level active without PCAP capture; enable CAPTURE_PCAP for full TCP trace"
+            )
+
         self.proxy = ProxyServer(
             config=self.config,
             on_frame=self._on_frame,
             twin_delivery=self.twin_delivery,
+            frame_capture=self.frame_capture,
         )
         await self.proxy.start()
         logger.info("ProxyServer started on %s:%s", self.config.proxy_host, self.config.proxy_port)
@@ -348,7 +391,16 @@ class ProxyApp:
             await self.twin_handler.stop()
             logger.info("TwinControlHandler stopped")
 
-        # 5. Disconnect MQTT
+        # 5. Stop capture
+        if self.pcap_capture:
+            self.pcap_capture.stop()
+            logger.info("PcapCapture stopped")
+
+        if self.frame_capture:
+            self.frame_capture.stop()
+            logger.info("FrameCapture stopped")
+
+        # 6. Disconnect MQTT
         if self.mqtt:
             self.mqtt.disconnect()
             logger.info("MQTT disconnected")

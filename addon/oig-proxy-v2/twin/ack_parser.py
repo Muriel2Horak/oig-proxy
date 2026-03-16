@@ -7,6 +7,7 @@ _RESULT_RE = re.compile(rb"<Result>(ACK|END)</Result>")
 _TABLE_RE = re.compile(rb"<TblName>([^<]+)</TblName>")
 _TODO_RE = re.compile(rb"<ToDo>([^<]+)</ToDo>")
 _DT_RE = re.compile(rb"<DT>([^<]+)</DT>")
+_REASON_RE = re.compile(rb"<Reason>([^<]+)</Reason>")
 _TBL_EVENT_CONTENT_RE = re.compile(
     r"Remotely\s*:\s*([A-Za-z0-9_]+)\s*/\s*([A-Za-z0-9_]+)\s*:\s*\[[^\]]*\]->\[([^\]]*)\]"
 )
@@ -30,6 +31,10 @@ def parse_box_ack(xml_bytes: bytes) -> dict[str, str] | None:
     dt_match = _DT_RE.search(xml_bytes)
     if dt_match:
         result["timestamp"] = dt_match.group(1).decode("utf-8", errors="replace")
+
+    reason_match = _REASON_RE.search(xml_bytes)
+    if reason_match:
+        result["reason"] = reason_match.group(1).decode("utf-8", errors="replace")
 
     return result
 

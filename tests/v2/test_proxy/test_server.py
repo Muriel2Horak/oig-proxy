@@ -268,14 +268,31 @@ async def test_pipe_cloud_to_box_stops_on_empty_read():
 
 
 @pytest.mark.asyncio
-async def test_handle_twin_frames_delivers_on_tbl_actual():
+async def test_handle_twin_frames_delivers_on_isnewset_only():
     cfg = make_config()
     server = ProxyServer(cfg)
     server.twin_delivery = MagicMock()
     server._deliver_pending_for_isnewset = AsyncMock()
 
     frame = build_frame(
-        "<TblName>tbl_actual</TblName><ID_Device>2206237016</ID_Device><P>10</P>"
+        "<TblName>IsNewSet</TblName><ID_Device>2206237016</ID_Device><DT>1</DT>"
+    ).encode("utf-8")
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+
+    await server._handle_twin_frames(frame, box_writer)
+
+    server._deliver_pending_for_isnewset.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_twin_frames_delivers_when_result_isnewset_overrides_tbl_actual():
+    cfg = make_config()
+    server = ProxyServer(cfg)
+    server.twin_delivery = MagicMock()
+    server._deliver_pending_for_isnewset = AsyncMock()
+
+    frame = build_frame(
+        "<Result>IsNewSet</Result><ID_Device>2206237016</ID_Device><TblName>tbl_actual</TblName><DT>1</DT>"
     ).encode("utf-8")
     box_writer = MagicMock(spec=asyncio.StreamWriter)
 
@@ -293,6 +310,23 @@ async def test_handle_twin_frames_skips_delivery_for_other_tables():
 
     frame = build_frame(
         "<TblName>tbl_dc_in</TblName><ID_Device>2206237016</ID_Device><P1>10</P1>"
+    ).encode("utf-8")
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+
+    await server._handle_twin_frames(frame, box_writer)
+
+    server._deliver_pending_for_isnewset.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_twin_frames_skips_delivery_for_tbl_actual():
+    cfg = make_config()
+    server = ProxyServer(cfg)
+    server.twin_delivery = MagicMock()
+    server._deliver_pending_for_isnewset = AsyncMock()
+
+    frame = build_frame(
+        "<TblName>tbl_actual</TblName><ID_Device>2206237016</ID_Device><P1>10</P1>"
     ).encode("utf-8")
     box_writer = MagicMock(spec=asyncio.StreamWriter)
 

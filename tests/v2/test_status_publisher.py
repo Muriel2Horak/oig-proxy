@@ -115,6 +115,7 @@ def test_publish_when_mqtt_ready():
     assert payload["last_frame_table"] == "tbl_invertor"
     assert payload["frame_count"] == 1
     assert payload["box_device_id"] == "DEV01"
+    assert payload["configured_mode"] == "online"
     assert payload["last_data"]
     assert payload["last_data"].endswith("Z")
     assert payload["last_data_update"] == payload["last_data"]
@@ -245,8 +246,27 @@ def test_publish_sends_discovery_for_proxy_status_when_loader_present():
         "device_mapping": "proxy",
         "entity_category": "diagnostic",
     }
+    loader.iter_sensors.return_value = []
     pub = ProxyStatusPublisher(mqtt, 60, "oig_proxy", sensor_loader=loader)
 
     pub._publish()
 
     assert mqtt.send_discovery.call_count >= 1
+
+
+def test_publish_sends_discovery_for_proxy_controls_when_loader_present():
+    mqtt = make_mqtt_client(connected=True)
+    loader = MagicMock()
+    loader.lookup.return_value = {
+        "name_cs": "HB - Stav proxy",
+        "device_mapping": "proxy",
+        "entity_category": "diagnostic",
+    }
+    loader.iter_sensors.return_value = [
+        ("proxy_control", "PROXY_MODE", {"name_cs": "Proxy - Režim", "device_mapping": "proxy", "entity_category": "config"})
+    ]
+    pub = ProxyStatusPublisher(mqtt, 60, "oig_proxy", sensor_loader=loader)
+
+    pub._publish()
+
+    assert any(call.kwargs.get("table") == "proxy_control" for call in mqtt.send_discovery.call_args_list)

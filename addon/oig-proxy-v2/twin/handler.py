@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from settings_constraints import is_setting_allowed, validate_setting_value
 
@@ -35,6 +35,8 @@ class TwinControlHandler:
         mqtt: Any,
         twin_queue: TwinQueue,
         device_id: str,
+        namespace: str = "oig_local",
+        proxy_control_handler: Callable[[str, str, Any], bool] | None = None,
     ) -> None:
         """Initialize the control handler.
 
@@ -46,9 +48,11 @@ class TwinControlHandler:
         self._mqtt = mqtt
         self._twin_queue = twin_queue
         self._device_id = device_id
+        self._namespace = namespace
         self._topic: str = "oig/+/control/set"
-        self._topic_compat: str = "oig_local/+/set/#"
+        self._topic_compat: str = f"{self._namespace}/+/set/#"
         self._subscribed = False
+        self._proxy_control_handler = proxy_control_handler
 
     async def start(self) -> None:
         """Start the handler by subscribing to the control topic.
@@ -92,12 +96,15 @@ class TwinControlHandler:
             payload: The raw message payload
         """
         try:
-            if topic.startswith("oig_local/") and "/set/" in topic:
+            raw_payload = payload.decode("utf-8", errors="replace")
+            logger.info("📥 Twin MQTT message: topic=%s payload=%s", topic, raw_payload)
+
+            if topic.startswith(f"{self._namespace}/") and "/set/" in topic:
                 path = topic.split("/")
                 if len(path) >= 5:
                     table = path[3]
                     key = path[4]
-                    value_raw = payload.decode("utf-8")
+                    value_raw = raw_payload
                     if not is_setting_allowed(table, key):
                         logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
                         return
@@ -111,12 +118,17 @@ class TwinControlHandler:
                             reason,
                         )
                         return
+                    if table == "proxy_control" and self._proxy_control_handler is not None:
+                        handled = self._proxy_control_handler(table, key, normalized)
+                        if handled:
+                            logger.info("Proxy control applied: %s:%s=%s", table, key, normalized)
+                            return
                     self._twin_queue.enqueue(table, key, normalized)
                     logger.info("Twin setting enqueued: %s:%s=%s", table, key, normalized)
                     return
 
             # Parse JSON payload
-            data = json.loads(payload.decode("utf-8"))
+            data = json.loads(raw_payload)
             if not isinstance(data, dict):
                 logger.warning(
                     "TwinControlHandler: Invalid message format on %s: expected JSON object",
@@ -150,6 +162,12 @@ class TwinControlHandler:
                     reason,
                 )
                 return
+
+            if table == "proxy_control" and self._proxy_control_handler is not None:
+                handled = self._proxy_control_handler(table, key, normalized)
+                if handled:
+                    logger.info("Proxy control applied: %s:%s=%s", table, key, normalized)
+                    return
 
             # Enqueue the setting
             self._twin_queue.enqueue(table, key, normalized)

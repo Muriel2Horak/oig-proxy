@@ -54,6 +54,9 @@ DEPLOY_FILES=(
     telemetry/__init__.py
     telemetry/collector.py
     telemetry/client.py
+    capture/__init__.py
+    capture/frame_capture.py
+    capture/pcap_capture.py
 )
 
 # ── Pomocné funkce ───────────────────────────────────────
@@ -97,7 +100,7 @@ echo ""
 
 # Krok 2: Vytvoření adresářové struktury
 echo "[2/7] Vytvářím adresářovou strukturu..."
-ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c 'mkdir -p /host${HOST_ADDON_DIR}/mqtt /host${HOST_ADDON_DIR}/proxy /host${HOST_ADDON_DIR}/protocol /host${HOST_ADDON_DIR}/sensor /host${HOST_ADDON_DIR}/twin /host${HOST_ADDON_DIR}/telemetry'"
+ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c 'mkdir -p /host${HOST_ADDON_DIR}/mqtt /host${HOST_ADDON_DIR}/proxy /host${HOST_ADDON_DIR}/protocol /host${HOST_ADDON_DIR}/sensor /host${HOST_ADDON_DIR}/twin /host${HOST_ADDON_DIR}/telemetry /host${HOST_ADDON_DIR}/capture'"
 echo " Adresáře vytvořeny"
 echo ""
 

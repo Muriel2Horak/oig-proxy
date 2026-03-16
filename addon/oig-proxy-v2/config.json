@@ -23,6 +23,7 @@
     "mqtt_username": "",
     "mqtt_password": "",
     "ha_ip": "",
+    "dns_override_ip": "",
     "dns_upstream": "8.8.8.8",
     "log_level": "INFO",
     "proxy_status_interval": 60,
@@ -30,6 +31,7 @@
     "capture_payloads": false,
     "capture_raw_bytes": false,
     "capture_retention_days": 7,
+    "capture_pcap": false,
     "control_mqtt_enabled": false,
     "telemetry_enabled": true
   },
@@ -46,6 +48,7 @@
     "mqtt_username": "str",
     "mqtt_password": "str",
     "ha_ip": "str?",
+    "dns_override_ip": "str?",
     "dns_upstream": "str?",
     "log_level": "list(INFO|DEBUG|TRACE)",
     "proxy_status_interval": "int",
@@ -53,6 +56,7 @@
     "capture_payloads": "bool?",
     "capture_raw_bytes": "bool?",
     "capture_retention_days": "int?",
+    "capture_pcap": "bool?",
     "control_mqtt_enabled": "bool?",
     "telemetry_enabled": "bool?"
   },

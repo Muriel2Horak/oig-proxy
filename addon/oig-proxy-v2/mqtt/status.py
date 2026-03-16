@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from mqtt.client import MQTTClient
@@ -25,11 +25,13 @@ class ProxyStatusPublisher:
         interval: int,
         proxy_device_id: str,
         sensor_loader: SensorMapLoader | None = None,
+        get_configured_mode: Callable[[], str] | None = None,
     ) -> None:
         self._mqtt = mqtt
         self._interval = interval
         self._proxy_device_id = proxy_device_id
         self._sensor_loader = sensor_loader
+        self._get_configured_mode = get_configured_mode
 
         self._frame_count = 0
         self._last_frame_table = ""
@@ -67,6 +69,9 @@ class ProxyStatusPublisher:
         payload = {
             "status": "online" if box_connected else "offline",
             "mode": "online" if box_connected else "offline",
+            "configured_mode": (
+                self._get_configured_mode() if self._get_configured_mode is not None else "online"
+            ),
             "connection_status": connection_status,
             "last_data": last_data_iso,
             "last_data_update": last_data_iso,
@@ -104,6 +109,31 @@ class ProxyStatusPublisher:
                     device_mapping=device_mapping,
                     entity_category=entity_category,
                     is_binary=is_binary,
+                )
+
+            for table, key, metadata in self._sensor_loader.iter_sensors():
+                if table != "proxy_control":
+                    continue
+                sensor_name = metadata.get("name_cs") or metadata.get("name") or key
+                unit = metadata.get("unit_of_measurement") or ""
+                device_class = metadata.get("device_class") or ""
+                state_class = metadata.get("state_class") or ""
+                entity_category = metadata.get("entity_category") or "config"
+                device_mapping = metadata.get("device_mapping") or "proxy"
+                is_binary = bool(metadata.get("is_binary", False))
+                enum_map = metadata.get("enum_map") or None
+                self._mqtt.send_discovery(
+                    device_id=self._proxy_device_id,
+                    table=table,
+                    sensor_key=key,
+                    sensor_name=sensor_name,
+                    unit=unit,
+                    device_class=device_class,
+                    state_class=state_class,
+                    device_mapping=device_mapping,
+                    entity_category=entity_category,
+                    is_binary=is_binary,
+                    enum_map=enum_map,
                 )
 
         self._mqtt.publish_state(

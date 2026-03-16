@@ -671,8 +671,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:box_connected": {
-      "name": "BOX připojen",
-      "name_cs": "BOX připojen",
+      "name": "HB - BOX připojen",
+      "name_cs": "HB - BOX připojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -705,8 +705,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:box_data_recent": {
-      "name": "Data z BOXu tečou",
-      "name_cs": "Data z BOXu tečou",
+      "name": "Datový tok - Data z BOXu tečou",
+      "name_cs": "Datový tok - Data z BOXu tečou",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -717,8 +717,8 @@
       "is_binary": true
     },
     "proxy_status:box_device_id": {
-      "name": "BOX ID",
-      "name_cs": "BOX ID",
+      "name": "Datový tok - BOX ID",
+      "name_cs": "Datový tok - BOX ID",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -728,8 +728,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:cloud_online": {
-      "name": "Cloud připojen",
-      "name_cs": "Cloud připojen",
+      "name": "HB - Cloud připojen",
+      "name_cs": "HB - Cloud připojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -762,8 +762,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:cloud_session_connected": {
-      "name": "Cloud TCP připojen",
-      "name_cs": "Cloud TCP připojen",
+      "name": "HB - Cloud TCP připojen",
+      "name_cs": "HB - Cloud TCP připojen",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -852,8 +852,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:last_data": {
-      "name": "Poslední aktualizace dat",
-      "name_cs": "Poslední aktualizace dat",
+      "name": "Datový tok - Poslední aktualizace dat",
+      "name_cs": "Datový tok - Poslední aktualizace dat",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -863,8 +863,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:last_data_update": {
-      "name": "Poslední aktualizace dat (kompatibilita)",
-      "name_cs": "Poslední aktualizace dat",
+      "name": "Datový tok - Poslední aktualizace dat",
+      "name_cs": "Datový tok - Poslední aktualizace dat",
       "unit_of_measurement": "",
       "device_class": "timestamp",
       "state_class": null,
@@ -874,8 +874,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:last_data_age_s": {
-      "name": "Stáří posledních dat",
-      "name_cs": "Stáří posledních dat",
+      "name": "Datový tok - Stáří posledních dat",
+      "name_cs": "Datový tok - Stáří posledních dat",
       "unit_of_measurement": "s",
       "device_class": "duration",
       "state_class": "measurement",
@@ -885,8 +885,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:connection_status": {
-      "name": "Stav MQTT spojení",
-      "name_cs": "Stav MQTT spojení",
+      "name": "HB - Stav MQTT spojení",
+      "name_cs": "HB - Stav MQTT spojení",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -896,8 +896,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:mqtt_connected": {
-      "name": "MQTT připojeno",
-      "name_cs": "MQTT připojeno",
+      "name": "HB - MQTT připojeno",
+      "name_cs": "HB - MQTT připojeno",
       "unit_of_measurement": "",
       "device_class": "connectivity",
       "state_class": null,
@@ -908,8 +908,8 @@
       "is_binary": true
     },
     "proxy_status:frame_count": {
-      "name": "Počet přijatých frame",
-      "name_cs": "Počet přijatých frame",
+      "name": "Datový tok - Počet přijatých frame",
+      "name_cs": "Datový tok - Počet přijatých frame",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": "measurement",
@@ -919,8 +919,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:last_frame_table": {
-      "name": "Poslední tabulka",
-      "name_cs": "Poslední tabulka",
+      "name": "Datový tok - Poslední tabulka",
+      "name_cs": "Datový tok - Poslední tabulka",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -930,8 +930,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:mode": {
-      "name": "Režim komunikace",
-      "name_cs": "Režim komunikace",
+      "name": "HB - Režim runtime",
+      "name_cs": "HB - Režim runtime",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -952,8 +952,8 @@
       "entity_category": "diagnostic"
     },
     "proxy_status:status": {
-      "name": "Stav komunikace",
-      "name_cs": "Stav komunikace",
+      "name": "HB - Stav proxy",
+      "name_cs": "HB - Stav proxy",
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -1533,7 +1533,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "aircon",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -1544,7 +1545,8 @@
       "device_class": "connectivity",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "aircon",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -1556,7 +1558,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "aircon",
+
       "todo": false,
       "is_binary": true
     },
@@ -1567,7 +1570,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "aircon",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -1578,7 +1582,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "aircon",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2378,7 +2383,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2390,7 +2396,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "load",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2401,7 +2408,8 @@
       "device_class": "battery",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2412,7 +2420,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2423,7 +2432,8 @@
       "device_class": "battery",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2434,7 +2444,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "load",
+      "device_mapping": "box",
+
       "todo": false
     },
     "tbl_box_prms:BYPASS_M": {
@@ -2444,7 +2455,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "load",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2456,7 +2468,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2467,7 +2480,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2478,7 +2492,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2489,7 +2504,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2500,7 +2516,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2511,7 +2528,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2522,7 +2540,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2533,7 +2552,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "load",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2545,7 +2565,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2556,7 +2577,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2568,7 +2590,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2580,7 +2603,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2592,7 +2616,8 @@
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false
     },
     "tbl_box_prms:FAN2": {
@@ -2602,7 +2627,8 @@
       "device_class": "temperature",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false
     },
     "tbl_box_prms:FAOUT": {
@@ -2612,7 +2638,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2624,7 +2651,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2636,7 +2664,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "pv",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2647,7 +2676,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "pv",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2658,7 +2688,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2669,7 +2700,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "is_binary": true
     },
@@ -2680,7 +2712,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2691,7 +2724,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2702,7 +2736,7 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
       "todo": false,
       "entity_category": "diagnostic",
       "enum_map": {
@@ -2721,7 +2755,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -2733,7 +2768,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2744,7 +2780,8 @@
       "device_class": "energy",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "battery",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2755,7 +2792,8 @@
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "pv",
+      "device_mapping": "box",
+
       "todo": false
     },
     "tbl_box_prms:P_GRID": {
@@ -2765,7 +2803,8 @@
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "grid",
+      "device_mapping": "box",
+
       "todo": false
     },
     "tbl_box_prms:P_LOAD": {
@@ -2775,7 +2814,8 @@
       "device_class": "power",
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "load",
+      "device_mapping": "box",
+
       "todo": false
     },
     "tbl_box_prms:RA": {
@@ -2785,7 +2825,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2796,7 +2837,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2807,7 +2849,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2818,7 +2861,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2829,7 +2873,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2840,7 +2885,8 @@
       "device_class": null,
       "state_class": "measurement",
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2851,7 +2897,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2862,7 +2909,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -2873,7 +2921,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "box",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3014,7 +3063,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "grid",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "is_binary": true
     },
@@ -3025,7 +3075,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "is_binary": true
     },
@@ -3036,7 +3087,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3091,7 +3143,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3102,7 +3155,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3113,7 +3167,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3124,7 +3179,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3268,7 +3324,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "heat_pump",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3279,7 +3336,8 @@
       "device_class": "connectivity",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "heat_pump",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -3291,7 +3349,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "heat_pump",
+
       "todo": false,
       "is_binary": true
     },
@@ -3302,7 +3361,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "heat_pump",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -3313,7 +3373,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "heat_pump",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4072,7 +4133,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "recuper",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4083,7 +4145,8 @@
       "device_class": "connectivity",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "recuper",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -4095,7 +4158,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "recuper",
+
       "todo": false,
       "is_binary": true
     },
@@ -4106,7 +4170,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "recuper",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4117,7 +4182,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "recuper",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4128,7 +4194,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4139,7 +4206,8 @@
       "device_class": "connectivity",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic",
       "is_binary": true
@@ -4151,7 +4219,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "is_binary": true
     },
@@ -4162,7 +4231,8 @@
       "device_class": null,
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4173,7 +4243,8 @@
       "device_class": "power",
       "state_class": null,
       "sensor_type_category": "measured",
-      "device_mapping": "inverter",
+      "device_mapping": "wl_charge",
+
       "todo": false,
       "entity_category": "diagnostic"
     },
@@ -4463,6 +4534,33 @@
       "entity_category": "diagnostic",
       "device_mapping": "box",
       "name": "BatteryBox - ZONEX_S"
+    },
+    "proxy_status:configured_mode": {
+      "name": "HB - Režim (nastavený)",
+      "name_cs": "HB - Režim (nastavený)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_control:PROXY_MODE": {
+      "name": "Proxy - Režim",
+      "name_cs": "Proxy - Režim",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "setting",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "config",
+      "enum_map": {
+        "0": "online",
+        "1": "hybrid",
+        "2": "offline"
+      }
     }
   },
   "warnings_3f": [

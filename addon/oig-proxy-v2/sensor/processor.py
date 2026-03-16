@@ -95,6 +95,8 @@ class FrameProcessor:
         for table, key, metadata in self._sensor_loader.iter_sensors():
             if table in ISNEW_TABLES:
                 continue
+            if table == "proxy_control":
+                continue
             if not self._table_enabled_for_device(device_id, table):
                 continue
             target_device_id = self._target_device_id(device_id, table)

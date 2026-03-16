@@ -76,6 +76,7 @@ def test_publish_all_discovery_skips_isnew_tables(processor: FrameProcessor, moc
         ("IsNewFW", "BAT_C", {"name_cs": "Stav nabití"}),
         ("IsNewSet", "BAT_C", {"name_cs": "Stav nabití"}),
         ("IsNewWeather", "BAT_C", {"name_cs": "Stav nabití"}),
+        ("proxy_control", "PROXY_MODE", {"name_cs": "Proxy - Režim"}),
         ("tbl_actual", "BAT_C", {"name_cs": "Stav nabití"}),
     ]
 

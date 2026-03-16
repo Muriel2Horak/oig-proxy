@@ -55,6 +55,7 @@ class TestTwinControlHandler:
         assert handler._mqtt == mock_mqtt
         assert handler._twin_queue == twin_queue
         assert handler._device_id == "test_device_123"
+        assert handler._namespace == "oig_local"
         assert handler._topic == "oig/+/control/set"
         assert handler._topic_compat == "oig_local/+/set/#"
         assert handler._subscribed is False
@@ -141,11 +142,11 @@ class TestTwinControlHandler:
 
     def test_on_message_with_float_value(self, handler, twin_queue):
         """Test _on_message handles float values."""
-        payload = json.dumps({"table": "tbl_invertor_prm1", "key": "V_CHRG", "value": 56.5})
+        payload = json.dumps({"table": "tbl_invertor_prms", "key": "P_ADJ_STRT", "value": 56.5})
 
         handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
 
-        setting = twin_queue.get("tbl_invertor_prm1", "V_CHRG")
+        setting = twin_queue.get("tbl_invertor_prms", "P_ADJ_STRT")
         assert setting.value == 56.5
 
     def test_on_message_with_boolean_value(self, handler, twin_queue):
@@ -336,6 +337,80 @@ class TestTwinControlHandlerEdgeCases:
     def test_on_message_accepts_compat_topic_value_with_validation(self, handler, twin_queue):
         handler._on_message(
             "oig_local/test_device_123/set/tbl_batt_prms/BAT_MIN",
+            b"22",
+        )
+
+        setting = twin_queue.get("tbl_batt_prms", "BAT_MIN")
+        assert setting is not None
+        assert setting.value == 22
+
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            (b"true", 1),
+            (b"ON", 1),
+            (b"false", 0),
+            (b"off", 0),
+        ],
+    )
+    def test_on_message_accepts_compat_switch_payloads(self, handler, twin_queue, payload, expected):
+        handler._on_message(
+            "oig_local/test_device_123/set/tbl_box_prms/SA",
+            payload,
+        )
+
+        setting = twin_queue.get("tbl_box_prms", "SA")
+        assert setting is not None
+        assert setting.value == expected
+
+    def test_on_message_routes_proxy_control_without_queue(self, mock_mqtt, twin_queue):
+        called = []
+
+        def _cb(table, key, value):
+            called.append((table, key, value))
+            return True
+
+        handler = TwinControlHandler(
+            mqtt=mock_mqtt,
+            twin_queue=twin_queue,
+            device_id="test_device_123",
+            proxy_control_handler=_cb,
+        )
+
+        payload = json.dumps({"table": "proxy_control", "key": "PROXY_MODE", "value": 2})
+        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
+
+        assert called == [("proxy_control", "PROXY_MODE", 2)]
+        assert twin_queue.size() == 0
+
+    @pytest.mark.asyncio
+    async def test_start_uses_custom_namespace_for_compat_topic(self, mock_mqtt, twin_queue):
+        handler = TwinControlHandler(
+            mqtt=mock_mqtt,
+            twin_queue=twin_queue,
+            device_id="test_device_123",
+            namespace="custom_ns",
+        )
+
+        await handler.start()
+
+        mock_mqtt.subscribe.assert_has_calls(
+            [
+                call("oig/+/control/set", handler._on_message),
+                call("custom_ns/+/set/#", handler._on_message),
+            ]
+        )
+
+    def test_on_message_accepts_custom_namespace_compat_topic(self, mock_mqtt, twin_queue):
+        handler = TwinControlHandler(
+            mqtt=mock_mqtt,
+            twin_queue=twin_queue,
+            device_id="test_device_123",
+            namespace="custom_ns",
+        )
+
+        handler._on_message(
+            "custom_ns/test_device_123/set/tbl_batt_prms/BAT_MIN",
             b"22",
         )
 

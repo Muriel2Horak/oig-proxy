@@ -46,6 +46,16 @@ class Config:
     telemetry_mqtt_broker: str = "telemetry.muriel-cz.cz:1883"
     telemetry_interval_s: int = 300
 
+    capture_payloads: bool = False
+    capture_raw_bytes: bool = False
+    capture_retention_days: int = 7
+    capture_db_path: str = "/data/payloads.db"
+
+    capture_pcap: bool = False
+    capture_pcap_path: str = "/data/capture.pcap"
+    capture_pcap_interface: str = "any"
+    capture_pcap_max_size_mb: int = 100
+
     def __init__(self) -> None:
         self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
@@ -78,6 +88,16 @@ class Config:
             "TELEMETRY_MQTT_BROKER", "telemetry.muriel-cz.cz:1883"
         )
         self.telemetry_interval_s = int(os.environ.get("TELEMETRY_INTERVAL_S", "300"))
+
+        self.capture_payloads = os.environ.get("CAPTURE_PAYLOADS", "false").lower() == "true"
+        self.capture_raw_bytes = os.environ.get("CAPTURE_RAW_BYTES", "false").lower() == "true"
+        self.capture_retention_days = int(os.environ.get("CAPTURE_RETENTION_DAYS", "7"))
+        self.capture_db_path = os.environ.get("CAPTURE_DB_PATH", "/data/payloads.db")
+
+        self.capture_pcap = os.environ.get("CAPTURE_PCAP", "false").lower() == "true"
+        self.capture_pcap_path = os.environ.get("CAPTURE_PCAP_PATH", "/data/capture.pcap")
+        self.capture_pcap_interface = os.environ.get("CAPTURE_PCAP_INTERFACE", "any")
+        self.capture_pcap_max_size_mb = int(os.environ.get("CAPTURE_PCAP_MAX_SIZE_MB", "100"))
 
     def __repr__(self) -> str:
         return (
