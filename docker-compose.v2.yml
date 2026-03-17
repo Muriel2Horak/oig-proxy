@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  oig-proxy-v2:
+    build:
+      context: ./addon/oig-proxy-v2
+      dockerfile: Dockerfile
+    container_name: oig_proxy_v2
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TARGET_SERVER=oigservis.cz
+      - TARGET_PORT=5710
+      - PROXY_PORT=5710
+      - PROXY_MODE=online
+      - CLOUD_ACK_TIMEOUT=1800.0
+      - HYBRID_RETRY_INTERVAL=60
+      - HYBRID_FAIL_THRESHOLD=1
+      - MQTT_HOST=10.0.0.143
+      - MQTT_PORT=1883
+      - MQTT_USERNAME=mqtt_user
+      - MQTT_PASSWORD=mqtt_password
+      - MQTT_NAMESPACE=oig_local
+      - MQTT_QOS=1
+      - MQTT_STATE_RETAIN=true
+      - HA_IP=10.0.0.143
+      - DNS_UPSTREAM=8.8.8.8
+      - LOG_LEVEL=INFO
+      - PROXY_STATUS_INTERVAL=60
+      - FULL_REFRESH_INTERVAL_HOURS=24
+      - CAPTURE_PAYLOADS=false
+      - CAPTURE_RAW_BYTES=false
+      - CAPTURE_RETENTION_DAYS=7
+      - CONTROL_MQTT_ENABLED=false
+      - TELEMETRY_ENABLED=true
+      - TELEMETRY_INTERVAL_S=300
+    volumes:
+      - ./data:/data
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
