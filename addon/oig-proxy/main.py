@@ -263,7 +263,6 @@ class ProxyApp:
             on_frame=self._on_frame,
             twin_delivery=self.twin_delivery,
             frame_capture=self.frame_capture,
-            telemetry_collector=self.telemetry_collector if self.config.telemetry_enabled else None,
         )
         if self.telemetry_collector is not None:
             self.proxy.mode_manager.on_hybrid_transition = self._on_hybrid_transition

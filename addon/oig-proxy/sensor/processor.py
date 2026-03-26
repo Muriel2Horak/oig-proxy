@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from sensor.loader import SensorMapLoader
@@ -218,8 +219,14 @@ class FrameProcessor:
                 enum_map=enum_map,
             )
 
-            # Add value to publish data
-            pub_data[key] = value
+            if device_class == "timestamp" and isinstance(value, str):
+                try:
+                    dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    pub_data[key] = dt.isoformat()
+                except ValueError:
+                    pub_data[key] = value
+            else:
+                pub_data[key] = value
 
             # Check for warnings_3f and decode if present
             warnings_list = metadata.get("warnings_3f", [])
@@ -247,15 +254,17 @@ class FrameProcessor:
 
         # Publish state if we have any data
         if pub_data:
-            self._mqtt.publish_state(target_device_id, table, pub_data)
+            prev = self._last_table_values.get((device_id, table), {})
+            merged = {**prev, **pub_data}
+            self._mqtt.publish_state(target_device_id, table, merged)
             self._last_table_values[(device_id, table)] = {
-                k: v for k, v in pub_data.items() if not k.startswith("_")
+                k: v for k, v in merged.items() if not k.startswith("_")
             }
-            logger.debug("Published %d keys for %s:%s", len(pub_data), target_device_id, table)
+            logger.debug("Published %d keys for %s:%s", len(merged), target_device_id, table)
 
             if table == "tbl_actual":
                 mirror_payloads: dict[str, dict[str, Any]] = {}
-                for key, value in pub_data.items():
+                for key, value in merged.items():
                     if key.endswith("_warnings") or key.endswith("_warnings_cs") or key.endswith("_warning_codes"):
                         continue
                     mirror_table = self._actual_mirror_targets.get(key)
@@ -266,10 +275,15 @@ class FrameProcessor:
                     mirror_payloads.setdefault(mirror_table, {})[key] = value
 
                 for mirror_table, mirror_data in mirror_payloads.items():
-                    self._mqtt.publish_state(target_device_id, mirror_table, mirror_data)
+                    prev_mirror = self._last_table_values.get((device_id, mirror_table), {})
+                    merged_mirror = {**prev_mirror, **mirror_data}
+                    self._mqtt.publish_state(target_device_id, mirror_table, merged_mirror)
+                    self._last_table_values[(device_id, mirror_table)] = {
+                        k: v for k, v in merged_mirror.items() if not k.startswith("_")
+                    }
                     logger.debug(
                         "Mirrored %d keys from tbl_actual to %s for %s",
-                        len(mirror_data),
+                        len(merged_mirror),
                         mirror_table,
                         target_device_id,
                     )

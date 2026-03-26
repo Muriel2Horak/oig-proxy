@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -61,6 +62,7 @@ class ModeManager:
         )
         self.last_offline_time: float = 0.0
         self.in_offline: bool = False
+        self.on_hybrid_transition: Callable[[str, float, str | None], None] | None = None
 
     def _get_initial_mode(self) -> ConnectionMode:
         """Určí počáteční ConnectionMode z konfigurace."""
@@ -127,6 +129,8 @@ class ModeManager:
                 self.in_offline = True
                 self.last_offline_time = time.time()
                 self.runtime_mode = ConnectionMode.OFFLINE
+                if self.on_hybrid_transition is not None:
+                    self.on_hybrid_transition("offline", self.last_offline_time, reason)
 
     def record_success(self) -> None:
         """Zaznamená úspěšné připojení k cloudu pro HYBRID režim."""
@@ -137,6 +141,8 @@ class ModeManager:
             logger.info("☁️ HYBRID: cloud recovered → switching to online mode")
             self.in_offline = False
             self.runtime_mode = ConnectionMode.ONLINE
+            if self.on_hybrid_transition is not None:
+                self.on_hybrid_transition("online", time.time(), None)
 
         self.fail_count = 0
 

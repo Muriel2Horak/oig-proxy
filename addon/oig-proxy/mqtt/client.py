@@ -282,17 +282,18 @@ class MQTTClient:
         is_setting = table in CONTROL_WRITE_WHITELIST and sensor_key in CONTROL_WRITE_WHITELIST[table]
         component = "binary_sensor" if is_binary else "sensor"
 
-        value_template = f"{{{{ value_json.{sensor_key} }}}}"
+        value_template = f"{{{{ value_json.get('{sensor_key}') }}}}"
         if enum_map:
             enum_json = json.dumps(enum_map, ensure_ascii=False)
             value_template = (
-                f"{{{{ ({enum_json}).get((value_json.{sensor_key} | string), "
-                f"value_json.{sensor_key}) }}}}"
+                f"{{{{ ({enum_json}).get((value_json.get('{sensor_key}') | string), "
+                f"value_json.get('{sensor_key}')) }}}}"
             )
 
         payload: dict[str, Any] = {
             "name": sensor_name,
             "object_id": object_id,
+            "default_entity_id": f"{component}.{object_id}",
             "unique_id": unique_id,
             "state_topic": state_topic,
             "value_template": value_template,
@@ -361,9 +362,10 @@ class MQTTClient:
                 control_payload: dict[str, Any] = {
                     "name": sensor_name,
                     "object_id": control_object_id,
+                    "default_entity_id": f"{control_component}.{control_object_id}",
                     "unique_id": control_unique_id,
                     "state_topic": state_topic,
-                    "value_template": f"{{{{ value_json.{sensor_key} }}}}",
+                    "value_template": f"{{{{ value_json.get('{sensor_key}') }}}}",
                     "command_topic": f"{self.namespace}/{device_id}/set/{table}/{sensor_key}",
                     "availability": [{"topic": availability_topic}],
                     "device": payload["device"],
@@ -394,8 +396,8 @@ class MQTTClient:
                     command_map = {label: raw for raw, label in ordered_items}
                     control_payload["options"] = [label for _raw, label in ordered_items]
                     control_payload["value_template"] = (
-                        f"{{{{ ({json.dumps(state_map, ensure_ascii=False)}).get((value_json.{sensor_key} | string), "
-                        f"value_json.{sensor_key} | string) }}}}"
+                        f"{{{{ ({json.dumps(state_map, ensure_ascii=False)}).get((value_json.get('{sensor_key}') | string), "
+                        f"value_json.get('{sensor_key}') | string) }}}}"
                     )
                     control_payload["command_template"] = (
                         f"{{{{ ({json.dumps(command_map, ensure_ascii=False)}).get(value, value) }}}}"
@@ -429,7 +431,7 @@ class MQTTClient:
     @staticmethod
     def _build_object_id(device_id: str, table: str, safe_key: str, is_control: bool = False) -> str:
         """Build deterministic HA object_id for stable entity_id naming."""
-        base = f"{device_id}_{table}_{safe_key}".lower()
+        base = f"oig_local_{device_id}_{table}_{safe_key}".lower()
         base = re.sub(r"[^a-z0-9_]+", "_", base)
         base = re.sub(r"_+", "_", base).strip("_")
         if is_control:

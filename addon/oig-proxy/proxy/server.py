@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,17 @@ class ProxyServer:
         self._active_connections: set[asyncio.Task[None]] = set()
         self.mode_manager = ModeManager(config)
 
+        self._start_time: float = time.time()
+        self.frames_received: int = 0
+        self.frames_forwarded: int = 0
+        self.cloud_connects: int = 0
+        self.cloud_disconnects: int = 0
+        self.cloud_timeouts: int = 0
+        self.cloud_errors: int = 0
+        self._box_connected: bool = False
+        self.box_peer: str | None = None
+        self._cloud_connected: bool = False
+
     async def start(self) -> None:
         """Spustí TCP server."""
         self._server = await asyncio.start_server(
@@ -156,6 +168,15 @@ class ProxyServer:
             await asyncio.gather(*self._active_connections, return_exceptions=True)
         logger.info("OIG Proxy v2 zastavena")
 
+    def is_box_connected(self) -> bool:
+        return self._box_connected
+
+    def is_cloud_connected(self) -> bool:
+        return self._cloud_connected
+
+    def uptime_s(self) -> float:
+        return time.time() - self._start_time
+
     async def _handle_box_connection(
         self,
         box_reader: asyncio.StreamReader,
@@ -172,10 +193,11 @@ class ProxyServer:
 
         peer = box_writer.get_extra_info("peername", ("?", "?"))
 
-        # Generate unique session ID for tracking
         import uuid
         session_id = str(uuid.uuid4())
 
+        self._box_connected = True
+        self.box_peer = f"{peer[0]}:{peer[1]}"
         logger.info("📦 BOX připojen z %s:%s (session=%s)", *peer[:2], session_id)
 
         # Check if we should try cloud connection
@@ -198,19 +220,26 @@ class ProxyServer:
                 self.config.cloud_port,
                 session_id,
             )
-            # Record success for hybrid mode
+            self.cloud_connects += 1
+            self._cloud_connected = True
             self.mode_manager.record_success()
-        except (OSError, asyncio.TimeoutError) as exc:
+        except asyncio.TimeoutError as exc:
+            self.cloud_timeouts += 1
             logger.error("❌ Cloud nedostupný: %s", exc)
-            # Record failure for hybrid mode
             self.mode_manager.record_failure(reason=str(exc))
-
-            # If in offline mode after failure, handle offline
             if self.mode_manager.is_offline():
                 await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
                 return
-
-            # Otherwise close connection
+            box_writer.close()
+            await box_writer.wait_closed()
+            return
+        except OSError as exc:
+            self.cloud_errors += 1
+            logger.error("❌ Cloud nedostupný: %s", exc)
+            self.mode_manager.record_failure(reason=str(exc))
+            if self.mode_manager.is_offline():
+                await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+                return
             box_writer.close()
             await box_writer.wait_closed()
             return
@@ -228,8 +257,6 @@ class ProxyServer:
             # Cleanup session tracking
             if self.twin_delivery is not None:
                 self.twin_delivery.clear_session(session_id)
-            
-            # Cleanup po ukončení
             for writer in (box_writer, cloud_writer):
                 if writer and not writer.is_closing():
                     writer.close()
@@ -237,6 +264,10 @@ class ProxyServer:
                         await writer.wait_closed()
                     except Exception:  # noqa: BLE001
                         pass
+            self._box_connected = False
+            self._cloud_connected = False
+            self.box_peer = None
+            self.cloud_disconnects += 1
             if current is not None:
                 self._active_connections.discard(current)
             logger.info("🔌 BOX odpojen: %s:%s (session=%s)", *peer[:2], session_id)
@@ -360,6 +391,7 @@ class ProxyServer:
                 try:
                     cloud_writer.write(payload)
                     await cloud_writer.drain()
+                    self.frames_forwarded += len(forward_chunks)
                 except (OSError, ConnectionResetError) as exc:
                     self.mode_manager.record_failure(reason=str(exc))
                     if self.mode_manager.is_offline():
@@ -537,6 +569,7 @@ class ProxyServer:
 
     async def _process_frame(self, frame_bytes: bytes) -> None:
         """Parsuje frame a volá callback."""
+        self.frames_received += 1
         if not self.on_frame:
             return
         try:

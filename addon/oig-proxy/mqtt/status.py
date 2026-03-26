@@ -66,15 +66,13 @@ class ProxyStatusPublisher:
             ).isoformat().replace("+00:00", "Z")
             last_data_age_s = int(max(0, now - self._last_frame_timestamp))
 
-        payload = {
+        payload: dict[str, Any] = {
             "status": "online" if box_connected else "offline",
             "mode": "online" if box_connected else "offline",
             "configured_mode": (
                 self._get_configured_mode() if self._get_configured_mode is not None else "online"
             ),
             "connection_status": connection_status,
-            "last_data": last_data_iso,
-            "last_data_update": last_data_iso,
             "last_data_age_s": last_data_age_s if last_data_age_s is not None else 0,
             "box_connected": int(box_connected),
             "box_data_recent": int(box_connected),
@@ -85,6 +83,9 @@ class ProxyStatusPublisher:
             "last_frame_table": self._last_frame_table,
             "box_device_id": self._last_frame_device_id,
         }
+        if last_data_iso:
+            payload["last_data"] = last_data_iso
+            payload["last_data_update"] = last_data_iso
 
         if self._sensor_loader is not None:
             for key in payload:
