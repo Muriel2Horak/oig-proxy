@@ -146,8 +146,8 @@ def test_publish_with_no_frames():
     assert payload["frame_count"] == 0
     assert payload["last_frame_table"] == ""
     assert payload["box_device_id"] == ""
-    assert payload["last_data"] == ""
-    assert payload["last_data_update"] == ""
+    assert "last_data" not in payload
+    assert "last_data_update" not in payload
     assert payload["last_data_age_s"] == 0
 
 

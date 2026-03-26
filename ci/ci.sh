@@ -116,7 +116,7 @@ if [[ "${RUN_LINT}" == "1" ]]; then
   if ! "${PYTHON_BIN}" -m pylint --version >/dev/null 2>&1; then
     echo "⚠️  Pylint not found, skipping..."
   else
-    if "${PYTHON_BIN}" -m pylint addon/oig-proxy/*.py tests/*.py --output-format=json --output="${REPORT_DIR}/pylint.json"; then
+    if "${PYTHON_BIN}" -m pylint addon/oig-proxy/ tests/v2/ --output-format=json --output="${REPORT_DIR}/pylint.json"; then
       echo "✅ Pylint passed"
     else
       echo "⚠️  Pylint found issues (report: ${REPORT_DIR}/pylint.json)"
@@ -213,22 +213,6 @@ if [[ "${RUN_SECURITY}" == "1" ]]; then
     echo "    ⚠️  Trivy not found"
   fi
 
-  # Security unit tests
-  echo "  → Security unit tests..."
-  if "${PYTHON_BIN}" -m pytest tests/test_security.py -v --junitxml="${REPORT_DIR}/security-junit.xml"; then
-    echo "    ✅ Security tests passed"
-  else
-    echo "    ⚠️  Security tests failed (check ${REPORT_DIR}/security-junit.xml)"
-  fi
-
-  # Penetration tests
-  echo "  → Penetration tests..."
-  if "${PYTHON_BIN}" -m pytest tests/test_penetration.py -v --junitxml="${REPORT_DIR}/penetration-junit.xml"; then
-    echo "    ✅ Penetration tests passed"
-  else
-    echo "    ⚠️  Penetration tests failed (check ${REPORT_DIR}/penetration-junit.xml)"
-  fi
-
   echo ""
   echo "✅ Security scan complete"
   echo ""
@@ -246,7 +230,7 @@ echo ""
 
 if ! "${PYTHON_BIN}" -m mypy --version >/dev/null 2>&1; then
   echo "⚠️  MyPy not found, skipping..."
-elif ! "${PYTHON_BIN}" -m mypy addon/oig-proxy/*.py --no-error-summary; then
+elif ! "${PYTHON_BIN}" -m mypy addon/oig-proxy/ --no-error-summary; then
   echo "⚠️  MyPy found type errors"
 else
   echo "✅ MyPy passed"
@@ -302,8 +286,6 @@ if [[ "${RUN_SECURITY}" == "1" ]]; then
   echo "  - Semgrep:     ${REPORT_DIR}/semgrep.json"
   echo "  - Gitleaks:    ${REPORT_DIR}/gitleaks.json"
   echo "  - Trivy:       ${REPORT_DIR}/trivy.json"
-  echo "  - Sec tests:   ${REPORT_DIR}/security-junit.xml"
-  echo "  - Pent tests:  ${REPORT_DIR}/penetration-junit.xml"
 fi
 echo ""
 echo "💡 Tips:"

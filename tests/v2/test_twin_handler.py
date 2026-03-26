@@ -7,7 +7,7 @@ Tests verify:
 - Log output verification
 - Unsubscribe on stop
 
-Run: PYTHONPATH=addon/oig-proxy-v2 pytest tests/v2/test_twin_handler.py -v
+Run: PYTHONPATH=addon/oig-proxy pytest tests/v2/test_twin_handler.py -v
 """
 
 # pyright: reportMissingImports=false

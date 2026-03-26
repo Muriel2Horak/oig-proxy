@@ -1,0 +1,190 @@
+#!/usr/bin/with-contenv bashio
+
+# DNS override: oigservis.cz -> HA IP (robust fallback chain)
+HA_IP_RAW=$(bashio::config 'ha_ip')
+if [ -z "$HA_IP_RAW" ] || [ "$HA_IP_RAW" = "null" ]; then
+  HA_IP_RAW=$(ip -4 route get 8.8.8.8 2>/dev/null | awk '{print $7; exit}')
+fi
+if [ -z "$HA_IP_RAW" ]; then
+  HA_IP_RAW=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+# valid IPv4 check; otherwise fallback
+if echo "$HA_IP_RAW" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+  HA_IP="$HA_IP_RAW"
+else
+  HA_IP="127.0.0.1"
+fi
+
+UPSTREAM=$(bashio::config 'dns_upstream' | tr -d '[]"' | xargs)
+if [ -z "$UPSTREAM" ] || [ "$UPSTREAM" = "null" ]; then
+  UPSTREAM="8.8.8.8"
+fi
+if ! echo "$UPSTREAM" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+  UPSTREAM="8.8.8.8"
+fi
+
+echo "server=$UPSTREAM" > /etc/dnsmasq.d/upstream.conf
+echo "address=/oigservis.cz/$HA_IP" > /etc/dnsmasq.d/oig.conf
+
+# spustit dnsmasq (foreground &)
+/usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &
+
+# Připravit JSON mapu: vždy použij novou verzi z image (release)
+if [ -f /data/sensor_map.json ]; then
+  cp /data/sensor_map.json /data/sensor_map.json.bak.$(date +%s) || true
+fi
+cp /app/sensor_map.json /data/sensor_map.json
+
+# Env pro proxy
+export TARGET_SERVER=$(bashio::config 'target_server')
+export TARGET_PORT=$(bashio::config 'target_port')
+
+# PROXY_MODE: online (default), hybrid, offline
+PROXY_MODE_RAW=$(bashio::config 'proxy_mode')
+if [ -z "$PROXY_MODE_RAW" ] || [ "$PROXY_MODE_RAW" = "null" ]; then
+  PROXY_MODE_RAW="online"
+fi
+export PROXY_MODE=$PROXY_MODE_RAW
+
+# HYBRID mode settings
+HYBRID_RETRY_INTERVAL_RAW=$(bashio::config 'hybrid_retry_interval')
+if [ -z "$HYBRID_RETRY_INTERVAL_RAW" ] || [ "$HYBRID_RETRY_INTERVAL_RAW" = "null" ]; then
+  HYBRID_RETRY_INTERVAL_RAW=300
+fi
+export HYBRID_RETRY_INTERVAL=$HYBRID_RETRY_INTERVAL_RAW
+
+HYBRID_FAIL_THRESHOLD_RAW=$(bashio::config 'hybrid_fail_threshold')
+if [ -z "$HYBRID_FAIL_THRESHOLD_RAW" ] || [ "$HYBRID_FAIL_THRESHOLD_RAW" = "null" ]; then
+  HYBRID_FAIL_THRESHOLD_RAW=1
+fi
+export HYBRID_FAIL_THRESHOLD=$HYBRID_FAIL_THRESHOLD_RAW
+
+bashio::log.info "🚀 Proxy mode: $PROXY_MODE (hybrid_fail_threshold=$HYBRID_FAIL_THRESHOLD, hybrid_retry_interval=$HYBRID_RETRY_INTERVAL)"
+
+# CLOUD_ACK_TIMEOUT from config (default 1800s)
+CLOUD_ACK_TIMEOUT_RAW=$(bashio::config 'cloud_ack_timeout')
+if [ -z "$CLOUD_ACK_TIMEOUT_RAW" ] || [ "$CLOUD_ACK_TIMEOUT_RAW" = "null" ]; then
+  CLOUD_ACK_TIMEOUT_RAW=1800
+fi
+export CLOUD_ACK_TIMEOUT=$CLOUD_ACK_TIMEOUT_RAW
+
+export PROXY_PORT=$(bashio::config 'proxy_port')
+export MQTT_HOST=$(bashio::config 'mqtt_host')
+export MQTT_PORT=$(bashio::config 'mqtt_port')
+export MQTT_USERNAME=$(bashio::config 'mqtt_username')
+export MQTT_PASSWORD=$(bashio::config 'mqtt_password')
+export MAP_RELOAD_SECONDS=$(bashio::config 'map_reload_seconds')
+
+PROXY_STATUS_INTERVAL_RAW=$(bashio::config 'proxy_status_interval')
+if [ -z "$PROXY_STATUS_INTERVAL_RAW" ] || [ "$PROXY_STATUS_INTERVAL_RAW" = "null" ]; then
+  PROXY_STATUS_INTERVAL_RAW=60
+fi
+export PROXY_STATUS_INTERVAL=$PROXY_STATUS_INTERVAL_RAW
+
+FULL_REFRESH_INTERVAL_RAW=$(bashio::config 'full_refresh_interval_hours')
+if [ -z "$FULL_REFRESH_INTERVAL_RAW" ] || [ "$FULL_REFRESH_INTERVAL_RAW" = "null" ]; then
+  FULL_REFRESH_INTERVAL_RAW=24
+fi
+export FULL_REFRESH_INTERVAL_H=$FULL_REFRESH_INTERVAL_RAW
+
+FORCE_OFFLINE_RAW=$(bashio::config 'force_offline')
+if [ -z "$FORCE_OFFLINE_RAW" ] || [ "$FORCE_OFFLINE_RAW" = "null" ]; then
+  FORCE_OFFLINE_RAW="false"
+fi
+export FORCE_OFFLINE=$FORCE_OFFLINE_RAW
+
+# NOVÉ: DEVICE_ID (volitelné, pokud není v config, použije se auto-detection)
+DEVICE_ID_RAW=$(bashio::config 'device_id' 2>/dev/null)
+if [ ! -z "$DEVICE_ID_RAW" ] && [ "$DEVICE_ID_RAW" != "null" ]; then
+  export DEVICE_ID="$DEVICE_ID_RAW"
+  bashio::log.info "Using configured DEVICE_ID: $DEVICE_ID"
+else
+  bashio::log.info "DEVICE_ID not configured, will be auto-detected from BOX communication"
+fi
+
+# log_level může být string nebo list -> vezmeme první hodnotu
+LOG_LEVEL_RAW=$(bashio::config 'log_level' | tr -d '[]\"' | xargs | cut -d',' -f1)
+[ -z "$LOG_LEVEL_RAW" ] && LOG_LEVEL_RAW="INFO"
+export LOG_LEVEL=$LOG_LEVEL_RAW
+export SENSOR_MAP_PATH=/data/sensor_map.json
+export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
+
+# CONTROL_MQTT_ENABLED - boolean z config
+CONTROL_MQTT_ENABLED_RAW=$(bashio::config 'control_mqtt_enabled' 2>/dev/null)
+if [ -z "$CONTROL_MQTT_ENABLED_RAW" ] || [ "$CONTROL_MQTT_ENABLED_RAW" = "null" ]; then
+  # Fallback: allow enabling via persistent flag file in /data when UI/schema doesn't expose the option yet.
+  # Expected values: "true"/"false" (case-insensitive).
+  if [ -f /data/control_mqtt_enabled ]; then
+    CONTROL_MQTT_ENABLED_RAW=$(cat /data/control_mqtt_enabled 2>/dev/null | tr -d '\r\n' | xargs)
+  fi
+fi
+if [ "$CONTROL_MQTT_ENABLED_RAW" = "true" ] || [ "$CONTROL_MQTT_ENABLED_RAW" = "1" ]; then
+  export CONTROL_MQTT_ENABLED="true"
+  bashio::log.info "🕹️ Control over MQTT: ENABLED"
+else
+  export CONTROL_MQTT_ENABLED="false"
+  bashio::log.info "🕹️ Control over MQTT: DISABLED"
+fi
+
+# CONTROL_MQTT_RETAIN - optional (retain last result for debugging)
+CONTROL_MQTT_RETAIN_RAW=$(bashio::config 'control_mqtt_retain' 2>/dev/null)
+if [ -z "$CONTROL_MQTT_RETAIN_RAW" ] || [ "$CONTROL_MQTT_RETAIN_RAW" = "null" ]; then
+  if [ -f /data/control_mqtt_retain ]; then
+    CONTROL_MQTT_RETAIN_RAW=$(cat /data/control_mqtt_retain 2>/dev/null | tr -d '\r\n' | xargs)
+  fi
+fi
+if [ "$CONTROL_MQTT_RETAIN_RAW" = "true" ] || [ "$CONTROL_MQTT_RETAIN_RAW" = "1" ]; then
+  export CONTROL_MQTT_RETAIN="true"
+  bashio::log.info "🧲 Control MQTT retain: ENABLED"
+fi
+
+# CONTROL_MQTT_BOX_READY_SECONDS - optional (override via file)
+if [ -f /data/control_mqtt_box_ready_seconds ]; then
+  CONTROL_MQTT_BOX_READY_SECONDS_RAW=$(cat /data/control_mqtt_box_ready_seconds 2>/dev/null | tr -d '\r\n' | xargs)
+  if [ -n "$CONTROL_MQTT_BOX_READY_SECONDS_RAW" ]; then
+    export CONTROL_MQTT_BOX_READY_SECONDS="$CONTROL_MQTT_BOX_READY_SECONDS_RAW"
+    bashio::log.info "⏱️ Control box ready seconds: $CONTROL_MQTT_BOX_READY_SECONDS"
+  fi
+fi
+
+# CONTROL_MQTT_LOG_ENABLED - optional (persist results to /data)
+CONTROL_MQTT_LOG_ENABLED_RAW=$(bashio::config 'control_mqtt_log_enabled' 2>/dev/null)
+if [ -z "$CONTROL_MQTT_LOG_ENABLED_RAW" ] || [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "null" ]; then
+  if [ -f /data/control_mqtt_log_enabled ]; then
+    CONTROL_MQTT_LOG_ENABLED_RAW=$(cat /data/control_mqtt_log_enabled 2>/dev/null | tr -d '\r\n' | xargs)
+  fi
+fi
+if [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "true" ] || [ "$CONTROL_MQTT_LOG_ENABLED_RAW" = "1" ]; then
+  export CONTROL_MQTT_LOG_ENABLED="true"
+  bashio::log.info "📝 Control MQTT log: ENABLED"
+fi
+
+# CAPTURE_PAYLOADS - boolean z config
+CAPTURE_RAW=$(bashio::config 'capture_payloads')
+if [ "$CAPTURE_RAW" = "true" ] || [ "$CAPTURE_RAW" = "1" ]; then
+  export CAPTURE_PAYLOADS="true"
+  bashio::log.info "📋 Capture payloads: ENABLED"
+else
+  export CAPTURE_PAYLOADS="false"
+  bashio::log.info "📋 Capture payloads: DISABLED"
+fi
+
+# CAPTURE_RAW_BYTES - boolean z config (ukládá base64 raw bytes do payloads.db)
+CAPTURE_RAW_BYTES=$(bashio::config 'capture_raw_bytes' 2>/dev/null)
+if [ "$CAPTURE_RAW_BYTES" = "true" ] || [ "$CAPTURE_RAW_BYTES" = "1" ]; then
+  export CAPTURE_RAW_BYTES="true"
+  bashio::log.info "📦 Capture raw bytes: ENABLED"
+else
+  export CAPTURE_RAW_BYTES="false"
+  bashio::log.info "📦 Capture raw bytes: DISABLED"
+fi
+
+# CAPTURE_RETENTION_DAYS - int z config (retence payloads.db)
+CAPTURE_RETENTION_DAYS=$(bashio::config 'capture_retention_days' 2>/dev/null)
+if [ -z "$CAPTURE_RETENTION_DAYS" ] || [ "$CAPTURE_RETENTION_DAYS" = "null" ]; then
+  CAPTURE_RETENTION_DAYS=7
+fi
+export CAPTURE_RETENTION_DAYS=$CAPTURE_RETENTION_DAYS
+bashio::log.info "🧹 Capture retention days: $CAPTURE_RETENTION_DAYS"
+
+python -u /app/main.py

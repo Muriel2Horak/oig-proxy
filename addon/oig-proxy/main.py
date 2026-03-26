@@ -1,126 +1,508 @@
 #!/usr/bin/env python3
 """
-OIG Proxy - vstupní bod aplikace.
+OIG Proxy v2 – entry point with full component integration.
+
+Startup sequence:
+1. Configure logging
+2. Load device_id
+3. Load sensor_map
+4. Connect MQTT
+5. Start TwinControlHandler
+6. Start ProxyStatusPublisher
+7. Start TelemetryCollector
+8. Start ProxyServer
+
+Graceful shutdown (reverse order):
+1. Stop ProxyServer
+2. Stop TelemetryCollector
+3. Stop ProxyStatusPublisher
+4. Stop TwinControlHandler
+5. Disconnect MQTT
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-import os
+import signal
 import sys
+import time
+from pathlib import Path
+from typing import Any
 
-from config import (
-    LOG_LEVEL,
-    MQTT_AVAILABLE,
-    PROXY_LISTEN_HOST,
-    PROXY_LISTEN_PORT,
-    TARGET_PORT,
-    TARGET_SERVER,
-    DATA_DIR,
-)
-from utils import load_sensor_map
-from proxy import OIGProxy
+from config import Config
+from capture.frame_capture import FrameCapture
+from capture.pcap_capture import PcapCapture
+from device_id import DeviceIdManager
+from logging_config import configure_logging
+from mqtt.client import MQTTClient
+from mqtt.status import ProxyStatusPublisher
+from proxy.server import ProxyServer
+from sensor.loader import SensorMapLoader
+from sensor.processor import FrameProcessor
+from telemetry.collector import TelemetryCollector
+from twin import TwinControlHandler, TwinQueue
+from twin.delivery import TwinDelivery
 
-
-def _sanitize_log_value(value: object) -> object:
-    """Očistí logované hodnoty od řídicích znaků a zachová strukturu."""
-    if isinstance(value, str):
-        return value.replace(
-            "\r",
-            "\\r").replace(
-            "\n",
-            "\\n").replace(
-            "\t",
-            "\\t")
-    if isinstance(value, dict):
-        return {key: _sanitize_log_value(val) for key, val in value.items()}
-    if isinstance(value, (list, tuple)):
-        return type(value)(_sanitize_log_value(val) for val in value)
-    return value
+logger = logging.getLogger("oig_proxy_v2")
 
 
-class LogSanitizerFilter(logging.Filter):  # pylint: disable=too-few-public-methods
-    """Sanitizuje log recordy před zapsáním do logu."""
+class ProxyApp:
+    """Main application class integrating all OIG Proxy v2 components."""
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = _sanitize_log_value(record.msg)
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {
-                    key: _sanitize_log_value(val) for key,
-                    val in record.args.items()}
-            else:
-                record.args = tuple(_sanitize_log_value(arg)
-                                    for arg in record.args)
-        return True
+    def __init__(self, config: Config) -> None:
+        """Initialize the proxy application with all components."""
+        self.config = config
+        self._stop_event = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
+        # Components (initialized in startup sequence)
+        self.device_id_manager: DeviceIdManager | None = None
+        self.sensor_loader: SensorMapLoader | None = None
+        self.mqtt: MQTTClient | None = None
+        self.frame_processor: FrameProcessor | None = None
+        self.twin_queue: TwinQueue | None = None
+        self.twin_delivery: TwinDelivery | None = None
+        self.twin_handler: TwinControlHandler | None = None
+        self.status_publisher: ProxyStatusPublisher | None = None
+        self.telemetry_collector: TelemetryCollector | None = None
+        self.frame_capture: FrameCapture | None = None
+        self.pcap_capture: PcapCapture | None = None
+        self.proxy: ProxyServer | None = None
 
-# Logging setup
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-_root_logger = logging.getLogger()
-for _handler in _root_logger.handlers:
-    _handler.addFilter(LogSanitizerFilter())
+        # Background tasks
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self._health_task: asyncio.Task[Any] | None = None
 
-logger = logging.getLogger(__name__)
+    async def startup(self) -> bool:
+        """Execute startup sequence. Returns True if successful."""
+        logger.info("OIG Proxy v2 starting up...")
+        start_time = time.time()
+        self._loop = asyncio.get_running_loop()
 
+        # 1. Configure logging (already done in main())
+        logger.info("Logging configured (level=%s)", self.config.log_level)
 
-def check_requirements():
-    """Zkontroluje základní požadavky."""
-    if not MQTT_AVAILABLE:
-        logger.warning(
-            "⚠️ MQTT knihovna paho-mqtt není nainstalována. "
-            "MQTT funkcionalita nebude dostupná."
+        # 2. Load device_id
+        self.device_id_manager = DeviceIdManager()
+        device_id = self.device_id_manager.load()
+        logger.info("Device ID loaded: %s", device_id or "not set (will learn from frames)")
+
+        # 3. Load sensor_map
+        self.sensor_loader = SensorMapLoader(self.config.sensor_map_path)
+        self.sensor_loader.load()
+        sensor_count = self.sensor_loader.sensor_count()
+        logger.info("Sensor map loaded: %d sensors from %s", sensor_count, self.config.sensor_map_path)
+
+        # 4. Connect MQTT
+        self.mqtt = MQTTClient(
+            host=self.config.mqtt_host,
+            port=self.config.mqtt_port,
+            username=self.config.mqtt_username,
+            password=self.config.mqtt_password,
+            namespace=self.config.mqtt_namespace,
+            qos=self.config.mqtt_qos,
+            state_retain=self.config.mqtt_state_retain,
         )
 
+        mqtt_device_id = device_id or "unknown"
+        mqtt_ok = False
+        mqtt_client = self.mqtt
+        if mqtt_client is not None:
+            mqtt_ok = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: mqtt_client.connect(mqtt_device_id)
+            )
+        if mqtt_ok:
+            logger.info("MQTT connected to %s:%s", self.config.mqtt_host, self.config.mqtt_port)
+        else:
+            logger.warning("MQTT connection failed – proxy will run without MQTT")
 
-async def main():
-    """Hlavní funkce."""
-    logger.info("=" * 60)
-    logger.info("OIG Proxy - Multi-mode Cloud & MQTT Proxy")
-    logger.info("=" * 60)
+        # Create frame processor (needs MQTT and sensor_loader)
+        self.frame_processor = FrameProcessor(
+            self.mqtt,
+            self.sensor_loader,
+            proxy_device_id=self.config.proxy_device_id,
+        )
+        if self.mqtt.is_ready() and self.frame_processor is not None:
+            logger.info("FrameProcessor ready for lazy discovery from live frames")
+            if device_id:
+                self.frame_processor.publish_all_discovery(device_id)
+                logger.info("Published full discovery for known device_id=%s", device_id)
 
-    # Check requirements
-    check_requirements()
+        # Create twin components
+        self.twin_queue = TwinQueue()
+        self.twin_delivery = TwinDelivery(self.twin_queue, self.mqtt)
 
-    # Načti sensor mapu (DŮLEŽITÉ pro MQTT entity)
-    load_sensor_map()
-    logger.debug("✅ Sensor map loaded")
+        # 5. Start TwinControlHandler (if MQTT ready)
+        if self.mqtt.is_ready():
+            self.twin_handler = TwinControlHandler(
+                mqtt=self.mqtt,
+                twin_queue=self.twin_queue,
+                device_id=mqtt_device_id,
+                namespace=self.config.mqtt_namespace,
+                proxy_control_handler=self._handle_proxy_control,
+            )
+            await self.twin_handler.start()
+            logger.info("TwinControlHandler started")
+        else:
+            logger.warning("TwinControlHandler not started (MQTT not ready)")
 
-    # DEVICE_ID je optional - detekuje se z komunikace
-    device_id = os.getenv('DEVICE_ID')
-    if device_id:
-        logger.info("Using configured DEVICE_ID: %s", device_id)
-    else:
-        logger.info("DEVICE_ID not set - will be detected from communication")
-        device_id = "AUTO"  # Placeholder - bude aktualizováno z prvního framu
+        # 6. Start ProxyStatusPublisher
+        if self.config.proxy_status_interval > 0:
+            self.status_publisher = ProxyStatusPublisher(
+                mqtt=self.mqtt,
+                interval=self.config.proxy_status_interval,
+                proxy_device_id=self.config.proxy_device_id,
+                sensor_loader=self.sensor_loader,
+                get_configured_mode=(
+                    lambda: self.proxy.mode_manager.configured_mode if self.proxy else "online"
+                ),
+            )
+            status_task = asyncio.create_task(
+                self.status_publisher.run(),
+                name="status_publisher",
+            )
+            self._tasks.add(status_task)
+            status_task.add_done_callback(self._tasks.discard)
+            logger.info("ProxyStatusPublisher started (interval=%ds)", self.config.proxy_status_interval)
+        else:
+            logger.info("ProxyStatusPublisher disabled (interval <= 0)")
 
-    # Konfigurace
-    logger.info("📋 Configuration:")
-    logger.info("   Device ID: %s", device_id)
-    logger.info("   Listen: %s:%s", PROXY_LISTEN_HOST, PROXY_LISTEN_PORT)
-    logger.info("   Cloud target: %s:%s", TARGET_SERVER, TARGET_PORT)
-    logger.info("   Data directory: %s", DATA_DIR)
-    logger.info("   Log level: %s", LOG_LEVEL)
-    logger.info("   MQTT: %s", "Enabled" if MQTT_AVAILABLE else "Disabled")
+        # 7. Start TelemetryCollector
+        if self.config.telemetry_enabled:
+            self.telemetry_collector = TelemetryCollector(
+                interval_s=self.config.telemetry_interval_s,
+                version="2.0.0",
+                telemetry_enabled=self.config.telemetry_enabled,
+                telemetry_mqtt_broker=self.config.telemetry_mqtt_broker,
+                telemetry_interval_s=self.config.telemetry_interval_s,
+                device_id=mqtt_device_id,
+                mqtt_namespace=self.config.mqtt_namespace,
+                mqtt_publisher=self.mqtt,
+                get_mode=lambda: (
+                    self.proxy.mode_manager.configured_mode
+                    if self.proxy and self.proxy.mode_manager.configured_mode == "hybrid"
+                    else (self.proxy.mode_manager.runtime_mode.value if self.proxy else "offline")
+                ),
+                get_configured_mode=lambda: str(self.proxy.mode_manager.configured_mode) if self.proxy else "online",
+                get_box_connected=lambda: self.proxy.is_box_connected() if self.proxy else False,
+                get_box_peer=lambda: self.proxy.box_peer if self.proxy else None,
+                get_uptime_s=lambda: self.proxy.uptime_s() if self.proxy else 0.0,
+                get_frames_received=lambda: self.proxy.frames_received if self.proxy else 0,
+                get_frames_forwarded=lambda: self.proxy.frames_forwarded if self.proxy else 0,
+                get_cloud_connects=lambda: self.proxy.cloud_connects if self.proxy else 0,
+                get_cloud_disconnects=lambda: self.proxy.cloud_disconnects if self.proxy else 0,
+                get_cloud_timeouts=lambda: self.proxy.cloud_timeouts if self.proxy else 0,
+                get_cloud_errors=lambda: self.proxy.cloud_errors if self.proxy else 0,
+                get_cloud_session_connected=lambda: self.proxy.is_cloud_connected() if self.proxy else False,
+                consume_set_commands=lambda: self._consume_twin_commands(),
+                get_background_tasks=lambda: self._tasks,
+            )
+            self.telemetry_collector.init()
 
-    # Vytvoř a spusť proxy
-    proxy = OIGProxy(device_id)
+            class _TelemetryLogHandler(logging.Handler):
+                def __init__(self, collector: TelemetryCollector) -> None:
+                    super().__init__(level=logging.WARNING)
+                    self._collector = collector
+
+                def emit(self, record: logging.LogRecord) -> None:
+                    self._collector.record_log_entry(record)
+
+            logging.getLogger().addHandler(_TelemetryLogHandler(self.telemetry_collector))
+
+            telemetry_task = asyncio.create_task(
+                self.telemetry_collector.loop(),
+                name="telemetry_collector",
+            )
+            self._tasks.add(telemetry_task)
+            telemetry_task.add_done_callback(self._tasks.discard)
+            logger.info("TelemetryCollector started (interval=%ds)", self.config.telemetry_interval_s)
+        else:
+            logger.info("TelemetryCollector disabled")
+
+        # 8. Start ProxyServer
+        if self.config.capture_payloads:
+            self.frame_capture = FrameCapture(
+                db_path=self.config.capture_db_path,
+                capture_raw_bytes=self.config.capture_raw_bytes,
+                retention_days=self.config.capture_retention_days,
+            )
+            self.frame_capture.start()
+            logger.info(
+                "Frame payload capture enabled (db=%s raw_bytes=%s)",
+                self.config.capture_db_path,
+                self.config.capture_raw_bytes,
+            )
+        else:
+            logger.warning("Frame payload capture disabled (CAPTURE_PAYLOADS=false)")
+
+        if self.config.capture_pcap:
+            self.pcap_capture = PcapCapture(
+                port=self.config.proxy_port,
+                pcap_path=self.config.capture_pcap_path,
+                interface=self.config.capture_pcap_interface,
+                max_size_mb=self.config.capture_pcap_max_size_mb,
+            )
+            await self.pcap_capture.start_async()
+            logger.info(
+                "PCAP capture enabled (path=%s interface=%s max_size_mb=%s)",
+                self.config.capture_pcap_path,
+                self.config.capture_pcap_interface,
+                self.config.capture_pcap_max_size_mb,
+            )
+        else:
+            logger.warning("PCAP capture disabled (CAPTURE_PCAP=false)")
+
+        if self.config.log_level == "TRACE" and not self.config.capture_pcap:
+            logger.warning(
+                "TRACE level active without PCAP capture; enable CAPTURE_PCAP for full TCP trace"
+            )
+
+        self.proxy = ProxyServer(
+            config=self.config,
+            on_frame=self._on_frame,
+            twin_delivery=self.twin_delivery,
+            frame_capture=self.frame_capture,
+            telemetry_collector=self.telemetry_collector if self.config.telemetry_enabled else None,
+        )
+        if self.telemetry_collector is not None:
+            self.proxy.mode_manager.on_hybrid_transition = self._on_hybrid_transition
+        await self.proxy.start()
+        logger.info("ProxyServer started on %s:%s", self.config.proxy_host, self.config.proxy_port)
+
+        # Start MQTT health check
+        self._health_task = asyncio.create_task(
+            self.mqtt.health_check_loop(mqtt_device_id),
+            name="mqtt_health",
+        )
+
+        elapsed = time.time() - start_time
+        logger.info("OIG Proxy v2 startup complete in %.2fs", elapsed)
+        return True
+
+    def _handle_proxy_control(self, table: str, key: str, value: Any) -> bool:
+        if table != "proxy_control":
+            return False
+        if key == "PROXY_MODE":
+            mode_map = {0: "online", 1: "hybrid", 2: "offline"}
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"online", "hybrid", "offline"}:
+                    mode_name = normalized
+                else:
+                    try:
+                        mode_name = mode_map[int(normalized)]
+                    except (TypeError, ValueError, KeyError):
+                        logger.warning("Proxy control rejected: invalid PROXY_MODE value=%s", value)
+                        return True
+            else:
+                try:
+                    mode_name = mode_map[int(value)]
+                except (TypeError, ValueError, KeyError):
+                    logger.warning("Proxy control rejected: invalid PROXY_MODE value=%s", value)
+                    return True
+
+            if self._loop is None:
+                logger.warning("Proxy control rejected: event loop is not available")
+                return True
+
+            if self._loop.is_closed():
+                logger.warning("Proxy control rejected: event loop is closed")
+                return True
+
+            loop = self._loop
+
+            def _schedule() -> None:
+                task = loop.create_task(self._apply_proxy_mode(mode_name), name="apply_proxy_mode")
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+
+            try:
+                loop.call_soon_threadsafe(_schedule)
+            except RuntimeError as exc:
+                logger.warning("Proxy control rejected: failed to schedule mode apply (%s)", exc)
+            return True
+        return False
+
+    async def _apply_proxy_mode(self, mode_name: str) -> None:
+        if self.proxy is None:
+            return
+        applied = await self.proxy.mode_manager.apply_configured_mode(mode_name)
+        if applied:
+            logger.info("Proxy mode set from HA control: %s", mode_name)
+            if self.status_publisher is not None:
+                self.status_publisher._publish()
+
+    def _consume_twin_commands(self) -> list[dict[str, str]]:
+        """Return pending twin set commands in v1-compatible format for telemetry.
+
+        Does NOT clear the queue — twin delivery acknowledges items individually.
+        """
+        if self.twin_queue is None:
+            return []
+        return [
+            {"key": f"{s.table}:{s.key}", "value": str(s.value)}
+            for s in self.twin_queue.get_pending()
+        ]
+
+    def _on_hybrid_transition(self, state: str, started_at: float, reason: str | None) -> None:
+        if self.telemetry_collector is None:
+            return
+        self.telemetry_collector.record_hybrid_state_end(
+            state=state,
+            state_since_epoch=started_at,
+            ended_at=time.time(),
+            mode="hybrid",
+            reason=reason,
+        )
+
+    async def _on_frame(self, data: dict[str, Any]) -> None:
+        """Handle parsed frame from proxy server.
+
+        This callback is called for each frame received from the Box.
+        It validates device_id, records frame in status publisher,
+        and processes the frame through FrameProcessor.
+        """
+        if not data:
+            return
+
+        frame_device_id = data.get("_device_id")
+        table = data.get("_table")
+        if not table or not frame_device_id:
+            return
+
+        if table in ("IsNewSet", "IsNewWeather", "IsNewFW"):
+            table = "tbl_actual"
+            data["_table"] = "tbl_actual"
+
+        # Device ID validation and learning
+        if self.device_id_manager:
+            if self.device_id_manager.device_id is None:
+                # First frame with device_id - save it
+                self.device_id_manager.save(frame_device_id)
+                logger.info("Device ID set from first frame: %s", frame_device_id)
+            elif not self.device_id_manager.validate(frame_device_id):
+                # Mismatch - log warning and ignore frame
+                logger.warning(
+                    "Device ID mismatch: expected %s, got %s",
+                    self.device_id_manager.device_id,
+                    frame_device_id,
+                )
+                return
+
+        # Record frame in status publisher
+        if self.status_publisher:
+            self.status_publisher.record_frame(frame_device_id, table)
+
+        # Process frame through FrameProcessor (publishes to MQTT)
+        if self.frame_processor:
+            try:
+                await self.frame_processor.process(frame_device_id, table, data)
+            except Exception as exc:
+                logger.error("Frame processing error: %s", exc)
+
+        if table == "tbl_events" and self.telemetry_collector is not None:
+            self.telemetry_collector.record_tbl_event(parsed=data, device_id=frame_device_id)
+
+    async def shutdown(self) -> None:
+        """Execute graceful shutdown sequence (reverse of startup)."""
+        logger.info("OIG Proxy v2 shutting down...")
+
+        # Cancel MQTT health check
+        if self._health_task and not self._health_task.done():
+            self._health_task.cancel()
+            try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("MQTT health check stopped")
+
+        # 1. Stop ProxyServer
+        if self.proxy:
+            await self.proxy.stop()
+            logger.info("ProxyServer stopped")
+
+        # 2. Stop TelemetryCollector
+        if self.telemetry_collector and self.telemetry_collector.task:
+            self.telemetry_collector.task.cancel()
+            try:
+                await self.telemetry_collector.task
+            except asyncio.CancelledError:
+                pass
+            logger.info("TelemetryCollector stopped")
+
+        # 3. Stop ProxyStatusPublisher
+        if self.status_publisher:
+            self.status_publisher.stop()
+            logger.info("ProxyStatusPublisher stopped")
+
+        # Cancel all background tasks
+        if self._tasks:
+            for task in list(self._tasks):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            self._tasks.clear()
+
+        # 4. Stop TwinControlHandler
+        if self.twin_handler:
+            await self.twin_handler.stop()
+            logger.info("TwinControlHandler stopped")
+
+        # 5. Stop capture
+        if self.pcap_capture:
+            self.pcap_capture.stop()
+            logger.info("PcapCapture stopped")
+
+        if self.frame_capture:
+            self.frame_capture.stop()
+            logger.info("FrameCapture stopped")
+
+        # 6. Disconnect MQTT
+        if self.mqtt:
+            self.mqtt.disconnect()
+            logger.info("MQTT disconnected")
+
+        logger.info("OIG Proxy v2 shutdown complete")
+
+    async def run(self) -> None:
+        """Run the proxy application until stop signal."""
+        # Setup signal handlers
+        loop = asyncio.get_running_loop()
+
+        def _signal_handler() -> None:
+            logger.info("Shutdown signal received")
+            self._stop_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _signal_handler)
+
+        # Wait for stop signal
+        try:
+            await self._stop_event.wait()
+        finally:
+            await self.shutdown()
+
+
+def main() -> None:
+    """Entry point for OIG Proxy v2."""
+    config = Config()
+    configure_logging(config.log_level)
+
+    app = ProxyApp(config)
+
+    async def run_app() -> None:
+        startup_ok = await app.startup()
+        if not startup_ok:
+            logger.error("Startup failed, exiting")
+            sys.exit(1)
+        await app.run()
 
     try:
-        await proxy.start()
+        asyncio.run(run_app())
     except KeyboardInterrupt:
-        logger.info("\n👋 Shutting down...")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error("❌ Fatal error: %s", exc, exc_info=True)
-        sys.exit(1)
+        pass
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
-        sys.exit(0)
+    main()

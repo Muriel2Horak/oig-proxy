@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-V2_ADDON_DIR = os.path.join(ROOT_DIR, "addon", "oig-proxy-v2")
+V2_ADDON_DIR = os.path.join(ROOT_DIR, "addon", "oig-proxy")
 V1_ADDON_DIR = os.path.join(ROOT_DIR, "addon", "oig-proxy")
 
 # Odstraníme v1 z path, pokud tam je (pytest ho přidává automaticky)

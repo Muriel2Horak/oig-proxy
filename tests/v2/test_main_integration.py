@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 # Add addon path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy-v2"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy"))
 
 from main import ProxyApp, main
 

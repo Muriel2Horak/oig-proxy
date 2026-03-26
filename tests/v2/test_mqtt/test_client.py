@@ -184,12 +184,14 @@ def test_send_discovery_payload_structure():
 
     payload = json.loads(mock_paho.publish.call_args[0][1])
     assert payload["name"] == "Battery SoC"
-    assert payload["object_id"] == "dev01_tbl_batt_soc"
+    assert payload["object_id"] == "oig_local_dev01_tbl_batt_soc"
+    assert payload["default_entity_id"] == "sensor.oig_local_dev01_tbl_batt_soc"
     assert payload["unit_of_measurement"] == "%"
     assert payload["device_class"] == "battery"
     assert payload["state_class"] == "measurement"
     assert "state_topic" in payload
     assert payload["state_topic"] == "oig_local/DEV01/tbl_batt/state"
+    assert payload["value_template"] == "{{ value_json.get('SoC') }}"
     assert "availability" in payload
     assert payload["availability"][0]["topic"] == "oig_local/DEV01/availability"
     assert "device" in payload
@@ -231,7 +233,8 @@ def test_send_discovery_creates_number_command_entity_for_whitelisted_setting():
     control_topic = mock_paho.publish.call_args_list[0][0][0]
     control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
     assert control_topic == "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config"
-    assert control_payload["object_id"] == "dev01_tbl_batt_prms_bat_min_cfg"
+    assert control_payload["object_id"] == "oig_local_dev01_tbl_batt_prms_bat_min_cfg"
+    assert control_payload["default_entity_id"] == "number.oig_local_dev01_tbl_batt_prms_bat_min_cfg"
     assert control_payload["command_topic"] == "oig_local/DEV01/set/tbl_batt_prms/BAT_MIN"
     assert control_payload["entity_category"] == "config"
     assert control_payload["mode"] == "box"
@@ -255,6 +258,7 @@ def test_send_discovery_creates_switch_for_zero_one_setting_constraint():
     control_topic = mock_paho.publish.call_args_list[0][0][0]
     control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
     assert control_topic == "homeassistant/switch/oig_local_dev01_tbl_box_prms_sa_cfg/config"
+    assert control_payload["default_entity_id"] == "switch.oig_local_dev01_tbl_box_prms_sa_cfg"
     assert control_payload["command_topic"] == "oig_local/DEV01/set/tbl_box_prms/SA"
     assert control_payload["payload_on"] == 1
     assert control_payload["payload_off"] == 0
@@ -275,9 +279,10 @@ def test_send_discovery_uses_enum_value_template_for_sensor_state():
     )
 
     payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
-    assert payload["object_id"] == "dev01_tbl_invertor_prms_mode"
-    assert "(value_json.MODE | string)" in payload["value_template"]
+    assert payload["object_id"] == "oig_local_dev01_tbl_invertor_prms_mode"
+    assert "(value_json.get('MODE') | string)" in payload["value_template"]
     assert '"0": "Home 1"' in payload["value_template"]
+    assert "value_json.get('MODE')" in payload["value_template"]
 
 
 def test_send_discovery_creates_sensor_and_select_for_box_mode():
@@ -299,13 +304,16 @@ def test_send_discovery_creates_sensor_and_select_for_box_mode():
     control_payload = json.loads(mock_paho.publish.call_args_list[1][0][1])
 
     assert sensor_topic == "homeassistant/sensor/oig_local_dev01_tbl_box_prms_mode/config"
-    assert sensor_payload["object_id"] == "dev01_tbl_box_prms_mode"
+    assert sensor_payload["object_id"] == "oig_local_dev01_tbl_box_prms_mode"
+    assert sensor_payload["default_entity_id"] == "sensor.oig_local_dev01_tbl_box_prms_mode"
     assert '"0": "Home 1"' in sensor_payload["value_template"]
+    assert "value_json.get('MODE')" in sensor_payload["value_template"]
 
     assert control_topic == "homeassistant/select/oig_local_dev01_tbl_box_prms_mode_cfg/config"
-    assert control_payload["object_id"] == "dev01_tbl_box_prms_mode_cfg"
+    assert control_payload["object_id"] == "oig_local_dev01_tbl_box_prms_mode_cfg"
+    assert control_payload["default_entity_id"] == "select.oig_local_dev01_tbl_box_prms_mode_cfg"
     assert control_payload["options"] == ["Home 1", "Home 2"]
-    assert "value_json.MODE" in control_payload["value_template"]
+    assert "value_json.get('MODE')" in control_payload["value_template"]
     assert '"Home 2": "1"' in control_payload["command_template"]
 
 
@@ -325,10 +333,42 @@ def test_send_discovery_creates_select_for_proxy_mode_enum_setting():
     control_topic = mock_paho.publish.call_args_list[0][0][0]
     control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
     assert control_topic == "homeassistant/select/oig_local_dev01_proxy_control_proxy_mode_cfg/config"
-    assert control_payload["object_id"] == "dev01_proxy_control_proxy_mode_cfg"
+    assert control_payload["object_id"] == "oig_local_dev01_proxy_control_proxy_mode_cfg"
+    assert control_payload["default_entity_id"] == "select.oig_local_dev01_proxy_control_proxy_mode_cfg"
     assert control_payload["options"] == ["online", "hybrid", "offline"]
-    assert "value_json.PROXY_MODE" in control_payload["value_template"]
+    assert "value_json.get('PROXY_MODE')" in control_payload["value_template"]
     assert '"hybrid": "1"' in control_payload["command_template"]
+
+
+def test_send_discovery_plain_sensor_value_template_is_missing_key_safe():
+    c = make_client(namespace="oig_local")
+    mock_paho = inject_mock_paho(c)
+
+    c.send_discovery(
+        device_id="DEV01",
+        table="tbl_actual",
+        sensor_key="LoadedOn",
+        sensor_name="Loaded On",
+    )
+
+    payload = json.loads(mock_paho.publish.call_args[0][1])
+    assert payload["value_template"] == "{{ value_json.get('LoadedOn') }}"
+
+
+def test_send_discovery_enum_sensor_value_template_is_missing_key_safe():
+    c = make_client(namespace="oig_local")
+    mock_paho = inject_mock_paho(c)
+
+    c.send_discovery(
+        device_id="DEV01",
+        table="tbl_actual",
+        sensor_key="MODE",
+        sensor_name="Mode",
+        enum_map={"0": "Home 1", "1": "Home 2"},
+    )
+
+    payload = json.loads(mock_paho.publish.call_args[0][1])
+    assert "value_json.get('MODE')" in payload["value_template"]
 
 
 def test_send_discovery_creates_switch_entity_for_binary_setting():
@@ -348,11 +388,29 @@ def test_send_discovery_creates_switch_entity_for_binary_setting():
     topic = mock_paho.publish.call_args_list[0][0][0]
     payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
     assert topic == "homeassistant/switch/oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg/config"
-    assert payload["object_id"] == "dev01_tbl_invertor_prm1_buz_mut_cfg"
+    assert payload["object_id"] == "oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg"
+    assert payload["default_entity_id"] == "switch.oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg"
     assert payload["payload_on"] == 1
     assert payload["payload_off"] == 0
     assert payload["state_on"] == 1
     assert payload["state_off"] == 0
+
+
+def test_send_discovery_creates_binary_sensor_default_entity_id():
+    c = make_client(namespace="oig_local")
+    mock_paho = inject_mock_paho(c)
+
+    c.send_discovery(
+        device_id="DEV01",
+        table="tbl_batt_prms",
+        sensor_key="BAT_DI",
+        sensor_name="Battery DI",
+        is_binary=True,
+    )
+
+    payload = json.loads(mock_paho.publish.call_args[0][1])
+    assert payload["object_id"] == "oig_local_dev01_tbl_batt_prms_bat_di"
+    assert payload["default_entity_id"] == "binary_sensor.oig_local_dev01_tbl_batt_prms_bat_di"
 
 
 def test_send_discovery_deduplication():
@@ -416,8 +474,8 @@ def test_send_discovery_for_table_skips_internal_keys():
 
 
 def test_build_object_id_normalizes_non_alnum():
-    assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B") == "dev_01_tbl_box_a_b"
-    assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B", is_control=True) == "dev_01_tbl_box_a_b_cfg"
+    assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B") == "oig_local_dev_01_tbl_box_a_b"
+    assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B", is_control=True) == "oig_local_dev_01_tbl_box_a_b_cfg"
 
 
 # ---------------------------------------------------------------------------

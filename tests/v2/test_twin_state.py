@@ -6,7 +6,7 @@ Tests verify:
 - Overwrite behavior for same (table, key)
 - get_pending returns sorted results
 
-Run: PYTHONPATH=addon/oig-proxy-v2 pytest tests/v2/test_twin_state.py -v
+Run: PYTHONPATH=addon/oig-proxy pytest tests/v2/test_twin_state.py -v
 """
 
 # pyright: reportMissingImports=false

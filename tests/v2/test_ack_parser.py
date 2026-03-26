@@ -3,7 +3,7 @@ import sys
 
 # pyright: reportMissingImports=false
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy-v2")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
 from twin.ack_parser import parse_box_ack, parse_tbl_events_ack
 

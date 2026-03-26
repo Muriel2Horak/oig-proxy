@@ -46,6 +46,7 @@ def make_config(**overrides) -> Config:
 # Spuštění a zastavení serveru
 # ---------------------------------------------------------------------------
 
+@pytest.mark.enable_socket
 @pytest.mark.asyncio
 async def test_server_starts_and_listens():
     """Server se spustí a naslouchá na zvoleném portu."""
@@ -62,6 +63,7 @@ async def test_server_starts_and_listens():
         await server.stop()
 
 
+@pytest.mark.enable_socket
 @pytest.mark.asyncio
 async def test_server_stop_clears_state():
     """Po stop() je _server None."""
@@ -72,6 +74,7 @@ async def test_server_stop_clears_state():
     assert server._server is None
 
 
+@pytest.mark.enable_socket
 @pytest.mark.asyncio
 async def test_serve_forever_calls_start_if_not_started():
     """serve_forever() zavolá start() pokud _server je None."""
@@ -151,6 +154,19 @@ async def test_on_frame_bad_bytes_no_crash():
     await server._process_frame(b"\x00\x01\x02garbage\xff")
     # callback nebyl zavolán (neplatný XML)
     assert received == []
+
+
+@pytest.mark.asyncio
+async def test_frames_received_increments_on_process_frame():
+    cfg = make_config()
+    server = ProxyServer(cfg)
+
+    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device><P>100</P>"
+    frame_bytes = build_frame(xml).encode("utf-8")
+
+    await server._process_frame(frame_bytes)
+
+    assert server.frames_received == 1
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +355,7 @@ async def test_handle_twin_frames_skips_delivery_for_tbl_actual():
 # Připojení k cloudu selhá
 # ---------------------------------------------------------------------------
 
+@pytest.mark.enable_socket
 @pytest.mark.asyncio
 async def test_box_connection_closes_on_cloud_failure():
     """Pokud cloud není dostupný, box_writer se zavře."""
@@ -361,3 +378,92 @@ async def test_box_connection_closes_on_cloud_failure():
         await writer.wait_closed()
     finally:
         await server.stop()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+async def test_box_connected_state_reflects_connection():
+    async def cloud_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            await reader.read(4096)
+        except Exception:
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    cloud_server = await asyncio.start_server(cloud_handler, "127.0.0.1", 0)
+    cloud_port = cloud_server.sockets[0].getsockname()[1]
+
+    cfg = make_config(cloud_host="127.0.0.1", cloud_port=cloud_port, cloud_connect_timeout=1.0)
+    server = ProxyServer(cfg)
+    await server.start()
+    proxy_port = server._server.sockets[0].getsockname()[1]
+
+    async def wait_for(predicate, timeout: float = 2.0) -> None:
+        async def _inner() -> None:
+            while not predicate():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(_inner(), timeout=timeout)
+
+    try:
+        _, box_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        await wait_for(server.is_box_connected)
+        assert server.is_box_connected() is True
+        assert server.box_peer is not None
+
+        box_writer.close()
+        await box_writer.wait_closed()
+        await wait_for(lambda: not server.is_box_connected())
+        assert server.is_box_connected() is False
+        assert server.box_peer is None
+    finally:
+        await server.stop()
+        cloud_server.close()
+        await cloud_server.wait_closed()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+async def test_cloud_connects_counter_increments():
+    async def cloud_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            await reader.read(4096)
+        except Exception:
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    cloud_server = await asyncio.start_server(cloud_handler, "127.0.0.1", 0)
+    cloud_port = cloud_server.sockets[0].getsockname()[1]
+
+    cfg = make_config(cloud_host="127.0.0.1", cloud_port=cloud_port, cloud_connect_timeout=1.0)
+    server = ProxyServer(cfg)
+    await server.start()
+    proxy_port = server._server.sockets[0].getsockname()[1]
+
+    async def wait_for(predicate, timeout: float = 2.0) -> None:
+        async def _inner() -> None:
+            while not predicate():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(_inner(), timeout=timeout)
+
+    try:
+        _, box_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+        await wait_for(lambda: server.cloud_connects == 1)
+        assert server.cloud_connects == 1
+
+        box_writer.close()
+        await box_writer.wait_closed()
+        await wait_for(lambda: server.cloud_disconnects == 1)
+    finally:
+        await server.stop()
+        cloud_server.close()
+        await cloud_server.wait_closed()
