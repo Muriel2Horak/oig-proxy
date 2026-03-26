@@ -76,6 +76,7 @@ def test_publish_all_discovery_skips_isnew_tables(processor: FrameProcessor, moc
         ("IsNewFW", "BAT_C", {"name_cs": "Stav nabití"}),
         ("IsNewSet", "BAT_C", {"name_cs": "Stav nabití"}),
         ("IsNewWeather", "BAT_C", {"name_cs": "Stav nabití"}),
+        ("proxy_control", "PROXY_MODE", {"name_cs": "Proxy - Režim"}),
         ("tbl_actual", "BAT_C", {"name_cs": "Stav nabití"}),
     ]
 
@@ -580,3 +581,185 @@ async def test_integration_with_real_loader_and_temp_sensor(tmp_path) -> None:
     # Verify state was published
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert pub_data["Temp"] == 25.5
+
+
+# -----------------------------------------------------------------------------
+# Timestamp normalization tests
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_process_normalizes_timestamp_device_class_to_iso(
+    processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock
+) -> None:
+    """Timestamp device_class value should be converted to timezone-aware ISO string."""
+    mock_loader.lookup.return_value = {
+        "name_cs": "Firmware - Načteno",
+        "device_class": "timestamp",
+        "device_mapping": "inverter",
+    }
+
+    await processor.process("DEV01", "tbl_actual", {"LoadedOn": "2026-03-18 10:07:08"})
+
+    pub_data = mock_mqtt.publish_state.call_args[0][2]
+    assert pub_data["LoadedOn"] == "2026-03-18T10:07:08+00:00"
+
+
+@pytest.mark.asyncio
+async def test_process_keeps_non_timestamp_value_unchanged(
+    processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock
+) -> None:
+    """Non-timestamp device_class values should be published unchanged."""
+    mock_loader.lookup.return_value = {
+        "name_cs": "Teplota",
+        "device_class": "temperature",
+        "unit_of_measurement": "°C",
+        "device_mapping": "inverter",
+    }
+
+    await processor.process("DEV01", "tbl_actual", {"Temp": 25.5})
+
+    pub_data = mock_mqtt.publish_state.call_args[0][2]
+    assert pub_data["Temp"] == 25.5
+
+
+@pytest.mark.asyncio
+async def test_tbl_actual_partial_frames_merge_with_previous_state(
+    mock_mqtt: MagicMock, mock_loader: MagicMock
+) -> None:
+    mock_loader.iter_sensors.return_value = [
+        ("tbl_actual", "LoadedOn", {"name_cs": "Firmware - Načteno"}),
+        ("tbl_actual", "Geobaseid", {"name_cs": "Geobáze"}),
+        ("tbl_actual", "BAT_C", {"name_cs": "Baterie - Stav nabití"}),
+    ]
+
+    def _lookup(table: str, key: str):
+        values = {
+            ("tbl_actual", "LoadedOn"): {
+                "name_cs": "Firmware - Načteno",
+                "device_class": "timestamp",
+                "device_mapping": "inverter",
+            },
+            ("tbl_actual", "Geobaseid"): {
+                "name_cs": "Geobáze",
+                "device_mapping": "inverter",
+            },
+            ("tbl_actual", "BAT_C"): {
+                "name_cs": "Baterie - Stav nabití",
+                "unit_of_measurement": "%",
+                "device_mapping": "battery",
+            },
+        }
+        return values.get((table, key))
+
+    mock_loader.lookup.side_effect = _lookup
+    fresh_processor = FrameProcessor(mqtt=mock_mqtt, sensor_loader=mock_loader)
+
+    await fresh_processor.process(
+        "DEV01",
+        "tbl_actual",
+        {
+            "LoadedOn": "2026-03-18 10:07:08",
+            "Geobaseid": 15,
+            "BAT_C": 91,
+        },
+    )
+    await fresh_processor.process("DEV01", "tbl_actual", {"BAT_C": 92})
+
+    second_payload = mock_mqtt.publish_state.call_args_list[-1][0][2]
+    assert second_payload["LoadedOn"] == "2026-03-18T10:07:08+00:00"
+    assert second_payload["Geobaseid"] == 15
+    assert second_payload["BAT_C"] == 92
+
+
+@pytest.mark.asyncio
+async def test_tbl_actual_mirror_uses_merged_values_on_partial_updates(
+    mock_mqtt: MagicMock, mock_loader: MagicMock
+) -> None:
+    mock_loader.iter_sensors.return_value = [
+        ("tbl_actual", "FV_P1", {"name_cs": "Aktuální FV1"}),
+        ("tbl_actual", "FV_P2", {"name_cs": "Aktuální FV2"}),
+        ("tbl_dc_in", "FV_P1", {"name_cs": "FVE string 1"}),
+        ("tbl_dc_in", "FV_P2", {"name_cs": "FVE string 2"}),
+    ]
+
+    def _lookup(table: str, key: str):
+        values = {
+            ("tbl_actual", "FV_P1"): {"name_cs": "Aktuální FV1", "device_mapping": "pv"},
+            ("tbl_actual", "FV_P2"): {"name_cs": "Aktuální FV2", "device_mapping": "pv"},
+            ("tbl_dc_in", "FV_P1"): {"name_cs": "FVE string 1", "device_mapping": "pv"},
+            ("tbl_dc_in", "FV_P2"): {"name_cs": "FVE string 2", "device_mapping": "pv"},
+        }
+        return values.get((table, key))
+
+    mock_loader.lookup.side_effect = _lookup
+    fresh_processor = FrameProcessor(mqtt=mock_mqtt, sensor_loader=mock_loader)
+
+    await fresh_processor.process("DEV01", "tbl_actual", {"FV_P1": 321, "FV_P2": 654})
+    await fresh_processor.process("DEV01", "tbl_actual", {"FV_P2": 700})
+
+    mirror_calls = [
+        call[0]
+        for call in mock_mqtt.publish_state.call_args_list
+        if call[0][1] == "tbl_dc_in"
+    ]
+    assert len(mirror_calls) == 2
+    assert mirror_calls[1][2]["FV_P1"] == 321
+    assert mirror_calls[1][2]["FV_P2"] == 700
+
+
+@pytest.mark.asyncio
+async def test_process_merges_partial_payload_for_non_actual_table(
+    mock_mqtt: MagicMock, mock_loader: MagicMock
+) -> None:
+    def _lookup(table: str, key: str):
+        values = {
+            ("tbl_ac_out", "AC_OUT_P"): {"name_cs": "Výstupní výkon", "device_mapping": "load"},
+            ("tbl_ac_out", "AC_OUT_V"): {"name_cs": "Výstupní napětí", "device_mapping": "load"},
+        }
+        return values.get((table, key))
+
+    mock_loader.lookup.side_effect = _lookup
+    fresh_processor = FrameProcessor(mqtt=mock_mqtt, sensor_loader=mock_loader)
+
+    await fresh_processor.process("DEV01", "tbl_ac_out", {"AC_OUT_P": 1200, "AC_OUT_V": 230})
+    await fresh_processor.process("DEV01", "tbl_ac_out", {"AC_OUT_P": 1250})
+
+    second_payload = mock_mqtt.publish_state.call_args_list[-1][0][2]
+    assert second_payload["AC_OUT_P"] == 1250
+    assert second_payload["AC_OUT_V"] == 230
+
+
+@pytest.mark.asyncio
+async def test_process_mirror_merge_with_previous_mirror_state(
+    mock_mqtt: MagicMock, mock_loader: MagicMock
+) -> None:
+    mock_loader.iter_sensors.return_value = [
+        ("tbl_actual", "LOAD_P", {"name_cs": "Aktuální zátěž"}),
+        ("tbl_ac_out", "LOAD_P", {"name_cs": "Zátěž AC výstup"}),
+    ]
+
+    def _lookup(table: str, key: str):
+        values = {
+            ("tbl_actual", "LOAD_P"): {"name_cs": "Aktuální zátěž", "device_mapping": "load"},
+            ("tbl_ac_out", "LOAD_P"): {"name_cs": "Zátěž AC výstup", "device_mapping": "load"},
+        }
+        return values.get((table, key))
+
+    mock_loader.lookup.side_effect = _lookup
+    fresh_processor = FrameProcessor(mqtt=mock_mqtt, sensor_loader=mock_loader)
+    fresh_processor._last_table_values[("DEV01", "tbl_ac_out")] = {"AC_OUT_V": 230}
+
+    await fresh_processor.process("DEV01", "tbl_actual", {"LOAD_P": 700})
+
+    mirror_calls = [
+        call[0]
+        for call in mock_mqtt.publish_state.call_args_list
+        if call[0][1] == "tbl_ac_out"
+    ]
+    assert len(mirror_calls) == 1
+    assert mirror_calls[0][2]["AC_OUT_V"] == 230
+    assert mirror_calls[0][2]["LOAD_P"] == 700
+    assert fresh_processor._last_table_values[("DEV01", "tbl_ac_out")] == {
+        "AC_OUT_V": 230,
+        "LOAD_P": 700,
+    }

@@ -6,7 +6,7 @@ import os
 original_path = sys.path.copy()
 
 # Přidáme v1 addon do path na konec (aby v2 mělo přednost)
-v1_addon = os.path.join(os.path.dirname(__file__), '..', '..', 'addon', 'oig-proxy')
+v1_addon = os.path.join(os.path.dirname(__file__), '..', '..', 'addon', 'oig-proxy-v1-archive')
 if v1_addon not in sys.path:
     sys.path.append(v1_addon)
 

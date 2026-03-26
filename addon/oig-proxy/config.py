@@ -1,227 +1,117 @@
 #!/usr/bin/env python3
+"""Konfigurace OIG Proxy v2.
+
+Nacita se z env vars (override) nebo defaults.
+Zadne feature flagy.
 """
-Konfigurace OIG Proxy - všechny konstanty a environment variables.
-"""
+
+from __future__ import annotations
 
 import os
-from importlib.util import find_spec
-
-# ============================================================================
-# MQTT Availability Check
-# ============================================================================
-try:
-    MQTT_AVAILABLE = find_spec("paho.mqtt.client") is not None
-except ModuleNotFoundError:
-    MQTT_AVAILABLE = False
-
-# ============================================================================
-# Helpers
-# ============================================================================
 
 
-def _get_int_env(name: str, default: int) -> int:
-    """Vrátí int z env proměnné s bezpečným fallbackem."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = str(raw).strip()
-    if raw == "" or raw.lower() == "null":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
+class Config:
+    """Konfigurace proxy nactena z env vars."""
 
+    # TCP proxy
+    proxy_host: str = "0.0.0.0"
+    proxy_port: int = 5710
 
-def _get_float_env(name: str, default: float) -> float:
-    """Vrátí float z env proměnné s bezpečným fallbackem."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = str(raw).strip()
-    if raw == "" or raw.lower() == "null":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
+    # Cloud target
+    cloud_host: str = "oigservis.cz"
+    cloud_port: int = 5710
+    cloud_connect_timeout: float = 10.0
+    cloud_ack_timeout: float = 30.0
 
+    # MQTT
+    mqtt_host: str = "core-mosquitto"
+    mqtt_port: int = 1883
+    mqtt_username: str = ""
+    mqtt_password: str = ""
+    mqtt_namespace: str = "oig_local"
+    mqtt_qos: int = 1
+    mqtt_state_retain: bool = True
 
-# ============================================================================
-# MQTT Configuration
-# ============================================================================
-MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
-MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
-MQTT_NAMESPACE = os.getenv("MQTT_NAMESPACE", "oig_local")
-MQTT_PUBLISH_QOS = 1  # QoS level (0=fire&forget, 1=at least once)
-MQTT_STATE_RETAIN = os.getenv("MQTT_STATE_RETAIN", "true").lower() == "true"
-PROXY_STATUS_ATTRS_TOPIC = os.getenv(
-    "PROXY_STATUS_ATTRS_TOPIC", "oig_local/oig_proxy/proxy_status/attrs"
-)
-LOCAL_GETACTUAL_ENABLED = os.getenv(
-    "LOCAL_GETACTUAL_ENABLED",
-    "false").lower() == "true"
-LOCAL_GETACTUAL_INTERVAL_S = _get_float_env("LOCAL_GETACTUAL_INTERVAL_S", 10.0)
-FULL_REFRESH_INTERVAL_H = max(1, _get_int_env("FULL_REFRESH_INTERVAL_H", 24))
+    # Proxy mode (online / hybrid)
+    proxy_mode: str = "online"
+    hybrid_retry_interval: int = 60
+    hybrid_fail_threshold: int = 3
 
-# ============================================================================
-# Proxy Mode Configuration
-# ============================================================================
-# ONLINE = transparent forward (default; explicit online is respected),
-# HYBRID = smart fallback, OFFLINE = always local
-PROXY_MODE = os.getenv("PROXY_MODE", "online").lower()
+    # Logging
+    log_level: str = "INFO"
 
-# For HYBRID mode: seconds to wait before retry online
-HYBRID_RETRY_INTERVAL = _get_int_env("HYBRID_RETRY_INTERVAL", 60)
-# For HYBRID mode: consecutive failures before switching to offline (1 =
-# immediate)
-HYBRID_FAIL_THRESHOLD = _get_int_env("HYBRID_FAIL_THRESHOLD", 1)
-# For HYBRID mode: connect timeout when probing cloud
-HYBRID_CONNECT_TIMEOUT = _get_float_env("HYBRID_CONNECT_TIMEOUT", 5.0)
+    # Proxy status publisher
+    proxy_status_interval: int = 60
+    proxy_device_id: str = "oig_proxy"
 
-# ============================================================================
-# Cloud Configuration
-# ============================================================================
-TARGET_SERVER = os.getenv("TARGET_SERVER", "oigservis.cz")
-TARGET_PORT = int(os.getenv("TARGET_PORT", "5710"))
-# ACK timeout — how long to wait for cloud ACK before treating cloud as down
-CLOUD_ACK_TIMEOUT = _get_float_env("CLOUD_ACK_TIMEOUT", 1800.0)
+    # Sensor map
+    sensor_map_path: str = "/data/sensor_map.json"
 
-# ============================================================================
-# Proxy Configuration
-# ============================================================================
-DEVICE_ID = os.getenv("DEVICE_ID", "")  # Povinné!
-PROXY_LISTEN_HOST = os.getenv(
-    "PROXY_LISTEN_HOST",
-    "0.0.0.0",
-)  # nosec B104 - needs LAN binding for appliance mode
-PROXY_LISTEN_PORT = int(os.getenv("PROXY_PORT", "5710"))
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-PROXY_STATUS_INTERVAL = _get_int_env("PROXY_STATUS_INTERVAL", 60)
+    telemetry_enabled: bool = True
+    telemetry_mqtt_broker: str = "telemetry.muriel-cz.cz:1883"
+    telemetry_interval_s: int = 300
 
-# ============================================================================
-# Control API (prototype)
-# ============================================================================
-# No auth in prototype; set port to 0 to disable.
-CONTROL_API_HOST = os.getenv("CONTROL_API_HOST", "127.0.0.1")
-CONTROL_API_PORT = _get_int_env("CONTROL_API_PORT", 0)
+    capture_payloads: bool = False
+    capture_raw_bytes: bool = False
+    capture_retention_days: int = 7
+    capture_db_path: str = "/data/payloads.db"
 
-# ============================================================================
-# Control over MQTT (production)
-# ============================================================================
-CONTROL_MQTT_ENABLED = os.getenv(
-    "CONTROL_MQTT_ENABLED",
-    "false").lower() == "true"
-CONTROL_MQTT_SET_TOPIC = os.getenv(
-    "CONTROL_MQTT_SET_TOPIC", "oig_local/oig_proxy/control/set"
-)
-CONTROL_MQTT_RESULT_TOPIC = os.getenv(
-    "CONTROL_MQTT_RESULT_TOPIC", "oig_local/oig_proxy/control/result"
-)
-CONTROL_MQTT_STATUS_PREFIX = os.getenv(
-    "CONTROL_MQTT_STATUS_PREFIX", "oig_local/oig_proxy/control/status"
-)
-CONTROL_MQTT_QOS = _get_int_env("CONTROL_MQTT_QOS", 1)
-CONTROL_MQTT_RETAIN = os.getenv(
-    "CONTROL_MQTT_RETAIN",
-    "false").lower() == "true"
-CONTROL_MQTT_STATUS_RETAIN = os.getenv(
-    "CONTROL_MQTT_STATUS_RETAIN",
-    "true").lower() == "true"
-CONTROL_MQTT_BOX_READY_SECONDS = _get_int_env(
-    "CONTROL_MQTT_BOX_READY_SECONDS", 10)
-CONTROL_MQTT_ACK_TIMEOUT_S = float(
-    os.getenv("CONTROL_MQTT_ACK_TIMEOUT_S", "30"))
-CONTROL_MQTT_APPLIED_TIMEOUT_S = float(
-    os.getenv("CONTROL_MQTT_APPLIED_TIMEOUT_S", "120"))
-CONTROL_MQTT_MODE_QUIET_SECONDS = float(
-    os.getenv("CONTROL_MQTT_MODE_QUIET_SECONDS", "20"))
+    capture_pcap: bool = False
+    capture_pcap_path: str = "/data/capture.pcap"
+    capture_pcap_interface: str = "any"
+    capture_pcap_max_size_mb: int = 100
 
-# Default whitelist (deny-by-default for everything else)
-CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
-    "tbl_batt_prms": {"FMT_ON", "BAT_MIN"},
-    "tbl_boiler_prms": {"ISON", "MANUAL", "SSR0", "SSR1", "SSR2", "OFFSET"},
-    "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA", "RQRESET"},
-    "tbl_invertor_prms": {"GRID_PV_ON", "GRID_PV_OFF", "TO_GRID"},
-    "tbl_invertor_prm1": {"AAC_MAX_CHRG", "A_MAX_CHRG"},
-}
+    def __init__(self) -> None:
+        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
+        self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
-# ============================================================================
-# Sensor Map Configuration
-# ============================================================================
-SENSOR_MAP_PATH = os.getenv(
-    "SENSOR_MAP_PATH",
-    os.path.join(os.path.dirname(__file__), "sensor_map.json")
-)
-# 0 disables reload
-MAP_RELOAD_SECONDS = int(os.getenv("MAP_RELOAD_SECONDS", "0"))
+        self.cloud_host = os.environ.get("TARGET_SERVER", "oigservis.cz")
+        self.cloud_port = int(os.environ.get("TARGET_PORT", "5710"))
+        self.cloud_connect_timeout = float(
+            os.environ.get("CLOUD_CONNECT_TIMEOUT", "10.0"))
+        self.cloud_ack_timeout = float(
+            os.environ.get("CLOUD_ACK_TIMEOUT", "30.0"))
 
-# ============================================================================
-# Persistence Paths
-# ============================================================================
-DATA_DIR = os.getenv("DATA_DIR", "/data")
-MODE_STATE_PATH = os.path.join(DATA_DIR, "mode_state.json")
-PRMS_STATE_PATH = os.path.join(DATA_DIR, "prms_state.json")
-MQTT_QUEUE_DB_PATH = os.path.join(DATA_DIR, "mqtt_queue.db")
-CAPTURE_DB_PATH = os.path.join(DATA_DIR, "payloads.db")
+        self.mqtt_host = os.environ.get("MQTT_HOST", "core-mosquitto")
+        self.mqtt_port = int(os.environ.get("MQTT_PORT", "1883"))
+        self.mqtt_username = os.environ.get("MQTT_USERNAME", "")
+        self.mqtt_password = os.environ.get("MQTT_PASSWORD", "")
+        self.mqtt_namespace = os.environ.get("MQTT_NAMESPACE", "oig_local")
+        self.mqtt_qos = int(os.environ.get("MQTT_QOS", "1"))
+        self.mqtt_state_retain = os.environ.get(
+            "MQTT_STATE_RETAIN", "true").lower() == "true"
 
-# Control MQTT logging
-CONTROL_MQTT_LOG_ENABLED = os.getenv(
-    "CONTROL_MQTT_LOG_ENABLED",
-    "false").lower() == "true"
-CONTROL_MQTT_LOG_PATH = os.getenv(
-    "CONTROL_MQTT_LOG_PATH", os.path.join(DATA_DIR, "control_results.jsonl")
-)
-CONTROL_MQTT_PENDING_PATH = os.getenv(
-    "CONTROL_MQTT_PENDING_PATH", os.path.join(DATA_DIR, "control_pending.json")
-)
+        self.log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 
-# ============================================================================
-# Capture Configuration
-# ============================================================================
-CAPTURE_PAYLOADS = os.getenv("CAPTURE_PAYLOADS", "false").lower() == "true"
-CAPTURE_RAW_BYTES = os.getenv("CAPTURE_RAW_BYTES", "false").lower() == "true"
-# Retence capture DB (frames) v dnech. 0 = nevynucovat retenci.
-CAPTURE_RETENTION_DAYS = max(0, _get_int_env("CAPTURE_RETENTION_DAYS", 7))
+        self.proxy_status_interval = int(
+            os.environ.get("PROXY_STATUS_INTERVAL", "60"))
+        self.proxy_device_id = os.environ.get("PROXY_DEVICE_ID", "oig_proxy")
+        self.sensor_map_path = os.environ.get("SENSOR_MAP_PATH", "/data/sensor_map.json")
 
-# ============================================================================
-# MQTT Queue Configuration
-# ============================================================================
-MQTT_QUEUE_MAX_SIZE = int(os.getenv("MQTT_QUEUE_MAX_SIZE", "5000"))
+        self.telemetry_enabled = os.environ.get("TELEMETRY_ENABLED", "true").lower() == "true"
+        self.telemetry_mqtt_broker = os.environ.get(
+            "TELEMETRY_MQTT_BROKER", "telemetry.muriel-cz.cz:1883"
+        )
+        self.telemetry_interval_s = int(os.environ.get("TELEMETRY_INTERVAL_S", "300"))
 
-# ============================================================================
-# Telemetry Configuration (MQTT to muriel-cz.cz)
-# ============================================================================
-TELEMETRY_ENABLED = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
-TELEMETRY_MQTT_BROKER = os.getenv(
-    "TELEMETRY_MQTT_BROKER",
-    "telemetry.muriel-cz.cz:1883")
-TELEMETRY_INTERVAL_S = _get_int_env("TELEMETRY_INTERVAL_S", 300)  # 5 minutes
+        self.capture_payloads = os.environ.get("CAPTURE_PAYLOADS", "false").lower() == "true"
+        self.capture_raw_bytes = os.environ.get("CAPTURE_RAW_BYTES", "false").lower() == "true"
+        self.capture_retention_days = int(os.environ.get("CAPTURE_RETENTION_DAYS", "7"))
+        self.capture_db_path = os.environ.get("CAPTURE_DB_PATH", "/data/payloads.db")
 
-# ============================================================================
-# MQTT Publisher Configuration
-# ============================================================================
-MQTT_REPLAY_RATE = float(os.getenv("MQTT_REPLAY_RATE", "10.0"))   # messages/s
+        self.capture_pcap = os.environ.get("CAPTURE_PCAP", "false").lower() == "true"
+        self.capture_pcap_path = os.environ.get("CAPTURE_PCAP_PATH", "/data/capture.pcap")
+        self.capture_pcap_interface = os.environ.get("CAPTURE_PCAP_INTERFACE", "any")
+        self.capture_pcap_max_size_mb = int(os.environ.get("CAPTURE_PCAP_MAX_SIZE_MB", "100"))
 
-# ============================================================================
-# Device Names (for MQTT discovery)
-# ============================================================================
-DEVICE_NAMES = {
-    "inverter": "Střídač",
-    "battery": "Baterie",
-    "boiler": "Bojler",
-    "recuper": "Rekuperace",
-    "heat_pump": "Tepelné čerpadlo",
-    "aircon": "Klimatizace",
-    "wl_charge": "Wallbox",
-    "box": "OIG Box",
-    "pv": "FVE",
-    "grid": "Síť",
-    "load": "Spotřeba",
-    "proxy": "Proxy",
-}
+        self.proxy_mode = os.environ.get("PROXY_MODE", "online").strip().lower()
+        self.hybrid_retry_interval = int(os.environ.get("HYBRID_RETRY_INTERVAL", "60"))
+        self.hybrid_fail_threshold = int(os.environ.get("HYBRID_FAIL_THRESHOLD", "3"))
 
-# Pevný device_id pro proxy/status/event senzory
-PROXY_DEVICE_ID = os.getenv("PROXY_DEVICE_ID", "oig_proxy")
+    def __repr__(self) -> str:
+        return (
+            f"Config(proxy={self.proxy_host}:{self.proxy_port}, "
+            f"cloud={self.cloud_host}:{self.cloud_port}, "
+            f"mqtt={self.mqtt_host}:{self.mqtt_port}, "
+            f"namespace={self.mqtt_namespace})"
+        )

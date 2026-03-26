@@ -3,7 +3,7 @@ import sys
 
 # pyright: reportMissingImports=false
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy-v2")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
 from twin.ack_parser import parse_box_ack, parse_tbl_events_ack
 
@@ -22,6 +22,12 @@ def test_parse_box_ack_end_with_details() -> None:
         "todo": "T_Room",
         "timestamp": "2026-03-12 12:00:00",
     }
+
+
+def test_parse_box_ack_with_reason() -> None:
+    xml = b"<Result>ACK</Result><Reason>Setting</Reason>"
+    parsed = parse_box_ack(xml)
+    assert parsed == {"result": "ACK", "reason": "Setting"}
 
 
 def test_parse_box_ack_non_ack_returns_none() -> None:

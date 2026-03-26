@@ -5,8 +5,9 @@ import pytest
 
 # pyright: reportMissingImports=false
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy-v2")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
+from protocol.frames import build_setting_frame
 from twin.delivery import TwinDelivery
 from twin.state import TwinQueue
 
@@ -64,9 +65,32 @@ async def test_deliver_pending_drops_after_inflight_timeout() -> None:
     assert queue.size() == 0
 
 
-def test_build_setting_xml_format() -> None:
-    xml = TwinDelivery.build_setting_xml("tbl_box_prms", "MODE", 1)
-    assert xml == "<TblName>tbl_box_prms</TblName><MODE>1</MODE>"
+def test_build_setting_frame_format() -> None:
+    frame = build_setting_frame(
+        device_id="2206237016",
+        table="tbl_box_prms",
+        key="MODE",
+        value=1,
+        id_set=844979473,
+        msg_id=12345678,
+    )
+    frame_str = frame.decode("utf-8")
+    assert "<ID>12345678</ID>" in frame_str
+    assert "<ID_Device>2206237016</ID_Device>" in frame_str
+    assert "<ID_Set>844979473</ID_Set>" in frame_str
+    assert "<ID_SubD>0</ID_SubD>" in frame_str
+    assert "<NewValue>1</NewValue>" in frame_str
+    assert "<Confirm>New</Confirm>" in frame_str
+    assert "<TblName>tbl_box_prms</TblName>" in frame_str
+    assert "<TblItem>MODE</TblItem>" in frame_str
+    assert "<ID_Server>9</ID_Server>" in frame_str
+    assert "<mytimediff>0</mytimediff>" in frame_str
+    assert "<Reason>Setting</Reason>" in frame_str
+    assert "<ver>" in frame_str and "</ver>" in frame_str
+    assert "<TSec>" in frame_str and "</TSec>" in frame_str
+    assert "<DT>" in frame_str and "</DT>" in frame_str
+    assert "<CRC>" in frame_str and "</CRC>" in frame_str
+    assert frame_str.endswith("\r\n")
 
 
 @pytest.mark.asyncio
@@ -79,3 +103,34 @@ async def test_acknowledge_removes_setting_from_queue() -> None:
     delivery.acknowledge("tbl_set", "T_Room")
 
     assert queue.size() == 0
+
+
+def test_next_id_set_starts_at_epoch_range() -> None:
+    queue = TwinQueue()
+    delivery = TwinDelivery(queue, _MQTTStub())
+
+    next_id = delivery.next_id_set()
+
+    assert next_id >= 1_700_000_000
+
+
+def test_next_id_set_clamps_when_observed_is_older() -> None:
+    queue = TwinQueue()
+    delivery = TwinDelivery(queue, _MQTTStub())
+    delivery.observe_id_set(845_125_850)
+
+    next_id = delivery.next_id_set()
+
+    assert next_id >= 1_700_000_000
+
+
+def test_observed_msg_id_increments_monotonic() -> None:
+    queue = TwinQueue()
+    delivery = TwinDelivery(queue, _MQTTStub())
+
+    delivery.observe_msg_id(13_800_000)
+    first = delivery.next_msg_id()
+    second = delivery.next_msg_id()
+
+    assert first == 13_800_001
+    assert second == 13_800_002

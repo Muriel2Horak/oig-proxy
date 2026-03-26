@@ -97,6 +97,7 @@ def test_build_discovery_payload_binary(monkeypatch):
     assert payload["payload_off"] == "0"
     assert "unit_of_measurement" not in payload
     assert payload["state_topic"].endswith("/tbl_batt/state")
+    assert payload["value_template"] == "{{ value_json.get('FLAG') }}"
     assert payload["json_attributes_topic"] == payload["state_topic"]
     assert payload["device"]["via_device"] == (
         f"{mqtt_publisher.MQTT_NAMESPACE}_DEV1_inverter"

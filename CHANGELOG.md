@@ -2,22 +2,33 @@
 
 <!-- markdownlint-disable MD024 -->
 
-## [Unreleased]
+## [2.0.0] - 2026-03-26
+
+### Breaking Changes
+- **Complete modular rewrite (V2)**: monolithic `addon/oig-proxy` replaced with fully modular architecture
+  - Source reorganized into packages: `mqtt/`, `proxy/`, `protocol/`, `sensor/`, `twin/`, `telemetry/`, `capture/`
+  - Old V1 source archived to `addon/oig-proxy-v1-archive`
+  - CI scripts, pytest, deploy script all updated to V2 paths
 
 ### Added
-- **Twin Architecture**: Complete refactoring of setting management with unified DigitalTwin
-  - TwinMQTTHandler for MQTT subscription to `oig_local/+/+/set` topics
+- **Twin Architecture**: Unified DigitalTwin for setting management
+  - TwinMQTTHandler subscribing to `oig_local/+/+/set`
   - Automatic SA (Send All) queueing after successful setting completion
   - MQTT state publishing to `oig_local/oig_proxy/twin_state/state` (retained)
-  - Session-based Twin activation in ONLINE mode
-  - HYBRID/OFFLINE mode support via `should_route_settings_via_twin()`
-  - 5 new HA sensors: twin_queue_length, twin_inflight_tx, twin_last_command_status, twin_session_active, twin_mode
-  - Comprehensive integration tests in `tests/test_twin_integration.py`
-  - Full documentation in `docs/twin_architecture.md`
+  - Session-based Twin activation in ONLINE mode; HYBRID/OFFLINE support via `should_route_settings_via_twin()`
+  - 5 new HA sensors: `twin_queue_length`, `twin_inflight_tx`, `twin_last_command_status`, `twin_session_active`, `twin_mode`
+- **361 unit tests** covering all V2 modules (up from V1 baseline)
+- **SonarQube self-hosted quality gate**: PASSED on first V2 scan
 
 ### Fixed
-- **Control Settings**: Fixed OFFLINE mode command handling - removed incorrect validation that blocked commands when BOX wasn't sending data continuously. Commands now work in OFFLINE mode as long as TCP connection is active (regression introduced in v1.3.9, commit db9e943)
-- **OFFLINE Mode Setting Delivery**: Fixed protocol-level issue where Setting frames were sent as standalone writes instead of as responses to BOX IsNewSet polls. BOX firmware ignores Setting frames that arrive outside the IsNewSet poll-response context. Setting frames are now queued and delivered when the BOX sends its next IsNewSet poll, matching the cloud protocol flow that BOX firmware expects.
+- **Control Settings**: OFFLINE mode commands no longer blocked when BOX is not sending data continuously — commands work as long as TCP connection is active (regression from v1.3.9)
+- **OFFLINE Mode Setting Delivery**: Setting frames now queued and delivered in response to BOX IsNewSet polls, matching cloud protocol flow expected by BOX firmware
+
+### Changed
+- `pytest.ini`: `testpaths` updated to `tests/v2`
+- `sonar-project.properties`: sources and tests updated to V2 paths
+- `deploy_to_haos.sh`: updated for V2 modular file structure; `deploy_v2_to_haos.sh` removed
+- `ci/ci.sh`: pylint and mypy scan V2 package directories; stale V1 security test references removed
 
 ## [1.6.0] - 2026-02-11
 
