@@ -157,6 +157,7 @@ class ProxyApp:
                 get_configured_mode=(
                     lambda: self.proxy.mode_manager.configured_mode if self.proxy else "online"
                 ),
+                initial_device_id=device_id,
             )
             status_task = asyncio.create_task(
                 self.status_publisher.run(),
@@ -172,7 +173,7 @@ class ProxyApp:
         if self.config.telemetry_enabled:
             self.telemetry_collector = TelemetryCollector(
                 interval_s=self.config.telemetry_interval_s,
-                version="2.0.0",
+                version=self.config.version,
                 telemetry_enabled=self.config.telemetry_enabled,
                 telemetry_mqtt_broker=self.config.telemetry_mqtt_broker,
                 telemetry_interval_s=self.config.telemetry_interval_s,
@@ -375,13 +376,16 @@ class ProxyApp:
             data["_table"] = "tbl_actual"
 
         # Device ID validation and learning
+        status_recorded = False
         if self.device_id_manager:
             if self.device_id_manager.device_id is None:
-                # First frame with device_id - save it
                 self.device_id_manager.save(frame_device_id)
                 logger.info("Device ID set from first frame: %s", frame_device_id)
+                if self.status_publisher:
+                    self.status_publisher.record_frame(frame_device_id, table)
+                    self.status_publisher._publish()
+                    status_recorded = True
             elif not self.device_id_manager.validate(frame_device_id):
-                # Mismatch - log warning and ignore frame
                 logger.warning(
                     "Device ID mismatch: expected %s, got %s",
                     self.device_id_manager.device_id,
@@ -389,8 +393,7 @@ class ProxyApp:
                 )
                 return
 
-        # Record frame in status publisher
-        if self.status_publisher:
+        if self.status_publisher and not status_recorded:
             self.status_publisher.record_frame(frame_device_id, table)
 
         # Process frame through FrameProcessor (publishes to MQTT)

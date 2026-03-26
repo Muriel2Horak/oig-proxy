@@ -26,6 +26,7 @@ class ProxyStatusPublisher:
         proxy_device_id: str,
         sensor_loader: SensorMapLoader | None = None,
         get_configured_mode: Callable[[], str] | None = None,
+        initial_device_id: str | None = None,
     ) -> None:
         self._mqtt = mqtt
         self._interval = interval
@@ -35,7 +36,7 @@ class ProxyStatusPublisher:
 
         self._frame_count = 0
         self._last_frame_table = ""
-        self._last_frame_device_id = ""
+        self._last_frame_device_id = initial_device_id or ""
         self._last_frame_timestamp = 0.0
 
         self._running = False

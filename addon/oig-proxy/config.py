@@ -7,6 +7,7 @@ Zadne feature flagy.
 
 from __future__ import annotations
 
+import json
 import os
 
 
@@ -62,6 +63,14 @@ class Config:
     capture_pcap_max_size_mb: int = 100
 
     def __init__(self) -> None:
+        _config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        try:
+            with open(_config_path, encoding="utf-8") as _f:
+                _addon_config = json.load(_f)
+        except (OSError, json.JSONDecodeError):
+            _addon_config = {}
+        self.version: str = str(_addon_config.get("version", "unknown"))
+
         self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
