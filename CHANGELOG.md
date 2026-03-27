@@ -2,6 +2,24 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.3] - 2026-03-27
+
+### Fixed
+- **MQTT reconnect**: po restartu HA nebo MQTT brokeru se `availability: online` republišuje pro všechna dříve zaznamenaná `device_id` (ne jen pro aktuálně připojené) — entity v HA již nemizí po reconnectu
+- **Telemetrie `device_id`**: `TelemetryCollector` nyní okamžitě aktualizuje `device_id` při prvním naučení z BOX framu — fleet dashboard již neukazuje `device_id = "unknown"` u existujících instalací
+
+## [2.0.2] - 2026-03-27
+
+### Fixed
+- **Verze v telemetrii**: verze se již nečte z hardcoded řetězce `"2.0.0"`, ale dynamicky z `config.json` přes `Config.version` — fleet dashboard nyní zobrazuje správnou verzi
+- **`device_id = "unknown"` na fresh install**: `ProxyStatusPublisher` dostává `initial_device_id` z `DeviceIdManager` při startu; status publish s prázdným `box_device_id` je eliminován
+- **Okamžité naučení `device_id`**: při prvním přijatém BOX framu se `status_publisher` a `telemetry_collector` aktualizují synchronně ještě před dalším publish cyklem
+
+## [2.0.1] - 2026-03-27
+
+### Changed
+- Bump verze z 2.0.0 na 2.0.1 (drobné opravy konfigurace)
+
 ## [2.0.0] - 2026-03-26
 
 ### Breaking Changes
