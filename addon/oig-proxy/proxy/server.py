@@ -17,6 +17,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from typing import TYPE_CHECKING
+
 try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
@@ -39,6 +41,12 @@ except ImportError:
     from proxy.dns_resolve import resolve_a_record  # type: ignore[no-redef]
     from proxy.mode import ConnectionMode, ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
+
+if TYPE_CHECKING:
+    try:
+        from ..telemetry.collector import TelemetryCollector
+    except ImportError:
+        from telemetry.collector import TelemetryCollector  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +125,13 @@ class ProxyServer:
         on_frame: FrameCallback | None = None,
         twin_delivery: TwinDelivery | None = None,
         frame_capture: FrameCapture | None = None,
+        telemetry_collector: "TelemetryCollector | None" = None,
     ) -> None:
         self.config = config
         self.on_frame = on_frame
         self.twin_delivery = twin_delivery
         self.frame_capture = frame_capture
+        self.telemetry_collector = telemetry_collector
         self._server: asyncio.Server | None = None
         self._active_connections: set[asyncio.Task[None]] = set()
         self.mode_manager = ModeManager(config)
@@ -195,6 +205,62 @@ class ProxyServer:
     def uptime_s(self) -> float:
         return time.time() - self._start_time
 
+    def _record_telemetry_connection_end(
+        self,
+        *,
+        box_connected_since_epoch: float | None,
+        box_reason: str,
+        box_peer: str | None,
+        cloud_connected_since_epoch: float | None,
+        cloud_reason: str,
+    ) -> None:
+        collector = self.telemetry_collector
+        if collector is None:
+            return
+        collector.record_box_session_end(
+            connected_since_epoch=box_connected_since_epoch,
+            reason=box_reason,
+            peer=box_peer,
+        )
+        if cloud_connected_since_epoch is not None:
+            collector.record_cloud_session_end(
+                connected_since_epoch=cloud_connected_since_epoch,
+                reason=cloud_reason,
+            )
+
+    def _record_cloud_connect_failure(
+        self,
+        *,
+        conn_id: int,
+        failure_type: str,
+        failure_detail: str,
+        peer: str,
+        will_go_offline: bool,
+    ) -> None:
+        collector = self.telemetry_collector
+        if collector is None:
+            return
+        if failure_type == "timeout":
+            collector.record_timeout(conn_id=conn_id)
+        else:
+            collector.record_response("", source="error", conn_id=conn_id)
+        collector.record_error_context(
+            event_type=f"error_cloud_connect_{failure_type}",
+            details={
+                "cloud_host": self.config.cloud_host,
+                "cloud_port": self.config.cloud_port,
+                "peer": peer,
+                "error": failure_detail,
+                "offline_fallback": will_go_offline,
+            },
+        )
+        if will_go_offline:
+            collector.record_offline_event(
+                reason=f"cloud_connect_{failure_type}",
+                local_ack=True,
+                mode=str(self.mode_manager.runtime_mode.value),
+            )
+
     async def _handle_box_connection(
         self,
         box_reader: asyncio.StreamReader,
@@ -208,8 +274,10 @@ class ProxyServer:
         current = asyncio.current_task()
         if current is not None:
             self._active_connections.add(current)
+        session_conn_id = id(current)
 
         peer = box_writer.get_extra_info("peername", ("?", "?"))
+        peer_str = f"{peer[0]}:{peer[1]}"
 
         # Reject excess connections immediately to prevent reconnect storm / FD exhaustion
         if self._active_connection_count >= self.config.max_concurrent_connections:
@@ -232,15 +300,33 @@ class ProxyServer:
         session_id = str(uuid.uuid4())
 
         self._box_connected = True
-        self.box_peer = f"{peer[0]}:{peer[1]}"
+        self.box_peer = peer_str
+        box_connected_since_epoch = time.time()
+        cloud_connected_since_epoch: float | None = None
+        cloud_disconnect_reason = "not_connected"
+        box_disconnect_reason = "eof"
         logger.info("📦 BOX připojen z %s:%s (session=%s)", *peer[:2], session_id)
 
         # Check if we should try cloud connection
         if not self.mode_manager.should_try_cloud():
             logger.info("☁️ Skipping cloud connection (mode=%s)", self.mode_manager.configured_mode)
+            box_disconnect_reason = "offline_mode"
+            if self.telemetry_collector is not None:
+                self.telemetry_collector.record_offline_event(
+                    reason="configured_offline_mode",
+                    local_ack=True,
+                    mode=str(self.mode_manager.runtime_mode.value),
+                )
             try:
                 await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
             finally:
+                self._record_telemetry_connection_end(
+                    box_connected_since_epoch=box_connected_since_epoch,
+                    box_reason=box_disconnect_reason,
+                    box_peer=peer_str,
+                    cloud_connected_since_epoch=None,
+                    cloud_reason=cloud_disconnect_reason,
+                )
                 self._active_connection_count -= 1
                 self._box_connected = False
                 self.box_peer = None
@@ -264,23 +350,48 @@ class ProxyServer:
             )
             self.cloud_connects += 1
             self._cloud_connected = True
+            cloud_connected_since_epoch = time.time()
+            cloud_disconnect_reason = "eof"
             self.mode_manager.record_success()
         except asyncio.TimeoutError as exc:
             self.cloud_timeouts += 1
             logger.error("❌ Cloud nedostupný: %s", exc)
             self.mode_manager.record_failure(reason=str(exc))
+            self._record_cloud_connect_failure(
+                conn_id=session_conn_id,
+                failure_type="timeout",
+                failure_detail=str(exc),
+                peer=peer_str,
+                will_go_offline=self.mode_manager.is_offline(),
+            )
             if self.mode_manager.is_offline():
+                box_disconnect_reason = "offline_fallback_timeout"
                 try:
                     await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
                 finally:
+                    self._record_telemetry_connection_end(
+                        box_connected_since_epoch=box_connected_since_epoch,
+                        box_reason=box_disconnect_reason,
+                        box_peer=peer_str,
+                        cloud_connected_since_epoch=None,
+                        cloud_reason=cloud_disconnect_reason,
+                    )
                     self._active_connection_count -= 1
                     self._box_connected = False
                     self.box_peer = None
                     if current is not None:
                         self._active_connections.discard(current)
                 return
+            box_disconnect_reason = "cloud_connect_timeout"
             box_writer.close()
             await box_writer.wait_closed()
+            self._record_telemetry_connection_end(
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_reason=box_disconnect_reason,
+                box_peer=peer_str,
+                cloud_connected_since_epoch=None,
+                cloud_reason=cloud_disconnect_reason,
+            )
             self._active_connection_count -= 1
             self._box_connected = False
             self.box_peer = None
@@ -291,18 +402,41 @@ class ProxyServer:
             self.cloud_errors += 1
             logger.error("❌ Cloud nedostupný: %s", exc)
             self.mode_manager.record_failure(reason=str(exc))
+            self._record_cloud_connect_failure(
+                conn_id=session_conn_id,
+                failure_type="oserror",
+                failure_detail=str(exc),
+                peer=peer_str,
+                will_go_offline=self.mode_manager.is_offline(),
+            )
             if self.mode_manager.is_offline():
+                box_disconnect_reason = "offline_fallback_oserror"
                 try:
                     await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
                 finally:
+                    self._record_telemetry_connection_end(
+                        box_connected_since_epoch=box_connected_since_epoch,
+                        box_reason=box_disconnect_reason,
+                        box_peer=peer_str,
+                        cloud_connected_since_epoch=None,
+                        cloud_reason=cloud_disconnect_reason,
+                    )
                     self._active_connection_count -= 1
                     self._box_connected = False
                     self.box_peer = None
                     if current is not None:
                         self._active_connections.discard(current)
                 return
+            box_disconnect_reason = "cloud_connect_oserror"
             box_writer.close()
             await box_writer.wait_closed()
+            self._record_telemetry_connection_end(
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_reason=box_disconnect_reason,
+                box_peer=peer_str,
+                cloud_connected_since_epoch=None,
+                cloud_reason=cloud_disconnect_reason,
+            )
             self._active_connection_count -= 1
             self._box_connected = False
             self.box_peer = None
@@ -338,7 +472,6 @@ class ProxyServer:
             await asyncio.gather(*pipe_tasks, return_exceptions=True)
             raise
         finally:
-            # Cleanup session tracking
             if self.twin_delivery is not None:
                 self.twin_delivery.clear_session(session_id)
             for writer in (box_writer, cloud_writer):
@@ -348,6 +481,13 @@ class ProxyServer:
                         await writer.wait_closed()
                     except Exception:  # noqa: BLE001
                         pass
+            self._record_telemetry_connection_end(
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_reason=box_disconnect_reason,
+                box_peer=peer_str,
+                cloud_connected_since_epoch=cloud_connected_since_epoch,
+                cloud_reason=cloud_disconnect_reason,
+            )
             self._active_connection_count -= 1
             self._box_connected = False
             self._cloud_connected = False
@@ -402,6 +542,10 @@ class ProxyServer:
                 if self.twin_delivery is not None:
                     self.twin_delivery.observe_id_set(observed_id_set)
                     self.twin_delivery.observe_msg_id(observed_msg_id)
+
+                if self.telemetry_collector is not None:
+                    self.telemetry_collector.record_request(table_name or None, conn_id)
+                    self.telemetry_collector.record_frame_direction("box_to_proxy")
 
                 if table_name in {"IsNewSet", "IsNewFW", "IsNewWeather"}:
                     pending = self.twin_delivery.has_pending() if self.twin_delivery else False
@@ -544,6 +688,10 @@ class ProxyServer:
                 if self.twin_delivery is not None:
                     self.twin_delivery.observe_id_set(observed_id_set)
                     self.twin_delivery.observe_msg_id(observed_msg_id)
+
+                if self.telemetry_collector is not None:
+                    self.telemetry_collector.record_response(frame_text, source="cloud", conn_id=conn_id)
+                    self.telemetry_collector.record_frame_direction("cloud_to_proxy")
                 
                 if self.twin_delivery is not None:
                     if (

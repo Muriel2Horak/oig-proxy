@@ -469,3 +469,152 @@ async def test_cloud_connects_counter_increments():
         await server.stop()
         cloud_server.close()
         await cloud_server.wait_closed()
+
+
+# ---------------------------------------------------------------------------
+# Telemetry integration — record_request / record_response / record_frame_direction
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_telemetry_record_request_called_on_box_to_cloud():
+    """record_request je volán pro každý frame přijatý od Boxu."""
+    from unittest.mock import MagicMock
+    from protocol.frame import build_frame
+    from protocol.parser import parse_xml_frame
+
+    cfg = make_config()
+    mock_telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
+
+    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device><P>100</P>"
+    frame_bytes = build_frame(xml).encode("utf-8")
+    frame_text = frame_bytes.decode("utf-8", errors="replace")
+    parsed_frame = parse_xml_frame(frame_text)
+    table_name = server._effective_table_name(parsed_frame, frame_text)
+    conn_id = 42
+
+    # Simulujeme volání jako v _pipe_box_to_cloud po parsování frame
+    server.telemetry_collector.record_request(table_name or None, conn_id)
+    server.telemetry_collector.record_frame_direction("box_to_proxy")
+
+    mock_telemetry.record_request.assert_called_once_with("tbl_invertor", 42)
+    mock_telemetry.record_frame_direction.assert_called_once_with("box_to_proxy")
+
+
+@pytest.mark.asyncio
+async def test_telemetry_record_response_called_on_cloud_to_box():
+    """record_response je volán pro každý frame přijatý z cloudu."""
+    from unittest.mock import MagicMock
+    from protocol.frame import build_frame
+
+    cfg = make_config()
+    mock_telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
+
+    xml = "<Result>ACK</Result><ToDo>GetAll</ToDo><ID_Device>12345</ID_Device>"
+    frame_bytes = build_frame(xml).encode("utf-8")
+    frame_text = frame_bytes.decode("utf-8", errors="replace")
+    conn_id = 99
+
+    # Simulujeme volání jako v _pipe_cloud_to_box po parsování frame
+    server.telemetry_collector.record_response(frame_text, source="cloud", conn_id=conn_id)
+    server.telemetry_collector.record_frame_direction("cloud_to_proxy")
+
+    mock_telemetry.record_response.assert_called_once_with(frame_text, source="cloud", conn_id=99)
+    mock_telemetry.record_frame_direction.assert_called_once_with("cloud_to_proxy")
+
+
+@pytest.mark.asyncio
+async def test_telemetry_not_called_when_collector_is_none():
+    """Bez telemetry_collector _process_frame necrashuje."""
+    cfg = make_config()
+    server = ProxyServer(cfg, telemetry_collector=None)
+
+    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device>"
+    frame_bytes = build_frame(xml).encode("utf-8")
+
+    await server._process_frame(frame_bytes)
+    assert server.telemetry_collector is None
+
+
+def test_proxy_server_accepts_telemetry_collector_param():
+    """ProxyServer přijímá telemetry_collector jako parametr."""
+    from unittest.mock import MagicMock
+
+    cfg = make_config()
+    mock_telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
+
+    assert server.telemetry_collector is mock_telemetry
+
+
+def test_proxy_server_telemetry_collector_defaults_to_none():
+    """telemetry_collector je None pokud není předán."""
+    cfg = make_config()
+    server = ProxyServer(cfg)
+
+    assert server.telemetry_collector is None
+
+
+def test_record_telemetry_connection_end_records_box_and_cloud_sessions():
+    cfg = make_config()
+    mock_telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
+
+    server._record_telemetry_connection_end(
+        box_connected_since_epoch=100.0,
+        box_reason="eof",
+        box_peer="1.2.3.4:5678",
+        cloud_connected_since_epoch=120.0,
+        cloud_reason="eof",
+    )
+
+    mock_telemetry.record_box_session_end.assert_called_once_with(
+        connected_since_epoch=100.0,
+        reason="eof",
+        peer="1.2.3.4:5678",
+    )
+    mock_telemetry.record_cloud_session_end.assert_called_once_with(
+        connected_since_epoch=120.0,
+        reason="eof",
+    )
+
+
+def test_record_cloud_connect_failure_records_timeout_and_offline_event():
+    cfg = make_config()
+    mock_telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
+
+    server._record_cloud_connect_failure(
+        conn_id=77,
+        failure_type="timeout",
+        failure_detail="timed out",
+        peer="1.2.3.4:5678",
+        will_go_offline=True,
+    )
+
+    mock_telemetry.record_timeout.assert_called_once_with(conn_id=77)
+    mock_telemetry.record_error_context.assert_called_once()
+    mock_telemetry.record_offline_event.assert_called_once_with(
+        reason="cloud_connect_timeout",
+        local_ack=True,
+        mode="online",
+    )
+
+
+def test_record_cloud_connect_failure_records_error_response_without_offline():
+    cfg = make_config()
+    mock_telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
+
+    server._record_cloud_connect_failure(
+        conn_id=88,
+        failure_type="oserror",
+        failure_detail="connection refused",
+        peer="1.2.3.4:5678",
+        will_go_offline=False,
+    )
+
+    mock_telemetry.record_response.assert_called_once_with("", source="error", conn_id=88)
+    mock_telemetry.record_error_context.assert_called_once()
+    mock_telemetry.record_offline_event.assert_not_called()
