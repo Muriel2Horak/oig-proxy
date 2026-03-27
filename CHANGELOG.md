@@ -2,6 +2,11 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.7] - 2026-03-27
+
+### Fixed
+- **Telemetrie detailu**: znovu napojeny request/response statistiky i detailní session/error metriky pro dashboard. `ProxyServer` nyní dostává `telemetry_collector` z `main.py`, zapisuje `record_request()` / `record_response()` / `record_frame_direction()` pro frame statistiky a při ukončení spojení nebo chybě připojení zapisuje také `record_box_session_end()`, `record_cloud_session_end()`, `record_error_context()` a `record_offline_event()`. Díky tomu se znovu plní panely pro počet tabulek, session délky, latest sessions, cloud failure reasons a error context.
+
 ## [2.0.6] - 2026-03-27
 
 ### Fixed
