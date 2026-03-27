@@ -385,6 +385,8 @@ class ProxyApp:
                     self.status_publisher.record_frame(frame_device_id, table)
                     self.status_publisher._publish()
                     status_recorded = True
+                if self.telemetry_collector:
+                    self.telemetry_collector.update_device_id(frame_device_id)
             elif not self.device_id_manager.validate(frame_device_id):
                 logger.warning(
                     "Device ID mismatch: expected %s, got %s",

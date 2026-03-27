@@ -79,6 +79,7 @@ class MQTTClient:
         self.connected = False
         self._discovery_sent: set[str] = set()
         self._availability_online_sent: set[str] = set()
+        self._all_known_device_ids: set[str] = set()
 
         # Statistiky
         self.publish_count = 0
@@ -177,10 +178,11 @@ class MQTTClient:
             self.connected = True
             self._discovery_sent.clear()
             self._availability_online_sent.clear()
-            device_id = getattr(client, "_oig_device_id", self._connect_device_id)
-            avail_topic = f"{self.namespace}/{device_id}/availability"
-            client.publish(avail_topic, "online", retain=True, qos=1)
-            self._availability_online_sent.add(device_id)
+            connect_id = getattr(client, "_oig_device_id", self._connect_device_id)
+            for device_id in ({connect_id} | self._all_known_device_ids):
+                avail_topic = f"{self.namespace}/{device_id}/availability"
+                client.publish(avail_topic, "online", retain=True, qos=1)
+                self._availability_online_sent.add(device_id)
             logger.info("MQTT: Připojeno (rc=0)")
         else:
             self.connected = False
@@ -223,6 +225,7 @@ class MQTTClient:
                     avail_result = client.publish(avail_topic, "online", retain=True, qos=1)
                     if getattr(avail_result, "rc", 1) == 0:
                         self._availability_online_sent.add(device_id)
+                        self._all_known_device_ids.add(device_id)
                 except Exception:  # noqa: BLE001
                     pass
             result = client.publish(

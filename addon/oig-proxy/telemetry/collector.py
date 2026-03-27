@@ -113,6 +113,11 @@ class TelemetryCollector:
         self.end_frames_sent = 0
         self.last_end_frame_time: float | None = None
 
+    def update_device_id(self, device_id: str) -> None:
+        self._device_id = device_id
+        if self.client:
+            self.client.device_id = device_id
+
     @staticmethod
     def _utc_iso(ts: float | None = None) -> str:
         if ts is None:
