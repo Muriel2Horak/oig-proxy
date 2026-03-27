@@ -117,6 +117,12 @@ class Config:
         self.hybrid_retry_interval = int(os.environ.get("HYBRID_RETRY_INTERVAL", "60"))
         self.hybrid_fail_threshold = int(os.environ.get("HYBRID_FAIL_THRESHOLD", "3"))
 
+        self.max_concurrent_connections = int(
+            os.environ.get("MAX_CONCURRENT_CONNECTIONS", "5")
+        )
+
+        self.dns_upstream = os.environ.get("DNS_UPSTREAM", "8.8.8.8")
+
     def __repr__(self) -> str:
         return (
             f"Config(proxy={self.proxy_host}:{self.proxy_port}, "

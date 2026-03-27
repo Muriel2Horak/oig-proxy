@@ -53,6 +53,8 @@ def make_config():
         cfg.proxy_status_interval = 60
         cfg.proxy_device_id = "oig_proxy"
         cfg.sensor_map_path = "/data/sensor_map.json"
+        cfg.max_concurrent_connections = 100
+        cfg.dns_upstream = "8.8.8.8"
 
         for key, value in overrides.items():
             setattr(cfg, key, value)

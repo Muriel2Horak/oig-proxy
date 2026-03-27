@@ -37,6 +37,8 @@ def make_config(**overrides) -> Config:
     cfg.mqtt_qos = 1
     cfg.mqtt_state_retain = True
     cfg.log_level = "DEBUG"
+    cfg.max_concurrent_connections = 100
+    cfg.dns_upstream = "8.8.8.8"
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg

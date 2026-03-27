@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "2.0.4",
+  "version": "2.0.6",
   "slug": "oig_proxy",
   "description": "OIG TCP proxy v2 – async architektura, MQTT, HA discovery",
   "arch": ["amd64", "aarch64"],
@@ -33,7 +33,8 @@
     "capture_retention_days": 7,
     "capture_pcap": false,
     "control_mqtt_enabled": false,
-    "telemetry_enabled": true
+    "telemetry_enabled": true,
+    "max_concurrent_connections": 5
   },
   "schema": {
     "target_server": "str",
@@ -58,7 +59,8 @@
     "capture_retention_days": "int?",
     "capture_pcap": "bool?",
     "control_mqtt_enabled": "bool?",
-    "telemetry_enabled": "bool?"
+    "telemetry_enabled": "bool?",
+    "max_concurrent_connections": "int?"
   },
   "ports": {
     "5710/tcp": 5710,

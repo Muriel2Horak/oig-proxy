@@ -25,6 +25,7 @@ try:
     from ..protocol.parser import parse_xml_frame
     from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
+    from .dns_resolve import resolve_a_record
     from .mode import ConnectionMode, ModeManager
     from .local_ack import build_local_ack
 except ImportError:
@@ -35,6 +36,7 @@ except ImportError:
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
     from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
+    from proxy.dns_resolve import resolve_a_record  # type: ignore[no-redef]
     from proxy.mode import ConnectionMode, ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
 
@@ -134,9 +136,25 @@ class ProxyServer:
         self._box_connected: bool = False
         self.box_peer: str | None = None
         self._cloud_connected: bool = False
+        self._active_connection_count: int = 0
+        self._cloud_ip: str = self.config.cloud_host
 
     async def start(self) -> None:
         """Spustí TCP server."""
+        dns_upstream = getattr(self.config, "dns_upstream", "8.8.8.8")
+        resolved = resolve_a_record(self.config.cloud_host, dns_upstream)
+        if resolved:
+            self._cloud_ip = resolved
+            logger.info(
+                "☁️ Cloud host %s resolved to %s via %s",
+                self.config.cloud_host, resolved, dns_upstream,
+            )
+        else:
+            self._cloud_ip = self.config.cloud_host
+            logger.warning(
+                "⚠️ Could not resolve %s via %s, using hostname directly",
+                self.config.cloud_host, dns_upstream,
+            )
         self._server = await asyncio.start_server(
             self._handle_box_connection,
             self.config.proxy_host,
@@ -193,6 +211,23 @@ class ProxyServer:
 
         peer = box_writer.get_extra_info("peername", ("?", "?"))
 
+        # Reject excess connections immediately to prevent reconnect storm / FD exhaustion
+        if self._active_connection_count >= self.config.max_concurrent_connections:
+            logger.warning(
+                "⚠️ Max concurrent connections (%d) reached, rejecting %s:%s",
+                self.config.max_concurrent_connections,
+                *peer[:2],
+            )
+            box_writer.close()
+            try:
+                await box_writer.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+            if current is not None:
+                self._active_connections.discard(current)
+            return
+        self._active_connection_count += 1
+
         import uuid
         session_id = str(uuid.uuid4())
 
@@ -206,6 +241,7 @@ class ProxyServer:
             try:
                 await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
             finally:
+                self._active_connection_count -= 1
                 self._box_connected = False
                 self.box_peer = None
                 if current is not None:
@@ -217,7 +253,7 @@ class ProxyServer:
         cloud_writer: asyncio.StreamWriter | None = None
         try:
             cloud_reader, cloud_writer = await asyncio.wait_for(
-                asyncio.open_connection(self.config.cloud_host, self.config.cloud_port),
+                asyncio.open_connection(self._cloud_ip, self.config.cloud_port),
                 timeout=self.config.cloud_connect_timeout,
             )
             logger.info(
@@ -237,6 +273,7 @@ class ProxyServer:
                 try:
                     await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
                 finally:
+                    self._active_connection_count -= 1
                     self._box_connected = False
                     self.box_peer = None
                     if current is not None:
@@ -244,6 +281,7 @@ class ProxyServer:
                 return
             box_writer.close()
             await box_writer.wait_closed()
+            self._active_connection_count -= 1
             self._box_connected = False
             self.box_peer = None
             if current is not None:
@@ -257,6 +295,7 @@ class ProxyServer:
                 try:
                     await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
                 finally:
+                    self._active_connection_count -= 1
                     self._box_connected = False
                     self.box_peer = None
                     if current is not None:
@@ -264,6 +303,7 @@ class ProxyServer:
                 return
             box_writer.close()
             await box_writer.wait_closed()
+            self._active_connection_count -= 1
             self._box_connected = False
             self.box_peer = None
             if current is not None:
@@ -308,6 +348,7 @@ class ProxyServer:
                         await writer.wait_closed()
                     except Exception:  # noqa: BLE001
                         pass
+            self._active_connection_count -= 1
             self._box_connected = False
             self._cloud_connected = False
             self.box_peer = None

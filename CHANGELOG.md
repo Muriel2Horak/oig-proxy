@@ -2,6 +2,16 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.6] - 2026-03-27
+
+### Fixed
+- **DNS loop pro Python proxy**: `asyncio.open_connection` používal systémový resolver (`/etc/resolv.conf` → HA supervisor DNS → zákazníkův router), který mohl vracet HA IP místo skutečné cloud IP (router má override `oigservis.cz → HA IP` pro BOX). Python proxy se tak připojovala sama na sebe. Přidán `dns_resolve.resolve_a_record()` — raw UDP DNS query přímo na `DNS_UPSTREAM` (default `8.8.8.8`), obejde systémový resolver. `cloud_host` se resolvuje jednou při startu serveru a kešuje jako `_cloud_ip`.
+
+## [2.0.5] - 2026-03-27
+
+### Fixed
+- **BOX reconnect storm / FD exhaustion**: po EMFILE situaci kernel TCP backlog nahromadil stovky čekajících spojení (~1340/s), která se po restartu proxy vyroutila najednou — event loop strávil veškerý čas přijímáním a event-loop pipeline se nikdy nedostala ke zpracování. Přidán limit `max_concurrent_connections` (default 5, konfigurovatelný přes `MAX_CONCURRENT_CONNECTIONS` env var nebo config.json). Překračující spojení jsou okamžitě uzavřena před vstupem do state machine — `_active_connection_count` je dekrementován na všech exit cestách.
+
 ## [2.0.4] - 2026-03-27
 
 ### Fixed
