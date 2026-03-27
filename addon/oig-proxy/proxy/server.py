@@ -203,7 +203,13 @@ class ProxyServer:
         # Check if we should try cloud connection
         if not self.mode_manager.should_try_cloud():
             logger.info("☁️ Skipping cloud connection (mode=%s)", self.mode_manager.configured_mode)
-            await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+            try:
+                await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+            finally:
+                self._box_connected = False
+                self.box_peer = None
+                if current is not None:
+                    self._active_connections.discard(current)
             return
 
         # Otevřeme spojení do cloudu
@@ -228,30 +234,68 @@ class ProxyServer:
             logger.error("❌ Cloud nedostupný: %s", exc)
             self.mode_manager.record_failure(reason=str(exc))
             if self.mode_manager.is_offline():
-                await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+                try:
+                    await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+                finally:
+                    self._box_connected = False
+                    self.box_peer = None
+                    if current is not None:
+                        self._active_connections.discard(current)
                 return
             box_writer.close()
             await box_writer.wait_closed()
+            self._box_connected = False
+            self.box_peer = None
+            if current is not None:
+                self._active_connections.discard(current)
             return
         except OSError as exc:
             self.cloud_errors += 1
             logger.error("❌ Cloud nedostupný: %s", exc)
             self.mode_manager.record_failure(reason=str(exc))
             if self.mode_manager.is_offline():
-                await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+                try:
+                    await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
+                finally:
+                    self._box_connected = False
+                    self.box_peer = None
+                    if current is not None:
+                        self._active_connections.discard(current)
                 return
             box_writer.close()
             await box_writer.wait_closed()
+            self._box_connected = False
+            self.box_peer = None
+            if current is not None:
+                self._active_connections.discard(current)
             return
 
-        # Spustíme obousměrný forward
+        # Spustíme obousměrný forward.
+        # Používáme FIRST_COMPLETED + cancel, aby po odpojení jedné strany
+        # byl okamžitě uvolněn i druhý socket (jinak hrozí FD leak – každých
+        # ~15 s přibude jeden "stuck" cloud socket dokud systém nevyčerpá FDs).
+        pipe_tasks = [
+            asyncio.ensure_future(
+                self._pipe_box_to_cloud(box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id)
+            ),
+            asyncio.ensure_future(
+                self._pipe_cloud_to_box(cloud_reader, box_writer, peer=peer, session_id=session_id)
+            ),
+        ]
         try:
-            await asyncio.gather(
-                self._pipe_box_to_cloud(box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id),
-                self._pipe_cloud_to_box(cloud_reader, box_writer, peer=peer, session_id=session_id),
-                return_exceptions=True,
+            _done, _pending = await asyncio.wait(
+                pipe_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            for _t in _pending:
+                _t.cancel()
+            if _pending:
+                await asyncio.gather(*_pending, return_exceptions=True)
         except asyncio.CancelledError:
+            for _t in pipe_tasks:
+                if not _t.done():
+                    _t.cancel()
+            await asyncio.gather(*pipe_tasks, return_exceptions=True)
             raise
         finally:
             # Cleanup session tracking

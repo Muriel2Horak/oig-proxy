@@ -2,6 +2,12 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.4] - 2026-03-27
+
+### Fixed
+- **FD leak / `[Errno 24] No file descriptors available`**: při každém připojení BOXu (~15 s) se otevíralo TCP spojení do cloudu, které po odpojení BOXu zůstávalo otevřené — `asyncio.gather` čekal na oba pipe tasky, ale cloud nezavřel spojení ihned po přijetí FIN. Po ~512 cyklech proces vyčerpal file descriptory a přestal přijímat nová spojení. Opraven přechodem na `asyncio.wait(FIRST_COMPLETED)` + cancel zbývajícího tasku — cloud socket je nyní uvolněn okamžitě po odpojení BOXu.
+- **Cleanup v early-return cestách**: `_active_connections`, `_box_connected` a `box_peer` se nyní správně resetují i v offline/cloud-error větvích kde se dříve vracelo bez cleanup.
+
 ## [2.0.3] - 2026-03-27
 
 ### Fixed
