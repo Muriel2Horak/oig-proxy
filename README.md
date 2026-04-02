@@ -35,7 +35,7 @@ TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA a
 
 ## Tok komunikace
 ```
-OIG Box  --DNS override-->  HA host (addon OIG Proxy, port 5710)  --TCP-->  oigservis.cz (cloud)
+OIG Box  --DNS override-->  HA host (addon OIG Proxy, port 5710)  --TCP-->  bridge.oigpower.cz (cloud)
    |                             |
    |  XML frame                  |  Parse + map + warnings decode
    |---------------------------->|  Publish state to MQTT: oig_local/<device_id>/<table>/state
@@ -75,7 +75,7 @@ Poznámka: změny typu entity (sensor ↔ binary_sensor) vyžadují vymazat star
 3. Přidej repo: `https://github.com/Muriel2Horak/oig-proxy` a potvrď.
 4. Najdi doplněk **OIG Proxy** a klikni **Instalovat**.
 5. Otevři záložku **Konfigurace** a nastav minimálně:
-   - `target_server`: `oigservis.cz`
+    - `target_server`: `bridge.oigpower.cz`
    - `target_port`: `5710`
    - `proxy_port`: `5710`
    - `mqtt_host`: `core-mosquitto`
@@ -86,25 +86,25 @@ Poznámka: změny typu entity (sensor ↔ binary_sensor) vyžadují vymazat star
    - `capture_payloads: true` – ukládá rámce do `/data/payloads.db`
    - `capture_raw_bytes: true` – ukládá i hrubé bajty (`raw_b64`) pro low-level analýzu
 7. Klikni **Uložit**.
-8. Na záložce **Info** dej **Spustit**.
+8. Na záložce **Info** dej **Spustit**. Po každé změně `target_server`, `ha_ip`, `dns_override_ip` nebo `dns_upstream` add-on restartuj, protože DNS i env konfigurace se skládají při startu.
 9. Ověření:
    - v logu add-onu uvidíš `🚀 OIG Proxy naslouchá na 0.0.0.0:5710`
    - po připojení BOXu uvidíš `BOX připojen`
    - v MQTT by měly vznikat retained discovery topicy `homeassistant/.../config`
 
 ### 3) DNS přesměrování (aby BOX volal proxy)
-BOX musí místo cloudu (`oigservis.cz`) chodit na IP Home Assistanta, kde běží add-on.
+BOX musí místo cloudu (`bridge.oigpower.cz`) chodit na IP Home Assistanta, kde běží add-on.
 Nejjednodušší je udělat DNS override v lokální síti.
 
 #### Rychlá kontrola, že DNS funguje
-- Na PC v síti: `nslookup oigservis.cz <IP_DNS_serveru>`
-- Na HA (Terminal & SSH add-on): `nslookup oigservis.cz`
-- Očekávání: `oigservis.cz` se překládá na IP HA (ne na veřejnou IP).
+- Na PC v síti: `nslookup bridge.oigpower.cz <IP_DNS_serveru>`
+- Na HA (Terminal & SSH add-on): `nslookup bridge.oigpower.cz`
+- Očekávání: `bridge.oigpower.cz` se překládá na IP HA (ne na veřejnou IP).
 
 #### Varianta A: Router umí DNS override/host record (doporučeno)
 1. V routeru najdi sekci typu **LAN / DHCP / DNS** nebo **DNS Rebind / Hostnames / Local DNS**.
 2. Přidej statický záznam:
-   - hostname: `oigservis.cz`
+    - hostname: `bridge.oigpower.cz`
    - typ: `A`
    - IP: `<IP Home Assistanta v LAN>`
 3. Ujisti se, že DHCP rozdává jako DNS server router (nebo DNS, který ten override umí).
@@ -112,18 +112,18 @@ Nejjednodušší je udělat DNS override v lokální síti.
 5. Pokud router používá DoH/DoT nebo „DNS proxy“, zkontroluj, že **lokální host override má prioritu** (u některých routerů je potřeba vypnout DoH pro LAN).
 
 #### Varianta B: DHCP rozdává DNS = IP Home Assistanta (nejjednodušší, když běží dnsmasq v add-onu)
-Tento add-on spouští **dnsmasq** (poslouchá na `53/udp` a `53/tcp`) a umí lokálně přepsat `oigservis.cz` na IP HA (viz `ha_ip` + `dns_upstream` v konfiguraci add-onu).
+Tento add-on spouští **dnsmasq** (poslouchá na `53/udp` a `53/tcp`) a umí lokálně přepsat aktuálně nastavený `target_server` na IP HA (viz `ha_ip` + `dns_upstream` v konfiguraci add-onu). Pro kompatibilitu přidává i legacy alias `oigservis.cz`, pokud je cílem nová doména.
 
 1. V HA v add-onu **OIG Proxy** nastav (Konfigurace):
    - `ha_ip`: IP Home Assistanta v LAN (nebo ponech prázdné – add-on se ji pokusí autodetekovat)
-   - `dns_override_ip`: volitelné, explicitní IP pro `oigservis.cz` DNS override (má prioritu nad `ha_ip`; použij např. pro NAS relay)
+    - `dns_override_ip`: volitelné, explicitní IP pro DNS override aktuálního `target_server` (má prioritu nad `ha_ip`; použij např. pro NAS relay)
    - `dns_upstream`: DNS upstream (default `8.8.8.8`, nebo dej IP tvého routeru/DNS)
 2. Ujisti se, že add-on běží a že port 53 je dostupný z LAN (add-on používá `host_network: true`).
 3. V routeru (DHCP server) nastav jako **DNS server** IP Home Assistanta.
 4. Restartuj BOX (nebo obnov DHCP lease), aby si načetl nový DNS.
-5. Ověř z klienta v LAN: `nslookup oigservis.cz <IP_HA>` → musí vracet IP HA.
+5. Ověř z klienta v LAN: `nslookup bridge.oigpower.cz <IP_HA>` → musí vracet IP HA.
 
-Pro relay/sniff scénář (mimo HA proxy path): nastav `dns_override_ip` na IP relay (např. `10.0.0.160`) a ověř `nslookup oigservis.cz <IP_HA_DNS>` vrací relay IP.
+Pro relay/sniff scénář (mimo HA proxy path): nastav `dns_override_ip` na IP relay (např. `10.0.0.160`) a ověř `nslookup bridge.oigpower.cz <IP_HA_DNS>` vrací relay IP.
 
 Poznámky:
 - Tohle ovlivní **všechny zařízení v LAN**, které používají DNS z DHCP. Pokud nechceš ovlivnit celou síť, nastav DNS jen pro BOX (pokud router umí per‑device DHCP options), nebo použij Variantu A/C.
@@ -131,13 +131,13 @@ Poznámky:
 #### Varianta B: Pi-hole / AdGuard Home / dnsmasq (když router neumí override)
 1. Provozuj lokální DNS server (Pi-hole / AdGuard Home / dnsmasq) v LAN.
 2. Nastav v něm DNS přepis:
-   - `oigservis.cz` → `<IP Home Assistanta>`
+    - `bridge.oigpower.cz` → `<IP Home Assistanta>`
 3. Nastav v routeru DHCP tak, aby klientům (včetně BOXu) rozdával jako DNS právě tento DNS server.
 4. Zkontroluj, že klienti nemají „fallback“ na veřejné DNS (např. 8.8.8.8).
 
 #### Varianta C: Jen pro test (hosts na jednom PC)
 Funguje jen pro testování z PC, ne pro BOX:
-- Přidej do hosts: `oigservis.cz <IP_HA>`
+- Přidej do hosts: `bridge.oigpower.cz <IP_HA>`
 
 #### Typické problémy (rychlá diagnostika)
 - **BOX má natvrdo veřejné DNS**: v routeru zablokuj odchozí DNS (TCP/UDP 53) mimo lokální DNS server, nebo přesměruj DNS provoz na svůj DNS (policy routing/NAT).
@@ -145,9 +145,9 @@ Funguje jen pro testování z PC, ne pro BOX:
 - **Více domén**: pokud se v komunikaci objeví i jiné domény, přidej je do override stejně (logy/proxy capture ti to odhalí).
 
 #### Příklady konfigurace (orientačně)
-- **OpenWrt (dnsmasq)**: v LuCI → *Network → DHCP and DNS → Hostnames* přidej `oigservis.cz` → `<IP_HA>`.
-  - CLI: přidej do `/etc/hosts` řádek `<IP_HA> oigservis.cz` a restartuj dnsmasq: `service dnsmasq restart`.
-- **MikroTik**: *IP → DNS → Static* přidej `oigservis.cz` s adresou `<IP_HA>` a zapni `Allow Remote Requests`.
+- **OpenWrt (dnsmasq)**: v LuCI → *Network → DHCP and DNS → Hostnames* přidej `bridge.oigpower.cz` → `<IP_HA>`.
+  - CLI: přidej do `/etc/hosts` řádek `<IP_HA> bridge.oigpower.cz` a restartuj dnsmasq: `service dnsmasq restart`.
+- **MikroTik**: *IP → DNS → Static* přidej `bridge.oigpower.cz` s adresou `<IP_HA>` a zapni `Allow Remote Requests`.
 
 ## Lokální spuštění (mimo HA)
 ```
@@ -170,7 +170,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/muriel2horak/o
 `config.json` používá image `ghcr.io/muriel2horak/oig-proxy-{arch}`; po pushi lze tag přepsat na konkrétní verzi.
 
 ## Konfigurace env (shrnutí)
-- `TARGET_SERVER` (default `oigservis.cz`), `TARGET_PORT` (5710) – cíl, kam proxy přeposílá.
+- `TARGET_SERVER` (default `bridge.oigpower.cz`), `TARGET_PORT` (5710) – cíl, kam proxy přeposílá.
 - `PROXY_PORT` (5710) – lokální port pro Box.
 - `MQTT_HOST/PORT/USERNAME/PASSWORD` – broker.
 - `MQTT_NAMESPACE` (default `oig_local`) – prefix topiců.
