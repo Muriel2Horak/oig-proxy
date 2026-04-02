@@ -1,6 +1,11 @@
 #!/usr/bin/with-contenv bashio
 
-# DNS override: oigservis.cz -> selected IP (dns_override_ip > ha_ip > auto-detect)
+# DNS override: configured target_server -> selected IP
+TARGET_SERVER_RAW=$(bashio::config 'target_server' | tr -d '[]"' | xargs)
+if [ -z "$TARGET_SERVER_RAW" ] || [ "$TARGET_SERVER_RAW" = "null" ]; then
+    TARGET_SERVER_RAW="bridge.oigpower.cz"
+fi
+
 DNS_OVERRIDE_RAW=$(bashio::config 'dns_override_ip')
 HA_IP_RAW=$(bashio::config 'ha_ip')
 if [ -n "$DNS_OVERRIDE_RAW" ] && [ "$DNS_OVERRIDE_RAW" != "null" ]; then
@@ -33,7 +38,10 @@ fi
 mkdir -p /etc/dnsmasq.d
 
 echo "server=$UPSTREAM" > /etc/dnsmasq.d/upstream.conf
-echo "address=/oigservis.cz/$DNS_TARGET_IP" > /etc/dnsmasq.d/oig.conf
+echo "address=/$TARGET_SERVER_RAW/$DNS_TARGET_IP" > /etc/dnsmasq.d/oig.conf
+if [ "$TARGET_SERVER_RAW" = "bridge.oigpower.cz" ]; then
+    echo "address=/oigservis.cz/$DNS_TARGET_IP" >> /etc/dnsmasq.d/oig.conf
+fi
 
 # spustit dnsmasq (foreground &)
 /usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &
@@ -52,7 +60,7 @@ if [ -f /app/sensor_map.json ]; then
 fi
 
 # Env pro proxy - all 21 parameters
-export TARGET_SERVER=$(bashio::config 'target_server')
+export TARGET_SERVER=$TARGET_SERVER_RAW
 export TARGET_PORT=$(bashio::config 'target_port')
 export PROXY_PORT=$(bashio::config 'proxy_port')
 
@@ -97,7 +105,7 @@ else
     export HA_IP=$HA_IP_CONFIG
 fi
 
-# DNS_OVERRIDE_IP (optional): if set, dnsmasq maps oigservis.cz to this IP
+# DNS_OVERRIDE_IP (optional): if set, dnsmasq maps target_server to this IP
 DNS_OVERRIDE_IP_CONFIG=$(bashio::config 'dns_override_ip')
 if [ -z "$DNS_OVERRIDE_IP_CONFIG" ] || [ "$DNS_OVERRIDE_IP_CONFIG" = "null" ]; then
     export DNS_OVERRIDE_IP=""

@@ -19,7 +19,7 @@ class Config:
     proxy_port: int = 5710
 
     # Cloud target
-    cloud_host: str = "oigservis.cz"
+    cloud_host: str = "bridge.oigpower.cz"
     cloud_port: int = 5710
     cloud_connect_timeout: float = 10.0
     cloud_ack_timeout: float = 30.0
@@ -74,7 +74,7 @@ class Config:
         self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
-        self.cloud_host = os.environ.get("TARGET_SERVER", "oigservis.cz")
+        self.cloud_host = os.environ.get("TARGET_SERVER", "bridge.oigpower.cz")
         self.cloud_port = int(os.environ.get("TARGET_PORT", "5710"))
         self.cloud_connect_timeout = float(
             os.environ.get("CLOUD_CONNECT_TIMEOUT", "10.0"))
