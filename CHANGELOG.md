@@ -2,6 +2,11 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.8] - 2026-04-02
+
+### Fixed
+- **Bridge DNS migration**: vestavěný dnsmasq override nyní následuje nastavený `target_server` místo hardcoded `oigservis.cz`, takže změna na `bridge.oigpower.cz` v HA konfiguraci skutečně přesměruje BOX na lokální proxy. Defaultní cloud host byl přepnut na `bridge.oigpower.cz` a při tomto cíli zůstává zachovaný kompatibilní alias `oigservis.cz` pro starší instalace během migrace.
+
 ## [2.0.7] - 2026-03-27
 
 ### Fixed
