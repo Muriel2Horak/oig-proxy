@@ -14,7 +14,7 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 1. Checkout code
 2. Setup Python 3.11
 3. Install dependencies (from `requirements-dev.txt`)
-4. Run unit tests with coverage (fail-under 80%)
+4. Run unit tests with coverage (fail-under 69%)
 5. Type checking (mypy)
 6. Lint Dockerfile (hadolint)
 7. Run security scan (Bandit - blocking)
@@ -24,7 +24,7 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 - Checkout code
 - Setup Python 3.11 (actions/setup-python@v5)
 - Install dependencies
-- Run pytest with coverage (--cov-fail-under=80)
+- Run pytest with coverage (--cov-fail-under=69)
 - Run mypy (type checking, blocking)
 - Run hadolint (Dockerfile linting)
 - Run bandit (Python SAST, blocking)
@@ -79,10 +79,8 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 7. Run **Semgrep** (Advanced SAST with custom rules)
 8. Run **Trivy** (Container/dependency scanning)
 9. Run **Gitleaks** (Secret leak detection)
-10. Run security unit tests
-11. Run penetration tests
-12. Upload reports as artifacts
-13. Comment on PR with security results
+10. Upload reports as artifacts
+11. Comment on PR with security results
 
 **Steps:**
 ```yaml
@@ -95,8 +93,6 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 - Run semgrep
 - Run trivy
 - Run gitleaks
-- Run security unit tests
-- Run penetration tests
 - Upload artifacts
 - Comment on PR
 ```
@@ -144,11 +140,11 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 
 | Feature | GitHub CI | Local CI (`ci.sh`) |
 |---------|-----------|---------------------|
-| **Setup** | Automatic on push/PR | Manual (`./.github/scripts/ci.sh`) |
+| **Setup** | Automatic on push/PR | Manual (`./ci/ci.sh`) |
 | **Python version** | 3.11 | System Python or venv |
 | **Dependencies** | Auto-installed | Auto-installed |
 | **Unit tests** | ✅ | ✅ (default, skip with `--no-tests`) |
-| **Coverage** | ✅ (fail-under 80%) | ✅ |
+| **Coverage** | ✅ (fail-under 69%) | ✅ |
 | **Pylint** | ✅ (separate workflow) | ✅ (default, skip with `--no-lint`) |
 | **MyPy** | ✅ (in CI workflow) | ✅ |
 | **Hadolint** | ✅ (in CI workflow) | ❌ |
@@ -208,20 +204,18 @@ This document describes all CI/CD workflows running in GitHub Actions and how to
 
 **Full CI (same as GitHub CI):**
 ```bash
-./.github/scripts/ci.sh
+./ci/ci.sh
 ```
 
 This runs:
 1. ✅ Pylint (linting)
 2. ✅ Unit tests with coverage
 3. ✅ Security scan (Bandit, Safety, Semgrep, Trivy, Gitleaks)
-4. ✅ Security unit tests
-5. ✅ Penetration tests
-6. ✅ MyPy (type checking)
+4. ✅ MyPy (type checking)
 
 **Full CI + SonarQube:**
 ```bash
-./.github/scripts/ci.sh --all
+./ci/ci.sh --all
 ```
 
 This runs everything above + SonarQube scan.
@@ -230,34 +224,34 @@ This runs everything above + SonarQube scan.
 
 Skip tests:
 ```bash
-./.github/scripts/ci.sh --no-tests
+./ci/ci.sh --no-tests
 ```
 
 Skip security:
 ```bash
-./.github/scripts/ci.sh --no-security
+./ci/ci.sh --no-security
 ```
 
 Skip linting:
 ```bash
-./.github/scripts/ci.sh --no-lint
+./ci/ci.sh --no-lint
 ```
 
 Run Sonar only:
 ```bash
-./.github/scripts/ci.sh --sonar
+./ci/ci.sh --sonar
 ```
 
 **Custom combinations:**
 
 Run only tests + linting (no security):
 ```bash
-./.github/scripts/ci.sh --no-security
+./ci/ci.sh --no-security
 ```
 
 Run only security (no tests):
 ```bash
-./.github/scripts/ci.sh --no-tests --no-lint
+./ci/ci.sh --no-tests --no-lint
 ```
 
 ### Running Security Scan Only
@@ -273,8 +267,6 @@ This runs:
 3. ✅ Semgrep (Advanced SAST)
 4. ✅ Trivy (Container/dependency scanning)
 5. ✅ Gitleaks (Secret leak detection)
-6. ✅ Security unit tests
-7. ✅ Penetration tests
 
 ### Running SonarQube Locally
 
@@ -326,12 +318,12 @@ REPORT_DIR=/path/to/reports .venv/bin/python .github/scripts/run_sonar.sh
 
 **Run unit tests only:**
 ```bash
-.venv/bin/python -m pytest tests/ -v --cov=addon/oig-proxy --cov-report=term
+.venv/bin/python -m pytest tests/v2 -v --cov=addon/oig-proxy --cov-report=term --cov-fail-under=69
 ```
 
 **Run specific test:**
 ```bash
-.venv/bin/python -m pytest tests/test_telemetry_client.py -v
+.venv/bin/python -m pytest tests/v2/test_telemetry.py -v
 ```
 
 **Run Pylint only:**
@@ -431,20 +423,20 @@ Daily Schedule → Security Scan (all security tools)
 Local CI runs steps sequentially (faster for development):
 
 ```
-./.github/scripts/ci.sh → Setup → Lint → Tests → Security → Sonar
+./ci/ci.sh → Setup → Lint → Tests → Security → Sonar
 ```
 
 ## Troubleshooting
 
 ### CI Script Fails
 
-**Problem:** `./.github/scripts/ci.sh` fails
+**Problem:** `./ci/ci.sh` fails
 
 **Solutions:**
 1. Check Python version: `python3 --version` (need 3.11+)
 2. Check venv: `ls .venv/bin/python`
 3. Install dependencies: `pip install -r requirements-dev.txt`
-4. Run with verbose output: `bash -x ./.github/scripts/ci.sh`
+4. Run with verbose output: `bash -x ./ci/ci.sh`
 
 ### Security Tools Missing
 
@@ -499,7 +491,7 @@ sudo mv gitleaks /usr/local/bin/
 
 ```bash
 # Run full CI locally
-./.github/scripts/ci.sh
+./ci/ci.sh
 
 # If all pass, commit and push
 git add .
@@ -511,7 +503,7 @@ git push
 
 ```bash
 # Run full CI locally + Sonar
-./.github/scripts/ci.sh --all
+./ci/ci.sh --all
 
 # If all pass, create PR
 gh pr create --title "..." --body "..."

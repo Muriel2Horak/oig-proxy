@@ -157,7 +157,7 @@ MQTT_HOST=... MQTT_PORT=1883 python -u main.py
 Nebo docker-compose v rootu (doplnit env pro MQTT a cílový server).
 
 ## Testy a kvalita
-- Spuštění testů: `./.github/scripts/run_tests.sh` (volitelné env: `COVERAGE_FAIL_UNDER=80`, `RUN_INTEGRATION=0`).
+- Spuštění testů: `./ci/ci.sh` (volitelné env: `COVERAGE_FAIL_UNDER=69`; přepínače `--no-tests`, `--no-security`, `--no-lint`, `--sonar`).
 - Sonar + Bandit: `./.github/scripts/run_sonar.sh` (vyžaduje `SONAR_TOKEN` a `SONAR_HOST_URL` v `.env`; volitelně `SONAR_CONFIGURE_QG=1` a `SONAR_QUALITY_GATE_NAME="Security A +0"`).
 - SonarCloud: nastav `SONAR_HOST_URL=https://sonarcloud.io`, `SONAR_ORGANIZATION=<org>`, `SONAR_PROJECT_KEY=<org>_<project>` a `SONAR_CLOUD_TOKEN` (pro PR analýzu i `SONAR_PR_KEY`, `SONAR_PR_BRANCH`, `SONAR_PR_BASE`).
 - Reporty se generují do `reports/` (`coverage.xml`, `junit.xml`, `bandit.json`) a jsou v `.gitignore`.

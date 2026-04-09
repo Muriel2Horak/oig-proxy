@@ -95,7 +95,7 @@
 - **Container Scanning**: Added Trivy for container and dependency vulnerability scanning
 
 ### Added
-- **Local CI Script** (`.github/scripts/ci.sh`): Run same checks as GitHub CI locally with flags (`--no-tests`, `--no-security`, `--no-lint`, `--sonar`)
+- **Local CI Script** (`ci/ci.sh`): Run same checks as GitHub CI locally with flags (`--no-tests`, `--no-security`, `--no-lint`, `--sonar`)
 - **GitHub Security Scan Workflow**: Daily security scan with all tools (Bandit, Safety, Semgrep, Trivy, Gitleaks)
 - **Security Unit Tests** (`tests/test_security.py`): 25 tests for telemetry, control API, session management, input validation, secrets, replay protection, encryption, and network security
 - **Penetration Tests** (`tests/test_penetration.py`): 31 tests simulating SQL injection, XSS, command injection, XML injection, path traversal, LDAP injection, buffer overflow, Unicode attacks, DoS, session hijacking, DNS rebinding, man-in-the-middle, null byte injection, format string attacks, integer overflow, and rate limiting attacks
