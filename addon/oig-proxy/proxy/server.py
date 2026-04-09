@@ -105,6 +105,23 @@ def _read_replay_frame_once(path: str) -> bytes | None:
 
 
 TRACE_LEVEL = 5
+TRANSPORT_RESULT_VALUES = frozenset({"ACK", "END"})
+POLL_RESULT_VALUES = frozenset({"IsNewSet", "IsNewWeather", "IsNewFW"})
+TRANSPORT_METADATA_KEYS = frozenset(
+    {
+        "Confirm",
+        "ID",
+        "ID_Server",
+        "NewValue",
+        "Rdt",
+        "Result",
+        "TSec",
+        "TblItem",
+        "Tmr",
+        "ToDo",
+        "mytimediff",
+    }
+)
 
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -858,7 +875,7 @@ class ProxyServer:
         try:
             text = frame_bytes.decode("utf-8", errors="replace")
             parsed = parse_xml_frame(text)
-            if parsed:
+            if parsed and not self._is_transport_frame(parsed):
                 await self.on_frame(parsed)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Frame parse error: %s", exc)
@@ -931,9 +948,35 @@ class ProxyServer:
     @staticmethod
     def _effective_table_name(parsed: dict[str, Any], payload: str) -> str:
         result = str(parsed.get("Result") or "")
-        if result in {"IsNewSet", "IsNewWeather", "IsNewFW", "ACK", "END"}:
+        if result in POLL_RESULT_VALUES | TRANSPORT_RESULT_VALUES:
             return result
         return str(parsed.get("_table") or infer_table_name(payload) or "")
+
+    @staticmethod
+    def _is_transport_frame(parsed: dict[str, Any]) -> bool:
+        result = str(parsed.get("Result") or "")
+        if result in TRANSPORT_RESULT_VALUES:
+            return True
+
+        if result in POLL_RESULT_VALUES:
+            publishable_keys = [
+                key
+                for key in parsed
+                if not key.startswith("_") and key not in TRANSPORT_METADATA_KEYS
+            ]
+            return not publishable_keys
+
+        keys = {key for key in parsed if not key.startswith("_")}
+        if {"TblItem", "NewValue"}.issubset(keys) and keys & {
+            "Confirm",
+            "ID",
+            "ID_Server",
+            "TSec",
+            "mytimediff",
+        }:
+            return True
+
+        return False
 
     async def _pipe_box_offline(
         self,
