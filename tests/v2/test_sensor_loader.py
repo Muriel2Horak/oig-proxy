@@ -1,4 +1,5 @@
 """Tests for sensor loader."""
+# pylint: disable=missing-function-docstring
 
 # pyright: reportMissingImports=false
 
