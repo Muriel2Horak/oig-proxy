@@ -128,7 +128,12 @@ async def test_twin_tbl_events_ack_removes_pending(make_config, dummy_writer_fac
     queue = TwinQueue()
     queue.enqueue("tbl_box_prms", "MODE", 0)
     twin_delivery = TwinDelivery(queue, MagicMock())
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+    on_confirmed_setting = AsyncMock()
+    server = ProxyServer(
+        cfg,
+        twin_delivery=twin_delivery,
+        on_confirmed_setting=on_confirmed_setting,
+    )
     box_writer = dummy_writer_factory()
 
     await server._deliver_pending_for_isnewset(
@@ -146,6 +151,7 @@ async def test_twin_tbl_events_ack_removes_pending(make_config, dummy_writer_fac
     await server._handle_twin_frames(ack_frame, box_writer)
 
     assert queue.size() == 0
+    on_confirmed_setting.assert_awaited_once_with("12345", "tbl_box_prms", "MODE", "0")
 
 
 @pytest.mark.asyncio
@@ -157,7 +163,12 @@ async def test_twin_reason_setting_ack_removes_pending(make_config, dummy_writer
     queue = TwinQueue()
     queue.enqueue("tbl_box_prms", "MODE", 3)
     twin_delivery = TwinDelivery(queue, MagicMock())
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+    on_confirmed_setting = AsyncMock()
+    server = ProxyServer(
+        cfg,
+        twin_delivery=twin_delivery,
+        on_confirmed_setting=on_confirmed_setting,
+    )
     box_writer = dummy_writer_factory()
 
     await server._deliver_pending_for_isnewset(
@@ -172,6 +183,7 @@ async def test_twin_reason_setting_ack_removes_pending(make_config, dummy_writer
 
     assert queue.size() == 0
     assert twin_delivery.inflight() is None
+    on_confirmed_setting.assert_awaited_once_with("12345", "tbl_box_prms", "MODE", 3)
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,35 @@ class TestProxyAppInitialization:
         assert app.proxy is None
 
 
+class TestConfirmedSettingHandling:
+    @pytest.mark.asyncio
+    async def test_on_confirmed_setting_routes_through_frame_processor(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+        app.frame_processor = AsyncMock()
+
+        await app._on_confirmed_setting("DEV01", "tbl_box_prms", "MODE", "3")
+
+        app.frame_processor.process.assert_awaited_once_with(
+            "DEV01",
+            "tbl_box_prms",
+            {"MODE": 3},
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_confirmed_setting_noops_without_frame_processor(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+        app.frame_processor = None
+
+        await app._on_confirmed_setting("DEV01", "tbl_box_prms", "MODE", "3")
+
+    def test_coerce_confirmed_value_parses_numeric_strings(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+
+        assert app._coerce_confirmed_value("3") == 3
+        assert app._coerce_confirmed_value("3.5") == 3.5
+        assert app._coerce_confirmed_value("MODE") == "MODE"
+
+
 class TestStartupSequence:
     """Test the startup sequence in correct order."""
 

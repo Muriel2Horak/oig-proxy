@@ -267,6 +267,24 @@ async def test_pipe_cloud_to_box_processes_parsed_frames():
 
 
 @pytest.mark.asyncio
+async def test_handle_twin_frames_publishes_confirmed_tbl_events_value() -> None:
+    cfg = make_config()
+    server = ProxyServer(cfg, on_confirmed_setting=AsyncMock(), twin_delivery=MagicMock())
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+
+    ack_frame = build_frame(
+        "<TblName>tbl_events</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [3]->[0]</Content>"
+    ).encode("utf-8")
+
+    await server._handle_twin_frames(ack_frame, box_writer)
+
+    server.on_confirmed_setting.assert_awaited_once_with("12345", "tbl_box_prms", "MODE", "0")
+
+
+@pytest.mark.asyncio
 async def test_pipe_cloud_to_box_stops_on_empty_read():
     """_pipe_cloud_to_box ukončí smyčku při EOF."""
     cfg = make_config()
