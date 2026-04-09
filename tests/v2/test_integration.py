@@ -1,3 +1,5 @@
+"""Integration tests for proxy server."""
+# pylint: disable=protected-access,missing-function-docstring,invalid-name,too-many-locals
 from __future__ import annotations
 
 import asyncio

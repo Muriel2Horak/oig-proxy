@@ -11,6 +11,7 @@ Tests the full integration of:
 - TelemetryCollector
 """
 
+# pylint: disable=protected-access,unspecified-encoding,too-few-public-methods,missing-class-docstring,missing-function-docstring,unnecessary-lambda,broad-exception-caught,unused-variable
 # pyright: reportMissingImports=false
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import pytest
 # Add addon path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy"))
 
-from main import ProxyApp, main
+from main import ProxyApp, main  # pylint: disable=wrong-import-position
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ Run: PYTHONPATH=addon/oig-proxy pytest tests/v2/test_twin_handler.py -v
 
 # pyright: reportMissingImports=false
 
-# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=too-many-public-methods,protected-access,missing-function-docstring,missing-class-docstring
 
 import asyncio
 import json

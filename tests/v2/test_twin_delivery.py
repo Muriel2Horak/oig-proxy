@@ -1,3 +1,4 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring,too-few-public-methods
 import os
 import sys
 
@@ -7,9 +8,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
-from protocol.frames import build_setting_frame
-from twin.delivery import TwinDelivery
-from twin.state import TwinQueue
+from protocol.frames import build_setting_frame  # pylint: disable=wrong-import-position
+from twin.delivery import TwinDelivery  # pylint: disable=wrong-import-position
+from twin.state import TwinQueue  # pylint: disable=wrong-import-position
 
 
 class _MQTTStub:
