@@ -4,6 +4,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -254,6 +255,75 @@ async def test_process_publishes_state(processor: FrameProcessor, mock_mqtt: Mag
     pub_data = call_args[2]
     assert pub_data["Temp"] == 25.5
     assert pub_data["Humid"] == 60
+
+
+@pytest.mark.asyncio
+async def test_process_ignores_generic_setting_transport_metadata(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    mock_loader.lookup.return_value = None
+
+    with caplog.at_level(logging.WARNING):
+        await processor.process(
+            "DEV01",
+            "tbl_invertor_prms",
+            {
+                "ID": 13809469,
+                "NewValue": 1,
+                "Confirm": "New",
+                "TblItem": "MODE",
+                "ID_Server": 9,
+                "mytimediff": 0,
+                "TSec": "2026-03-17 07:03:04",
+            },
+        )
+
+    mock_mqtt.publish_state.assert_not_called()
+    assert "Missing sensor_map entry" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_process_ignores_ack_like_transport_metadata(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    mock_loader.lookup.return_value = None
+
+    with caplog.at_level(logging.WARNING):
+        await processor.process(
+            "DEV01",
+            "tbl_actual",
+            {
+                "Result": "ACK",
+                "Rdt": "2025-12-07 20:46:52",
+                "Tmr": 100,
+            },
+        )
+
+    mock_mqtt.publish_state.assert_not_called()
+    assert "Missing sensor_map entry" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_process_keeps_real_sensor_keys_when_transport_metadata_leaks(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
+    def lookup(table: str, key: str) -> dict | None:
+        if (table, key) == ("tbl_invertor_prms", "MODE"):
+            return {"name_cs": "Mode", "device_mapping": "inverter"}
+        return None
+
+    mock_loader.lookup.side_effect = lookup
+
+    await processor.process(
+        "DEV01",
+        "tbl_invertor_prms",
+        {
+            "MODE": 3,
+            "ID": 13809469,
+            "NewValue": 3,
+            "Confirm": "New",
+            "TblItem": "MODE",
+            "ID_Server": 9,
+            "mytimediff": 0,
+            "TSec": "2026-03-17 07:03:04",
+        },
+    )
+
+    mock_mqtt.publish_state.assert_called_once_with("DEV01", "tbl_invertor_prms", {"MODE": 3})
 
 
 # -----------------------------------------------------------------------------

@@ -130,6 +130,77 @@ async def test_on_frame_callback_called_for_valid_frame():
 
 
 @pytest.mark.asyncio
+async def test_on_frame_skips_generic_setting_transport_frames() -> None:
+    received = []
+
+    async def callback(parsed: dict) -> None:
+        received.append(parsed)
+
+    cfg = make_config()
+    server = ProxyServer(cfg, on_frame=callback)
+
+    xml = (
+        "<TblName>tbl_invertor_prms</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<ID>13809469</ID>"
+        "<NewValue>1</NewValue>"
+        "<Confirm>New</Confirm>"
+        "<TblItem>MODE</TblItem>"
+        "<ID_Server>9</ID_Server>"
+        "<mytimediff>0</mytimediff>"
+        "<TSec>2026-03-17 07:03:04</TSec>"
+    )
+    frame_bytes = build_frame(xml).encode("utf-8")
+
+    await server._process_frame(frame_bytes)
+
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_on_frame_skips_ack_transport_frames_even_with_table_and_device() -> None:
+    received = []
+
+    async def callback(parsed: dict) -> None:
+        received.append(parsed)
+
+    cfg = make_config()
+    server = ProxyServer(cfg, on_frame=callback)
+
+    xml = (
+        "<Result>ACK</Result>"
+        "<TblName>tbl_actual</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<Rdt>2025-12-07 20:46:52</Rdt>"
+        "<Tmr>100</Tmr>"
+    )
+    frame_bytes = build_frame(xml).encode("utf-8")
+
+    await server._process_frame(frame_bytes)
+
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_on_frame_keeps_isnew_table_payload_with_real_sensor_keys() -> None:
+    received = []
+
+    async def callback(parsed: dict) -> None:
+        received.append(parsed)
+
+    cfg = make_config()
+    server = ProxyServer(cfg, on_frame=callback)
+
+    xml = "<TblName>IsNewFW</TblName><ID_Device>12345</ID_Device><BAT_C>91</BAT_C>"
+    frame_bytes = build_frame(xml).encode("utf-8")
+
+    await server._process_frame(frame_bytes)
+
+    assert len(received) == 1
+    assert received[0]["BAT_C"] == 91
+
+
+@pytest.mark.asyncio
 async def test_on_frame_not_called_when_no_callback():
     """Bez on_frame callback se _process_frame tiše ignoruje."""
     cfg = make_config()
