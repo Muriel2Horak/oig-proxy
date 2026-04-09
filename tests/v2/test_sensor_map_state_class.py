@@ -1,4 +1,5 @@
 """Tests for sensor map state class validation."""
+# pylint: disable=unspecified-encoding,missing-function-docstring
 
 # pyright: reportMissingImports=false
 
