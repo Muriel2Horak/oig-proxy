@@ -1,18 +1,23 @@
 """Wrapper pro v1 CRC funkce pro cross-referenční testy."""
-import sys
-import os
 
-# Uložíme si aktuální path
-original_path = sys.path.copy()
+from importlib.machinery import SourcelessFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+from pathlib import Path
 
-# Přidáme v1 addon do path na konec (aby v2 mělo přednost)
-v1_addon = os.path.join(os.path.dirname(__file__), '..', '..', 'addon', 'oig-proxy-v1-archive')
-if v1_addon not in sys.path:
-    sys.path.append(v1_addon)
 
-from oig_frame import crc16_modbus
+_V1_PYC = (
+    Path(__file__).resolve().parents[2]
+    / "addon"
+    / "oig-proxy-v1-archive"
+    / "__pycache__"
+    / "oig_frame.cpython-312.pyc"
+)
+_LOADER = SourcelessFileLoader("tests_v2_oig_frame_v1", str(_V1_PYC))
+_SPEC = spec_from_loader("tests_v2_oig_frame_v1", _LOADER)
+assert _SPEC is not None
+_MODULE = module_from_spec(_SPEC)
+_LOADER.exec_module(_MODULE)
 
-# Obnovíme path, aby v1 neovlivňovalo další importy
-sys.path = original_path
+crc16_modbus = _MODULE.crc16_modbus
 
 __all__ = ['crc16_modbus']
