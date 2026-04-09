@@ -1,3 +1,4 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring
 import os
 import sys
 
@@ -5,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
-from twin.ack_parser import parse_box_ack, parse_tbl_events_ack
+from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # pylint: disable=wrong-import-position
 
 
 def test_parse_box_ack_minimal_ack() -> None:

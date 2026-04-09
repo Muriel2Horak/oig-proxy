@@ -86,21 +86,27 @@ class DummyWriter:
         self.closed = False
 
     def write(self, data: bytes) -> None:
+        """Store data bytes to written list."""
         self.written.append(bytes(data))
 
     async def drain(self) -> None:
+        """No-op drain method."""
         return None
 
     def close(self) -> None:
+        """Mark writer as closed."""
         self.closed = True
 
     async def wait_closed(self) -> None:
+        """No-op wait_closed method."""
         return None
 
     def is_closing(self) -> bool:
+        """Return closed status."""
         return self.closed
 
     def get_extra_info(self, name: str, default=None):
+        """Return extra info for peername or default."""
         if name == "peername":
             return ("127.0.0.1", 12345)
         return default
