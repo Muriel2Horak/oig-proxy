@@ -262,6 +262,7 @@ class ProxyApp:
         self.proxy = ProxyServer(
             config=self.config,
             on_frame=self._on_frame,
+            on_confirmed_setting=self._on_confirmed_setting,
             twin_delivery=self.twin_delivery,
             frame_capture=self.frame_capture,
             telemetry_collector=self.telemetry_collector,
@@ -408,6 +409,37 @@ class ProxyApp:
 
         if table == "tbl_events" and self.telemetry_collector is not None:
             self.telemetry_collector.record_tbl_event(parsed=data, device_id=frame_device_id)
+
+    async def _on_confirmed_setting(
+        self,
+        device_id: str,
+        table: str,
+        key: str,
+        value: Any,
+    ) -> None:
+        if self.frame_processor is None:
+            return
+        await self.frame_processor.process(
+            device_id,
+            table,
+            {key: self._coerce_confirmed_value(value)},
+        )
+
+    @staticmethod
+    def _coerce_confirmed_value(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            return value
+        try:
+            return int(normalized)
+        except ValueError:
+            pass
+        try:
+            return float(normalized)
+        except ValueError:
+            return value
 
     async def shutdown(self) -> None:
         """Execute graceful shutdown sequence (reverse of startup)."""

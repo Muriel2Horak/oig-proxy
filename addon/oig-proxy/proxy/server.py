@@ -108,6 +108,7 @@ TRACE_LEVEL = 5
 
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
+ConfirmedSettingCallback = Callable[[str, str, str, Any], Awaitable[None]]
 
 
 class ProxyServer:
@@ -123,12 +124,14 @@ class ProxyServer:
         self,
         config: Config,
         on_frame: FrameCallback | None = None,
+        on_confirmed_setting: ConfirmedSettingCallback | None = None,
         twin_delivery: TwinDelivery | None = None,
         frame_capture: FrameCapture | None = None,
         telemetry_collector: "TelemetryCollector | None" = None,
     ) -> None:
         self.config = config
         self.on_frame = on_frame
+        self.on_confirmed_setting = on_confirmed_setting
         self.twin_delivery = twin_delivery
         self.frame_capture = frame_capture
         self.telemetry_collector = telemetry_collector
@@ -729,6 +732,9 @@ class ProxyServer:
         if run_isnewset_hook and table_name == "IsNewSet" and box_writer is not None:
             await self._deliver_pending_for_isnewset(frame_text, box_writer)
 
+        inflight_setting = self.twin_delivery.inflight_setting() if self.twin_delivery else None
+        confirmed_published = False
+
         parsed_ack = parse_box_ack(frame_bytes)
         if (
             parsed_ack
@@ -736,6 +742,16 @@ class ProxyServer:
             and parsed_ack.get("table")
             and parsed_ack.get("todo")
         ):
+            if inflight_setting is not None:
+                setting, inflight_device_id = inflight_setting
+                if (setting.table, setting.key) == (parsed_ack["table"], parsed_ack["todo"]):
+                    await self._publish_confirmed_setting(
+                        inflight_device_id,
+                        setting.table,
+                        setting.key,
+                        setting.value,
+                    )
+                    confirmed_published = True
             logger.info(
                 "✅ BOX ACK received: %s:%s payload=%s",
                 parsed_ack["table"],
@@ -750,6 +766,13 @@ class ProxyServer:
 
         event_ack = parse_tbl_events_ack(parsed_frame)
         if event_ack and event_ack.get("table") and event_ack.get("key"):
+            await self._publish_confirmed_setting(
+                str(parsed_frame.get("_device_id") or ""),
+                event_ack["table"],
+                event_ack["key"],
+                event_ack.get("value"),
+            )
+            confirmed_published = True
             logger.info(
                 "✅ BOX ACK received (tbl_events): %s:%s payload=%s",
                 event_ack["table"],
@@ -763,9 +786,16 @@ class ProxyServer:
             )
 
         if parsed_ack and parsed_ack.get("result") == "ACK" and parsed_ack.get("reason") == "Setting":
-            inflight = self.twin_delivery.inflight()
-            if inflight is not None:
-                table, key = inflight
+            if inflight_setting is not None:
+                setting, inflight_device_id = inflight_setting
+                if not confirmed_published:
+                    await self._publish_confirmed_setting(
+                        inflight_device_id,
+                        setting.table,
+                        setting.key,
+                        setting.value,
+                    )
+                table, key = setting.table, setting.key
                 logger.info(
                     "✅ BOX ACK received (Reason=Setting), acknowledging inflight %s:%s payload=%s",
                     table,
@@ -773,6 +803,26 @@ class ProxyServer:
                     frame_text,
                 )
                 self.twin_delivery.acknowledge(table, key, session_id=session_id)
+
+    async def _publish_confirmed_setting(
+        self,
+        device_id: str | None,
+        table: str,
+        key: str,
+        value: Any,
+    ) -> None:
+        if self.on_confirmed_setting is None or not device_id:
+            return
+        try:
+            await self.on_confirmed_setting(device_id, table, key, value)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Confirmed setting publish failed for %s:%s=%s: %s",
+                table,
+                key,
+                value,
+                exc,
+            )
 
     async def _deliver_pending_for_isnewset(
         self,

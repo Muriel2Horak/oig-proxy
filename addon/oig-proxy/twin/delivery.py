@@ -214,6 +214,15 @@ class TwinDelivery:
         """Get current global inflight setting."""
         return self._inflight_key
 
+    def inflight_setting(self) -> tuple[TwinSetting, str] | None:
+        """Return current inflight setting together with target device_id."""
+        if self._inflight_key is None or self._inflight_device_id is None:
+            return None
+        setting = self._twin_queue.get(self._inflight_key[0], self._inflight_key[1])
+        if setting is None:
+            return None
+        return setting, self._inflight_device_id
+
     def session_inflight(self, session_id: str) -> tuple[str, str] | None:
         """Get current session inflight setting."""
         data = self._session_inflight.get(session_id)
