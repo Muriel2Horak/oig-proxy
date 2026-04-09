@@ -464,6 +464,24 @@ class ProxyServer:
                 self._active_connections.discard(current)
             return
 
+        if cloud_reader is None or cloud_writer is None:
+            logger.error("❌ Cloud connection missing stream endpoints after successful connect")
+            box_writer.close()
+            await box_writer.wait_closed()
+            self._record_telemetry_connection_end(
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_reason="cloud_connect_missing_stream",
+                box_peer=peer_str,
+                cloud_connected_since_epoch=None,
+                cloud_reason=cloud_disconnect_reason,
+            )
+            self._active_connection_count -= 1
+            self._box_connected = False
+            self.box_peer = None
+            if current is not None:
+                self._active_connections.discard(current)
+            return
+
         # Spustíme obousměrný forward.
         # Používáme FIRST_COMPLETED + cancel, aby po odpojení jedné strany
         # byl okamžitě uvolněn i druhý socket (jinak hrozí FD leak – každých

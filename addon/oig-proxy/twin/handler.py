@@ -137,16 +137,19 @@ class TwinControlHandler:
                 return
 
             # Extract required fields
-            table = data.get("table")
-            key = data.get("key")
+            table_raw = data.get("table")
+            key_raw = data.get("key")
             value = data.get("value")
 
-            if table is None or key is None or value is None:
+            if not isinstance(table_raw, str) or not isinstance(key_raw, str) or value is None:
                 logger.warning(
                     "TwinControlHandler: Invalid message format on %s: missing table/key/value",
                     topic,
                 )
                 return
+
+            table = table_raw
+            key = key_raw
 
             if not is_setting_allowed(table, key):
                 logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
