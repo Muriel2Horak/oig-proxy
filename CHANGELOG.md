@@ -2,6 +2,16 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.9] - 2026-04-09
+
+### Fixed
+- **Confirmed setting state sync**: když Box potvrdí změnu nastavení přes `tbl_events` nebo ACK inflight settingu, proxy nyní přepublikuje potvrzenou hodnotu zpět do MQTT/HA state přes existující `FrameProcessor` merge cestu. Nastavené entity tak po cloud změně okamžitě ukazují potvrzený stav Boxu místo čekání na další plný refresh tabulky.
+- **Generic transport frame filtering**: setting transport framy a ACK/END metadata (`ID`, `NewValue`, `Confirm`, `TblItem`, `ID_Server`, `mytimediff`, `TSec`, `Rdt`, `Tmr`, ...) už se obecně neberou jako senzorická data. Tím mizí warningy `Missing sensor_map entry` pro `tbl_box_prms`, `tbl_invertor_prms`, `tbl_invertor_prm1` a podobné setting tabulky, aniž by bylo potřeba hardcodovat konkrétní tabulky.
+- **Twin setting XML self references**: opravena chyba v `TwinSetting.build_setting_xml`, kde se při skládání XML používaly neexistující lokální proměnné místo `self.value`, `self.table` a `self.key`.
+
+### Added
+- **Project docs import**: do repa přidány `docs/v2/`, `AGENTS.md` a zdrojový workbook `docs/CBB Box - modbus TCP.xls`, se srovnanými odkazy na aktuální `addon/oig-proxy` layout a cloud endpoint.
+
 ## [2.0.8] - 2026-04-02
 
 ### Fixed
