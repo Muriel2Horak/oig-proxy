@@ -131,45 +131,7 @@ class ProxyApp:
 
         # Create twin components
         self.twin_queue = TwinQueue()
-        self.twin_delivery = TwinDelivery(self.twin_queue, self.mqtt)
 
-        # 5. Start TwinControlHandler (if MQTT ready)
-        if self.mqtt.is_ready():
-            self.twin_handler = TwinControlHandler(
-                mqtt=self.mqtt,
-                twin_queue=self.twin_queue,
-                device_id=mqtt_device_id,
-                namespace=self.config.mqtt_namespace,
-                proxy_control_handler=self._handle_proxy_control,
-            )
-            await self.twin_handler.start()
-            logger.info("TwinControlHandler started")
-        else:
-            logger.warning("TwinControlHandler not started (MQTT not ready)")
-
-        # 6. Start ProxyStatusPublisher
-        if self.config.proxy_status_interval > 0:
-            self.status_publisher = ProxyStatusPublisher(
-                mqtt=self.mqtt,
-                interval=self.config.proxy_status_interval,
-                proxy_device_id=self.config.proxy_device_id,
-                sensor_loader=self.sensor_loader,
-                get_configured_mode=(
-                    lambda: self.proxy.mode_manager.configured_mode if self.proxy else "online"
-                ),
-                initial_device_id=device_id,
-            )
-            status_task = asyncio.create_task(
-                self.status_publisher.run(),
-                name="status_publisher",
-            )
-            self._tasks.add(status_task)
-            status_task.add_done_callback(self._tasks.discard)
-            logger.info("ProxyStatusPublisher started (interval=%ds)", self.config.proxy_status_interval)
-        else:
-            logger.info("ProxyStatusPublisher disabled (interval <= 0)")
-
-        # 7. Start TelemetryCollector
         if self.config.telemetry_enabled:
             self.telemetry_collector = TelemetryCollector(
                 interval_s=self.config.telemetry_interval_s,
@@ -201,9 +163,54 @@ class ProxyApp:
             )
             self.telemetry_collector.init()
 
+        self.twin_delivery = TwinDelivery(
+            self.twin_queue,
+            self.mqtt,
+            telemetry_collector=self.telemetry_collector,
+        )
+
+        # 5. Start TwinControlHandler (if MQTT ready)
+        if self.mqtt.is_ready():
+            self.twin_handler = TwinControlHandler(
+                mqtt=self.mqtt,
+                twin_queue=self.twin_queue,
+                device_id=mqtt_device_id,
+                namespace=self.config.mqtt_namespace,
+                proxy_control_handler=self._handle_proxy_control,
+                telemetry_collector=self.telemetry_collector,
+            )
+            await self.twin_handler.start()
+            logger.info("TwinControlHandler started")
+        else:
+            logger.warning("TwinControlHandler not started (MQTT not ready)")
+
+        # 6. Start ProxyStatusPublisher
+        if self.config.proxy_status_interval > 0:
+            self.status_publisher = ProxyStatusPublisher(
+                mqtt=self.mqtt,
+                interval=self.config.proxy_status_interval,
+                proxy_device_id=self.config.proxy_device_id,
+                sensor_loader=self.sensor_loader,
+                get_configured_mode=(
+                    lambda: self.proxy.mode_manager.configured_mode if self.proxy else "online"
+                ),
+                initial_device_id=device_id,
+            )
+            status_task = asyncio.create_task(
+                self.status_publisher.run(),
+                name="status_publisher",
+            )
+            self._tasks.add(status_task)
+            status_task.add_done_callback(self._tasks.discard)
+            logger.info("ProxyStatusPublisher started (interval=%ds)", self.config.proxy_status_interval)
+        else:
+            logger.info("ProxyStatusPublisher disabled (interval <= 0)")
+
+        # 7. Start TelemetryCollector
+        if self.telemetry_collector is not None:
             class _TelemetryLogHandler(logging.Handler):
                 def __init__(self, collector: TelemetryCollector) -> None:
-                    super().__init__(level=logging.WARNING)
+                    super().__init__(level=logging.NOTSET)
                     self._collector = collector
 
                 def emit(self, record: logging.LogRecord) -> None:

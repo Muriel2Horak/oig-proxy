@@ -204,16 +204,16 @@ class ProxyServer:
             await server.serve_forever()
 
     async def stop(self) -> None:
-        """Graceful shutdown."""
         if self._server:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
-        # Zrušíme aktivní spojení
         for task in list(self._active_connections):
             task.cancel()
         if self._active_connections:
             await asyncio.gather(*self._active_connections, return_exceptions=True)
+        if self.twin_delivery is not None:
+            self.twin_delivery.shutdown()
         logger.info("OIG Proxy v2 zastavena")
 
     def is_box_connected(self) -> bool:
@@ -309,8 +309,8 @@ class ProxyServer:
             box_writer.close()
             try:
                 await box_writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("wait_closed error during rejection: %s", exc)
             if current is not None:
                 self._active_connections.discard(current)
             return
@@ -517,8 +517,8 @@ class ProxyServer:
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("wait_closed error in pipe cleanup: %s", exc)
             self._record_telemetry_connection_end(
                 box_connected_since_epoch=box_connected_since_epoch,
                 box_reason=box_disconnect_reason,
@@ -642,6 +642,11 @@ class ProxyServer:
                                 setting.table,
                                 setting.key,
                                 setting.value,
+                            )
+                            self.twin_delivery.record_injected_box(
+                                setting,
+                                device_id,
+                                session_id=session_id or "",
                             )
                             withheld_chunks = True
                             continue
@@ -770,6 +775,15 @@ class ProxyServer:
         inflight_setting = self.twin_delivery.inflight_setting() if self.twin_delivery else None
         confirmed_published = False
 
+        def _unpack_inflight():
+            if inflight_setting is None:
+                return None
+            try:
+                setting, device_id = inflight_setting
+                return setting, device_id
+            except Exception:
+                return None
+
         parsed_ack = parse_box_ack(frame_bytes)
         if (
             parsed_ack
@@ -777,27 +791,29 @@ class ProxyServer:
             and parsed_ack.get("table")
             and parsed_ack.get("todo")
         ):
-            if inflight_setting is not None:
-                setting, inflight_device_id = inflight_setting
+            matched_inflight = False
+            pair = _unpack_inflight()
+            if pair is not None:
+                setting, inflight_device_id = pair
                 if (setting.table, setting.key) == (parsed_ack["table"], parsed_ack["todo"]):
-                    await self._publish_confirmed_setting(
+                    matched_inflight = True
+                    self.twin_delivery.record_ack_box_observed(
+                        setting,
                         inflight_device_id,
-                        setting.table,
-                        setting.key,
-                        setting.value,
+                        session_id=session_id or "",
                     )
-                    confirmed_published = True
             logger.info(
                 "✅ BOX ACK received: %s:%s payload=%s",
                 parsed_ack["table"],
                 parsed_ack["todo"],
                 frame_text,
             )
-            self.twin_delivery.acknowledge(
-                parsed_ack["table"],
-                parsed_ack["todo"],
-                session_id=session_id,
-            )
+            if not matched_inflight:
+                self.twin_delivery.acknowledge(
+                    parsed_ack["table"],
+                    parsed_ack["todo"],
+                    session_id=session_id,
+                )
 
         event_ack = parse_tbl_events_ack(parsed_frame)
         if event_ack and event_ack.get("table") and event_ack.get("key"):
@@ -814,6 +830,16 @@ class ProxyServer:
                 event_ack["key"],
                 frame_text,
             )
+            pair = _unpack_inflight()
+            if pair is not None:
+                setting, inflight_device_id = pair
+                if (setting.table, setting.key) == (event_ack["table"], event_ack["key"]):
+                    self.twin_delivery.record_ack_tbl_events(
+                        setting,
+                        inflight_device_id,
+                        confirmed_value=event_ack.get("value"),
+                        session_id=session_id or "",
+                    )
             self.twin_delivery.acknowledge(
                 event_ack["table"],
                 event_ack["key"],
@@ -821,8 +847,9 @@ class ProxyServer:
             )
 
         if parsed_ack and parsed_ack.get("result") == "ACK" and parsed_ack.get("reason") == "Setting":
-            if inflight_setting is not None:
-                setting, inflight_device_id = inflight_setting
+            pair = _unpack_inflight()
+            if pair is not None:
+                setting, inflight_device_id = pair
                 if not confirmed_published:
                     await self._publish_confirmed_setting(
                         inflight_device_id,
@@ -830,6 +857,11 @@ class ProxyServer:
                         setting.key,
                         setting.value,
                     )
+                self.twin_delivery.record_ack_reason_setting(
+                    setting,
+                    inflight_device_id,
+                    session_id=session_id or "",
+                )
                 table, key = setting.table, setting.key
                 logger.info(
                     "✅ BOX ACK received (Reason=Setting), acknowledging inflight %s:%s payload=%s",
@@ -838,6 +870,27 @@ class ProxyServer:
                     frame_text,
                 )
                 self.twin_delivery.acknowledge(table, key, session_id=session_id)
+
+        if parsed_ack and parsed_ack.get("result") == "NACK":
+            pair = _unpack_inflight()
+            if pair is not None:
+                setting, inflight_device_id = pair
+                self.twin_delivery.record_nack(
+                    setting,
+                    inflight_device_id,
+                    session_id=session_id or "",
+                )
+                logger.info(
+                    "❌ BOX NACK received for inflight %s:%s payload=%s",
+                    setting.table,
+                    setting.key,
+                    frame_text,
+                )
+                self.twin_delivery.acknowledge(
+                    setting.table,
+                    setting.key,
+                    session_id=session_id,
+                )
 
     async def _publish_confirmed_setting(
         self,
@@ -882,6 +935,7 @@ class ProxyServer:
                 frame = build_frame(payload).encode("utf-8", errors="replace")
                 box_writer.write(frame)
                 await box_writer.drain()
+                self.twin_delivery.record_injected_box(setting, device_id)
             except (OSError, ConnectionResetError):
                 break
 
@@ -1019,8 +1073,8 @@ class ProxyServer:
             box_writer.close()
             try:
                 await box_writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("wait_closed error in offline pipe: %s", exc)
             logger.info("🔌 BOX odpojen (offline): %s:%s", *peer[:2])
 
     async def _handle_offline_frames(

@@ -4,10 +4,19 @@ import logging
 import secrets
 import time
 from datetime import datetime, timezone, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from telemetry.settings_audit import (
+    ACK_TERMINAL_PRECEDENCE,
+    TERMINAL_STEPS,
+    SettingStep,
+    make_incoming_record,
+    make_step_record,
+)
 
 if TYPE_CHECKING:
     from ..mqtt.client import MQTTClient
+    from telemetry.collector import TelemetryCollector
     from .state import TwinQueue, TwinSetting
 
 
@@ -21,23 +30,32 @@ class TwinDelivery:
     Cloud-initiated settings take priority over local queue.
     """
     
-    def __init__(self, twin_queue: TwinQueue, mqtt: MQTTClient, inflight_timeout_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        twin_queue: TwinQueue,
+        mqtt: MQTTClient,
+        inflight_timeout_s: float = 60.0,
+        telemetry_collector: TelemetryCollector | None = None,
+    ) -> None:
         self._twin_queue = twin_queue
         self._mqtt = mqtt
         self._inflight_timeout_s = inflight_timeout_s
-        
+        self._telemetry_collector = telemetry_collector
+
         # Cloud-initiated setting tracking
         self._cloud_inflight: bool = False
-        
+
         # Session-level inflight tracking: session_id -> (table, key, since)
         self._session_inflight: dict[str, tuple[str, str, float]] = {}
-        
+
         # Global inflight for backward compatibility
         self._inflight_key: tuple[str, str] | None = None
         self._inflight_device_id: str | None = None
         self._inflight_since: float | None = None
         self._last_seen_id_set: int | None = None
         self._last_msg_id: int | None = None
+
+        self._recorded_terminal: dict[str, SettingStep] = {}
 
     def observe_id_set(self, id_set: int | None) -> None:
         if id_set is None:
@@ -67,6 +85,49 @@ class TwinDelivery:
             self._last_msg_id = 13_000_000
         return self._last_msg_id
 
+    def _make_parent_record(self, setting: TwinSetting, device_id: str) -> Any:
+        record = make_incoming_record(
+            device_id=device_id,
+            table=setting.table,
+            key=setting.key,
+            raw_text="",
+            value=setting.value,
+            msg_id=setting.msg_id,
+            id_set=setting.id_set,
+        )
+        record.audit_id = setting.audit_id
+        return record
+
+    def _record_audit_step(
+        self,
+        setting: TwinSetting,
+        device_id: str,
+        step: SettingStep,
+        *,
+        confirmed_value: Any = None,
+        raw_text: str = "",
+        session_id: str = "",
+    ) -> None:
+        if self._telemetry_collector is None or not setting.audit_id:
+            return
+        if step in TERMINAL_STEPS:
+            existing = self._recorded_terminal.get(setting.audit_id)
+            if existing is not None:
+                existing_prec = ACK_TERMINAL_PRECEDENCE.get(existing, 0)
+                new_prec = ACK_TERMINAL_PRECEDENCE.get(step, 0)
+                if existing_prec >= new_prec:
+                    return
+            self._recorded_terminal[setting.audit_id] = step
+        parent = self._make_parent_record(setting, device_id)
+        record = make_step_record(
+            parent,
+            step,
+            confirmed_value=confirmed_value,
+            raw_text=raw_text,
+            session_id=session_id,
+        )
+        self._telemetry_collector.record_setting_audit_step(record)
+
     async def deliver_pending(
         self, 
         device_id: str,
@@ -91,6 +152,14 @@ class TwinDelivery:
                     self._inflight_key[1],
                     elapsed,
                 )
+                setting = self._twin_queue.get(self._inflight_key[0], self._inflight_key[1])
+                if setting is not None and self._inflight_device_id is not None:
+                    self._record_audit_step(
+                        setting,
+                        self._inflight_device_id,
+                        SettingStep.TIMEOUT,
+                        session_id=session_id or "",
+                    )
                 self._twin_queue.acknowledge(self._inflight_key[0], self._inflight_key[1])
                 self._clear_global_inflight()
 
@@ -108,6 +177,14 @@ class TwinDelivery:
                         key,
                         elapsed,
                     )
+                    setting = self._twin_queue.get(table, key)
+                    if setting is not None and self._inflight_device_id is not None:
+                        self._record_audit_step(
+                            setting,
+                            self._inflight_device_id,
+                            SettingStep.TIMEOUT,
+                            session_id=session_id,
+                        )
                     del self._session_inflight[session_id]
                 else:
                     logger.debug(
@@ -134,16 +211,23 @@ class TwinDelivery:
 
         # Take first setting
         setting = pending[0]
-        
+
         # Mark as inflight (both session and global)
         now = time.monotonic()
         self._inflight_key = (setting.table, setting.key)
         self._inflight_device_id = device_id
         self._inflight_since = now
-        
+
         if session_id is not None:
             self._session_inflight[session_id] = (setting.table, setting.key, now)
-        
+
+        self._record_audit_step(
+            setting,
+            device_id,
+            SettingStep.DELIVER_SELECTED,
+            session_id=session_id or "",
+        )
+
         logger.info(
             "TwinDelivery: delivering %s:%s=%s (device=%s, session=%s)",
             setting.table,
@@ -152,7 +236,7 @@ class TwinDelivery:
             device_id,
             session_id or "global",
         )
-        
+
         return [setting]
 
     def acknowledge(self, table: str, key: str, session_id: str | None = None) -> bool:
@@ -193,22 +277,100 @@ class TwinDelivery:
         return removed
 
     def _clear_global_inflight(self) -> None:
-        """Clear global inflight state."""
         self._inflight_key = None
         self._inflight_device_id = None
         self._inflight_since = None
 
     def clear_session(self, session_id: str) -> None:
-        """Clear session tracking (call when TCP session ends)."""
         if session_id in self._session_inflight:
             table, key, _ = self._session_inflight[session_id]
-            logger.debug(
-                "TwinDelivery: clearing session %s inflight %s:%s",
-                session_id,
-                table,
-                key,
-            )
+            setting = self._twin_queue.get(table, key)
+            if setting is not None and self._inflight_device_id is not None:
+                self._record_audit_step(
+                    setting,
+                    self._inflight_device_id,
+                    SettingStep.SESSION_CLEARED,
+                    session_id=session_id,
+                )
             del self._session_inflight[session_id]
+
+    def record_injected_box(
+        self,
+        setting: TwinSetting,
+        device_id: str,
+        session_id: str = "",
+    ) -> None:
+        self._record_audit_step(
+            setting,
+            device_id,
+            SettingStep.INJECTED_BOX,
+            session_id=session_id,
+        )
+
+    def record_ack_box_observed(
+        self,
+        setting: TwinSetting,
+        device_id: str,
+        session_id: str = "",
+    ) -> None:
+        self._record_audit_step(
+            setting,
+            device_id,
+            SettingStep.ACK_BOX_OBSERVED,
+            session_id=session_id,
+        )
+
+    def record_ack_tbl_events(
+        self,
+        setting: TwinSetting,
+        device_id: str,
+        confirmed_value: Any,
+        session_id: str = "",
+    ) -> None:
+        self._record_audit_step(
+            setting,
+            device_id,
+            SettingStep.ACK_TBL_EVENTS,
+            confirmed_value=confirmed_value,
+            session_id=session_id,
+        )
+
+    def record_ack_reason_setting(
+        self,
+        setting: TwinSetting,
+        device_id: str,
+        session_id: str = "",
+    ) -> None:
+        self._record_audit_step(
+            setting,
+            device_id,
+            SettingStep.ACK_REASON_SETTING,
+            session_id=session_id,
+        )
+
+    def record_nack(
+        self,
+        setting: TwinSetting,
+        device_id: str,
+        session_id: str = "",
+    ) -> None:
+        self._record_audit_step(
+            setting,
+            device_id,
+            SettingStep.NACK,
+            session_id=session_id,
+        )
+
+    def shutdown(self) -> None:
+        if self._inflight_key is not None and self._inflight_device_id is not None:
+            setting = self._twin_queue.get(self._inflight_key[0], self._inflight_key[1])
+            if setting is not None:
+                self._record_audit_step(
+                    setting,
+                    self._inflight_device_id,
+                    SettingStep.SESSION_CLEARED,
+                )
+            self._clear_global_inflight()
 
     def inflight(self) -> tuple[str, str] | None:
         """Get current global inflight setting."""

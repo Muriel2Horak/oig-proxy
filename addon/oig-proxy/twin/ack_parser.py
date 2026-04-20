@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_RESULT_RE = re.compile(rb"<Result>(ACK|END)</Result>")
+_RESULT_RE = re.compile(rb"<Result>(ACK|END|NACK)</Result>")
 _TABLE_RE = re.compile(rb"<TblName>([^<]+)</TblName>")
 _TODO_RE = re.compile(rb"<ToDo>([^<]+)</ToDo>")
 _DT_RE = re.compile(rb"<DT>([^<]+)</DT>")
