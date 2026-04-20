@@ -8,13 +8,23 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
+from unittest.mock import MagicMock  # pylint: disable=wrong-import-position
+
 from protocol.frames import build_setting_frame  # pylint: disable=wrong-import-position
+from telemetry.settings_audit import SettingResult, SettingStep, record_to_dict  # pylint: disable=wrong-import-position
 from twin.delivery import TwinDelivery  # pylint: disable=wrong-import-position
 from twin.state import TwinQueue  # pylint: disable=wrong-import-position
 
 
 class _MQTTStub:
     pass
+
+
+def _make_collector():
+    collector = MagicMock()
+    collector.settings_audit = []
+    collector.record_setting_audit_step = lambda r: collector.settings_audit.append(record_to_dict(r))
+    return collector
 
 
 @pytest.mark.asyncio
@@ -135,3 +145,111 @@ def test_observed_msg_id_increments_monotonic() -> None:
 
     assert first == 13_800_001
     assert second == 13_800_002
+
+
+@pytest.mark.asyncio
+async def test_deliver_pending_records_selected_step() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+
+    assert len(pending) == 1
+    assert len(collector.settings_audit) == 1
+    record = collector.settings_audit[0]
+    assert record["step"] == SettingStep.DELIVER_SELECTED.value
+    assert record["result"] == SettingResult.PENDING.value
+    assert record["audit_id"] == pending[0].audit_id
+    assert record["session_id"] == "sess_1"
+
+
+@pytest.mark.asyncio
+async def test_timeout_records_timeout_step() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, _MQTTStub(), inflight_timeout_s=0.0, telemetry_collector=collector)
+
+    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
+
+    assert len(collector.settings_audit) == 2
+    timeout_record = collector.settings_audit[1]
+    assert timeout_record["step"] == SettingStep.TIMEOUT.value
+    assert timeout_record["result"] == SettingResult.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_clear_session_records_session_cleared() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    delivery.clear_session("sess_1")
+
+    assert len(collector.settings_audit) == 2
+    session_record = collector.settings_audit[1]
+    assert session_record["step"] == SettingStep.SESSION_CLEARED.value
+    assert session_record["result"] == SettingResult.INCOMPLETE.value
+    assert session_record["audit_id"] == pending[0].audit_id
+
+
+@pytest.mark.asyncio
+async def test_shutdown_records_session_cleared_for_global_inflight() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
+
+    pending = await delivery.deliver_pending("dev_1")
+    delivery.shutdown()
+
+    assert len(collector.settings_audit) == 2
+    session_record = collector.settings_audit[1]
+    assert session_record["step"] == SettingStep.SESSION_CLEARED.value
+    assert session_record["result"] == SettingResult.INCOMPLETE.value
+    assert session_record["audit_id"] == pending[0].audit_id
+
+
+def test_terminal_deduplication_prevents_duplicate_success() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
+
+    setting = queue.get("tbl_set", "T_Room")
+    assert setting is not None
+
+    delivery.record_ack_box_observed(setting, "dev_1")
+    delivery.record_ack_box_observed(setting, "dev_1")
+
+    assert len(collector.settings_audit) == 2
+    assert collector.settings_audit[0]["step"] == SettingStep.ACK_BOX_OBSERVED.value
+    assert collector.settings_audit[1]["step"] == SettingStep.ACK_BOX_OBSERVED.value
+
+    delivery.record_ack_tbl_events(setting, "dev_1", confirmed_value="23")
+    delivery.record_ack_tbl_events(setting, "dev_1", confirmed_value="23")
+
+    assert len(collector.settings_audit) == 3
+    assert collector.settings_audit[2]["step"] == SettingStep.ACK_TBL_EVENTS.value
+    assert collector.settings_audit[2]["result"] == SettingResult.CONFIRMED.value
+
+
+@pytest.mark.asyncio
+async def test_session_timeout_records_timeout_step() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, _MQTTStub(), inflight_timeout_s=0.0, telemetry_collector=collector)
+
+    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
+
+    assert len(collector.settings_audit) == 2
+    timeout_record = collector.settings_audit[1]
+    assert timeout_record["step"] == SettingStep.TIMEOUT.value
+    assert timeout_record["result"] == SettingResult.FAILED.value

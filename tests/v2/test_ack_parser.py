@@ -32,7 +32,8 @@ def test_parse_box_ack_with_reason() -> None:
 
 
 def test_parse_box_ack_non_ack_returns_none() -> None:
-    assert parse_box_ack(b"<Result>NACK</Result>") is None
+    # NACK is now a valid parsed result (used for settings audit NACK tracking)
+    assert parse_box_ack(b"<Result>NACK</Result>") == {"result": "NACK"}
 
 
 def test_parse_tbl_events_ack_setting_event() -> None:
