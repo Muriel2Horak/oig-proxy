@@ -211,9 +211,8 @@ class TelemetryCollector:
             with self._logs_lock:
                 self.logs.append(entry)
                 self._prune_log_buffer()
-        except Exception:
+        except Exception:  # NOSONAR
             self.log_error = True
-            self.log_error = False
 
     def _snapshot_logs(self) -> list[dict[str, Any]]:
         logs, _ = self._snapshot_log_buffer()
@@ -254,7 +253,7 @@ class TelemetryCollector:
     def _extract_nack_reason(response_text: str) -> str:
         import re
 
-        match = re.search(r"<Reason>([^<]*)</Reason>", response_text)
+        match = re.search(r"<Reason>([^<]*)</Reason>", response_text)  # NOSONAR
         return match.group(1).strip() if match else "unknown"
 
     def record_nack_reason(self, reason: str) -> None:

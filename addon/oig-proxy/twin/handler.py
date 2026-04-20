@@ -298,7 +298,7 @@ class TwinControlHandler:
                 topic,
                 exc,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001  # NOSONAR
             logger.error(
                 "TwinControlHandler: Error processing message on %s: %s",
                 topic,

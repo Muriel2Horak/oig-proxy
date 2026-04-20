@@ -92,7 +92,7 @@ ACK_TERMINAL_PRECEDENCE = {
 # Privacy Redaction
 # ----------------------------------------------------------------------
 
-_PRIVACY_KEY_RE = re.compile(
+_PRIVACY_KEY_RE = re.compile(  # NOSONAR - safe pattern, no ReDoS risk (no nested quantifiers)
     r"(password|token|secret|auth|pass|key)",
     re.IGNORECASE,
 )
