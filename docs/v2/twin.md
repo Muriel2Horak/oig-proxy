@@ -379,3 +379,83 @@ The `proxy_status:control_queue_len` sensor shows how many settings are pending 
 `proxy_status:control_inflight` shows the key currently being applied (or empty if none).
 
 `proxy_status:control_last_result` shows the last ACK/NACK result.
+
+---
+
+## Settings Audit Lifecycle
+
+When a setting command flows through the proxy, the telemetry system records each
+step in the `settings_audit` array. This is **not** a generic frame-capture
+mechanism. Raw text is stored **only** for the `incoming` step (the initial
+settings command). Subsequent steps track the lifecycle without raw text.
+
+### Step Taxonomy (lifecycle stages)
+
+| Step | Meaning |
+|------|---------|
+| `incoming` | First seen inbound command via MQTT control topic |
+| `rejected_not_allowed` | Setting key is not in the allowlist |
+| `rejected_validation` | Value failed validation |
+| `enqueued` | Accepted and placed in the twin queue |
+| `superseded` | A newer setting for the same `(table, key)` replaced this one |
+| `deliver_selected` | Chosen from the queue for delivery to the Box |
+| `injected_box` | Sent to the Box as an XML frame |
+| `ack_box_observed` | Box acknowledged the setting |
+| `ack_tbl_events` | Confirmed via a `tbl_events` frame from the Box |
+| `ack_reason_setting` | Confirmed via cloud `reason=Setting` response |
+| `nack` | Box or cloud rejected the setting |
+| `timeout` | No response received within the timeout window |
+| `session_cleared` | Session ended without confirmation (graceful shutdown) |
+
+### Result Enum
+
+| Result | Meaning |
+|--------|---------|
+| `pending` | Awaiting further lifecycle steps |
+| `rejected` | Setting was rejected (not_allowed or validation) |
+| `superseded` | Replaced by another setting for the same key |
+| `confirmed` | Successfully confirmed by the Box |
+| `failed` | Failed (nack or timeout) |
+| `incomplete` | Session cleared without confirmation |
+
+### Lifecycle Flow
+
+```
+incoming → enqueued → deliver_selected → injected_box
+                                              ↓
+                              ack_box_observed → ack_tbl_events → confirmed
+                                              ↓
+                              ack_reason_setting → confirmed
+                                              ↓
+                              nack → failed
+                              timeout → failed
+                              session_cleared → incomplete (graceful shutdown)
+```
+
+When a newer setting arrives for the same `(table, key)` before the earlier one
+is confirmed, the earlier audit record transitions to `superseded` and the newer
+one starts at `incoming`.
+
+### Raw Text Scope
+
+`raw_text` is captured **only** at the `incoming` step. It contains the full
+original MQTT payload for the settings command. All subsequent steps carry
+`raw_text: ""` (empty). This avoids storing duplicate payloads and limits the
+mechanism to settings flow tracking, not general frame capture.
+
+If the `raw_text` exceeds 16 KiB, it is truncated and `raw_text_truncated` is
+set to `true`. The original byte count is preserved in `raw_text_bytes_original`.
+
+### Session Termination
+
+- **Graceful shutdown (SIGTERM/SIGINT):** Any inflight settings record their
+  current step, then a `session_cleared` step is added with result `incomplete`.
+
+- **Abrupt crash:** The telemetry buffer is not flushed. The audit trail for
+  the current window is incomplete. This is an accepted operational gap.
+
+### Broker and Retention
+
+The settings audit telemetry is published to the same telemetry broker as other
+telemetry data (`telemetry.muriel-cz.cz:1883`). It is stored in the
+`telemetry_settings_audit` InfluxDB bucket with **180-day retention**.
