@@ -50,7 +50,7 @@ jobs:
       - name: Security scan (bandit)
         run: |
           mkdir -p reports
-          bandit -r addon/oig-proxy -f json -o reports/bandit.json
+          bandit -r addon/oig-proxy -x addon/oig-proxy/tests -f json -o reports/bandit.json
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@e44258b109568baa0df60ed515909fc6c72cba92
