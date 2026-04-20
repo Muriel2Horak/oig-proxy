@@ -208,12 +208,12 @@ class TelemetryClient:
             return
         try:
             client.loop_stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Telemetry client loop_stop error: %s", exc)
         try:
             client.disconnect()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Telemetry client disconnect error: %s", exc)
         self._client = None
         self._connected = False
 

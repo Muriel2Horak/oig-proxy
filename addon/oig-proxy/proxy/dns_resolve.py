@@ -11,7 +11,7 @@ overrides oigservis.cz → HA IP for LAN clients.
 from __future__ import annotations
 
 import logging
-import random
+import os
 import socket
 import struct
 
@@ -53,7 +53,7 @@ def resolve_a_record(
     except OSError:
         pass
 
-    query_id = random.randint(0, 65535)
+    query_id = struct.unpack(">H", os.urandom(2))[0]
 
     # DNS header: ID | flags(RD=1) | QDCOUNT=1 | ANCOUNT=0 | NSCOUNT=0 | ARCOUNT=0
     header = struct.pack(">HHHHHH", query_id, 0x0100, 1, 0, 0, 0)

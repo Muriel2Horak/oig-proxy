@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .client import TelemetryClient
+from .settings_audit import SettingStep, SettingsAuditRecord, record_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +83,18 @@ class TelemetryCollector:
         self.offline_events: deque[dict[str, Any]] = deque()
         self.tbl_events: deque[dict[str, Any]] = deque()
         self.error_context: deque[dict[str, Any]] = deque()
+        self.settings_audit: deque[dict[str, Any]] = deque()
 
         self.logs: deque[dict[str, Any]] = deque()
+        self._dropped_log_epochs: deque[float] = deque()
         self._logs_lock = threading.Lock()
-        self.log_window_s = 60
-        self.log_max = 1000
+        self.log_window_s = 300
+        self.log_max = 5000
         self.log_error = False
 
+        self.warning_burst_windows_remaining = 0
+        self.setting_burst_current_active = False
+        self.setting_burst_next_windows_remaining = 0
         self.debug_windows_remaining = 0
         self.box_seen_in_window = False
         self.force_logs_this_window = True
@@ -150,16 +156,50 @@ class TelemetryCollector:
         cutoff = time.time() - float(self.log_window_s)
         while self.logs and self.logs[0]["_epoch"] < cutoff:
             self.logs.popleft()
+        while self._dropped_log_epochs and self._dropped_log_epochs[0] < cutoff:
+            self._dropped_log_epochs.popleft()
         while len(self.logs) > self.log_max:
-            self.logs.popleft()
+            dropped_entry = self.logs.popleft()
+            self._dropped_log_epochs.append(float(dropped_entry["_epoch"]))
+
+    @property
+    def debug_windows_remaining(self) -> int:
+        return self.warning_burst_windows_remaining
+
+    @debug_windows_remaining.setter
+    def debug_windows_remaining(self, value: int) -> None:
+        self.warning_burst_windows_remaining = int(value)
+
+    def _build_log_overflow_marker(self, dropped_count: int) -> dict[str, Any]:
+        return {
+            "timestamp": self._utc_log_ts(time.time()),
+            "level": "WARNING",
+            "message": "log buffer truncated",
+            "source": "telemetry.collector",
+            "synthetic": True,
+            "dropped_count": dropped_count,
+        }
+
+    def _snapshot_log_buffer(self) -> tuple[list[dict[str, Any]], int]:
+        with self._logs_lock:
+            self._prune_log_buffer()
+            logs = [{k: v for k, v in item.items() if k != "_epoch"} for item in self.logs]
+            dropped_count = len(self._dropped_log_epochs)
+        return logs, dropped_count
+
+    def _advance_log_window_state(self) -> None:
+        if self.warning_burst_windows_remaining > 0:
+            self.warning_burst_windows_remaining -= 1
+        next_setting_window_active = self.setting_burst_next_windows_remaining > 0
+        if self.setting_burst_next_windows_remaining > 0:
+            self.setting_burst_next_windows_remaining -= 1
+        self.setting_burst_current_active = next_setting_window_active
 
     def record_log_entry(self, record: logging.LogRecord) -> None:
         if self.log_error:
             return
         if record.levelno >= logging.WARNING:
-            self.debug_windows_remaining = 2
-        if self.debug_windows_remaining <= 0 and not self.force_logs_this_window:
-            return
+            self.warning_burst_windows_remaining += 2
         try:
             entry = {
                 "_epoch": record.created,
@@ -176,9 +216,8 @@ class TelemetryCollector:
             self.log_error = False
 
     def _snapshot_logs(self) -> list[dict[str, Any]]:
-        with self._logs_lock:
-            self._prune_log_buffer()
-            return [{k: v for k, v in item.items() if k != "_epoch"} for item in self.logs]
+        logs, _ = self._snapshot_log_buffer()
+        return logs
 
     def _flush_log_buffer(self) -> list[dict[str, Any]]:
         with self._logs_lock:
@@ -344,6 +383,15 @@ class TelemetryCollector:
             }
         )
 
+    def record_setting_audit_step(self, record: SettingsAuditRecord | dict[str, Any]) -> None:
+        record_dict = record_to_dict(record) if isinstance(record, SettingsAuditRecord) else dict(record)
+        self.settings_audit.append(record_dict)
+        step = record_dict.get("step", "")
+        if step == SettingStep.INCOMING.value:
+            self.setting_burst_current_active = True
+            self.setting_burst_next_windows_remaining = 1
+            self.force_logs_this_window = True
+
     def record_box_session_end(self, *, connected_since_epoch: float | None, reason: str, peer: str | None) -> None:
         if connected_since_epoch is None:
             return
@@ -443,15 +491,15 @@ class TelemetryCollector:
             if self.client.device_id == "" and self._device_id:
                 self.client.device_id = self._device_id
             await self.client.provision()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Telemetry provision failed: %s", exc)
         try:
             if self.client.device_id == "" and self._device_id:
                 self.client.device_id = self._device_id
             metrics = self.collect_metrics()
             await self.client.send_telemetry(metrics)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Telemetry send_telemetry failed: %s", exc)
         while True:
             await asyncio.sleep(self.interval_s)
             try:
@@ -459,8 +507,8 @@ class TelemetryCollector:
                     self.client.device_id = self._device_id
                 metrics = self.collect_metrics()
                 await self.client.send_telemetry(metrics)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Telemetry periodic send failed: %s", exc)
 
     def _get_box_connected_window_status(self) -> bool:
         box_connected_now = bool(self._get_box_connected()) if self._get_box_connected else False
@@ -469,16 +517,17 @@ class TelemetryCollector:
         return box_connected_window
 
     @staticmethod
-    def _should_include_logs(debug_active: bool, box_connected_window: bool) -> bool:
-        return debug_active or not box_connected_window
+    def _should_include_logs(burst_active: bool, box_connected_window: bool) -> bool:
+        return burst_active or not box_connected_window
 
-    def _get_telemetry_logs(self, debug_active: bool, include_logs: bool) -> list[dict[str, Any]]:
-        logs = self._flush_log_buffer() if include_logs else []
-        if not include_logs:
-            with self._logs_lock:
-                self.logs.clear()
-        if debug_active:
-            self.debug_windows_remaining -= 1
+    def _get_telemetry_logs(self, burst_active: bool, include_logs: bool) -> list[dict[str, Any]]:
+        logs: list[dict[str, Any]] = []
+        if include_logs:
+            logs, dropped_count = self._snapshot_log_buffer()
+            if dropped_count > 0:
+                logs.append(self._build_log_overflow_marker(dropped_count))
+        if burst_active:
+            self._advance_log_window_state()
         return logs
 
     def _get_cloud_online_window_status(self) -> bool:
@@ -508,6 +557,7 @@ class TelemetryCollector:
             "error_context": list(self.error_context),
             "stats": self._flush_stats(),
             "logs": logs,
+            "settings_audit": list(self.settings_audit),
         }
         self.box_sessions.clear()
         self.cloud_sessions.clear()
@@ -515,7 +565,7 @@ class TelemetryCollector:
         self.offline_events.clear()
         self.tbl_events.clear()
         self.error_context.clear()
-        self.force_logs_this_window = True
+        self.settings_audit.clear()
         return window_metrics
 
     def _cached_state_value(self, device_id: str, table_name: str, field_name: str) -> Any | None:
@@ -580,10 +630,13 @@ class TelemetryCollector:
     def collect_metrics(self) -> dict[str, Any]:
         uptime_s = int(self._get_uptime_s()) if self._get_uptime_s else 0
         set_commands = self._consume_set_commands() if self._consume_set_commands else []
-        debug_active = self.debug_windows_remaining > 0
+        warning_burst_active = self.warning_burst_windows_remaining > 0
+        setting_burst_active = self.setting_burst_current_active
+        burst_active = warning_burst_active or setting_burst_active
         box_connected_window = self._get_box_connected_window_status()
-        include_logs = self._should_include_logs(debug_active, box_connected_window)
-        logs = self._get_telemetry_logs(debug_active, include_logs)
+        include_logs = self._should_include_logs(burst_active, box_connected_window) or self.force_logs_this_window
+        self.force_logs_this_window = False
+        logs = self._get_telemetry_logs(burst_active, include_logs)
         cloud_online_window = self._get_cloud_online_window_status()
         window_metrics = self._collect_and_clear_window_metrics(logs)
         metrics: dict[str, Any] = {

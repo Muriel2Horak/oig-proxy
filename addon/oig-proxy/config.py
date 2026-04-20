@@ -15,7 +15,7 @@ class Config:
     """Konfigurace proxy nactena z env vars."""
 
     # TCP proxy
-    proxy_host: str = "0.0.0.0"
+    proxy_host: str = "0.0.0.0"  # nosec: intentional bind for HA proxy service
     proxy_port: int = 5710
 
     # Cloud target
@@ -71,7 +71,7 @@ class Config:
             _addon_config = {}
         self.version: str = str(_addon_config.get("version", "unknown"))
 
-        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
+        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")  # nosec: intentional default bind for HA proxy service
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
         self.cloud_host = os.environ.get("TARGET_SERVER", "bridge.oigpower.cz")
