@@ -491,14 +491,14 @@ class TelemetryCollector:
                 self.client.device_id = self._device_id
             await self.client.provision()
         except Exception as exc:
-            logger.debug("Telemetry provision failed: %s", exc)
+            logger.info("Telemetry provision failed: %s", exc)
         try:
             if self.client.device_id == "" and self._device_id:
                 self.client.device_id = self._device_id
             metrics = self.collect_metrics()
             await self.client.send_telemetry(metrics)
         except Exception as exc:
-            logger.debug("Telemetry send_telemetry failed: %s", exc)
+            logger.info("Telemetry send_telemetry failed: %s", exc)
         while True:
             await asyncio.sleep(self.interval_s)
             try:
@@ -507,7 +507,7 @@ class TelemetryCollector:
                 metrics = self.collect_metrics()
                 await self.client.send_telemetry(metrics)
             except Exception as exc:
-                logger.debug("Telemetry periodic send failed: %s", exc)
+                logger.info("Telemetry periodic send failed: %s", exc)
 
     def _get_box_connected_window_status(self) -> bool:
         box_connected_now = bool(self._get_box_connected()) if self._get_box_connected else False

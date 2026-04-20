@@ -249,13 +249,16 @@ class TelemetryClient:
 
             for _ in range(50):
                 if self._connected:
+                    logger.info("Telemetry client connected to %s:%s", self._mqtt_host, self._mqtt_port)
                     return True
                 time.sleep(0.1)
 
+            logger.info("Telemetry client connection timeout after 5s")
             self._cleanup_client()
             self._connect_backoff_s = min(self._connect_backoff_s * 2.0, 300.0)
             return False
-        except Exception:
+        except Exception as exc:
+            logger.info("Telemetry client creation failed: %s", exc)
             self._cleanup_client()
             self._connect_backoff_s = min(self._connect_backoff_s * 2.0, 300.0)
             return False
