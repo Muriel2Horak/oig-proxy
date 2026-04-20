@@ -91,6 +91,7 @@ def test_raw_text_truncation_oversized_text_truncated_safely() -> None:
     """Oversized raw text is truncated safely at the 16 KiB boundary."""
     settings_audit = importlib.import_module("telemetry.settings_audit")
     truncate_raw_text = settings_audit.truncate_raw_text
+    # pylint: disable=protected-access
     _MAX_RAW_TEXT_BYTES = settings_audit._MAX_RAW_TEXT_BYTES
     make_incoming_record = settings_audit.make_incoming_record
 
@@ -247,6 +248,7 @@ def test_step_records_cap_raw_text_after_audit_id_exceeds_aggregate_limit() -> N
     make_incoming_record = settings_audit.make_incoming_record
     make_step_record = settings_audit.make_step_record
     SettingStep = settings_audit.SettingStep
+    # pylint: disable=protected-access
     _MAX_RAW_TEXT_BYTES = settings_audit._MAX_RAW_TEXT_BYTES
 
     _clear_audit_tracking_state(settings_audit)
@@ -280,6 +282,7 @@ def test_aggregate_raw_text_cap_is_tracked_independently_per_audit_id() -> None:
     make_incoming_record = settings_audit.make_incoming_record
     make_step_record = settings_audit.make_step_record
     SettingStep = settings_audit.SettingStep
+    # pylint: disable=protected-access
     _MAX_RAW_TEXT_BYTES = settings_audit._MAX_RAW_TEXT_BYTES
 
     _clear_audit_tracking_state(settings_audit)

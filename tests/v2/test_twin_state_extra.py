@@ -1,7 +1,7 @@
 """Additional coverage tests for twin state and ack parsing."""
 
 # pyright: reportMissingImports=false
-# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access,too-few-public-methods
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Coverage tests for capture modules."""
 
 # pyright: reportMissingImports=false
-# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access,too-few-public-methods
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import capture.frame_capture as frame_capture
-import capture.pcap_capture as pcap_capture
+from capture import frame_capture
+from capture import pcap_capture
 
 
 def _create_frames_table(conn: sqlite3.Connection) -> None:
@@ -155,6 +155,7 @@ def test_frame_capture_helper_functions_and_timed_out_writer_loop(monkeypatch: p
     timed_capture = frame_capture.FrameCapture(db_path=str(timed_db), retention_days=0)
 
     class FakeQueue:
+        # pylint: disable=useless-return
         def __init__(self) -> None:
             self.calls = 0
 
@@ -162,7 +163,7 @@ def test_frame_capture_helper_functions_and_timed_out_writer_loop(monkeypatch: p
             self.calls += 1
             if self.calls == 1:
                 raise queue.Empty
-            return None
+            return None  # noqa: R1711
 
     timed_capture._queue = FakeQueue()  # type: ignore[assignment]
     monotonic_values = iter([0.0, 0.6, 1.2])

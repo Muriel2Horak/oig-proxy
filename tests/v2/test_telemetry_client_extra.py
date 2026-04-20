@@ -1,7 +1,7 @@
 """Additional coverage tests for telemetry.client."""
 
 # pyright: reportMissingImports=false
-# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
+# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access,too-many-instance-attributes
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class FakeMQTTClient:
         self.published: list[tuple[str, dict[str, object], int]] = []
 
     def connect(self, host: str, port: int, keepalive: int = 60) -> None:
+        # pylint: disable=attribute-defined-outside-init
         self.host = host
         self.port = port
         self.keepalive = keepalive
@@ -41,6 +42,7 @@ class FakeMQTTClient:
         self.loop_start_calls += 1
         if self.auto_connect and self.on_connect is not None:
             self.connected = True
+            # pylint: disable=not-callable
             self.on_connect(self, None, None, 0, None)
 
     def loop_stop(self) -> None:

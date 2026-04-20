@@ -141,7 +141,7 @@ def test_cached_state_value_device_specific_metrics_and_collect_metrics(monkeypa
         "oig_local/dev-1/tbl_invertor_prms/state": "{",
     }
     mqtt_publisher = SimpleNamespace(
-        get_cached_payload=lambda topic: cache.get(topic),
+        get_cached_payload=cache.get,
         is_ready=lambda: True,
     )
     collector = _make_collector(
