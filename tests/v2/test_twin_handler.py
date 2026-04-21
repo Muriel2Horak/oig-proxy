@@ -491,6 +491,7 @@ class TestTwinControlHandlerSettingsAudit:
         setting = twin_queue.get("tbl_box_prms", "MODE")
         assert setting is not None
         assert setting.audit_id == incoming["audit_id"]
+        assert getattr(setting, "raw_text", "") == payload
 
     def test_rejected_setting_audit_still_emits_diagnostics(
         self,
@@ -540,10 +541,13 @@ class TestTwinControlHandlerSettingsAudit:
 
         assert superseded["audit_id"] == first_audit_id
         assert superseded["result"] == "superseded"
+        assert superseded["raw_text"] == payload1
         assert replacement_incoming["audit_id"] != first_audit_id
         assert replacement_enqueued["audit_id"] == replacement_incoming["audit_id"]
+        assert replacement_enqueued["raw_text"] == payload2
 
         setting = twin_queue.get("tbl_box_prms", "MODE")
         assert setting is not None
         assert setting.value == 1
         assert setting.audit_id == replacement_enqueued["audit_id"]
+        assert getattr(setting, "raw_text", "") == payload2

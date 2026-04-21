@@ -76,7 +76,7 @@ class TwinControlHandler:
             device_id=self._device_id,
             table=setting.table,
             key=setting.key,
-            raw_text="",
+            raw_text=setting.raw_text,
             value=setting.value,
             msg_id=setting.msg_id,
             id_set=setting.id_set,
@@ -186,13 +186,18 @@ class TwinControlHandler:
                                 SettingResult.SUPERSEDED,
                             )
                         )
-                    self._twin_queue.enqueue(table, key, normalized, audit_id=incoming_record.audit_id)
+                    self._twin_queue.enqueue(
+                        table,
+                        key,
+                        normalized,
+                        audit_id=incoming_record.audit_id,
+                        raw_text=incoming_record.raw_text,
+                    )
                     enqueued_setting = self._twin_queue.get(table, key)
                     self._record_setting_audit(
                         make_step_record(
                             incoming_record,
                             SettingStep.ENQUEUED,
-                            raw_text=raw_payload,
                             msg_id=enqueued_setting.msg_id if enqueued_setting is not None else None,
                             id_set=enqueued_setting.id_set if enqueued_setting is not None else None,
                         )
@@ -279,13 +284,18 @@ class TwinControlHandler:
                         SettingResult.SUPERSEDED,
                     )
                 )
-            self._twin_queue.enqueue(table, key, normalized, audit_id=incoming_record.audit_id)
+            self._twin_queue.enqueue(
+                table,
+                key,
+                normalized,
+                audit_id=incoming_record.audit_id,
+                raw_text=incoming_record.raw_text,
+            )
             enqueued_setting = self._twin_queue.get(table, key)
             self._record_setting_audit(
                 make_step_record(
                     incoming_record,
                     SettingStep.ENQUEUED,
-                    raw_text=raw_payload,
                     msg_id=enqueued_setting.msg_id if enqueued_setting is not None else None,
                     id_set=enqueued_setting.id_set if enqueued_setting is not None else None,
                 )
