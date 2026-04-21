@@ -44,6 +44,8 @@ class TwinDelivery:
 
         # Cloud-initiated setting tracking
         self._cloud_inflight: bool = False
+        self._cloud_inflight_setting: TwinSetting | None = None
+        self._cloud_inflight_device_id: str | None = None
 
         # Session-level inflight tracking: session_id -> (table, key, since)
         self._session_inflight: dict[str, tuple[str, str, float]] = {}
@@ -274,7 +276,15 @@ class TwinDelivery:
         
         # Try queue acknowledge anyway
         removed = self._twin_queue.acknowledge(table, key)
-        return removed
+        if removed:
+            return True
+
+        if self._cloud_inflight_setting is not None:
+            if (self._cloud_inflight_setting.table, self._cloud_inflight_setting.key) == (table, key):
+                self.clear_cloud_inflight()
+                return True
+
+        return False
 
     def _clear_global_inflight(self) -> None:
         self._inflight_key = None
@@ -372,12 +382,24 @@ class TwinDelivery:
                 )
             self._clear_global_inflight()
 
+        if self._cloud_inflight_setting is not None and self._cloud_inflight_device_id is not None:
+            self._record_audit_step(
+                self._cloud_inflight_setting,
+                self._cloud_inflight_device_id,
+                SettingStep.SESSION_CLEARED,
+            )
+            self.clear_cloud_inflight()
+
     def inflight(self) -> tuple[str, str] | None:
         """Get current global inflight setting."""
+        if self._cloud_inflight_setting is not None:
+            return self._cloud_inflight_setting.table, self._cloud_inflight_setting.key
         return self._inflight_key
 
     def inflight_setting(self) -> tuple[TwinSetting, str] | None:
         """Return current inflight setting together with target device_id."""
+        if self._cloud_inflight_setting is not None and self._cloud_inflight_device_id is not None:
+            return self._cloud_inflight_setting, self._cloud_inflight_device_id
         if self._inflight_key is None or self._inflight_device_id is None:
             return None
         setting = self._twin_queue.get(self._inflight_key[0], self._inflight_key[1])
@@ -397,7 +419,49 @@ class TwinDelivery:
         if session_id is not None:
             if session_id in self._session_inflight:
                 return True
-        return self._inflight_key is not None or self._twin_queue.size() > 0
+        return self._cloud_inflight or self._inflight_key is not None or self._twin_queue.size() > 0
+
+    def begin_cloud_setting(
+        self,
+        device_id: str,
+        table: str,
+        key: str,
+        value: Any,
+        raw_text: str,
+        *,
+        msg_id: int = 0,
+        id_set: int = 0,
+        confirm: str = "New",
+    ) -> None:
+        """Create audit-backed inflight state for a cloud-originated setting."""
+        from .state import TwinSetting
+
+        incoming_record = make_incoming_record(
+            device_id=device_id,
+            table=table,
+            key=key,
+            raw_text=raw_text,
+            value=value,
+            msg_id=msg_id,
+            id_set=id_set,
+        )
+        if self._telemetry_collector is not None:
+            self._telemetry_collector.record_setting_audit_step(incoming_record)
+
+        self._cloud_inflight_setting = TwinSetting(
+            table=table,
+            key=key,
+            value=value,
+            enqueued_at=time.time(),
+            raw_text=incoming_record.raw_text,
+            audit_id=incoming_record.audit_id,
+            msg_id=msg_id,
+            id_set=id_set,
+            confirm=confirm,
+        )
+        self._cloud_inflight_device_id = device_id
+        self._cloud_inflight = True
+        logger.debug("TwinDelivery: cloud setting tracked as inflight %s:%s", table, key)
 
     def set_cloud_inflight(self) -> None:
         """Mark cloud-initiated setting as in-flight."""
@@ -407,6 +471,8 @@ class TwinDelivery:
     def clear_cloud_inflight(self) -> None:
         """Clear cloud-initiated setting inflight flag."""
         self._cloud_inflight = False
+        self._cloud_inflight_setting = None
+        self._cloud_inflight_device_id = None
         logger.debug("TwinDelivery: cloud setting inflight cleared")
 
     def is_cloud_inflight(self) -> bool:

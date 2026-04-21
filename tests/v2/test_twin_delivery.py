@@ -247,6 +247,48 @@ def test_terminal_deduplication_prevents_duplicate_success() -> None:
     assert collector.settings_audit[2]["result"] == SettingResult.CONFIRMED.value
 
 
+def test_begin_cloud_setting_records_incoming_and_exposes_inflight() -> None:
+    collector = _make_collector()
+    delivery = TwinDelivery(TwinQueue(), _MQTTStub(), telemetry_collector=collector)
+    raw_text = (
+        "<Frame><TblName>tbl_box_prms</TblName><ID_Device>dev_1</ID_Device>"
+        "<ID>12345678</ID><ID_Set>844979473</ID_Set><TblItem>MODE</TblItem>"
+        "<NewValue>1</NewValue><Confirm>New</Confirm><Reason>Setting</Reason></Frame>"
+    )
+
+    delivery.begin_cloud_setting(
+        device_id="dev_1",
+        table="tbl_box_prms",
+        key="MODE",
+        value=1,
+        raw_text=raw_text,
+        msg_id=12345678,
+        id_set=844979473,
+    )
+
+    assert delivery.is_cloud_inflight() is True
+    inflight = delivery.inflight_setting()
+    assert inflight is not None
+    setting, device_id = inflight
+    assert device_id == "dev_1"
+    assert setting.table == "tbl_box_prms"
+    assert setting.key == "MODE"
+    assert setting.value == 1
+    assert setting.msg_id == 12345678
+    assert setting.id_set == 844979473
+    assert setting.raw_text == raw_text
+    assert setting.audit_id
+
+    assert len(collector.settings_audit) == 1
+    record = collector.settings_audit[0]
+    assert record["step"] == SettingStep.INCOMING.value
+    assert record["result"] == SettingResult.PENDING.value
+    assert record["audit_id"] == setting.audit_id
+    assert record["msg_id"] == 12345678
+    assert record["id_set"] == 844979473
+    assert record["raw_text"] == raw_text
+
+
 @pytest.mark.asyncio
 async def test_session_timeout_records_timeout_step() -> None:
     queue = TwinQueue()
