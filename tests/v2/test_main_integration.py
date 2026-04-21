@@ -780,6 +780,25 @@ class TestErrorHandling:
         assert app.mqtt is not None
 
     @pytest.mark.asyncio
+    async def test_startup_handles_none_mqtt_client(self, mock_config):
+        app = ProxyApp(mock_config)
+
+        with patch("main.DeviceIdManager") as mock_device_manager:
+            mock_instance = Mock()
+            mock_instance.load.return_value = None
+            mock_instance.device_id = None
+            mock_device_manager.return_value = mock_instance
+
+            with patch("main.MQTTClient", return_value=None):
+                with patch("main.ProxyServer") as mock_proxy_class:
+                    mock_proxy = AsyncMock()
+                    mock_proxy_class.return_value = mock_proxy
+                    result = await app.startup()
+
+        assert result is True
+        assert app.frame_processor is not None
+
+    @pytest.mark.asyncio
     async def test_on_frame_handles_processor_error(self, mock_config):
         """Test that _on_frame handles FrameProcessor errors gracefully."""
         app = ProxyApp(mock_config)
@@ -818,6 +837,37 @@ class TestErrorHandling:
 
         # Should not raise
         await app.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_cancelled_health_task(self, mock_config):
+        app = ProxyApp(mock_config)
+        app.proxy = AsyncMock()
+        app.mqtt = Mock()
+
+        async def never_finishes() -> None:
+            await asyncio.Event().wait()
+
+        app._health_task = asyncio.create_task(never_finishes())
+
+        await app.shutdown()
+
+        assert app._health_task.cancelled() is True
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_cancelled_telemetry_task(self, mock_config):
+        app = ProxyApp(mock_config)
+        app.proxy = AsyncMock()
+        app.mqtt = Mock()
+
+        async def never_finishes() -> None:
+            await asyncio.Event().wait()
+
+        telemetry_task = asyncio.create_task(never_finishes())
+        app.telemetry_collector = Mock(task=telemetry_task)
+
+        await app.shutdown()
+
+        assert telemetry_task.cancelled() is True
 
 
 class TestSignalHandling:

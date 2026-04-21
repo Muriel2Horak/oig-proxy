@@ -123,7 +123,7 @@ class ProxyApp:
             self.sensor_loader,
             proxy_device_id=self.config.proxy_device_id,
         )
-        if self.mqtt.is_ready() and self.frame_processor is not None:
+        if mqtt_client is not None and mqtt_client.is_ready() and self.frame_processor is not None:
             logger.info("FrameProcessor ready for lazy discovery from live frames")
             if device_id:
                 self.frame_processor.publish_all_discovery(device_id)
@@ -170,7 +170,7 @@ class ProxyApp:
         )
 
         # 5. Start TwinControlHandler (if MQTT ready)
-        if self.mqtt.is_ready():
+        if mqtt_client is not None and mqtt_client.is_ready():
             self.twin_handler = TwinControlHandler(
                 mqtt=self.mqtt,
                 twin_queue=self.twin_queue,
@@ -280,10 +280,11 @@ class ProxyApp:
         logger.info("ProxyServer started on %s:%s", self.config.proxy_host, self.config.proxy_port)
 
         # Start MQTT health check
-        self._health_task = asyncio.create_task(
-            self.mqtt.health_check_loop(mqtt_device_id),
-            name="mqtt_health",
-        )
+        if mqtt_client is not None:
+            self._health_task = asyncio.create_task(
+                mqtt_client.health_check_loop(mqtt_device_id),
+                name="mqtt_health",
+            )
 
         elapsed = time.time() - start_time
         logger.info("OIG Proxy v2 startup complete in %.2fs", elapsed)
@@ -455,10 +456,7 @@ class ProxyApp:
         # Cancel MQTT health check
         if self._health_task and not self._health_task.done():
             self._health_task.cancel()
-            try:
-                await self._health_task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.gather(self._health_task, return_exceptions=True)
             logger.info("MQTT health check stopped")
 
         # 1. Stop ProxyServer
@@ -469,10 +467,7 @@ class ProxyApp:
         # 2. Stop TelemetryCollector
         if self.telemetry_collector and self.telemetry_collector.task:
             self.telemetry_collector.task.cancel()
-            try:
-                await self.telemetry_collector.task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.gather(self.telemetry_collector.task, return_exceptions=True)
             logger.info("TelemetryCollector stopped")
 
         # 3. Stop ProxyStatusPublisher
