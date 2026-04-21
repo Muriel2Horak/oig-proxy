@@ -369,7 +369,7 @@ def test_cloud_tbl_events_matches_correct_pending_value() -> None:
     assert confirmed[0]["id_set"] == 1002
 
 
-def test_cloud_reason_setting_expires_to_terminal_confirmation() -> None:
+def test_cloud_reason_setting_expires_to_terminal_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
     collector = _make_collector()
     delivery = TwinDelivery(
         TwinQueue(),
@@ -388,7 +388,9 @@ def test_cloud_reason_setting_expires_to_terminal_confirmation() -> None:
         id_set=1001,
     )
     delivery.mark_cloud_reason_setting("dev_1")
-    delivery._expire_cloud_pending(time.monotonic() + 2.0)
+
+    original_monotonic = time.monotonic
+    monkeypatch.setattr("twin.delivery.time.monotonic", lambda: original_monotonic() + 2.0)
 
     assert delivery.has_pending_or_inflight() is False
 
