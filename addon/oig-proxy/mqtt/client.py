@@ -487,7 +487,7 @@ class MQTTClient:
                 sensor_key=key,
                 sensor_name=key,
                 # Základní typ inference
-                unit="" if isinstance(value, str) else "",
+                unit="",
             )
 
     # ------------------------------------------------------------------
