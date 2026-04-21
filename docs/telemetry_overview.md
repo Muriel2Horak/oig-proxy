@@ -173,9 +173,13 @@ External stack path: `telemetry.muriel-cz.cz:1883` via MQTT, stored in
 - `failed` - failed (nack, timeout)
 - `incomplete` - session cleared without confirmation
 
-**Important:** `raw_text` is stored **only** for the `incoming` step (the
-initial settings flow). Subsequent steps do not carry raw text. This is not a
-generic frame-capture mechanism.
+**Important:** `raw_text` is captured at the `incoming` step and is
+lifecycle-continuous: the same redacted value (truncated to 16 KiB if needed)
+follows the record through every subsequent lifecycle step. The record carries
+`raw_text_truncated`, `raw_text_bytes_original`, and `audit_payload_capped` flags
+to indicate redaction. This is still settings-flow telemetry, not a generic
+frame-capture mechanism. Telemetry is written to the `telemetry_settings_audit`
+InfluxDB bucket with **180-day retention**.
 
 ## 6) Common Failure Modes
 

@@ -386,8 +386,10 @@ The `proxy_status:control_queue_len` sensor shows how many settings are pending 
 
 When a setting command flows through the proxy, the telemetry system records each
 step in the `settings_audit` array. This is **not** a generic frame-capture
-mechanism. Raw text is stored **only** for the `incoming` step (the initial
-settings command). Subsequent steps track the lifecycle without raw text.
+mechanism. `raw_text` is captured at the `incoming` step and is lifecycle-continuous:
+the same redacted value (truncated to 16 KiB if needed) follows the record through
+every subsequent lifecycle step, flagged via `raw_text_truncated`,
+`raw_text_bytes_original`, and `audit_payload_capped`.
 
 ### Step Taxonomy (lifecycle stages)
 
@@ -438,13 +440,15 @@ one starts at `incoming`.
 
 ### Raw Text Scope
 
-`raw_text` is captured **only** at the `incoming` step. It contains the full
-original MQTT payload for the settings command. All subsequent steps carry
-`raw_text: ""` (empty). This avoids storing duplicate payloads and limits the
-mechanism to settings flow tracking, not general frame capture.
+`raw_text` is captured at the `incoming` step and is **lifecycle-continuous**:
+the same redacted value (truncated to 16 KiB if needed, flagged via
+`raw_text_truncated`, `raw_text_bytes_original`, `audit_payload_capped`) follows
+the record through every subsequent lifecycle step. The mechanism is scoped to
+settings-flow tracking, not a generic frame-capture export.
 
-If the `raw_text` exceeds 16 KiB, it is truncated and `raw_text_truncated` is
-set to `true`. The original byte count is preserved in `raw_text_bytes_original`.
+**Verification status:** Remote-stack fixture-based verification is complete.
+A live cloud/local-HA setting-command end-to-end validation is intentionally
+postponed until deployment testing.
 
 ### Session Termination
 
@@ -453,6 +457,14 @@ set to `true`. The original byte count is preserved in `raw_text_bytes_original`
 
 - **Abrupt crash:** The telemetry buffer is not flushed. The audit trail for
   the current window is incomplete. This is an accepted operational gap.
+
+### Log Burst Semantics
+
+Logs are collected in a **300-second (5-minute) rolling buffer**. When a
+settings audit step is recorded (`incoming` step), the current window is
+forced to include logs, and the **next window** also has logs forced. This
+ensures the setting delivery flow is captured even if no WARNING+ occurred.
+Overlapping bursts coalesce; the stronger window count applies.
 
 ### Broker and Retention
 
