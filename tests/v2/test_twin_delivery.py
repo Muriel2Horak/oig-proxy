@@ -1,6 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring,too-few-public-methods
 import os
 import sys
+import time
 
 import pytest
 
@@ -287,6 +288,117 @@ def test_begin_cloud_setting_records_incoming_and_exposes_inflight() -> None:
     assert record["msg_id"] == 12345678
     assert record["id_set"] == 844979473
     assert record["raw_text"] == raw_text
+
+
+def test_cloud_reason_setting_stays_provisional_until_tbl_events() -> None:
+    collector = _make_collector()
+    delivery = TwinDelivery(TwinQueue(), _MQTTStub(), telemetry_collector=collector)
+
+    delivery.begin_cloud_setting(
+        device_id="dev_1",
+        table="tbl_box_prms",
+        key="MODE",
+        value=1,
+        raw_text="<Frame><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>",
+        msg_id=12345678,
+        id_set=844979473,
+    )
+
+    pending = delivery.mark_cloud_reason_setting("dev_1", session_id="sess_1")
+    assert pending is not None
+    assert delivery.is_cloud_inflight() is True
+
+    delivery.match_cloud_tbl_events(
+        "dev_1",
+        "tbl_box_prms",
+        "MODE",
+        confirmed_value="1",
+        session_id="sess_1",
+    )
+
+    assert [record["step"] for record in collector.settings_audit] == [
+        SettingStep.INCOMING.value,
+        SettingStep.ACK_REASON_SETTING.value,
+        SettingStep.ACK_TBL_EVENTS.value,
+    ]
+    assert collector.settings_audit[1]["result"] == SettingResult.PENDING.value
+    assert collector.settings_audit[2]["result"] == SettingResult.CONFIRMED.value
+    assert delivery.is_cloud_inflight() is False
+
+
+def test_cloud_tbl_events_matches_correct_pending_value() -> None:
+    collector = _make_collector()
+    delivery = TwinDelivery(TwinQueue(), _MQTTStub(), telemetry_collector=collector)
+
+    delivery.begin_cloud_setting(
+        device_id="dev_1",
+        table="tbl_box_prms",
+        key="MODE",
+        value=1,
+        raw_text="frame-1",
+        msg_id=111,
+        id_set=1001,
+    )
+    delivery.mark_cloud_reason_setting("dev_1")
+
+    delivery.begin_cloud_setting(
+        device_id="dev_1",
+        table="tbl_box_prms",
+        key="MODE",
+        value=0,
+        raw_text="frame-2",
+        msg_id=222,
+        id_set=1002,
+    )
+    delivery.mark_cloud_reason_setting("dev_1")
+
+    matched = delivery.match_cloud_tbl_events(
+        "dev_1",
+        "tbl_box_prms",
+        "MODE",
+        confirmed_value="0",
+    )
+    assert matched is not None
+    setting, _ = matched
+    assert setting.value == 0
+
+    confirmed = [
+        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_TBL_EVENTS.value
+    ]
+    assert len(confirmed) == 1
+    assert confirmed[0]["id_set"] == 1002
+
+
+def test_cloud_reason_setting_expires_to_terminal_confirmation() -> None:
+    collector = _make_collector()
+    delivery = TwinDelivery(
+        TwinQueue(),
+        _MQTTStub(),
+        inflight_timeout_s=1.0,
+        telemetry_collector=collector,
+    )
+
+    delivery.begin_cloud_setting(
+        device_id="dev_1",
+        table="tbl_box_prms",
+        key="MODE",
+        value=1,
+        raw_text="frame-1",
+        msg_id=111,
+        id_set=1001,
+    )
+    delivery.mark_cloud_reason_setting("dev_1")
+    delivery._expire_cloud_pending(time.monotonic() + 2.0)
+
+    assert delivery.has_pending_or_inflight() is False
+
+    reason_steps = [
+        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_REASON_SETTING.value
+    ]
+    assert [record["result"] for record in reason_steps] == [
+        SettingResult.PENDING.value,
+        SettingResult.CONFIRMED.value,
+    ]
 
 
 @pytest.mark.asyncio

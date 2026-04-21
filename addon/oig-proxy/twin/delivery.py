@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from dataclasses import dataclass
 import logging
 import secrets
 import time
@@ -9,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 from telemetry.settings_audit import (
     ACK_TERMINAL_PRECEDENCE,
     TERMINAL_STEPS,
+    SettingResult,
     SettingStep,
+    _normalize_value_for_text,
     make_incoming_record,
     make_step_record,
 )
@@ -21,6 +25,15 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _CloudPendingSetting:
+    setting: TwinSetting
+    device_id: str
+    tracked_at: float
+    reason_setting_seen: bool = False
+    reason_setting_at: float | None = None
 
 
 class TwinDelivery:
@@ -43,9 +56,7 @@ class TwinDelivery:
         self._telemetry_collector = telemetry_collector
 
         # Cloud-initiated setting tracking
-        self._cloud_inflight: bool = False
-        self._cloud_inflight_setting: TwinSetting | None = None
-        self._cloud_inflight_device_id: str | None = None
+        self._cloud_pending: dict[tuple[str, str, str], deque[_CloudPendingSetting]] = defaultdict(deque)
 
         # Session-level inflight tracking: session_id -> (table, key, since)
         self._session_inflight: dict[str, tuple[str, str, float]] = {}
@@ -106,13 +117,15 @@ class TwinDelivery:
         device_id: str,
         step: SettingStep,
         *,
+        result: SettingResult | None = None,
         confirmed_value: Any = None,
         raw_text: str | None = None,
         session_id: str = "",
     ) -> None:
         if self._telemetry_collector is None or not setting.audit_id:
             return
-        if step in TERMINAL_STEPS:
+        is_terminal = step in TERMINAL_STEPS and result != SettingResult.PENDING
+        if is_terminal:
             existing = self._recorded_terminal.get(setting.audit_id)
             if existing is not None:
                 existing_prec = ACK_TERMINAL_PRECEDENCE.get(existing, 0)
@@ -124,11 +137,69 @@ class TwinDelivery:
         record = make_step_record(
             parent,
             step,
+            result=result,
             confirmed_value=confirmed_value,
             raw_text=raw_text,
             session_id=session_id,
         )
         self._telemetry_collector.record_setting_audit_step(record)
+
+    @staticmethod
+    def _cloud_pending_key(device_id: str, table: str, key: str) -> tuple[str, str, str]:
+        return device_id, table, key
+
+    def _iter_cloud_pending(self) -> list[_CloudPendingSetting]:
+        entries: list[_CloudPendingSetting] = []
+        for queue in self._cloud_pending.values():
+            entries.extend(queue)
+        return entries
+
+    def _remove_cloud_pending(self, pending: _CloudPendingSetting) -> None:
+        queue_key = self._cloud_pending_key(
+            pending.device_id,
+            pending.setting.table,
+            pending.setting.key,
+        )
+        queue = self._cloud_pending.get(queue_key)
+        if queue is None:
+            return
+        try:
+            queue.remove(pending)
+        except ValueError:
+            return
+        if not queue:
+            self._cloud_pending.pop(queue_key, None)
+
+    def _oldest_cloud_pending(self, device_id: str | None = None) -> _CloudPendingSetting | None:
+        candidates = [
+            pending
+            for pending in self._iter_cloud_pending()
+            if device_id is None or pending.device_id == device_id
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda pending: pending.tracked_at)
+
+    def _expire_cloud_pending(self, now: float | None = None) -> None:
+        if now is None:
+            now = time.monotonic()
+        for pending in list(self._iter_cloud_pending()):
+            if pending.reason_setting_seen and pending.reason_setting_at is not None:
+                if now - pending.reason_setting_at >= self._inflight_timeout_s:
+                    self.record_ack_reason_setting(
+                        pending.setting,
+                        pending.device_id,
+                        session_id="",
+                        terminal=True,
+                    )
+                    self._remove_cloud_pending(pending)
+            elif now - pending.tracked_at >= self._inflight_timeout_s:
+                self._record_audit_step(
+                    pending.setting,
+                    pending.device_id,
+                    SettingStep.TIMEOUT,
+                )
+                self._remove_cloud_pending(pending)
 
     async def deliver_pending(
         self, 
@@ -279,9 +350,9 @@ class TwinDelivery:
         if removed:
             return True
 
-        if self._cloud_inflight_setting is not None:
-            if (self._cloud_inflight_setting.table, self._cloud_inflight_setting.key) == (table, key):
-                self.clear_cloud_inflight()
+        for pending in list(self._iter_cloud_pending()):
+            if (pending.setting.table, pending.setting.key) == (table, key):
+                self._remove_cloud_pending(pending)
                 return True
 
         return False
@@ -350,11 +421,14 @@ class TwinDelivery:
         setting: TwinSetting,
         device_id: str,
         session_id: str = "",
+        *,
+        terminal: bool = True,
     ) -> None:
         self._record_audit_step(
             setting,
             device_id,
             SettingStep.ACK_REASON_SETTING,
+            result=SettingResult.CONFIRMED if terminal else SettingResult.PENDING,
             session_id=session_id,
         )
 
@@ -382,24 +456,28 @@ class TwinDelivery:
                 )
             self._clear_global_inflight()
 
-        if self._cloud_inflight_setting is not None and self._cloud_inflight_device_id is not None:
+        for pending in list(self._iter_cloud_pending()):
             self._record_audit_step(
-                self._cloud_inflight_setting,
-                self._cloud_inflight_device_id,
+                pending.setting,
+                pending.device_id,
                 SettingStep.SESSION_CLEARED,
             )
-            self.clear_cloud_inflight()
+            self._remove_cloud_pending(pending)
 
     def inflight(self) -> tuple[str, str] | None:
         """Get current global inflight setting."""
-        if self._cloud_inflight_setting is not None:
-            return self._cloud_inflight_setting.table, self._cloud_inflight_setting.key
+        self._expire_cloud_pending()
+        pending = self._oldest_cloud_pending()
+        if pending is not None:
+            return pending.setting.table, pending.setting.key
         return self._inflight_key
 
     def inflight_setting(self) -> tuple[TwinSetting, str] | None:
         """Return current inflight setting together with target device_id."""
-        if self._cloud_inflight_setting is not None and self._cloud_inflight_device_id is not None:
-            return self._cloud_inflight_setting, self._cloud_inflight_device_id
+        self._expire_cloud_pending()
+        pending = self._oldest_cloud_pending()
+        if pending is not None:
+            return pending.setting, pending.device_id
         if self._inflight_key is None or self._inflight_device_id is None:
             return None
         setting = self._twin_queue.get(self._inflight_key[0], self._inflight_key[1])
@@ -416,10 +494,11 @@ class TwinDelivery:
 
     def has_pending_or_inflight(self, session_id: str | None = None) -> bool:
         """Check if there are pending or inflight settings."""
+        self._expire_cloud_pending()
         if session_id is not None:
             if session_id in self._session_inflight:
                 return True
-        return self._cloud_inflight or self._inflight_key is not None or self._twin_queue.size() > 0
+        return bool(self._iter_cloud_pending()) or self._inflight_key is not None or self._twin_queue.size() > 0
 
     def begin_cloud_setting(
         self,
@@ -436,6 +515,8 @@ class TwinDelivery:
         """Create audit-backed inflight state for a cloud-originated setting."""
         from .state import TwinSetting
 
+        self._expire_cloud_pending()
+
         incoming_record = make_incoming_record(
             device_id=device_id,
             table=table,
@@ -448,7 +529,7 @@ class TwinDelivery:
         if self._telemetry_collector is not None:
             self._telemetry_collector.record_setting_audit_step(incoming_record)
 
-        self._cloud_inflight_setting = TwinSetting(
+        setting = TwinSetting(
             table=table,
             key=key,
             value=value,
@@ -459,25 +540,81 @@ class TwinDelivery:
             id_set=id_set,
             confirm=confirm,
         )
-        self._cloud_inflight_device_id = device_id
-        self._cloud_inflight = True
+        queue_key = self._cloud_pending_key(device_id, table, key)
+        self._cloud_pending[queue_key].append(
+            _CloudPendingSetting(
+                setting=setting,
+                device_id=device_id,
+                tracked_at=time.monotonic(),
+            )
+        )
         logger.debug("TwinDelivery: cloud setting tracked as inflight %s:%s", table, key)
+
+    def mark_cloud_reason_setting(
+        self,
+        device_id: str,
+        session_id: str = "",
+    ) -> tuple[TwinSetting, str] | None:
+        self._expire_cloud_pending()
+        pending = self._oldest_cloud_pending(device_id)
+        if pending is None:
+            return None
+        if not pending.reason_setting_seen:
+            self.record_ack_reason_setting(
+                pending.setting,
+                pending.device_id,
+                session_id=session_id,
+                terminal=False,
+            )
+            pending.reason_setting_seen = True
+            pending.reason_setting_at = time.monotonic()
+        return pending.setting, pending.device_id
+
+    def match_cloud_tbl_events(
+        self,
+        device_id: str,
+        table: str,
+        key: str,
+        confirmed_value: Any,
+        session_id: str = "",
+    ) -> tuple[TwinSetting, str] | None:
+        self._expire_cloud_pending()
+        queue_key = self._cloud_pending_key(device_id, table, key)
+        queue = self._cloud_pending.get(queue_key)
+        if not queue:
+            return None
+
+        normalized_confirmed = _normalize_value_for_text(confirmed_value)
+        match = None
+        for pending in queue:
+            if _normalize_value_for_text(pending.setting.value) == normalized_confirmed:
+                match = pending
+                break
+        if match is None:
+            match = queue[0]
+
+        self.record_ack_tbl_events(
+            match.setting,
+            match.device_id,
+            confirmed_value=confirmed_value,
+            session_id=session_id,
+        )
+        self._remove_cloud_pending(match)
+        return match.setting, match.device_id
 
     def set_cloud_inflight(self) -> None:
         """Mark cloud-initiated setting as in-flight."""
-        self._cloud_inflight = True
         logger.debug("TwinDelivery: cloud setting marked as inflight")
 
     def clear_cloud_inflight(self) -> None:
         """Clear cloud-initiated setting inflight flag."""
-        self._cloud_inflight = False
-        self._cloud_inflight_setting = None
-        self._cloud_inflight_device_id = None
+        self._expire_cloud_pending()
         logger.debug("TwinDelivery: cloud setting inflight cleared")
 
     def is_cloud_inflight(self) -> bool:
         """Check if cloud-initiated setting is in-flight."""
-        return self._cloud_inflight
+        self._expire_cloud_pending()
+        return bool(self._iter_cloud_pending())
 
     def has_pending(self) -> bool:
         """Check if there are pending local settings."""
