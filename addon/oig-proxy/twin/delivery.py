@@ -90,7 +90,7 @@ class TwinDelivery:
             device_id=device_id,
             table=setting.table,
             key=setting.key,
-            raw_text="",
+            raw_text=setting.raw_text,
             value=setting.value,
             msg_id=setting.msg_id,
             id_set=setting.id_set,
@@ -105,7 +105,7 @@ class TwinDelivery:
         step: SettingStep,
         *,
         confirmed_value: Any = None,
-        raw_text: str = "",
+        raw_text: str | None = None,
         session_id: str = "",
     ) -> None:
         if self._telemetry_collector is None or not setting.audit_id:

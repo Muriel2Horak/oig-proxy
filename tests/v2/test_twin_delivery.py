@@ -151,6 +151,7 @@ def test_observed_msg_id_increments_monotonic() -> None:
 async def test_deliver_pending_records_selected_step() -> None:
     queue = TwinQueue()
     queue.enqueue("tbl_set", "T_Room", 22)
+    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
     collector = _make_collector()
     delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
 
@@ -163,12 +164,14 @@ async def test_deliver_pending_records_selected_step() -> None:
     assert record["result"] == SettingResult.PENDING.value
     assert record["audit_id"] == pending[0].audit_id
     assert record["session_id"] == "sess_1"
+    assert record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
 
 
 @pytest.mark.asyncio
 async def test_timeout_records_timeout_step() -> None:
     queue = TwinQueue()
     queue.enqueue("tbl_set", "T_Room", 22)
+    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
     collector = _make_collector()
     delivery = TwinDelivery(queue, _MQTTStub(), inflight_timeout_s=0.0, telemetry_collector=collector)
 
@@ -179,12 +182,14 @@ async def test_timeout_records_timeout_step() -> None:
     timeout_record = collector.settings_audit[1]
     assert timeout_record["step"] == SettingStep.TIMEOUT.value
     assert timeout_record["result"] == SettingResult.FAILED.value
+    assert timeout_record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
 
 
 @pytest.mark.asyncio
 async def test_clear_session_records_session_cleared() -> None:
     queue = TwinQueue()
     queue.enqueue("tbl_set", "T_Room", 22)
+    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
     collector = _make_collector()
     delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
 
@@ -196,12 +201,14 @@ async def test_clear_session_records_session_cleared() -> None:
     assert session_record["step"] == SettingStep.SESSION_CLEARED.value
     assert session_record["result"] == SettingResult.INCOMPLETE.value
     assert session_record["audit_id"] == pending[0].audit_id
+    assert session_record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
 
 
 @pytest.mark.asyncio
 async def test_shutdown_records_session_cleared_for_global_inflight() -> None:
     queue = TwinQueue()
     queue.enqueue("tbl_set", "T_Room", 22)
+    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
     collector = _make_collector()
     delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
 
@@ -213,6 +220,7 @@ async def test_shutdown_records_session_cleared_for_global_inflight() -> None:
     assert session_record["step"] == SettingStep.SESSION_CLEARED.value
     assert session_record["result"] == SettingResult.INCOMPLETE.value
     assert session_record["audit_id"] == pending[0].audit_id
+    assert session_record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
 
 
 def test_terminal_deduplication_prevents_duplicate_success() -> None:
