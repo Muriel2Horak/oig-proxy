@@ -340,7 +340,7 @@ def make_step_record(
     step: SettingStep,
     result: SettingResult | None = None,
     *,
-    raw_text: str = "",
+    raw_text: str | None = None,
     confirmed_value: Any = None,
     session_id: str | None = None,
     msg_id: int | None = None,
@@ -369,10 +369,14 @@ def make_step_record(
     truncated = ""
     info = TruncationInfo()
     audit_payload_capped = False
-    if raw_text:
+    raw_text_source = parent_record.raw_text if raw_text is None else raw_text
+    if raw_text_source:
         if _is_sensitive_key(parent_record.key):
-            raw_text = "[REDACTED]"
-        truncated, info, audit_payload_capped = _apply_raw_text_limits(parent_record.audit_id, raw_text)
+            raw_text_source = "[REDACTED]"
+        truncated, info, audit_payload_capped = _apply_raw_text_limits(
+            parent_record.audit_id,
+            raw_text_source,
+        )
 
     record = SettingsAuditRecord(
         audit_id=parent_record.audit_id,
@@ -396,7 +400,7 @@ def make_step_record(
         audit_payload_capped=audit_payload_capped,
         timestamp="",  # filled by __post_init__
     )
-    if raw_text:
+    if raw_text_source:
         record.with_truncated_raw_text(truncated, info)
     return record
 

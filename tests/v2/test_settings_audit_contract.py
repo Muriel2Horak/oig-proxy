@@ -243,6 +243,25 @@ def test_make_incoming_record_keeps_value_num_float_none_for_string_values() -> 
     assert record.value_num_float is None
 
 
+def test_make_step_record_inherits_parent_raw_text_when_omitted() -> None:
+    settings_audit = importlib.import_module("telemetry.settings_audit")
+    make_incoming_record = settings_audit.make_incoming_record
+    make_step_record = settings_audit.make_step_record
+    SettingStep = settings_audit.SettingStep
+
+    record = make_incoming_record(
+        device_id="dev_001",
+        table="tbl_box_prms",
+        key="MODE",
+        raw_text="<Frame><NewValue>1</NewValue></Frame>",
+        value=1,
+    )
+
+    step = make_step_record(record, SettingStep.ENQUEUED)
+
+    assert step.raw_text == record.raw_text
+
+
 def test_step_records_cap_raw_text_after_audit_id_exceeds_aggregate_limit() -> None:
     settings_audit = importlib.import_module("telemetry.settings_audit")
     make_incoming_record = settings_audit.make_incoming_record
