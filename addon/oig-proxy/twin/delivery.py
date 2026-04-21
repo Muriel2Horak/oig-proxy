@@ -57,6 +57,7 @@ class TwinDelivery:
 
         # Cloud-initiated setting tracking
         self._cloud_pending: dict[tuple[str, str, str], deque[_CloudPendingSetting]] = defaultdict(deque)
+        self._cloud_legacy_inflight: bool = False
 
         # Session-level inflight tracking: session_id -> (table, key, since)
         self._session_inflight: dict[str, tuple[str, str, float]] = {}
@@ -498,7 +499,7 @@ class TwinDelivery:
         if session_id is not None:
             if session_id in self._session_inflight:
                 return True
-        return bool(self._iter_cloud_pending()) or self._inflight_key is not None or self._twin_queue.size() > 0
+        return self._cloud_legacy_inflight or bool(self._iter_cloud_pending()) or self._inflight_key is not None or self._twin_queue.size() > 0
 
     def begin_cloud_setting(
         self,
@@ -604,17 +605,19 @@ class TwinDelivery:
 
     def set_cloud_inflight(self) -> None:
         """Mark cloud-initiated setting as in-flight."""
+        self._cloud_legacy_inflight = True
         logger.debug("TwinDelivery: cloud setting marked as inflight")
 
     def clear_cloud_inflight(self) -> None:
         """Clear cloud-initiated setting inflight flag."""
+        self._cloud_legacy_inflight = False
         self._expire_cloud_pending()
         logger.debug("TwinDelivery: cloud setting inflight cleared")
 
     def is_cloud_inflight(self) -> bool:
         """Check if cloud-initiated setting is in-flight."""
         self._expire_cloud_pending()
-        return bool(self._iter_cloud_pending())
+        return self._cloud_legacy_inflight or bool(self._iter_cloud_pending())
 
     def has_pending(self) -> bool:
         """Check if there are pending local settings."""
