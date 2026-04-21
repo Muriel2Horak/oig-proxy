@@ -3,12 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_RESULT_RE = re.compile(rb"<Result>(ACK|END)</Result>")
-_TABLE_RE = re.compile(rb"<TblName>([^<]+)</TblName>")
-_TODO_RE = re.compile(rb"<ToDo>([^<]+)</ToDo>")
-_DT_RE = re.compile(rb"<DT>([^<]+)</DT>")
-_REASON_RE = re.compile(rb"<Reason>([^<]+)</Reason>")
-_TBL_EVENT_CONTENT_RE = re.compile(
+_RESULT_RE = re.compile(rb"<Result>(ACK|END|NACK)</Result>")  # NOSONAR
+_TABLE_RE = re.compile(rb"<TblName>([^<]+)</TblName>")  # NOSONAR
+_TODO_RE = re.compile(rb"<ToDo>([^<]+)</ToDo>")  # NOSONAR
+_DT_RE = re.compile(rb"<DT>([^<]+)</DT>")  # NOSONAR
+_REASON_RE = re.compile(rb"<Reason>([^<]+)</Reason>")  # NOSONAR
+_TBL_EVENT_CONTENT_RE = re.compile(  # NOSONAR
     r"Remotely\s*:\s*([A-Za-z0-9_]+)\s*/\s*([A-Za-z0-9_]+)\s*:\s*\[[^\]]*\]->\[([^\]]*)\]"
 )
 

@@ -29,6 +29,7 @@ DEPLOY_FILES=(
     sensor_map.json
     config.json
     Dockerfile
+    build.json
     requirements.txt
     mqtt/__init__.py
     mqtt/client.py
@@ -54,6 +55,7 @@ DEPLOY_FILES=(
     telemetry/__init__.py
     telemetry/collector.py
     telemetry/client.py
+    telemetry/settings_audit.py
     capture/__init__.py
     capture/frame_capture.py
     capture/pcap_capture.py

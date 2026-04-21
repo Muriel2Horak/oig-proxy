@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-04-20T18:28:39Z",
+  "device_id": "test_device_001",
+  "mode": "ONLINE",
+  "configured_mode": "ONLINE",
+  "version": "2.0.0",
+  "instance_hash": "abc123",
+  "box_peer": "10.0.0.5:5710",
+  "box_connected": true,
+  "cloud_online": true,
+  "mqtt_ok": true,
+  "interval_s": 60,
+  "uptime_s": 3600,
+  "frames_received": 42,
+  "frames_forwarded": 40,
+  "cloud_connects": 5,
+  "cloud_disconnects": 2,
+  "cloud_timeouts": 1,
+  "cloud_errors": 0,
+  "mqtt_queue": 0,
+  "set_commands": [],
+  "window_metrics": {
+    "box_sessions": [],
+    "cloud_sessions": [],
+    "hybrid_sessions": [],
+    "offline_events": [],
+    "tbl_events": [],
+    "error_context": [],
+    "stats": [],
+    "logs": [
+      {
+        "timestamp": "2026-04-20T18:28:39Z",
+        "level": "INFO",
+        "source": "test",
+        "message": "Settings audit test log entry"
+      }
+    ],
+    "settings_audit": [
+      {
+        "timestamp": "2026-04-20T18:28:39Z",
+        "device_id": "test_device_001",
+        "table": "tbl_settings",
+        "step": "incoming",
+        "result": "pending",
+        "audit_id": "aud_20250420120000000_123456",
+        "key": "max_power_w",
+        "session_id": "sess_abc123",
+        "msg_id": 42,
+        "id_set": 7,
+        "value_text": "5000",
+        "confirmed_value_text": "",
+        "value_kind": "int",
+        "confirmed_value_kind": "",
+        "value_num_float": 5000.0,
+        "confirmed_value_num_float": null,
+        "raw_text": "Set tbl_settings max_power_w=5000",
+        "raw_text_truncated": false,
+        "raw_text_bytes_original": 33,
+        "audit_payload_capped": false
+      },
+      {
+        "timestamp": "2026-04-20T18:28:39Z",
+        "device_id": "test_device_001",
+        "table": "tbl_settings",
+        "step": "ack_tbl_events",
+        "result": "confirmed",
+        "audit_id": "aud_20250420120000000_123456",
+        "key": "max_power_w",
+        "session_id": "sess_abc123",
+        "msg_id": 42,
+        "id_set": 7,
+        "value_text": "5000",
+        "confirmed_value_text": "5000",
+        "value_kind": "int",
+        "confirmed_value_kind": "int",
+        "value_num_float": 5000.0,
+        "confirmed_value_num_float": 5000.0,
+        "raw_text": "",
+        "raw_text_truncated": false,
+        "raw_text_bytes_original": 0,
+        "audit_payload_capped": false
+      }
+    ]
+  },
+  "nack_reasons": {},
+  "conn_mismatch_drops": 0,
+  "cloud_gap_histogram": {
+    "lt_60s": 0,
+    "60_120s": 0,
+    "120_300s": 0,
+    "300_600s": 0,
+    "gt_600s": 0
+  },
+  "pairing_confidence": {
+    "high": 0,
+    "medium": 0,
+    "low": 0
+  },
+  "frame_directions": {
+    "box_to_proxy": 0,
+    "cloud_to_proxy": 0,
+    "proxy_to_box": 0
+  },
+  "signal_distribution": {},
+  "end_frames": {
+    "received": 0,
+    "sent": 0,
+    "time_since_last_s": null
+  }
+}

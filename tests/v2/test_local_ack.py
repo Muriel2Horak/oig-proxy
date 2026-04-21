@@ -166,7 +166,7 @@ def test_build_local_ack_all_frames_have_crc():
         "unknown",
     ]
     for table in tables:
-        frame = build_local_ack(table, has_queued_data=(table == "IsNewSet"))
+        frame = build_local_ack(table, has_queued_data=table == "IsNewSet")
         assert b"<CRC>" in frame, f"Missing CRC for {table}"
         assert b"</Frame>" in frame, f"Missing </Frame> for {table}"
 

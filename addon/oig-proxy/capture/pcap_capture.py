@@ -22,7 +22,7 @@ import asyncio
 import logging
 import os
 import signal
-import subprocess
+import subprocess  # nosec: B404 - intentional infrastructure tool for packet capture
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,8 @@ class PcapCapture:
         logger.info("PcapCapture starting: %s", " ".join(cmd))
 
         try:
-            self._process = subprocess.Popen(
+            # B603: subprocess.Popen is used intentionally for tcpdump capture; no user input involved
+            self._process = subprocess.Popen(  # nosec: B603
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -183,4 +184,4 @@ class PcapCapture:
                     self._process = None
                     break
         except asyncio.CancelledError:
-            pass
+            raise

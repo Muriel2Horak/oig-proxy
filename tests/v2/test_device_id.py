@@ -1,4 +1,5 @@
 """Testy pro device_id.py — DeviceIdManager."""
+# pylint: disable=missing-function-docstring,unspecified-encoding
 from __future__ import annotations
 
 import json

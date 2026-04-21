@@ -11,6 +11,7 @@ Tests the full integration of:
 - TelemetryCollector
 """
 
+# pylint: disable=protected-access,unspecified-encoding,too-few-public-methods,missing-class-docstring,missing-function-docstring,unnecessary-lambda,broad-exception-caught,unused-variable
 # pyright: reportMissingImports=false
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import pytest
 # Add addon path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy"))
 
-from main import ProxyApp, main
+from main import ProxyApp, main  # pylint: disable=wrong-import-position
 
 
 @pytest.fixture
@@ -115,6 +116,35 @@ class TestProxyAppInitialization:
         assert app.status_publisher is None
         assert app.telemetry_collector is None
         assert app.proxy is None
+
+
+class TestConfirmedSettingHandling:
+    @pytest.mark.asyncio
+    async def test_on_confirmed_setting_routes_through_frame_processor(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+        app.frame_processor = AsyncMock()
+
+        await app._on_confirmed_setting("DEV01", "tbl_box_prms", "MODE", "3")
+
+        app.frame_processor.process.assert_awaited_once_with(
+            "DEV01",
+            "tbl_box_prms",
+            {"MODE": 3},
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_confirmed_setting_noops_without_frame_processor(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+        app.frame_processor = None
+
+        await app._on_confirmed_setting("DEV01", "tbl_box_prms", "MODE", "3")
+
+    def test_coerce_confirmed_value_parses_numeric_strings(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+
+        assert app._coerce_confirmed_value("3") == 3
+        assert app._coerce_confirmed_value("3.5") == 3.5
+        assert app._coerce_confirmed_value("MODE") == "MODE"
 
 
 class TestStartupSequence:
@@ -270,6 +300,44 @@ class TestStartupSequence:
 
         assert app.twin_queue is not None
         assert app.twin_delivery is not None
+
+    @pytest.mark.asyncio
+    async def test_startup_passes_telemetry_collector_to_twin_delivery(self, mock_config):
+        """Test that TwinDelivery receives the live telemetry collector instance."""
+        mock_config.telemetry_enabled = True
+        app = ProxyApp(mock_config)
+
+        collector = Mock()
+        collector.init = Mock()
+        collector.loop = AsyncMock()
+
+        with patch("main.DeviceIdManager") as mock_device_manager:
+            mock_instance = Mock()
+            mock_instance.load.return_value = None
+            mock_instance.device_id = None
+            mock_device_manager.return_value = mock_instance
+
+            with patch("main.MQTTClient") as mock_mqtt_class:
+                mock_mqtt = Mock()
+                mock_mqtt.is_ready.return_value = False
+                mock_mqtt.health_check_loop = AsyncMock()
+                mock_mqtt_class.return_value = mock_mqtt
+
+                with patch("main.TelemetryCollector", return_value=collector):
+                    with patch("main.TwinDelivery") as mock_twin_delivery_class:
+                        mock_twin_delivery_class.return_value = Mock()
+
+                        with patch("main.ProxyServer") as mock_proxy_class:
+                            mock_proxy = AsyncMock()
+                            mock_proxy.mode_manager = Mock()
+                            mock_proxy_class.return_value = mock_proxy
+                            await app.startup()
+
+        mock_twin_delivery_class.assert_called_once_with(
+            app.twin_queue,
+            mock_mqtt,
+            telemetry_collector=collector,
+        )
 
     @pytest.mark.asyncio
     async def test_startup_starts_twin_handler_when_mqtt_ready(self, mock_config):
@@ -712,6 +780,25 @@ class TestErrorHandling:
         assert app.mqtt is not None
 
     @pytest.mark.asyncio
+    async def test_startup_handles_none_mqtt_client(self, mock_config):
+        app = ProxyApp(mock_config)
+
+        with patch("main.DeviceIdManager") as mock_device_manager:
+            mock_instance = Mock()
+            mock_instance.load.return_value = None
+            mock_instance.device_id = None
+            mock_device_manager.return_value = mock_instance
+
+            with patch("main.MQTTClient", return_value=None):
+                with patch("main.ProxyServer") as mock_proxy_class:
+                    mock_proxy = AsyncMock()
+                    mock_proxy_class.return_value = mock_proxy
+                    result = await app.startup()
+
+        assert result is True
+        assert app.frame_processor is not None
+
+    @pytest.mark.asyncio
     async def test_on_frame_handles_processor_error(self, mock_config):
         """Test that _on_frame handles FrameProcessor errors gracefully."""
         app = ProxyApp(mock_config)
@@ -750,6 +837,37 @@ class TestErrorHandling:
 
         # Should not raise
         await app.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_cancelled_health_task(self, mock_config):
+        app = ProxyApp(mock_config)
+        app.proxy = AsyncMock()
+        app.mqtt = Mock()
+
+        async def never_finishes() -> None:
+            await asyncio.Event().wait()
+
+        app._health_task = asyncio.create_task(never_finishes())
+
+        await app.shutdown()
+
+        assert app._health_task.cancelled() is True
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_cancelled_telemetry_task(self, mock_config):
+        app = ProxyApp(mock_config)
+        app.proxy = AsyncMock()
+        app.mqtt = Mock()
+
+        async def never_finishes() -> None:
+            await asyncio.Event().wait()
+
+        telemetry_task = asyncio.create_task(never_finishes())
+        app.telemetry_collector = Mock(task=telemetry_task)
+
+        await app.shutdown()
+
+        assert telemetry_task.cancelled() is True
 
 
 class TestSignalHandling:

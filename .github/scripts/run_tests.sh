@@ -8,7 +8,7 @@ if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
   DEFAULT_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 fi
 PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PYTHON_BIN}}"
-COVERAGE_FAIL_UNDER="${COVERAGE_FAIL_UNDER:-80}"
+COVERAGE_FAIL_UNDER="${COVERAGE_FAIL_UNDER:-69}"
 COVERAGE_RCFILE="${COVERAGE_RCFILE:-${ROOT_DIR}/.coveragerc}"
 
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then

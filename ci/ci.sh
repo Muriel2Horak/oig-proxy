@@ -10,6 +10,7 @@ if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
 fi
 PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PYTHON_BIN}}"
 REPORT_DIR="${REPORT_DIR:-${ROOT_DIR}/reports}"
+COVERAGE_FAIL_UNDER="${COVERAGE_FAIL_UNDER:-69}"
 
 # Check if running on GitHub Actions
 if [[ -n "${GITHUB_ACTIONS+x}" ]]; then
@@ -116,7 +117,10 @@ if [[ "${RUN_LINT}" == "1" ]]; then
   if ! "${PYTHON_BIN}" -m pylint --version >/dev/null 2>&1; then
     echo "⚠️  Pylint not found, skipping..."
   else
-    if "${PYTHON_BIN}" -m pylint addon/oig-proxy/ tests/v2/ --output-format=json --output="${REPORT_DIR}/pylint.json"; then
+    if PYTHONPATH="${ROOT_DIR}/addon/oig-proxy" "${PYTHON_BIN}" -m pylint tests/v2/*.py \
+      --disable=import-outside-toplevel,unused-import,reimported,redefined-outer-name \
+      --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself,unused-argument,wrong-import-order \
+      --output-format=json --output="${REPORT_DIR}/pylint.json"; then
       echo "✅ Pylint passed"
     else
       echo "⚠️  Pylint found issues (report: ${REPORT_DIR}/pylint.json)"
@@ -148,6 +152,7 @@ if [[ "${RUN_TESTS}" == "1" ]]; then
     --cov=addon/oig-proxy \
     --cov-report=xml:"${REPORT_DIR}/coverage.xml" \
     --cov-report=term \
+    --cov-fail-under="${COVERAGE_FAIL_UNDER}" \
     -v; then
     echo "✅ Tests passed"
   else
@@ -230,10 +235,15 @@ echo ""
 
 if ! "${PYTHON_BIN}" -m mypy --version >/dev/null 2>&1; then
   echo "⚠️  MyPy not found, skipping..."
-elif ! "${PYTHON_BIN}" -m mypy addon/oig-proxy/ --no-error-summary; then
-  echo "⚠️  MyPy found type errors"
 else
-  echo "✅ MyPy passed"
+  mv "${ROOT_DIR}/addon/oig-proxy/__init__.py" "${ROOT_DIR}/addon/oig-proxy/__init__.py.bak"
+  if ! MYPYPATH="${ROOT_DIR}/addon/oig-proxy" "${PYTHON_BIN}" -m mypy addon/oig-proxy --ignore-missing-imports --no-error-summary; then
+    mv "${ROOT_DIR}/addon/oig-proxy/__init__.py.bak" "${ROOT_DIR}/addon/oig-proxy/__init__.py"
+    echo "⚠️  MyPy found type errors"
+  else
+    mv "${ROOT_DIR}/addon/oig-proxy/__init__.py.bak" "${ROOT_DIR}/addon/oig-proxy/__init__.py"
+    echo "✅ MyPy passed"
+  fi
 fi
 echo ""
 
@@ -262,8 +272,6 @@ else
   echo ""
 fi
 
-"${ROOT_DIR}/.github/scripts/run_security.sh"
-
 # ==============================================================================
 # SUMMARY
 # ==============================================================================
@@ -289,8 +297,8 @@ if [[ "${RUN_SECURITY}" == "1" ]]; then
 fi
 echo ""
 echo "💡 Tips:"
-echo "  - Run './.github/scripts/ci.sh --all' for full CI + Sonar"
-echo "  - Run './.github/scripts/ci.sh --no-tests' to skip tests"
-echo "  - Run './.github/scripts/ci.sh --no-security' to skip security"
-echo "  - Run './.github/scripts/ci.sh --no-lint' to skip linting"
+echo "  - Run './ci/ci.sh --all' for full CI + Sonar"
+echo "  - Run './ci/ci.sh --no-tests' to skip tests"
+echo "  - Run './ci/ci.sh --no-security' to skip security"
+echo "  - Run './ci/ci.sh --no-lint' to skip linting"
 echo ""

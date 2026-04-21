@@ -1,9 +1,11 @@
 """Tests for sensor/processor.py — FrameProcessor."""
+# pylint: disable=protected-access,missing-function-docstring
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -116,7 +118,7 @@ async def test_tbl_events_publishes_to_proxy_device(processor_with_proxy: FrameP
 async def test_process_skips_internal_keys(processor: FrameProcessor, mock_mqtt: MagicMock) -> None:
     """Keys starting with _ should be skipped."""
     await processor.process("DEV01", "tbl_actual", {"_raw": "data", "_internal": True, "Temp": 25})
-    
+
     # publish_state should be called with only non-internal keys
     mock_mqtt.publish_state.assert_called_once()
     pub_data = mock_mqtt.publish_state.call_args[0][2]
@@ -135,9 +137,9 @@ async def test_process_looks_up_sensor_metadata(processor: FrameProcessor, mock_
         "state_class": "measurement",
         "device_mapping": "inverter",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25.5})
-    
+
     mock_loader.lookup.assert_called_once_with("tbl_actual", "Temp")
 
 
@@ -225,9 +227,9 @@ async def test_process_sends_discovery_with_metadata(processor: FrameProcessor, 
         "state_class": "measurement",
         "device_mapping": "inverter",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25.5})
-    
+
     mock_mqtt.send_discovery.assert_called_once()
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["device_id"] == "DEV01"
@@ -244,9 +246,9 @@ async def test_process_sends_discovery_with_metadata(processor: FrameProcessor, 
 async def test_process_publishes_state(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
     """Should publish state data to MQTT."""
     mock_loader.lookup.return_value = None # No metadata
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25.5, "Humid": 60})
-    
+
     mock_mqtt.publish_state.assert_called_once()
     call_args = mock_mqtt.publish_state.call_args[0]
     assert call_args[0] == "DEV01"
@@ -254,6 +256,75 @@ async def test_process_publishes_state(processor: FrameProcessor, mock_mqtt: Mag
     pub_data = call_args[2]
     assert pub_data["Temp"] == 25.5
     assert pub_data["Humid"] == 60
+
+
+@pytest.mark.asyncio
+async def test_process_ignores_generic_setting_transport_metadata(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    mock_loader.lookup.return_value = None
+
+    with caplog.at_level(logging.WARNING):
+        await processor.process(
+            "DEV01",
+            "tbl_invertor_prms",
+            {
+                "ID": 13809469,
+                "NewValue": 1,
+                "Confirm": "New",
+                "TblItem": "MODE",
+                "ID_Server": 9,
+                "mytimediff": 0,
+                "TSec": "2026-03-17 07:03:04",
+            },
+        )
+
+    mock_mqtt.publish_state.assert_not_called()
+    assert "Missing sensor_map entry" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_process_ignores_ack_like_transport_metadata(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    mock_loader.lookup.return_value = None
+
+    with caplog.at_level(logging.WARNING):
+        await processor.process(
+            "DEV01",
+            "tbl_actual",
+            {
+                "Result": "ACK",
+                "Rdt": "2025-12-07 20:46:52",
+                "Tmr": 100,
+            },
+        )
+
+    mock_mqtt.publish_state.assert_not_called()
+    assert "Missing sensor_map entry" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_process_keeps_real_sensor_keys_when_transport_metadata_leaks(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
+    def lookup(table: str, key: str) -> dict | None:
+        if (table, key) == ("tbl_invertor_prms", "MODE"):
+            return {"name_cs": "Mode", "device_mapping": "inverter"}
+        return None
+
+    mock_loader.lookup.side_effect = lookup
+
+    await processor.process(
+        "DEV01",
+        "tbl_invertor_prms",
+        {
+            "MODE": 3,
+            "ID": 13809469,
+            "NewValue": 3,
+            "Confirm": "New",
+            "TblItem": "MODE",
+            "ID_Server": 9,
+            "mytimediff": 0,
+            "TSec": "2026-03-17 07:03:04",
+        },
+    )
+
+    mock_mqtt.publish_state.assert_called_once_with("DEV01", "tbl_invertor_prms", {"MODE": 3})
 
 
 # -----------------------------------------------------------------------------
@@ -268,9 +339,9 @@ async def test_send_discovery_uses_name_cs_when_available(processor: FrameProces
         "name_cs": "Teplota",
         "unit_of_measurement": "°C",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25})
-    
+
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["sensor_name"] == "Teplota"
 
@@ -282,9 +353,9 @@ async def test_send_discovery_falls_back_to_name_when_name_cs_missing(processor:
         "name": "Temperature",
         "unit_of_measurement": "°C",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25})
-    
+
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["sensor_name"] == "Temperature"
 
@@ -295,9 +366,9 @@ async def test_send_discovery_falls_back_to_key_when_no_name(processor: FramePro
     mock_loader.lookup.return_value = {
         "unit_of_measurement": "°C",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25})
-    
+
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["sensor_name"] == "Temp"
 
@@ -311,9 +382,9 @@ async def test_send_discovery_with_binary_sensor(processor: FrameProcessor, mock
         "device_class": "battery_charging",
         "device_mapping": "battery",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"CHARGE": 1})
-    
+
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["sensor_name"] == "Nabíjení aktivní"
     assert call_kwargs["device_class"] == "battery_charging"
@@ -328,9 +399,9 @@ async def test_send_discovery_with_entity_category(processor: FrameProcessor, mo
         "entity_category": "diagnostic",
         "device_mapping": "inverter",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Status": "OK"})
-    
+
     mock_mqtt.send_discovery.assert_called_once()
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["entity_category"] == "diagnostic"
@@ -350,10 +421,10 @@ async def test_process_decodes_warnings_when_warnings_3f_present(processor: Fram
             {"bit": 4, "key": "ERR_PV", "remark_cs": "Výpadek FV vstupu 2"},
         ],
     }
-    
+
     # Value with bit 8 set (0b100000000 = 256)
     await processor.process("DEV01", "tbl_actual", {"ERR_PV": 256})
-    
+
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert "ERR_PV_warnings" in pub_data
     assert "ERR_PV" in pub_data["ERR_PV_warnings"]
@@ -371,10 +442,10 @@ async def test_process_decodes_multiple_warnings(processor: FrameProcessor, mock
             {"bit": 3, "key": "ERR_BATT_UNDER", "remark_cs": "Baterie pod napětím"},
         ],
     }
-    
+
     # Value with bits 4 and 3 set (1<<4 | 1<<3 = 16 + 8 = 24)
     await processor.process("DEV01", "tbl_actual", {"ERR_BATT": 24})
-    
+
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert "ERR_BATT_warnings" in pub_data
     warnings = pub_data["ERR_BATT_warnings"]
@@ -392,9 +463,9 @@ async def test_process_no_warnings_when_value_is_zero(processor: FrameProcessor,
             {"bit": 8, "key": "ERR_PV", "remark_cs": "Výpadek FV vstupu 1"},
         ],
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"ERR_PV": 0})
-    
+
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     # When no warnings, the _warnings key should not be present
     assert "ERR_PV_warnings" not in pub_data
@@ -407,9 +478,9 @@ async def test_process_no_warnings_when_warnings_3f_empty(processor: FrameProces
         "name_cs": "Teplota",
         "warnings_3f": [],
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25})
-    
+
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert "Temp_warnings" not in pub_data
 
@@ -420,9 +491,9 @@ async def test_process_no_warnings_when_warnings_3f_missing(processor: FrameProc
     mock_loader.lookup.return_value = {
         "name_cs": "Teplota",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25})
-    
+
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert "Temp_warnings" not in pub_data
 
@@ -435,9 +506,9 @@ async def test_process_no_warnings_when_warnings_3f_missing(processor: FrameProc
 async def test_process_handles_none_metadata(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
     """Should handle missing sensor_map entry gracefully."""
     mock_loader.lookup.return_value = None
-    
+
     await processor.process("DEV01", "tbl_actual", {"UnknownSensor": 42})
-    
+
     # Should still publish the value even without metadata
     mock_mqtt.publish_state.assert_called_once()
     pub_data = mock_mqtt.publish_state.call_args[0][2]
@@ -455,9 +526,9 @@ async def test_process_handles_null_values_in_metadata(processor: FrameProcessor
         "device_class": None,
         "state_class": None,
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25})
-    
+
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["sensor_name"] == "Temperature"  # Falls back to name
     assert call_kwargs["unit"] == ""  # Empty string for None
@@ -500,9 +571,9 @@ async def test_process_preserves_original_value_in_pub_data(processor: FrameProc
         "name_cs": "Teplota",
         "unit_of_measurement": "°C",
     }
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25.5, "Count": 42})
-    
+
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert pub_data["Temp"] == 25.5
     assert pub_data["Count"] == 42
@@ -518,18 +589,18 @@ async def test_process_with_multiple_sensors(processor: FrameProcessor, mock_mqt
             "Pressure": {"name_cs": "Tlak", "unit_of_measurement": "hPa"},
         }
         return lookups.get(key)
-    
+
     mock_loader.lookup.side_effect = lookup_side_effect
-    
+
     await processor.process("DEV01", "tbl_actual", {
         "Temp": 25.5,
         "Humid": 60,
         "Pressure": 1013,
     })
-    
+
     # Should send discovery for each sensor
     assert mock_mqtt.send_discovery.call_count == 3
-    
+
     # Should publish all values
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert pub_data["Temp"] == 25.5
@@ -557,27 +628,27 @@ async def test_integration_with_real_loader_and_temp_sensor(tmp_path) -> None:
             }
         }
     }
-    
+
     map_file = tmp_path / "sensor_map.json"
     map_file.write_text(json.dumps(sensor_map))
-    
+
     loader = SensorMapLoader(str(map_file))
     loader.load()
-    
+
     mock_mqtt = MagicMock(spec=MQTTClient)
     mock_mqtt.send_discovery.return_value = True
     mock_mqtt.publish_state.return_value = True
-    
+
     processor = FrameProcessor(mqtt=mock_mqtt, sensor_loader=loader)
-    
+
     await processor.process("DEV01", "tbl_actual", {"Temp": 25.5})
-    
+
     # Verify discovery was sent with correct unit
     call_kwargs = mock_mqtt.send_discovery.call_args.kwargs
     assert call_kwargs["unit"] == "°C"
     assert call_kwargs["device_class"] == "temperature"
     assert call_kwargs["state_class"] == "measurement"
-    
+
     # Verify state was published
     pub_data = mock_mqtt.publish_state.call_args[0][2]
     assert pub_data["Temp"] == 25.5

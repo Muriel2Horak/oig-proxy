@@ -1,6 +1,7 @@
 """
 Testy pro proxy/mode.py — ModeManager a ConnectionMode.
 """
+# pylint: disable=too-few-public-methods
 from __future__ import annotations
 
 import asyncio

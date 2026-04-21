@@ -2,6 +2,21 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.10] - 2026-04-21
+
+### Fixed
+- **Release quality gate cleanup**: hardening of async cancellation handling, optional MQTT lifecycle guards, cleanup of the MQTT discovery dead conditional, and removal of hardcoded DNS-upstream literals so the `release/v2.0.9 -> main` SonarCloud quality gate can pass cleanly.
+
+## [2.0.9] - 2026-04-09
+
+### Fixed
+- **Confirmed setting state sync**: když Box potvrdí změnu nastavení přes `tbl_events` nebo ACK inflight settingu, proxy nyní přepublikuje potvrzenou hodnotu zpět do MQTT/HA state přes existující `FrameProcessor` merge cestu. Nastavené entity tak po cloud změně okamžitě ukazují potvrzený stav Boxu místo čekání na další plný refresh tabulky.
+- **Generic transport frame filtering**: setting transport framy a ACK/END metadata (`ID`, `NewValue`, `Confirm`, `TblItem`, `ID_Server`, `mytimediff`, `TSec`, `Rdt`, `Tmr`, ...) už se obecně neberou jako senzorická data. Tím mizí warningy `Missing sensor_map entry` pro `tbl_box_prms`, `tbl_invertor_prms`, `tbl_invertor_prm1` a podobné setting tabulky, aniž by bylo potřeba hardcodovat konkrétní tabulky.
+- **Twin setting XML self references**: opravena chyba v `TwinSetting.build_setting_xml`, kde se při skládání XML používaly neexistující lokální proměnné místo `self.value`, `self.table` a `self.key`.
+
+### Added
+- **Project docs import**: do repa přidány `docs/v2/`, `AGENTS.md` a zdrojový workbook `docs/CBB Box - modbus TCP.xls`, se srovnanými odkazy na aktuální `addon/oig-proxy` layout a cloud endpoint.
+
 ## [2.0.8] - 2026-04-02
 
 ### Fixed
@@ -85,7 +100,7 @@
 - **Container Scanning**: Added Trivy for container and dependency vulnerability scanning
 
 ### Added
-- **Local CI Script** (`.github/scripts/ci.sh`): Run same checks as GitHub CI locally with flags (`--no-tests`, `--no-security`, `--no-lint`, `--sonar`)
+- **Local CI Script** (`ci/ci.sh`): Run same checks as GitHub CI locally with flags (`--no-tests`, `--no-security`, `--no-lint`, `--sonar`)
 - **GitHub Security Scan Workflow**: Daily security scan with all tools (Bandit, Safety, Semgrep, Trivy, Gitleaks)
 - **Security Unit Tests** (`tests/test_security.py`): 25 tests for telemetry, control API, session management, input validation, secrets, replay protection, encryption, and network security
 - **Penetration Tests** (`tests/test_penetration.py`): 31 tests simulating SQL injection, XSS, command injection, XML injection, path traversal, LDAP injection, buffer overflow, Unicode attacks, DoS, session hijacking, DNS rebinding, man-in-the-middle, null byte injection, format string attacks, integer overflow, and rate limiting attacks

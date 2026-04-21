@@ -1,6 +1,7 @@
 """
 Testy pro mqtt/status.py — ProxyStatusPublisher.
 """
+# pylint: disable=protected-access
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
@@ -239,6 +240,7 @@ def test_multiple_frames_accumulate():
 
 
 def test_publish_sends_discovery_for_proxy_status_when_loader_present():
+    """Test discovery sent when loader present."""
     mqtt = make_mqtt_client(connected=True)
     loader = MagicMock()
     loader.lookup.return_value = {
@@ -255,6 +257,7 @@ def test_publish_sends_discovery_for_proxy_status_when_loader_present():
 
 
 def test_publish_sends_discovery_for_proxy_controls_when_loader_present():
+    """Test discovery sent for proxy controls when loader present."""
     mqtt = make_mqtt_client(connected=True)
     loader = MagicMock()
     loader.lookup.return_value = {

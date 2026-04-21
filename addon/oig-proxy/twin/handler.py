@@ -10,9 +10,19 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from settings_constraints import is_setting_allowed, validate_setting_value
+from telemetry.settings_audit import (
+    SettingResult,
+    SettingStep,
+    SettingsAuditRecord,
+    make_incoming_record,
+    make_step_record,
+)
 
 if TYPE_CHECKING:
+    from telemetry.collector import TelemetryCollector
+
     from .state import TwinQueue
+    from .state import TwinSetting
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +47,7 @@ class TwinControlHandler:
         device_id: str,
         namespace: str = "oig_local",
         proxy_control_handler: Callable[[str, str, Any], bool] | None = None,
+        telemetry_collector: TelemetryCollector | None = None,
     ) -> None:
         """Initialize the control handler.
 
@@ -53,6 +64,25 @@ class TwinControlHandler:
         self._topic_compat: str = f"{self._namespace}/+/set/#"
         self._subscribed = False
         self._proxy_control_handler = proxy_control_handler
+        self._telemetry_collector = telemetry_collector
+
+    def _record_setting_audit(self, record: SettingsAuditRecord) -> None:
+        if self._telemetry_collector is None:
+            return
+        self._telemetry_collector.record_setting_audit_step(record)
+
+    def _make_pending_setting_record(self, setting: TwinSetting) -> SettingsAuditRecord:
+        record = make_incoming_record(
+            device_id=self._device_id,
+            table=setting.table,
+            key=setting.key,
+            raw_text=setting.raw_text,
+            value=setting.value,
+            msg_id=setting.msg_id,
+            id_set=setting.id_set,
+        )
+        record.audit_id = setting.audit_id
+        return record
 
     async def start(self) -> None:
         """Start the handler by subscribing to the control topic.
@@ -105,11 +135,35 @@ class TwinControlHandler:
                     table = path[3]
                     key = path[4]
                     value_raw = raw_payload
+                    incoming_record = make_incoming_record(
+                        device_id=self._device_id,
+                        table=table,
+                        key=key,
+                        raw_text=raw_payload,
+                        value=value_raw,
+                    )
+                    self._record_setting_audit(incoming_record)
                     if not is_setting_allowed(table, key):
+                        self._record_setting_audit(
+                            make_step_record(
+                                incoming_record,
+                                SettingStep.REJECTED_NOT_ALLOWED,
+                                SettingResult.REJECTED,
+                                raw_text=raw_payload,
+                            )
+                        )
                         logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
                         return
                     ok, normalized, reason = validate_setting_value(table, key, value_raw)
                     if not ok:
+                        self._record_setting_audit(
+                            make_step_record(
+                                incoming_record,
+                                SettingStep.REJECTED_VALIDATION,
+                                SettingResult.REJECTED,
+                                raw_text=raw_payload,
+                            )
+                        )
                         logger.warning(
                             "Twin setting rejected: %s:%s=%s (%s)",
                             table,
@@ -123,7 +177,31 @@ class TwinControlHandler:
                         if handled:
                             logger.info("Proxy control applied: %s:%s=%s", table, key, normalized)
                             return
-                    self._twin_queue.enqueue(table, key, normalized)
+                    pending_setting = self._twin_queue.get(table, key)
+                    if pending_setting is not None and pending_setting.audit_id:
+                        self._record_setting_audit(
+                            make_step_record(
+                                self._make_pending_setting_record(pending_setting),
+                                SettingStep.SUPERSEDED,
+                                SettingResult.SUPERSEDED,
+                            )
+                        )
+                    self._twin_queue.enqueue(
+                        table,
+                        key,
+                        normalized,
+                        audit_id=incoming_record.audit_id,
+                        raw_text=incoming_record.raw_text,
+                    )
+                    enqueued_setting = self._twin_queue.get(table, key)
+                    self._record_setting_audit(
+                        make_step_record(
+                            incoming_record,
+                            SettingStep.ENQUEUED,
+                            msg_id=enqueued_setting.msg_id if enqueued_setting is not None else None,
+                            id_set=enqueued_setting.id_set if enqueued_setting is not None else None,
+                        )
+                    )
                     logger.info("Twin setting enqueued: %s:%s=%s", table, key, normalized)
                     return
 
@@ -137,23 +215,50 @@ class TwinControlHandler:
                 return
 
             # Extract required fields
-            table = data.get("table")
-            key = data.get("key")
+            table_raw = data.get("table")
+            key_raw = data.get("key")
             value = data.get("value")
 
-            if table is None or key is None or value is None:
+            if not isinstance(table_raw, str) or not isinstance(key_raw, str) or value is None:
                 logger.warning(
                     "TwinControlHandler: Invalid message format on %s: missing table/key/value",
                     topic,
                 )
                 return
 
+            table = table_raw
+            key = key_raw
+            incoming_record = make_incoming_record(
+                device_id=self._device_id,
+                table=table,
+                key=key,
+                raw_text=raw_payload,
+                value=value,
+            )
+            self._record_setting_audit(incoming_record)
+
             if not is_setting_allowed(table, key):
+                self._record_setting_audit(
+                    make_step_record(
+                        incoming_record,
+                        SettingStep.REJECTED_NOT_ALLOWED,
+                        SettingResult.REJECTED,
+                        raw_text=raw_payload,
+                    )
+                )
                 logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
                 return
 
             ok, normalized, reason = validate_setting_value(table, key, value)
             if not ok:
+                self._record_setting_audit(
+                    make_step_record(
+                        incoming_record,
+                        SettingStep.REJECTED_VALIDATION,
+                        SettingResult.REJECTED,
+                        raw_text=raw_payload,
+                    )
+                )
                 logger.warning(
                     "Twin setting rejected: %s:%s=%s (%s)",
                     table,
@@ -170,7 +275,31 @@ class TwinControlHandler:
                     return
 
             # Enqueue the setting
-            self._twin_queue.enqueue(table, key, normalized)
+            pending_setting = self._twin_queue.get(table, key)
+            if pending_setting is not None and pending_setting.audit_id:
+                self._record_setting_audit(
+                    make_step_record(
+                        self._make_pending_setting_record(pending_setting),
+                        SettingStep.SUPERSEDED,
+                        SettingResult.SUPERSEDED,
+                    )
+                )
+            self._twin_queue.enqueue(
+                table,
+                key,
+                normalized,
+                audit_id=incoming_record.audit_id,
+                raw_text=incoming_record.raw_text,
+            )
+            enqueued_setting = self._twin_queue.get(table, key)
+            self._record_setting_audit(
+                make_step_record(
+                    incoming_record,
+                    SettingStep.ENQUEUED,
+                    msg_id=enqueued_setting.msg_id if enqueued_setting is not None else None,
+                    id_set=enqueued_setting.id_set if enqueued_setting is not None else None,
+                )
+            )
             logger.info("Twin setting enqueued: %s:%s=%s", table, key, normalized)
 
         except json.JSONDecodeError as exc:
@@ -179,7 +308,7 @@ class TwinControlHandler:
                 topic,
                 exc,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001  # NOSONAR
             logger.error(
                 "TwinControlHandler: Error processing message on %s: %s",
                 topic,

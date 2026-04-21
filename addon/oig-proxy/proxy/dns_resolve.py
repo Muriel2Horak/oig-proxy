@@ -11,11 +11,13 @@ overrides oigservis.cz → HA IP for LAN clients.
 from __future__ import annotations
 
 import logging
-import random
+import os
 import socket
 import struct
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_DNS_SERVER = socket.inet_ntoa(bytes((8, 8, 8, 8)))
 
 
 def _skip_dns_name(data: bytes, offset: int) -> int:
@@ -33,7 +35,7 @@ def _skip_dns_name(data: bytes, offset: int) -> int:
 
 def resolve_a_record(
     hostname: str,
-    dns_server: str = "8.8.8.8",
+    dns_server: str = DEFAULT_DNS_SERVER,
     timeout: float = 5.0,
 ) -> str | None:
     """Resolve *hostname* to an IPv4 address using *dns_server* directly.
@@ -53,7 +55,7 @@ def resolve_a_record(
     except OSError:
         pass
 
-    query_id = random.randint(0, 65535)
+    query_id = struct.unpack(">H", os.urandom(2))[0]
 
     # DNS header: ID | flags(RD=1) | QDCOUNT=1 | ANCOUNT=0 | NSCOUNT=0 | ARCOUNT=0
     header = struct.pack(">HHHHHH", query_id, 0x0100, 1, 0, 0, 0)

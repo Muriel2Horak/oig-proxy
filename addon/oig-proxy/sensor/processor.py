@@ -13,6 +13,21 @@ from mqtt.client import MQTTClient
 logger = logging.getLogger(__name__)
 
 ISNEW_TABLES = {"IsNewFW", "IsNewSet", "IsNewWeather"}
+TRANSPORT_METADATA_KEYS = frozenset(
+    {
+        "Confirm",
+        "ID",
+        "ID_Server",
+        "NewValue",
+        "Rdt",
+        "Result",
+        "TSec",
+        "TblItem",
+        "Tmr",
+        "ToDo",
+        "mytimediff",
+    }
+)
 
 
 class FrameProcessor:
@@ -177,9 +192,14 @@ class FrameProcessor:
                 return
             data = deduped
 
+        transport_metadata_frame = self._is_transport_metadata_frame(data)
+
         for key, value in data.items():
             # Skip internal keys prefixed with _
             if key.startswith("_"):
+                continue
+
+            if transport_metadata_frame and key in TRANSPORT_METADATA_KEYS:
                 continue
 
             # Look up sensor metadata
@@ -287,3 +307,21 @@ class FrameProcessor:
                         mirror_table,
                         target_device_id,
                     )
+
+    @staticmethod
+    def _is_transport_metadata_frame(data: dict[str, Any]) -> bool:
+        result = str(data.get("Result") or "")
+        if result in {"ACK", "END", "IsNewFW", "IsNewSet", "IsNewWeather"}:
+            return True
+
+        keys = {key for key in data if not key.startswith("_")}
+        if {"TblItem", "NewValue"}.issubset(keys) and keys & {
+            "Confirm",
+            "ID",
+            "ID_Server",
+            "TSec",
+            "mytimediff",
+        }:
+            return True
+
+        return False

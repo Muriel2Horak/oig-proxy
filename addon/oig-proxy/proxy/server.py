@@ -27,7 +27,7 @@ try:
     from ..protocol.parser import parse_xml_frame
     from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
-    from .dns_resolve import resolve_a_record
+    from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
     from .mode import ConnectionMode, ModeManager
     from .local_ack import build_local_ack
 except ImportError:
@@ -38,7 +38,7 @@ except ImportError:
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
     from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
-    from proxy.dns_resolve import resolve_a_record  # type: ignore[no-redef]
+    from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
     from proxy.mode import ConnectionMode, ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
 
@@ -105,9 +105,27 @@ def _read_replay_frame_once(path: str) -> bytes | None:
 
 
 TRACE_LEVEL = 5
+TRANSPORT_RESULT_VALUES = frozenset({"ACK", "END"})
+POLL_RESULT_VALUES = frozenset({"IsNewSet", "IsNewWeather", "IsNewFW"})
+TRANSPORT_METADATA_KEYS = frozenset(
+    {
+        "Confirm",
+        "ID",
+        "ID_Server",
+        "NewValue",
+        "Rdt",
+        "Result",
+        "TSec",
+        "TblItem",
+        "Tmr",
+        "ToDo",
+        "mytimediff",
+    }
+)
 
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
+ConfirmedSettingCallback = Callable[[str, str, str, Any], Awaitable[None]]
 
 
 class ProxyServer:
@@ -123,12 +141,14 @@ class ProxyServer:
         self,
         config: Config,
         on_frame: FrameCallback | None = None,
+        on_confirmed_setting: ConfirmedSettingCallback | None = None,
         twin_delivery: TwinDelivery | None = None,
         frame_capture: FrameCapture | None = None,
         telemetry_collector: "TelemetryCollector | None" = None,
     ) -> None:
         self.config = config
         self.on_frame = on_frame
+        self.on_confirmed_setting = on_confirmed_setting
         self.twin_delivery = twin_delivery
         self.frame_capture = frame_capture
         self.telemetry_collector = telemetry_collector
@@ -151,7 +171,7 @@ class ProxyServer:
 
     async def start(self) -> None:
         """Spustí TCP server."""
-        dns_upstream = getattr(self.config, "dns_upstream", "8.8.8.8")
+        dns_upstream = getattr(self.config, "dns_upstream", DEFAULT_DNS_SERVER)
         resolved = resolve_a_record(self.config.cloud_host, dns_upstream)
         if resolved:
             self._cloud_ip = resolved
@@ -184,16 +204,16 @@ class ProxyServer:
             await server.serve_forever()
 
     async def stop(self) -> None:
-        """Graceful shutdown."""
         if self._server:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
-        # Zrušíme aktivní spojení
         for task in list(self._active_connections):
             task.cancel()
         if self._active_connections:
             await asyncio.gather(*self._active_connections, return_exceptions=True)
+        if self.twin_delivery is not None:
+            self.twin_delivery.shutdown()
         logger.info("OIG Proxy v2 zastavena")
 
     def is_box_connected(self) -> bool:
@@ -289,8 +309,8 @@ class ProxyServer:
             box_writer.close()
             try:
                 await box_writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("wait_closed error during rejection: %s", exc)
             if current is not None:
                 self._active_connections.discard(current)
             return
@@ -444,6 +464,24 @@ class ProxyServer:
                 self._active_connections.discard(current)
             return
 
+        if cloud_reader is None or cloud_writer is None:
+            logger.error("❌ Cloud connection missing stream endpoints after successful connect")
+            box_writer.close()
+            await box_writer.wait_closed()
+            self._record_telemetry_connection_end(
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_reason="cloud_connect_missing_stream",
+                box_peer=peer_str,
+                cloud_connected_since_epoch=None,
+                cloud_reason=cloud_disconnect_reason,
+            )
+            self._active_connection_count -= 1
+            self._box_connected = False
+            self.box_peer = None
+            if current is not None:
+                self._active_connections.discard(current)
+            return
+
         # Spustíme obousměrný forward.
         # Používáme FIRST_COMPLETED + cancel, aby po odpojení jedné strany
         # byl okamžitě uvolněn i druhý socket (jinak hrozí FD leak – každých
@@ -479,8 +517,8 @@ class ProxyServer:
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("wait_closed error in pipe cleanup: %s", exc)
             self._record_telemetry_connection_end(
                 box_connected_since_epoch=box_connected_since_epoch,
                 box_reason=box_disconnect_reason,
@@ -584,6 +622,7 @@ class ProxyServer:
                     setting = pending_settings[0] if pending_settings else None
                     logger.debug("deliver_pending returned: %s", setting)
                     if setting is not None:
+                        audit_session_id = session_id or ""
                         next_id_set = self.twin_delivery.next_id_set()
                         next_msg_id = self.twin_delivery.next_msg_id()
                         setting_frame = build_setting_frame(
@@ -604,6 +643,11 @@ class ProxyServer:
                                 setting.table,
                                 setting.key,
                                 setting.value,
+                            )
+                            self.twin_delivery.record_injected_box(
+                                setting,
+                                device_id,
+                                session_id=audit_session_id,
                             )
                             withheld_chunks = True
                             continue
@@ -703,8 +747,29 @@ class ProxyServer:
                             and "<NewValue>" in frame_text
                         )
                     ):
-                        self.twin_delivery.set_cloud_inflight()
-                        logger.info("☁️ Cloud Setting detected, marking cloud inflight")
+                        setting_table = str(parsed_frame.get("_table") or "")
+                        setting_key = str(parsed_frame.get("TblItem") or "")
+                        setting_value = parsed_frame.get("NewValue")
+                        setting_device_id = str(parsed_frame.get("_device_id") or "")
+                        if setting_table and setting_key and setting_value is not None and setting_device_id:
+                            self.twin_delivery.begin_cloud_setting(
+                                device_id=setting_device_id,
+                                table=setting_table,
+                                key=setting_key,
+                                value=setting_value,
+                                raw_text=frame_text,
+                                msg_id=observed_msg_id or 0,
+                                id_set=observed_id_set or 0,
+                                confirm=str(parsed_frame.get("Confirm") or "New"),
+                            )
+                            logger.info(
+                                "☁️ Cloud Setting detected, tracking inflight audit for %s:%s",
+                                setting_table,
+                                setting_key,
+                            )
+                        else:
+                            self.twin_delivery.set_cloud_inflight()
+                            logger.info("☁️ Cloud Setting detected, marking cloud inflight")
                     elif table_name == "END":
                         self.twin_delivery.clear_cloud_inflight()
                         logger.debug("☁️ Cloud END received, clearing cloud inflight")
@@ -722,12 +787,25 @@ class ProxyServer:
         if not self.twin_delivery:
             return
 
+        audit_session_id = session_id or ""
         frame_text = frame_bytes.decode("utf-8", errors="replace")
         parsed_frame = parse_xml_frame(frame_text)
         table_name = self._effective_table_name(parsed_frame, frame_text)
 
         if run_isnewset_hook and table_name == "IsNewSet" and box_writer is not None:
             await self._deliver_pending_for_isnewset(frame_text, box_writer)
+
+        inflight_setting = self.twin_delivery.inflight_setting() if self.twin_delivery else None
+        confirmed_published = False
+
+        def _unpack_inflight():
+            if inflight_setting is None:
+                return None
+            try:
+                setting, device_id = inflight_setting
+                return setting, device_id
+            except Exception:
+                return None
 
         parsed_ack = parse_box_ack(frame_bytes)
         if (
@@ -736,36 +814,103 @@ class ProxyServer:
             and parsed_ack.get("table")
             and parsed_ack.get("todo")
         ):
+            matched_inflight = False
+            pair = _unpack_inflight()
+            if pair is not None:
+                setting, inflight_device_id = pair
+                if (setting.table, setting.key) == (parsed_ack["table"], parsed_ack["todo"]):
+                    matched_inflight = True
+                    self.twin_delivery.record_ack_box_observed(
+                        setting,
+                        inflight_device_id,
+                        session_id=audit_session_id,
+                    )
             logger.info(
                 "✅ BOX ACK received: %s:%s payload=%s",
                 parsed_ack["table"],
                 parsed_ack["todo"],
                 frame_text,
             )
-            self.twin_delivery.acknowledge(
-                parsed_ack["table"],
-                parsed_ack["todo"],
-                session_id=session_id,
-            )
+            if not matched_inflight:
+                self.twin_delivery.acknowledge(
+                    parsed_ack["table"],
+                    parsed_ack["todo"],
+                    session_id=session_id,
+                )
 
         event_ack = parse_tbl_events_ack(parsed_frame)
         if event_ack and event_ack.get("table") and event_ack.get("key"):
+            await self._publish_confirmed_setting(
+                str(parsed_frame.get("_device_id") or ""),
+                event_ack["table"],
+                event_ack["key"],
+                event_ack.get("value"),
+            )
+            confirmed_published = True
             logger.info(
                 "✅ BOX ACK received (tbl_events): %s:%s payload=%s",
                 event_ack["table"],
                 event_ack["key"],
                 frame_text,
             )
-            self.twin_delivery.acknowledge(
+            cloud_pair = self.twin_delivery.match_cloud_tbl_events(
+                str(parsed_frame.get("_device_id") or ""),
                 event_ack["table"],
                 event_ack["key"],
-                session_id=session_id,
+                event_ack.get("value"),
+                session_id=audit_session_id,
             )
+            if cloud_pair is None:
+                pair = _unpack_inflight()
+            else:
+                pair = None
+            if pair is not None:
+                setting, inflight_device_id = pair
+                if (setting.table, setting.key) == (event_ack["table"], event_ack["key"]):
+                    self.twin_delivery.record_ack_tbl_events(
+                        setting,
+                        inflight_device_id,
+                        confirmed_value=event_ack.get("value"),
+                        session_id=audit_session_id,
+                    )
+            if cloud_pair is None:
+                self.twin_delivery.acknowledge(
+                    event_ack["table"],
+                    event_ack["key"],
+                    session_id=session_id,
+                )
 
         if parsed_ack and parsed_ack.get("result") == "ACK" and parsed_ack.get("reason") == "Setting":
-            inflight = self.twin_delivery.inflight()
-            if inflight is not None:
-                table, key = inflight
+            cloud_pair = self.twin_delivery.mark_cloud_reason_setting(
+                str(parsed_frame.get("_device_id") or ""),
+                session_id=audit_session_id,
+            )
+            pair = None
+            if cloud_pair is not None:
+                setting, inflight_device_id = cloud_pair
+                logger.info(
+                    "✅ BOX ACK received (Reason=Setting), provisional inflight %s:%s payload=%s",
+                    setting.table,
+                    setting.key,
+                    frame_text,
+                )
+            else:
+                pair = _unpack_inflight()
+            if cloud_pair is None and pair is not None:
+                setting, inflight_device_id = pair
+                if not confirmed_published:
+                    await self._publish_confirmed_setting(
+                        inflight_device_id,
+                        setting.table,
+                        setting.key,
+                        setting.value,
+                    )
+                self.twin_delivery.record_ack_reason_setting(
+                    setting,
+                    inflight_device_id,
+                    session_id=audit_session_id,
+                )
+                table, key = setting.table, setting.key
                 logger.info(
                     "✅ BOX ACK received (Reason=Setting), acknowledging inflight %s:%s payload=%s",
                     table,
@@ -773,6 +918,47 @@ class ProxyServer:
                     frame_text,
                 )
                 self.twin_delivery.acknowledge(table, key, session_id=session_id)
+
+        if parsed_ack and parsed_ack.get("result") == "NACK":
+            pair = _unpack_inflight()
+            if pair is not None:
+                setting, inflight_device_id = pair
+                self.twin_delivery.record_nack(
+                    setting,
+                    inflight_device_id,
+                    session_id=audit_session_id,
+                )
+                logger.info(
+                    "❌ BOX NACK received for inflight %s:%s payload=%s",
+                    setting.table,
+                    setting.key,
+                    frame_text,
+                )
+                self.twin_delivery.acknowledge(
+                    setting.table,
+                    setting.key,
+                    session_id=session_id,
+                )
+
+    async def _publish_confirmed_setting(
+        self,
+        device_id: str | None,
+        table: str,
+        key: str,
+        value: Any,
+    ) -> None:
+        if self.on_confirmed_setting is None or not device_id:
+            return
+        try:
+            await self.on_confirmed_setting(device_id, table, key, value)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Confirmed setting publish failed for %s:%s=%s: %s",
+                table,
+                key,
+                value,
+                exc,
+            )
 
     async def _deliver_pending_for_isnewset(
         self,
@@ -797,6 +983,7 @@ class ProxyServer:
                 frame = build_frame(payload).encode("utf-8", errors="replace")
                 box_writer.write(frame)
                 await box_writer.drain()
+                self.twin_delivery.record_injected_box(setting, device_id)
             except (OSError, ConnectionResetError):
                 break
 
@@ -808,7 +995,7 @@ class ProxyServer:
         try:
             text = frame_bytes.decode("utf-8", errors="replace")
             parsed = parse_xml_frame(text)
-            if parsed:
+            if parsed and not self._is_transport_frame(parsed):
                 await self.on_frame(parsed)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Frame parse error: %s", exc)
@@ -881,9 +1068,35 @@ class ProxyServer:
     @staticmethod
     def _effective_table_name(parsed: dict[str, Any], payload: str) -> str:
         result = str(parsed.get("Result") or "")
-        if result in {"IsNewSet", "IsNewWeather", "IsNewFW", "ACK", "END"}:
+        if result in POLL_RESULT_VALUES | TRANSPORT_RESULT_VALUES:
             return result
         return str(parsed.get("_table") or infer_table_name(payload) or "")
+
+    @staticmethod
+    def _is_transport_frame(parsed: dict[str, Any]) -> bool:
+        result = str(parsed.get("Result") or "")
+        if result in TRANSPORT_RESULT_VALUES:
+            return True
+
+        if result in POLL_RESULT_VALUES:
+            publishable_keys = [
+                key
+                for key in parsed
+                if not key.startswith("_") and key not in TRANSPORT_METADATA_KEYS
+            ]
+            return not publishable_keys
+
+        keys = {key for key in parsed if not key.startswith("_")}
+        if {"TblItem", "NewValue"}.issubset(keys) and keys & {
+            "Confirm",
+            "ID",
+            "ID_Server",
+            "TSec",
+            "mytimediff",
+        }:
+            return True
+
+        return False
 
     async def _pipe_box_offline(
         self,
@@ -908,8 +1121,8 @@ class ProxyServer:
             box_writer.close()
             try:
                 await box_writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("wait_closed error in offline pipe: %s", exc)
             logger.info("🔌 BOX odpojen (offline): %s:%s", *peer[:2])
 
     async def _handle_offline_frames(

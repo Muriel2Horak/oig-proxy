@@ -1,3 +1,4 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring
 import os
 import sys
 
@@ -5,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
 
-from twin.ack_parser import parse_box_ack, parse_tbl_events_ack
+from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # pylint: disable=wrong-import-position
 
 
 def test_parse_box_ack_minimal_ack() -> None:
@@ -31,7 +32,8 @@ def test_parse_box_ack_with_reason() -> None:
 
 
 def test_parse_box_ack_non_ack_returns_none() -> None:
-    assert parse_box_ack(b"<Result>NACK</Result>") is None
+    # NACK is now a valid parsed result (used for settings audit NACK tracking)
+    assert parse_box_ack(b"<Result>NACK</Result>") == {"result": "NACK"}
 
 
 def test_parse_tbl_events_ack_setting_event() -> None:

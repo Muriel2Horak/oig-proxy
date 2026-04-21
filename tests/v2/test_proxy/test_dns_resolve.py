@@ -136,7 +136,7 @@ class TestResolveARecord:
         wrong_id_response = _build_dns_response(0xDEAD, "oigservis.cz", "1.2.3.4")
         mock_sock.recvfrom.return_value = (wrong_id_response, ("8.8.8.8", 53))
 
-        with patch("proxy.dns_resolve.random.randint", return_value=0x1234):
+        with patch("proxy.dns_resolve.os.urandom", return_value=b"\x12\x34"):
             with patch("socket.socket", return_value=mock_sock):
                 result = resolve_a_record("oigservis.cz", "8.8.8.8")
 
