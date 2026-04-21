@@ -747,8 +747,29 @@ class ProxyServer:
                             and "<NewValue>" in frame_text
                         )
                     ):
-                        self.twin_delivery.set_cloud_inflight()
-                        logger.info("☁️ Cloud Setting detected, marking cloud inflight")
+                        setting_table = str(parsed_frame.get("_table") or "")
+                        setting_key = str(parsed_frame.get("TblItem") or "")
+                        setting_value = parsed_frame.get("NewValue")
+                        setting_device_id = str(parsed_frame.get("_device_id") or "")
+                        if setting_table and setting_key and setting_value is not None and setting_device_id:
+                            self.twin_delivery.begin_cloud_setting(
+                                device_id=setting_device_id,
+                                table=setting_table,
+                                key=setting_key,
+                                value=setting_value,
+                                raw_text=frame_text,
+                                msg_id=observed_msg_id or 0,
+                                id_set=observed_id_set or 0,
+                                confirm=str(parsed_frame.get("Confirm") or "New"),
+                            )
+                            logger.info(
+                                "☁️ Cloud Setting detected, tracking inflight audit for %s:%s",
+                                setting_table,
+                                setting_key,
+                            )
+                        else:
+                            self.twin_delivery.set_cloud_inflight()
+                            logger.info("☁️ Cloud Setting detected, marking cloud inflight")
                     elif table_name == "END":
                         self.twin_delivery.clear_cloud_inflight()
                         logger.debug("☁️ Cloud END received, clearing cloud inflight")

@@ -914,6 +914,63 @@ async def test_setting_audit_ack_reason_setting_reuses_stored_raw_text() -> None
 
 
 @pytest.mark.asyncio
+async def test_pipe_cloud_to_box_tracks_cloud_setting_for_audit_lifecycle() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingResult, SettingStep
+
+    collector = _make_collector()
+    delivery = TwinDelivery(TwinQueue(), MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    cloud_setting = build_frame(
+        "<TblName>tbl_box_prms</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<ID>13809469</ID>"
+        "<ID_Set>844979473</ID_Set>"
+        "<TblItem>MODE</TblItem>"
+        "<NewValue>1</NewValue>"
+        "<Confirm>New</Confirm>"
+        "<Reason>Setting</Reason>"
+    ).encode("utf-8")
+    cloud_reader = asyncio.StreamReader()
+    cloud_reader.feed_data(cloud_setting)
+    cloud_reader.feed_eof()
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.write = MagicMock()
+    box_writer.drain = AsyncMock()
+
+    await server._pipe_cloud_to_box(cloud_reader, box_writer)
+
+    inflight = delivery.inflight_setting()
+    assert inflight is not None
+    setting, device_id = inflight
+    assert device_id == "12345"
+    assert setting.audit_id
+    assert setting.raw_text == cloud_setting.decode("utf-8", errors="replace")
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<Reason>Setting</Reason>"
+        "<ID_Device>12345</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    audit_records = [record for record in collector.settings_audit if record["audit_id"] == setting.audit_id]
+    assert [record["step"] for record in audit_records] == [
+        SettingStep.INCOMING.value,
+        SettingStep.ACK_REASON_SETTING.value,
+    ]
+    assert audit_records[0]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
+    assert audit_records[1]["result"] == SettingResult.CONFIRMED.value
+    assert audit_records[1]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
+    assert delivery.inflight_setting() is None
+    assert delivery.is_cloud_inflight() is False
+
+
+@pytest.mark.asyncio
 async def test_setting_audit_nack_reuses_stored_raw_text() -> None:
     from twin.delivery import TwinDelivery
     from twin.state import TwinQueue
