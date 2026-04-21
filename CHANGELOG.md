@@ -2,6 +2,11 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.0.10] - 2026-04-21
+
+### Fixed
+- **Release quality gate cleanup**: hardening of async cancellation handling, optional MQTT lifecycle guards, cleanup of the MQTT discovery dead conditional, and removal of hardcoded DNS-upstream literals so the `release/v2.0.9 -> main` SonarCloud quality gate can pass cleanly.
+
 ## [2.0.9] - 2026-04-09
 
 ### Fixed
