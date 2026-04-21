@@ -302,6 +302,44 @@ class TestStartupSequence:
         assert app.twin_delivery is not None
 
     @pytest.mark.asyncio
+    async def test_startup_passes_telemetry_collector_to_twin_delivery(self, mock_config):
+        """Test that TwinDelivery receives the live telemetry collector instance."""
+        mock_config.telemetry_enabled = True
+        app = ProxyApp(mock_config)
+
+        collector = Mock()
+        collector.init = Mock()
+        collector.loop = AsyncMock()
+
+        with patch("main.DeviceIdManager") as mock_device_manager:
+            mock_instance = Mock()
+            mock_instance.load.return_value = None
+            mock_instance.device_id = None
+            mock_device_manager.return_value = mock_instance
+
+            with patch("main.MQTTClient") as mock_mqtt_class:
+                mock_mqtt = Mock()
+                mock_mqtt.is_ready.return_value = False
+                mock_mqtt.health_check_loop = AsyncMock()
+                mock_mqtt_class.return_value = mock_mqtt
+
+                with patch("main.TelemetryCollector", return_value=collector):
+                    with patch("main.TwinDelivery") as mock_twin_delivery_class:
+                        mock_twin_delivery_class.return_value = Mock()
+
+                        with patch("main.ProxyServer") as mock_proxy_class:
+                            mock_proxy = AsyncMock()
+                            mock_proxy.mode_manager = Mock()
+                            mock_proxy_class.return_value = mock_proxy
+                            await app.startup()
+
+        mock_twin_delivery_class.assert_called_once_with(
+            app.twin_queue,
+            mock_mqtt,
+            telemetry_collector=collector,
+        )
+
+    @pytest.mark.asyncio
     async def test_startup_starts_twin_handler_when_mqtt_ready(self, mock_config):
         """Test that TwinControlHandler starts when MQTT is ready."""
         app = ProxyApp(mock_config)

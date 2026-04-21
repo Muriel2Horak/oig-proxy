@@ -35,6 +35,7 @@ Each entry in these arrays is a single record to be stored in Influx:
 - `box_sessions[]`
 - `cloud_sessions[]`
 - `offline_events[]`
+- `settings_audit[]`
 
 ## 2) What Telegraf Does
 
@@ -58,6 +59,9 @@ Each array is written to its own measurement:
 - `telemetry_cloud_sessions`
 - `telemetry_offline_events`
 - `telemetry_stats`
+- `telemetry_settings_audit`
+
+The `telemetry_settings_audit` measurement is stored in the `telemetry_settings_audit` InfluxDB bucket with **180-day retention**. The broker is `telemetry.muriel-cz.cz:1883`.
 
 ## 3) InfluxDB Behavior (Important)
 
@@ -102,7 +106,82 @@ The device ID column is also the drilldown link into the Box Detail dashboard.
 - History graphs use `telemetry_*` measurements
 - If any of these are missing, detail panels appear empty
 
-## 5) Common Failure Modes
+## 5) Settings Audit Transport Shape
+
+The `window_metrics.settings_audit[]` array carries **settings audit records**,
+not generic frame captures. Each record tracks a single settings lifecycle step.
+
+**Transport shape** (one record per step):
+
+```json
+{
+  "timestamp": "2026-04-20T18:28:39Z",
+  "device_id": "ABC123",
+  "table": "tbl_set",
+  "step": "incoming",
+  "result": "pending",
+  "audit_id": "aud_20250420120000000_123456",
+  "key": "T_Room",
+  "session_id": "sess_abc123",
+  "msg_id": 42,
+  "id_set": 7,
+  "value_text": "22",
+  "confirmed_value_text": "",
+  "value_kind": "int",
+  "confirmed_value_kind": "",
+  "value_num_float": 22.0,
+  "confirmed_value_num_float": null,
+  "raw_text": "Set tbl_set T_Room=22",
+  "raw_text_truncated": false,
+  "raw_text_bytes_original": 23,
+  "audit_payload_capped": false
+}
+```
+
+**Influx schema:**
+
+- **Tags:** `device_id`, `table`, `step`, `result`
+- **Fields:** all remaining high-cardinality strings and numeric values
+
+**Storage:** The `telemetry_settings_audit` measurement is written to the
+`telemetry_settings_audit` InfluxDB bucket with **180-day retention**.
+External stack path: `telemetry.muriel-cz.cz:1883` via MQTT, stored in
+`telemetry_settings_audit` bucket.
+
+**Step taxonomy (lifecycle):**
+
+- `incoming` - first seen inbound command
+- `rejected_not_allowed` - setting not in allowlist
+- `rejected_validation` - value failed validation
+- `enqueued` - accepted and queued for delivery
+- `superseded` - prior pending setting replaced by new one
+- `deliver_selected` - chosen from queue for delivery
+- `injected_box` - sent to BOX device
+- `ack_box_observed` - BOX acknowledged the setting
+- `ack_tbl_events` - confirmed via tbl_events
+- `ack_reason_setting` - confirmed via cloud reason=Setting
+- `nack` - BOX or cloud rejected
+- `timeout` - no response within timeout window
+- `session_cleared` - session ended without ACK (graceful shutdown)
+
+**Result enum:**
+
+- `pending` - awaiting further lifecycle step
+- `rejected` - setting was rejected
+- `superseded` - replaced by another setting for same key
+- `confirmed` - successfully confirmed
+- `failed` - failed (nack, timeout)
+- `incomplete` - session cleared without confirmation
+
+**Important:** `raw_text` is captured at the `incoming` step and is
+lifecycle-continuous: the same redacted value (truncated to 16 KiB if needed)
+follows the record through every subsequent lifecycle step. The record carries
+`raw_text_truncated`, `raw_text_bytes_original`, and `audit_payload_capped` flags
+to indicate redaction. This is still settings-flow telemetry, not a generic
+frame-capture mechanism. Telemetry is written to the `telemetry_settings_audit`
+InfluxDB bucket with **180-day retention**.
+
+## 6) Common Failure Modes
 
 1. `telemetry_top` fields missing in Influx
    - Telegraf not writing them, or
@@ -115,15 +194,34 @@ The device ID column is also the drilldown link into the Box Detail dashboard.
    - Telegraf `json_query` mismatch
    - payload does not contain expected arrays
 
-## 6) Debug Burst Logging (Telemetry Logs)
+## 7) Debug Burst Logging (Telemetry Logs)
 
-By default, logs are **not** sent in telemetry. When a `WARNING` or `ERROR`
-is emitted, proxy enables a **debug burst** for the next **2 telemetry windows**
-(typically 10 minutes with 5-minute intervals). During the burst, **all log
-levels** are included in `telemetry_logs`. After the window expires, logs
-stop again.
+Logs are collected in a **300-second (5-minute) rolling buffer**. At telemetry
+interval, the buffer is flushed and transmitted. The buffer replaces the
+previous 60-second fixed window.
 
-## 7) Standard Debug Workflow
+**Burst semantics:**
+
+- **WARNING/ERROR burst:** When a log record at `WARNING` or higher is recorded,
+  the proxy activates a burst for the **next 2 telemetry windows**. All log
+  levels are included during the burst.
+
+- **Setting-triggered burst:** When a settings audit step is recorded
+  (`incoming` step), the current window is forced to include logs, and the
+  **next window** also has logs forced. This ensures the setting delivery flow
+  is captured even if no WARNING+ occurred.
+
+- **Coalescing:** If a WARNING burst and a setting burst overlap, they
+  coalesce. The stronger of the two window counts applies. Logs are emitted
+  for the combined duration.
+
+**Accepted gap:** If the proxy process crashes abruptly (e.g., SIGKILL, power
+loss) before the telemetry interval flushes the buffer, the audit trail for
+that window is incomplete. This is an accepted gap. Graceful shutdown (SIGTERM)
+emits a `session_cleared` step in the settings audit and flushes pending
+records before exit.
+
+## 8) Standard Debug Workflow
 
 1. Verify Telegraf writes `telemetry_top` and `telemetry_*` measurements
 2. If type conflict is suspected, delete and re-ingest data

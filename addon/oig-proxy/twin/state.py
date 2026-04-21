@@ -14,6 +14,8 @@ class TwinSetting:
     key: str
     value: Any
     enqueued_at: float
+    raw_text: str = ""
+    audit_id: str = ""
     msg_id: int = 0
     id_set: int = 0
     confirm: str = "New"
@@ -83,12 +85,29 @@ class TwinQueue:
             self._next_id_set = 100_000_000
         return id_set
 
-    def enqueue(self, table: str, key: str, value: Any, confirm: str = "New") -> None:
+    def _generate_audit_id(self) -> str:
+        import secrets
+        now_epoch = int(time.time() * 1000)
+        return f"aud_{now_epoch:014d}_{secrets.randbelow(1_000_000):06d}"
+
+    def enqueue(
+        self,
+        table: str,
+        key: str,
+        value: Any,
+        confirm: str = "New",
+        audit_id: str = "",
+        raw_text: str = "",
+    ) -> None:
+        if not audit_id:
+            audit_id = self._generate_audit_id()
         setting = TwinSetting(
             table=table,
             key=key,
             value=value,
             enqueued_at=time.time(),
+            raw_text=raw_text,
+            audit_id=audit_id,
             msg_id=self._generate_msg_id(),
             id_set=self._generate_id_set(),
             confirm=confirm,

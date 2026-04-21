@@ -1,10 +1,114 @@
 {
-  "active_plan": "/Users/martinhorak/Projects/oig-proxy/.sisyphus/plans/code-review-remediation.md",
-  "started_at": "2026-03-07T07:02:58.659Z",
+  "active_plan": "/repos/oig-proxy/.sisyphus/plans/settings-telemetry-audit.md",
+  "started_at": "2026-04-20T17:28:22.203Z",
   "session_ids": [
-    "ses_33bccf94affeghKw2u1zx5MVWt"
+    "ses_254105d10ffe4c8zzXk7ef5sVp",
+    "ses_253c52a9bffeooEeacmOiQyNS8",
+    "ses_253c51a8dffeN1FwmMDNkY9fki",
+    "ses_253c50d36ffezULP7fo8UfboZM",
+    "ses_253c4ef81ffeS4KNKFUPe8Ywg8",
+    "ses_2539e3c17ffeGbvtcnCExrPogv"
   ],
-  "plan_name": "code-review-remediation",
+  "session_origins": {
+    "ses_254105d10ffe4c8zzXk7ef5sVp": "direct",
+    "ses_253c52a9bffeooEeacmOiQyNS8": "appended",
+    "ses_253c51a8dffeN1FwmMDNkY9fki": "appended",
+    "ses_253c50d36ffezULP7fo8UfboZM": "appended",
+    "ses_253c4ef81ffeS4KNKFUPe8Ywg8": "appended",
+    "ses_2539e3c17ffeGbvtcnCExrPogv": "appended"
+  },
+  "plan_name": "settings-telemetry-audit",
   "agent": "atlas",
-  "worktree_path": "/Users/martinhorak/Projects/oig-proxy"
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Freeze the settings-audit contract and correlation model",
+      "session_id": "ses_2540d288fffeq7m1UICZyZZ1CT",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-20T17:35:32.408Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Record inbound settings and queue outcomes in TwinControlHandler",
+      "session_id": "ses_254088c42ffeu32FhD6UMi7LZp",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-20T17:50:06.889Z"
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "Record delivery, ACK, confirmation, and timeout lifecycle steps",
+      "session_id": "ses_253fbde7affewbvMpnLu4wDllI",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-20T18:08:33.025Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Expand log buffering to a rolling 300-second window with deterministic burst rules",
+      "session_id": "ses_253ea92faffePa36q5sB4SpkNC",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-20T18:18:11.673Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "Serialize `window_metrics.settings_audit[]` and force setting pre/post log windows",
+      "session_id": "ses_253e24cbaffeGS6oKJGy5krhar",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-20T18:27:03.929Z"
+    },
+    "todo:6": {
+      "task_key": "todo:6",
+      "task_label": "6",
+      "task_title": "Parse `window_metrics.settings_audit[]` into a dedicated Telegraf measurement on `docker-vm`",
+      "session_id": "ses_253da081dffef084zd4vkh9k86",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-20T18:34:26.749Z"
+    },
+    "todo:7": {
+      "task_key": "todo:7",
+      "task_label": "7",
+      "task_title": "Route settings-audit points to a dedicated 180-day Influx retention path",
+      "session_id": "ses_253d37cfaffeIi8GqeIrZ9d4vM",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-20T18:39:07.222Z"
+    },
+    "todo:8": {
+      "task_key": "todo:8",
+      "task_label": "8",
+      "task_title": "Add settings-audit visibility to Grafana fleet and box-detail dashboards",
+      "session_id": "ses_253cef4f9ffeoSmm900X1xm66v",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-04-20T18:44:58.945Z"
+    },
+    "todo:9": {
+      "task_key": "todo:9",
+      "task_label": "9",
+      "task_title": "Document the new telemetry semantics and operator workflow",
+      "session_id": "ses_253c99e17ffejdpqPdNr0JxjxZ",
+      "agent": "Sisyphus-Junior",
+      "category": "writing",
+      "updated_at": "2026-04-20T18:49:54.554Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "Plan Compliance Audit — oracle",
+      "session_id": "ses_253c4ef81ffeS4KNKFUPe8Ywg8",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-20T18:56:26.854Z"
+    }
+  }
 }

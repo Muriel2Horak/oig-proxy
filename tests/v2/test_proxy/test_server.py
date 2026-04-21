@@ -707,3 +707,306 @@ def test_record_cloud_connect_failure_records_error_response_without_offline():
     mock_telemetry.record_response.assert_called_once_with("", source="error", conn_id=88)
     mock_telemetry.record_error_context.assert_called_once()
     mock_telemetry.record_offline_event.assert_not_called()
+
+
+
+
+def _make_collector():
+    from telemetry.settings_audit import record_to_dict
+    collector = MagicMock()
+    collector.settings_audit = []
+    collector.record_setting_audit_step = lambda r: collector.settings_audit.append(record_to_dict(r))
+    return collector
+
+
+@pytest.mark.asyncio
+async def test_setting_audit_success_roundtrip() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingStep, SettingResult
+
+    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+    audit_id = pending[0].audit_id
+
+    delivery.record_injected_box(pending[0], "dev_1", session_id="sess_1")
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<TblName>tbl_box_prms</TblName>"
+        "<ToDo>MODE</ToDo>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    tbl_events_frame = build_frame(
+        "<TblName>tbl_events</TblName>"
+        "<ID_Device>dev_1</ID_Device>"
+        "<Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [3]->[1]</Content>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    steps = [r["step"] for r in collector.settings_audit]
+    assert SettingStep.DELIVER_SELECTED.value in steps
+    assert SettingStep.INJECTED_BOX.value in steps
+    assert SettingStep.ACK_BOX_OBSERVED.value in steps
+    assert SettingStep.ACK_TBL_EVENTS.value in steps
+    for step in (
+        SettingStep.DELIVER_SELECTED.value,
+        SettingStep.INJECTED_BOX.value,
+        SettingStep.ACK_BOX_OBSERVED.value,
+        SettingStep.ACK_TBL_EVENTS.value,
+    ):
+        assert [r for r in collector.settings_audit if r["step"] == step][0]["raw_text"] == raw_text
+
+    terminal = [r for r in collector.settings_audit if r["result"] == SettingResult.CONFIRMED.value]
+    assert len(terminal) == 1
+    assert terminal[0]["step"] == SettingStep.ACK_TBL_EVENTS.value
+    assert terminal[0]["audit_id"] == audit_id
+    assert terminal[0]["confirmed_value_text"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_ack_audit_no_duplicate_terminal() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingStep, SettingResult
+
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    tbl_events_frame = build_frame(
+        "<TblName>tbl_events</TblName>"
+        "<ID_Device>dev_1</ID_Device>"
+        "<Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [3]->[1]</Content>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    terminal = [r for r in collector.settings_audit if r["result"] == SettingResult.CONFIRMED.value]
+    assert len(terminal) == 1
+
+    ack_count = [r["step"] for r in collector.settings_audit].count(SettingStep.ACK_TBL_EVENTS.value)
+    assert ack_count == 1
+
+
+@pytest.mark.asyncio
+async def test_mixed_ack_precedence() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingStep, SettingResult
+
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<TblName>tbl_box_prms</TblName>"
+        "<ToDo>MODE</ToDo>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    tbl_events_frame = build_frame(
+        "<TblName>tbl_events</TblName>"
+        "<ID_Device>dev_1</ID_Device>"
+        "<Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [3]->[1]</Content>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    steps = collector.settings_audit
+    ack_observed = [r for r in steps if r["step"] == SettingStep.ACK_BOX_OBSERVED.value]
+    tbl_confirmed = [r for r in steps if r["step"] == SettingStep.ACK_TBL_EVENTS.value]
+
+    assert len(ack_observed) == 1
+    assert ack_observed[0]["result"] == SettingResult.PENDING.value
+
+    assert len(tbl_confirmed) == 1
+    assert tbl_confirmed[0]["result"] == SettingResult.CONFIRMED.value
+
+    terminal = [r for r in steps if r["result"] == SettingResult.CONFIRMED.value]
+    assert len(terminal) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_terminal_box_ack_does_not_publish_confirmed_setting() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    delivery = TwinDelivery(queue, MagicMock())
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+    server._publish_confirmed_setting = AsyncMock()  # type: ignore[method-assign]
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<TblName>tbl_box_prms</TblName>"
+        "<ToDo>MODE</ToDo>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    server._publish_confirmed_setting.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_setting_audit_ack_reason_setting_reuses_stored_raw_text() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingResult, SettingStep
+
+    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<Reason>Setting</Reason>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    ack_reason = [
+        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_REASON_SETTING.value
+    ]
+    assert len(ack_reason) == 1
+    assert ack_reason[0]["result"] == SettingResult.CONFIRMED.value
+    assert ack_reason[0]["raw_text"] == raw_text
+
+
+@pytest.mark.asyncio
+async def test_pipe_cloud_to_box_tracks_cloud_setting_for_audit_lifecycle() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingResult, SettingStep
+
+    collector = _make_collector()
+    delivery = TwinDelivery(TwinQueue(), MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    cloud_setting = build_frame(
+        "<TblName>tbl_box_prms</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<ID>13809469</ID>"
+        "<ID_Set>844979473</ID_Set>"
+        "<TblItem>MODE</TblItem>"
+        "<NewValue>1</NewValue>"
+        "<Confirm>New</Confirm>"
+        "<Reason>Setting</Reason>"
+    ).encode("utf-8")
+    cloud_reader = asyncio.StreamReader()
+    cloud_reader.feed_data(cloud_setting)
+    cloud_reader.feed_eof()
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.write = MagicMock()
+    box_writer.drain = AsyncMock()
+
+    await server._pipe_cloud_to_box(cloud_reader, box_writer)
+
+    inflight = delivery.inflight_setting()
+    assert inflight is not None
+    setting, device_id = inflight
+    assert device_id == "12345"
+    assert setting.audit_id
+    assert setting.raw_text == cloud_setting.decode("utf-8", errors="replace")
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<Reason>Setting</Reason>"
+        "<ID_Device>12345</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    tbl_events_frame = build_frame(
+        "<TblName>tbl_events</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [0]->[1]</Content>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    audit_records = [record for record in collector.settings_audit if record["audit_id"] == setting.audit_id]
+    assert [record["step"] for record in audit_records] == [
+        SettingStep.INCOMING.value,
+        SettingStep.ACK_REASON_SETTING.value,
+        SettingStep.ACK_TBL_EVENTS.value,
+    ]
+    assert audit_records[0]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
+    assert audit_records[1]["result"] == SettingResult.PENDING.value
+    assert audit_records[1]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
+    assert audit_records[2]["result"] == SettingResult.CONFIRMED.value
+    assert delivery.inflight_setting() is None
+    assert delivery.is_cloud_inflight() is False
+
+
+@pytest.mark.asyncio
+async def test_setting_audit_nack_reuses_stored_raw_text() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingResult, SettingStep
+
+    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    nack_frame = build_frame(
+        "<Result>NACK</Result>"
+        "<TblName>tbl_box_prms</TblName>"
+        "<ToDo>MODE</ToDo>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(nack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    nack_records = [record for record in collector.settings_audit if record["step"] == SettingStep.NACK.value]
+    assert len(nack_records) == 1
+    assert nack_records[0]["result"] == SettingResult.FAILED.value
+    assert nack_records[0]["raw_text"] == raw_text

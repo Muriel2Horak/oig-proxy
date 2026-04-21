@@ -164,8 +164,8 @@ class MQTTClient:
             try:
                 self._client.loop_stop()
                 self._client.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("MQTT cleanup error: %s", exc)
             self._client = None
         self.connected = False
 
@@ -226,8 +226,8 @@ class MQTTClient:
                     if getattr(avail_result, "rc", 1) == 0:
                         self._availability_online_sent.add(device_id)
                         self._all_known_device_ids.add(device_id)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("MQTT availability publish failed for %s: %s", device_id, exc)
             result = client.publish(
                 topic, payload, qos=self.qos, retain=self.state_retain
             )

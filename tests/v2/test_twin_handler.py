@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from telemetry.collector import TelemetryCollector
 from twin.handler import TwinControlHandler
 from twin.state import TwinQueue
 
@@ -60,10 +61,9 @@ class TestTwinControlHandler:
         assert handler._topic_compat == "oig_local/+/set/#"
         assert handler._subscribed is False
 
-    @pytest.mark.asyncio
-    async def test_start_subscribes_to_topic(self, handler, mock_mqtt):
+    def test_start_subscribes_to_topic(self, handler, mock_mqtt):
         """Test start() subscribes to the control topic."""
-        await handler.start()
+        asyncio.run(handler.start())
 
         assert mock_mqtt.subscribe.call_count == 2
         mock_mqtt.subscribe.assert_has_calls(
@@ -74,23 +74,21 @@ class TestTwinControlHandler:
         )
         assert handler._subscribed is True
 
-    @pytest.mark.asyncio
-    async def test_start_when_mqtt_not_ready(self, handler, mock_mqtt):
+    def test_start_when_mqtt_not_ready(self, handler, mock_mqtt):
         """Test start() does nothing when MQTT is not ready."""
         mock_mqtt.is_ready.return_value = False
 
-        await handler.start()
+        asyncio.run(handler.start())
 
         mock_mqtt.subscribe.assert_not_called()
         assert handler._subscribed is False
 
-    @pytest.mark.asyncio
-    async def test_stop_unsubscribes_from_topic(self, handler, mock_mqtt):
+    def test_stop_unsubscribes_from_topic(self, handler, mock_mqtt):
         """Test stop() unsubscribes from the control topic."""
-        await handler.start()
+        asyncio.run(handler.start())
         assert handler._subscribed is True
 
-        await handler.stop()
+        asyncio.run(handler.stop())
 
         assert mock_mqtt.unsubscribe.call_count == 2
         mock_mqtt.unsubscribe.assert_has_calls(
@@ -101,20 +99,18 @@ class TestTwinControlHandler:
         )
         assert handler._subscribed is False
 
-    @pytest.mark.asyncio
-    async def test_stop_when_not_subscribed(self, handler, mock_mqtt):
+    def test_stop_when_not_subscribed(self, handler, mock_mqtt):
         """Test stop() does nothing when not subscribed."""
-        await handler.stop()
+        asyncio.run(handler.stop())
 
         mock_mqtt.unsubscribe.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_stop_when_mqtt_not_ready(self, handler, mock_mqtt):
+    def test_stop_when_mqtt_not_ready(self, handler, mock_mqtt):
         """Test stop() handles MQTT not being ready."""
-        await handler.start()
+        asyncio.run(handler.start())
         mock_mqtt.is_ready.return_value = False
 
-        await handler.stop()
+        asyncio.run(handler.stop())
 
         mock_mqtt.unsubscribe.assert_not_called()
 
@@ -383,8 +379,7 @@ class TestTwinControlHandlerEdgeCases:
         assert called == [("proxy_control", "PROXY_MODE", 2)]
         assert twin_queue.size() == 0
 
-    @pytest.mark.asyncio
-    async def test_start_uses_custom_namespace_for_compat_topic(self, mock_mqtt, twin_queue):
+    def test_start_uses_custom_namespace_for_compat_topic(self, mock_mqtt, twin_queue):
         handler = TwinControlHandler(
             mqtt=mock_mqtt,
             twin_queue=twin_queue,
@@ -392,7 +387,7 @@ class TestTwinControlHandlerEdgeCases:
             namespace="custom_ns",
         )
 
-        await handler.start()
+        asyncio.run(handler.start())
 
         mock_mqtt.subscribe.assert_has_calls(
             [
@@ -428,20 +423,131 @@ class TestTwinControlHandlerEdgeCases:
 
         assert handler._topic == "oig/+/control/set"
 
-    @pytest.mark.asyncio
-    async def test_start_logs_subscription(self, handler, mock_mqtt, caplog):
+    def test_start_logs_subscription(self, handler, mock_mqtt, caplog):
         """Test start() logs subscription message."""
         with caplog.at_level("INFO"):
-            await handler.start()
+            asyncio.run(handler.start())
 
         assert "Subscribed to oig/+/control/set" in caplog.text
 
-    @pytest.mark.asyncio
-    async def test_stop_logs_unsubscription(self, handler, mock_mqtt, caplog):
+    def test_stop_logs_unsubscription(self, handler, mock_mqtt, caplog):
         """Test stop() logs unsubscription message."""
-        await handler.start()
+        asyncio.run(handler.start())
 
         with caplog.at_level("INFO"):
-            await handler.stop()
+            asyncio.run(handler.stop())
 
         assert "Unsubscribed from oig/+/control/set" in caplog.text
+
+
+class TestTwinControlHandlerSettingsAudit:
+    @pytest.fixture
+    def mock_mqtt(self):
+        mqtt = MagicMock()
+        mqtt.is_ready.return_value = True
+        return mqtt
+
+    @pytest.fixture
+    def twin_queue(self):
+        return TwinQueue()
+
+    @pytest.fixture
+    def telemetry_collector(self):
+        return TelemetryCollector(interval_s=300)
+
+    @pytest.fixture
+    def handler(self, mock_mqtt, twin_queue, telemetry_collector):
+        return TwinControlHandler(
+            mqtt=mock_mqtt,
+            twin_queue=twin_queue,
+            device_id="test_device_123",
+            telemetry_collector=telemetry_collector,
+        )
+
+    def test_accepted_setting_audit_records_incoming_and_enqueued_steps(
+        self,
+        handler,
+        telemetry_collector,
+        twin_queue,
+    ):
+        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
+
+        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
+
+        assert twin_queue.size() == 1
+        assert len(telemetry_collector.settings_audit) == 2
+
+        incoming, enqueued = telemetry_collector.settings_audit
+        assert incoming["step"] == "incoming"
+        assert incoming["result"] == "pending"
+        assert incoming["raw_text"] == payload
+        assert incoming["audit_id"].startswith("aud_")
+
+        assert enqueued["step"] == "enqueued"
+        assert enqueued["result"] == "pending"
+        assert enqueued["raw_text"] == payload
+        assert enqueued["audit_id"] == incoming["audit_id"]
+
+        setting = twin_queue.get("tbl_box_prms", "MODE")
+        assert setting is not None
+        assert setting.audit_id == incoming["audit_id"]
+        assert getattr(setting, "raw_text", "") == payload
+
+    def test_rejected_setting_audit_still_emits_diagnostics(
+        self,
+        handler,
+        telemetry_collector,
+        twin_queue,
+    ):
+        handler._on_message(
+            "oig_local/test_device_123/set/tbl_batt_prms/BAT_MIN",
+            b"10",
+        )
+
+        assert twin_queue.size() == 0
+        assert len(telemetry_collector.settings_audit) == 2
+
+        incoming, rejected = telemetry_collector.settings_audit
+        assert incoming["step"] == "incoming"
+        assert incoming["raw_text"] == "10"
+        assert rejected["step"] == "rejected_validation"
+        assert rejected["result"] == "rejected"
+        assert rejected["raw_text"] == "10"
+        assert rejected["audit_id"] == incoming["audit_id"]
+        assert telemetry_collector.setting_burst_current_active is True
+        assert telemetry_collector.setting_burst_next_windows_remaining == 1
+
+    def test_overwrite_same_key_audit_emits_superseded_before_replacement_enqueue(
+        self,
+        handler,
+        telemetry_collector,
+        twin_queue,
+    ):
+        payload1 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
+        payload2 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 1})
+
+        handler._on_message("oig/test_device_123/control/set", payload1.encode("utf-8"))
+        first_audit_id = telemetry_collector.settings_audit[-1]["audit_id"]
+
+        handler._on_message("oig/test_device_123/control/set", payload2.encode("utf-8"))
+
+        assert twin_queue.size() == 1
+        steps = [record["step"] for record in telemetry_collector.settings_audit]
+        assert steps == ["incoming", "enqueued", "incoming", "superseded", "enqueued"]
+
+        replacement_enqueued = telemetry_collector.settings_audit[-1]
+        replacement_incoming = telemetry_collector.settings_audit[-3]
+        superseded = telemetry_collector.settings_audit[-2]
+
+        assert superseded["audit_id"] == first_audit_id
+        assert superseded["result"] == "superseded"
+        assert superseded["raw_text"] == payload1
+        assert replacement_incoming["audit_id"] != first_audit_id
+        assert replacement_enqueued["audit_id"] == replacement_incoming["audit_id"]
+        assert replacement_enqueued["raw_text"] == payload2
+
+        setting = twin_queue.get("tbl_box_prms", "MODE")
+        assert setting is not None
+        assert setting.value == 1
+        assert setting.audit_id == replacement_enqueued["audit_id"]
+        assert getattr(setting, "raw_text", "") == payload2

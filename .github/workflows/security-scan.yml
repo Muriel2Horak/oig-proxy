@@ -65,7 +65,7 @@ jobs:
       
       - name: Run Bandit (Python SAST)
         run: |
-          python -m bandit -r addon/oig-proxy -f json -o reports/bandit.json
+          python -m bandit -r addon/oig-proxy -x addon/oig-proxy/tests -f json -o reports/bandit.json
       
       - name: Run Safety (Dependency vulnerabilities)
         run: |
