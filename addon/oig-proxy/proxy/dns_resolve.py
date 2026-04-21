@@ -17,6 +17,8 @@ import struct
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DNS_SERVER = socket.inet_ntoa(bytes((8, 8, 8, 8)))
+
 
 def _skip_dns_name(data: bytes, offset: int) -> int:
     """Skip over a DNS name field, handling compression pointers."""
@@ -33,7 +35,7 @@ def _skip_dns_name(data: bytes, offset: int) -> int:
 
 def resolve_a_record(
     hostname: str,
-    dns_server: str = "8.8.8.8",
+    dns_server: str = DEFAULT_DNS_SERVER,
     timeout: float = 5.0,
 ) -> str | None:
     """Resolve *hostname* to an IPv4 address using *dns_server* directly.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 
 
 class Config:
@@ -121,7 +122,10 @@ class Config:
             os.environ.get("MAX_CONCURRENT_CONNECTIONS", "5")
         )
 
-        self.dns_upstream = os.environ.get("DNS_UPSTREAM", "8.8.8.8")
+        self.dns_upstream = os.environ.get(
+            "DNS_UPSTREAM",
+            socket.inet_ntoa(bytes((8, 8, 8, 8))),
+        )
 
     def __repr__(self) -> str:
         return (

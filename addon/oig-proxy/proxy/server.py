@@ -27,7 +27,7 @@ try:
     from ..protocol.parser import parse_xml_frame
     from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
-    from .dns_resolve import resolve_a_record
+    from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
     from .mode import ConnectionMode, ModeManager
     from .local_ack import build_local_ack
 except ImportError:
@@ -38,7 +38,7 @@ except ImportError:
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
     from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
-    from proxy.dns_resolve import resolve_a_record  # type: ignore[no-redef]
+    from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
     from proxy.mode import ConnectionMode, ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
 
@@ -171,7 +171,7 @@ class ProxyServer:
 
     async def start(self) -> None:
         """Spustí TCP server."""
-        dns_upstream = getattr(self.config, "dns_upstream", "8.8.8.8")
+        dns_upstream = getattr(self.config, "dns_upstream", DEFAULT_DNS_SERVER)
         resolved = resolve_a_record(self.config.cloud_host, dns_upstream)
         if resolved:
             self._cloud_ip = resolved
