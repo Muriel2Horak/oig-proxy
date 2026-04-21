@@ -958,14 +958,24 @@ async def test_pipe_cloud_to_box_tracks_cloud_setting_for_audit_lifecycle() -> N
     ).encode("utf-8")
     await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
 
+    tbl_events_frame = build_frame(
+        "<TblName>tbl_events</TblName>"
+        "<ID_Device>12345</ID_Device>"
+        "<Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [0]->[1]</Content>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
     audit_records = [record for record in collector.settings_audit if record["audit_id"] == setting.audit_id]
     assert [record["step"] for record in audit_records] == [
         SettingStep.INCOMING.value,
         SettingStep.ACK_REASON_SETTING.value,
+        SettingStep.ACK_TBL_EVENTS.value,
     ]
     assert audit_records[0]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
-    assert audit_records[1]["result"] == SettingResult.CONFIRMED.value
+    assert audit_records[1]["result"] == SettingResult.PENDING.value
     assert audit_records[1]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
+    assert audit_records[2]["result"] == SettingResult.CONFIRMED.value
     assert delivery.inflight_setting() is None
     assert delivery.is_cloud_inflight() is False
 

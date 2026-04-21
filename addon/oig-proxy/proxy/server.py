@@ -853,7 +853,17 @@ class ProxyServer:
                 event_ack["key"],
                 frame_text,
             )
-            pair = _unpack_inflight()
+            cloud_pair = self.twin_delivery.match_cloud_tbl_events(
+                str(parsed_frame.get("_device_id") or ""),
+                event_ack["table"],
+                event_ack["key"],
+                event_ack.get("value"),
+                session_id=audit_session_id,
+            )
+            if cloud_pair is None:
+                pair = _unpack_inflight()
+            else:
+                pair = None
             if pair is not None:
                 setting, inflight_device_id = pair
                 if (setting.table, setting.key) == (event_ack["table"], event_ack["key"]):
@@ -863,15 +873,30 @@ class ProxyServer:
                         confirmed_value=event_ack.get("value"),
                         session_id=audit_session_id,
                     )
-            self.twin_delivery.acknowledge(
-                event_ack["table"],
-                event_ack["key"],
-                session_id=session_id,
-            )
+            if cloud_pair is None:
+                self.twin_delivery.acknowledge(
+                    event_ack["table"],
+                    event_ack["key"],
+                    session_id=session_id,
+                )
 
         if parsed_ack and parsed_ack.get("result") == "ACK" and parsed_ack.get("reason") == "Setting":
-            pair = _unpack_inflight()
-            if pair is not None:
+            cloud_pair = self.twin_delivery.mark_cloud_reason_setting(
+                str(parsed_frame.get("_device_id") or ""),
+                session_id=audit_session_id,
+            )
+            pair = None
+            if cloud_pair is not None:
+                setting, inflight_device_id = cloud_pair
+                logger.info(
+                    "✅ BOX ACK received (Reason=Setting), provisional inflight %s:%s payload=%s",
+                    setting.table,
+                    setting.key,
+                    frame_text,
+                )
+            else:
+                pair = _unpack_inflight()
+            if cloud_pair is None and pair is not None:
                 setting, inflight_device_id = pair
                 if not confirmed_published:
                     await self._publish_confirmed_setting(
