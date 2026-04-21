@@ -367,5 +367,6 @@ async def test_pcap_monitor_process_stderr_read_error_and_cancel(monkeypatch: py
 
     capture._process = RunningProcess()
     monkeypatch.setattr(pcap_capture.asyncio, "sleep", cancelled_sleep)
-    await capture._monitor_process()
+    with pytest.raises(asyncio.CancelledError):
+        await capture._monitor_process()
     assert capture._process is not None

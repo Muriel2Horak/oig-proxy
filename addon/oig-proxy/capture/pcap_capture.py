@@ -184,4 +184,4 @@ class PcapCapture:
                     self._process = None
                     break
         except asyncio.CancelledError:
-            pass
+            raise
