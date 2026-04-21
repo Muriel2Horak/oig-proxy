@@ -622,6 +622,7 @@ class ProxyServer:
                     setting = pending_settings[0] if pending_settings else None
                     logger.debug("deliver_pending returned: %s", setting)
                     if setting is not None:
+                        audit_session_id = session_id or ""
                         next_id_set = self.twin_delivery.next_id_set()
                         next_msg_id = self.twin_delivery.next_msg_id()
                         setting_frame = build_setting_frame(
@@ -646,7 +647,7 @@ class ProxyServer:
                             self.twin_delivery.record_injected_box(
                                 setting,
                                 device_id,
-                                session_id=session_id or "",
+                                session_id=audit_session_id,
                             )
                             withheld_chunks = True
                             continue
@@ -765,6 +766,7 @@ class ProxyServer:
         if not self.twin_delivery:
             return
 
+        audit_session_id = session_id or ""
         frame_text = frame_bytes.decode("utf-8", errors="replace")
         parsed_frame = parse_xml_frame(frame_text)
         table_name = self._effective_table_name(parsed_frame, frame_text)
@@ -800,7 +802,7 @@ class ProxyServer:
                     self.twin_delivery.record_ack_box_observed(
                         setting,
                         inflight_device_id,
-                        session_id=session_id or "",
+                        session_id=audit_session_id,
                     )
             logger.info(
                 "✅ BOX ACK received: %s:%s payload=%s",
@@ -838,7 +840,7 @@ class ProxyServer:
                         setting,
                         inflight_device_id,
                         confirmed_value=event_ack.get("value"),
-                        session_id=session_id or "",
+                        session_id=audit_session_id,
                     )
             self.twin_delivery.acknowledge(
                 event_ack["table"],
@@ -860,7 +862,7 @@ class ProxyServer:
                 self.twin_delivery.record_ack_reason_setting(
                     setting,
                     inflight_device_id,
-                    session_id=session_id or "",
+                    session_id=audit_session_id,
                 )
                 table, key = setting.table, setting.key
                 logger.info(
@@ -878,7 +880,7 @@ class ProxyServer:
                 self.twin_delivery.record_nack(
                     setting,
                     inflight_device_id,
-                    session_id=session_id or "",
+                    session_id=audit_session_id,
                 )
                 logger.info(
                     "❌ BOX NACK received for inflight %s:%s payload=%s",

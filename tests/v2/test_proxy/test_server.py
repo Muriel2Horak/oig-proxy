@@ -725,8 +725,10 @@ async def test_setting_audit_success_roundtrip() -> None:
     from twin.state import TwinQueue
     from telemetry.settings_audit import SettingStep, SettingResult
 
+    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
     queue = TwinQueue()
     queue.enqueue("tbl_box_prms", "MODE", 1)
+    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
     collector = _make_collector()
     delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
     cfg = make_config()
@@ -759,6 +761,13 @@ async def test_setting_audit_success_roundtrip() -> None:
     assert SettingStep.INJECTED_BOX.value in steps
     assert SettingStep.ACK_BOX_OBSERVED.value in steps
     assert SettingStep.ACK_TBL_EVENTS.value in steps
+    for step in (
+        SettingStep.DELIVER_SELECTED.value,
+        SettingStep.INJECTED_BOX.value,
+        SettingStep.ACK_BOX_OBSERVED.value,
+        SettingStep.ACK_TBL_EVENTS.value,
+    ):
+        assert [r for r in collector.settings_audit if r["step"] == step][0]["raw_text"] == raw_text
 
     terminal = [r for r in collector.settings_audit if r["result"] == SettingResult.CONFIRMED.value]
     assert len(terminal) == 1
@@ -869,3 +878,68 @@ async def test_non_terminal_box_ack_does_not_publish_confirmed_setting() -> None
     await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
 
     server._publish_confirmed_setting.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_setting_audit_ack_reason_setting_reuses_stored_raw_text() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingResult, SettingStep
+
+    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    ack_frame = build_frame(
+        "<Result>ACK</Result>"
+        "<Reason>Setting</Reason>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    ack_reason = [
+        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_REASON_SETTING.value
+    ]
+    assert len(ack_reason) == 1
+    assert ack_reason[0]["result"] == SettingResult.CONFIRMED.value
+    assert ack_reason[0]["raw_text"] == raw_text
+
+
+@pytest.mark.asyncio
+async def test_setting_audit_nack_reuses_stored_raw_text() -> None:
+    from twin.delivery import TwinDelivery
+    from twin.state import TwinQueue
+    from telemetry.settings_audit import SettingResult, SettingStep
+
+    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
+    queue = TwinQueue()
+    queue.enqueue("tbl_box_prms", "MODE", 1)
+    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
+    collector = _make_collector()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_delivery=delivery)
+
+    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    assert len(pending) == 1
+
+    nack_frame = build_frame(
+        "<Result>NACK</Result>"
+        "<TblName>tbl_box_prms</TblName>"
+        "<ToDo>MODE</ToDo>"
+        "<ID_Device>dev_1</ID_Device>"
+    ).encode("utf-8")
+    await server._handle_twin_frames(nack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
+
+    nack_records = [record for record in collector.settings_audit if record["step"] == SettingStep.NACK.value]
+    assert len(nack_records) == 1
+    assert nack_records[0]["result"] == SettingResult.FAILED.value
+    assert nack_records[0]["raw_text"] == raw_text
