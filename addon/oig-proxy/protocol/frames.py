@@ -16,6 +16,26 @@ except ImportError:
     from frame import build_frame, RESULT_ACK, RESULT_END  # type: ignore[no-redef]
 
 
+def _last_sunday(year: int, month: int) -> datetime:
+    day = datetime(year, month + 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+    return day - timedelta(days=(day.weekday() + 1) % 7)
+
+
+def czech_local_datetime_from_utc(utc_dt: datetime) -> datetime:
+    """Convert UTC datetime to Czech civil time without relying on host tzdata."""
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+    utc_dt = utc_dt.astimezone(timezone.utc)
+    summer_start = _last_sunday(utc_dt.year, 3).replace(hour=1, minute=0, second=0, microsecond=0)
+    summer_end = _last_sunday(utc_dt.year, 10).replace(hour=1, minute=0, second=0, microsecond=0)
+    offset_hours = 2 if summer_start <= utc_dt < summer_end else 1
+    return (utc_dt + timedelta(hours=offset_hours)).replace(tzinfo=None)
+
+
+def czech_local_datetime_from_epoch(epoch_seconds: int) -> datetime:
+    return czech_local_datetime_from_utc(datetime.fromtimestamp(epoch_seconds, tz=timezone.utc))
+
+
 def build_ack_only_frame() -> bytes:
     """Sestaví prostý ACK frame.
 
@@ -101,18 +121,22 @@ def build_setting_frame(
     """
     _ = todo
     now_utc = datetime.now(timezone.utc)
-    # DT musí být v CZ local time (UTC+1) – BOX validuje ID_Set = unix_timestamp(DT - 1h)
-    now_local_cz = now_utc + timedelta(hours=1)
+    now_epoch = int(now_utc.timestamp())
+    tsec_utc = (
+        now_utc
+        if now_epoch >= id_set
+        else datetime.fromtimestamp(id_set, tz=timezone.utc)
+    )
+    setting_dt_cz = czech_local_datetime_from_epoch(id_set)
     if msg_id is None:
-        # Cloud ID roste sekvenčně od ~13.6M, generujeme v bezpečném rozsahu 13M–14M
-        msg_id = secrets.randbelow(1_000_000) + 13_000_000
+        msg_id = secrets.randbelow(1_000_000) + 14_000_000
     ver = secrets.randbelow(65_535)
     inner = (
         f"<ID>{msg_id}</ID>"
         f"<ID_Device>{device_id}</ID_Device>"
         f"<ID_Set>{id_set}</ID_Set>"
         "<ID_SubD>0</ID_SubD>"
-        f"<DT>{now_local_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+        f"<DT>{setting_dt_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
         f"<NewValue>{value}</NewValue>"
         f"<Confirm>{confirm}</Confirm>"
         f"<TblName>{table}</TblName>"
@@ -120,7 +144,7 @@ def build_setting_frame(
         "<ID_Server>9</ID_Server>"
         "<mytimediff>0</mytimediff>"
         "<Reason>Setting</Reason>"
-        f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+        f"<TSec>{tsec_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
         f"<ver>{ver:05d}</ver>"
     )
     return build_frame(inner).encode("utf-8")

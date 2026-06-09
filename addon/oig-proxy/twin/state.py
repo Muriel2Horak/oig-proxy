@@ -5,8 +5,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from datetime import datetime, timezone
-
 
 @dataclass
 class TwinSetting:
@@ -20,69 +18,20 @@ class TwinSetting:
     id_set: int = 0
     confirm: str = "New"
 
-    def build_setting_xml(
-        self,
-        device_id: str,
-        id_set: int,
-        msg_id: int = 0,
-        confirm: str = "New",
-    ) -> str:
-        """Build XML payload for setting delivery – generic form (matches cloud)."""
-        if msg_id == 0:
-            msg_id = secrets.randbelow(90_000_000) + 10_000_000
-
-        now_local = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        ver = secrets.randbelow(90_000) + 10_000
-
-        # Výpočet CRC nad XML bez samotného <CRC> elementu (stejně jako cloud).
-        xml_without_crc = (
-            f"<ID>{msg_id}</ID>"
-            f"<ID_Device>{device_id}</ID_Device>"
-            f"<ID_Set>{id_set}</ID_Set>"
-            "<ID_SubD>0</ID_SubD>"
-            f"<DT>{now_local}</DT>"
-            f"<NewValue>{self.value}</NewValue>"
-            f"<Confirm>{confirm}</Confirm>"
-            f"<TblName>{self.table}</TblName>"
-            f"<TblItem>{self.key}</TblItem>"
-            "<ID_Server>9</ID_Server>"
-            "<mytimediff>0</mytimediff>"
-            "<Reason>Setting</Reason>"
-            f"<TSec>{now_utc}</TSec>"
-            f"<ver>{ver:05d}</ver>"
-        )
-        crc = self._calculate_crc16(xml_without_crc)
-
-        return f"{xml_without_crc}<CRC>{crc}</CRC></Frame>"
-
-    def _calculate_crc16(self, data: str) -> int:
-        """Compute CRC‑16‑Modbus over the supplied ASCII string."""
-        crc = 0xFFFF
-        for byte in data.encode('ascii'):
-            crc ^= byte
-            for _ in range(8):
-                if crc & 0x0001:
-                    crc >>= 1
-                    crc ^= 0xA001
-                else:
-                    crc >>= 1
-        return crc & 0xFFFF
-
 
 class TwinQueue:
     def __init__(self) -> None:
         self._queue: dict[tuple[str, str], TwinSetting] = {}
-        self._next_id_set = int(time.time_ns() % 900_000_000) + 100_000_000
+        self._next_id_set = int(time.time())
 
     def _generate_msg_id(self) -> int:
-        return secrets.randbelow(90_000_000) + 10_000_000
+        return secrets.randbelow(1_000_000) + 14_000_000
 
     def _generate_id_set(self) -> int:
         id_set = self._next_id_set
         self._next_id_set += 1
-        if self._next_id_set > 999_999_999:
-            self._next_id_set = 100_000_000
+        if self._next_id_set > 9_999_999_999:
+            self._next_id_set = int(time.time())
         return id_set
 
     def _generate_audit_id(self) -> str:

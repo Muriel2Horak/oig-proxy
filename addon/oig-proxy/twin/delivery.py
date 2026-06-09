@@ -5,9 +5,10 @@ from dataclasses import dataclass
 import logging
 import secrets
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from protocol.frames import czech_local_datetime_from_epoch
 from telemetry.settings_audit import (
     ACK_TERMINAL_PRECEDENCE,
     TERMINAL_STEPS,
@@ -92,11 +93,9 @@ class TwinDelivery:
 
     def next_msg_id(self) -> int:
         if self._last_msg_id is None:
-            self._last_msg_id = secrets.randbelow(1_000_000) + 13_000_000
+            self._last_msg_id = secrets.randbelow(1_000_000) + 14_000_000
             return self._last_msg_id
         self._last_msg_id += 1
-        if self._last_msg_id > 13_999_999:
-            self._last_msg_id = 13_000_000
         return self._last_msg_id
 
     def _make_parent_record(self, setting: TwinSetting, device_id: str) -> Any:
@@ -640,10 +639,16 @@ class TwinDelivery:
     ) -> str:
         """Build XML payload for setting delivery."""
         if msg_id == 0:
-            msg_id = secrets.randbelow(1_000_000) + 13_000_000
+            msg_id = secrets.randbelow(1_000_000) + 14_000_000
 
         now_utc = datetime.now(timezone.utc)
-        now_local_cz = now_utc + timedelta(hours=1)
+        now_epoch = int(now_utc.timestamp())
+        tsec_utc = (
+            now_utc
+            if now_epoch >= id_set
+            else datetime.fromtimestamp(id_set, tz=timezone.utc)
+        )
+        setting_dt_cz = czech_local_datetime_from_epoch(id_set)
         ver = secrets.randbelow(65_535)
 
         return (
@@ -651,7 +656,7 @@ class TwinDelivery:
             f"<ID_Device>{device_id}</ID_Device>"
             f"<ID_Set>{id_set}</ID_Set>"
             "<ID_SubD>0</ID_SubD>"
-            f"<DT>{now_local_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+            f"<DT>{setting_dt_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
             f"<NewValue>{value}</NewValue>"
             f"<Confirm>{confirm}</Confirm>"
             f"<TblName>{table}</TblName>"
@@ -659,6 +664,6 @@ class TwinDelivery:
             "<ID_Server>9</ID_Server>"
             "<mytimediff>0</mytimediff>"
             "<Reason>Setting</Reason>"
-            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+            f"<TSec>{tsec_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
             f"<ver>{ver:05d}</ver>"
         )
