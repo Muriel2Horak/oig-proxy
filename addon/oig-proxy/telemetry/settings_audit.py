@@ -434,11 +434,6 @@ def _generate_audit_id() -> str:
     return f"aud_{int(time.time() * 1000):014d}_{secrets.randbelow(1_000_000):06d}"
 
 
-def is_terminal_step(step: SettingStep) -> bool:
-    """Return True if the step is a terminal (final) lifecycle step."""
-    return step in TERMINAL_STEPS
-
-
 def is_stronger_ack(this_step: SettingStep, other_step: SettingStep) -> bool:
     """Return True if this_step represents a stronger ACK than other_step.
 

@@ -35,7 +35,6 @@ class TwinQueue:
         return id_set
 
     def _generate_audit_id(self) -> str:
-        import secrets
         now_epoch = int(time.time() * 1000)
         return f"aud_{now_epoch:014d}_{secrets.randbelow(1_000_000):06d}"
 

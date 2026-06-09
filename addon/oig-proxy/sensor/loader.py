@@ -57,21 +57,6 @@ class SensorMapLoader:
         sensors = self._data.get("sensors", {})
         return sensors.get(lookup_key)
 
-    def get_warnings(self, table: str, key: str) -> list[dict]:
-        """Get warnings_3f list for given table:key field.
-
-        Args:
-            table: Table name.
-            key: Sensor key.
-
-        Returns:
-            List of warning dicts, empty list if none.
-        """
-        sensor = self.lookup(table, key)
-        if sensor is None:
-            return []
-        return sensor.get("warnings_3f", [])
-
     def sensor_count(self) -> int:
         """Return number of sensors in the map.
 

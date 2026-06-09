@@ -485,13 +485,6 @@ class TwinDelivery:
             return None
         return setting, self._inflight_device_id
 
-    def session_inflight(self, session_id: str) -> tuple[str, str] | None:
-        """Get current session inflight setting."""
-        data = self._session_inflight.get(session_id)
-        if data:
-            return (data[0], data[1])
-        return None
-
     def has_pending_or_inflight(self, session_id: str | None = None) -> bool:
         """Check if there are pending or inflight settings."""
         self._expire_cloud_pending()
@@ -621,11 +614,6 @@ class TwinDelivery:
     def has_pending(self) -> bool:
         """Check if there are pending local settings."""
         return self._twin_queue.size() > 0
-
-    def get_first_pending(self) -> TwinSetting | None:
-        """Get first pending local setting without marking as inflight."""
-        pending = self._twin_queue.get_pending()
-        return pending[0] if pending else None
 
     @staticmethod
     def build_setting_xml(

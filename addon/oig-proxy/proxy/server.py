@@ -23,7 +23,7 @@ try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
     from ..protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name
-    from ..protocol.frames import build_setting_frame, build_end_frame_with_timestamp
+    from ..protocol.frames import build_setting_frame
     from ..protocol.parser import parse_xml_frame
     from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
@@ -34,7 +34,7 @@ except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
     from protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
-    from protocol.frames import build_setting_frame, build_end_frame_with_timestamp  # type: ignore[no-redef]
+    from protocol.frames import build_setting_frame  # type: ignore[no-redef]
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
     from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
@@ -1143,7 +1143,7 @@ class ProxyServer:
             except Exception:  # noqa: BLE001
                 table_name = ""
             # Build and send local ACK
-            ack_frame = build_local_ack(table_name, has_queued_data=False)
+            ack_frame = build_local_ack(table_name)
             try:
                 box_writer.write(ack_frame)
                 await box_writer.drain()

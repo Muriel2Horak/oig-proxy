@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import re
 
-import pytest
 
-from proxy.local_ack import build_local_ack, should_queue_frame
+from proxy.local_ack import build_local_ack
 from protocol.frames import (
     build_ack_only_frame,
     build_getactual_frame,
     build_end_time_frame,
-    build_end_frame_with_timestamp,
-    build_end_only_frame,
 )
 
 
@@ -47,22 +44,6 @@ def test_build_end_time_frame():
     assert b"<CRC>" in frame
 
 
-def test_build_end_frame_with_timestamp():
-    """build_end_frame_with_timestamp() vrací END frame s DT."""
-    frame = build_end_frame_with_timestamp()
-    assert b"<Result>END</Result>" in frame
-    assert b"<DT>" in frame
-    assert b"<CRC>" in frame
-
-
-def test_build_end_only_frame():
-    """build_end_only_frame() vrací prostý END frame."""
-    frame = build_end_only_frame()
-    assert b"<Result>END</Result>" in frame
-    assert b"<CRC>" in frame
-    assert b"</Frame>" in frame
-
-
 def test_frames_have_valid_crc():
     """Všechny framy mají validní CRC."""
     from protocol.crc import crc16_modbus
@@ -71,8 +52,6 @@ def test_frames_have_valid_crc():
         build_ack_only_frame(),
         build_getactual_frame(),
         build_end_time_frame(),
-        build_end_frame_with_timestamp(),
-        build_end_only_frame(),
     ]
 
     for frame in frames:
@@ -115,29 +94,25 @@ def test_build_local_ack_tbl_any():
         assert b"<Result>ACK</Result>" in frame, f"Expected ACK for {table}"
 
 
-def test_build_local_ack_isnewset_no_queue():
-    """build_local_ack('IsNewSet') bez fronty vrací ACK."""
-    frame = build_local_ack("IsNewSet", has_queued_data=False)
-    assert b"<Result>ACK</Result>" in frame
-
-
-def test_build_local_ack_isnewset_with_queue():
-    """build_local_ack('IsNewSet') s frontou vrací END s DT."""
-    frame = build_local_ack("IsNewSet", has_queued_data=True)
+def test_build_local_ack_isnewset():
+    """build_local_ack('IsNewSet') vrací END + čas + GetActual (jako cloud)."""
+    frame = build_local_ack("IsNewSet")
     assert b"<Result>END</Result>" in frame
-    assert b"<DT>" in frame
+    assert b"<ToDo>GetActual</ToDo>" in frame
 
 
 def test_build_local_ack_isnewweather():
-    """build_local_ack('IsNewWeather') vrací END."""
+    """build_local_ack('IsNewWeather') vrací END + GetActual (jako cloud)."""
     frame = build_local_ack("IsNewWeather")
     assert b"<Result>END</Result>" in frame
+    assert b"<ToDo>GetActual</ToDo>" in frame
 
 
 def test_build_local_ack_isnewfw():
-    """build_local_ack('IsNewFW') vrací END."""
+    """build_local_ack('IsNewFW') vrací END + GetActual (jako cloud)."""
     frame = build_local_ack("IsNewFW")
     assert b"<Result>END</Result>" in frame
+    assert b"<ToDo>GetActual</ToDo>" in frame
 
 
 def test_build_local_ack_end():
@@ -166,33 +141,6 @@ def test_build_local_ack_all_frames_have_crc():
         "unknown",
     ]
     for table in tables:
-        frame = build_local_ack(table, has_queued_data=table == "IsNewSet")
+        frame = build_local_ack(table)
         assert b"<CRC>" in frame, f"Missing CRC for {table}"
         assert b"</Frame>" in frame, f"Missing </Frame> for {table}"
-
-
-# -----------------------------------------------------------------------------
-# should_queue_frame
-# -----------------------------------------------------------------------------
-
-def test_should_queue_frame_tbl():
-    """should_queue_frame() vrací True pro tbl_* tabulky."""
-    assert should_queue_frame("tbl_actual") is True
-    assert should_queue_frame("tbl_invertor") is True
-    assert should_queue_frame("tbl_batt") is True
-    assert should_queue_frame("tbl_events") is True
-
-
-def test_should_queue_frame_control():
-    """should_queue_frame() vrací False pro kontrolní tabulky."""
-    assert should_queue_frame("IsNewSet") is False
-    assert should_queue_frame("IsNewWeather") is False
-    assert should_queue_frame("IsNewFW") is False
-    assert should_queue_frame("END") is False
-    assert should_queue_frame("ACK") is False
-
-
-def test_should_queue_frame_unknown():
-    """should_queue_frame() vrací False pro neznámé tabulky."""
-    assert should_queue_frame("unknown") is False
-    assert should_queue_frame("") is False

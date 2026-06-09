@@ -72,29 +72,6 @@ def build_end_time_frame() -> bytes:
     return build_frame(inner).encode("utf-8")
 
 
-def build_end_frame_with_timestamp() -> bytes:
-    """Sestaví END frame s aktuálním časem (pro IsNewSet odpověď).
-
-    Returns:
-        END frame with DT timestamp
-    """
-    now = datetime.now()
-    inner = (
-        f"{RESULT_END}"
-        f"<DT>{now.strftime('%Y-%m-%d %H:%M:%S')}</DT>"
-    )
-    return build_frame(inner).encode("utf-8")
-
-
-def build_end_only_frame() -> bytes:
-    """Sestaví prostý END frame bez timestampu.
-
-    Returns:
-        Simple END frame (for IsNewWeather, IsNewFW)
-    """
-    return build_frame(RESULT_END).encode("utf-8")
-
-
 def build_setting_frame(
     device_id: str,
     table: str,
