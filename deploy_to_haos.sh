@@ -44,7 +44,6 @@ DEPLOY_FILES=(
     protocol/frame.py
     protocol/crc.py
     protocol/frames.py
-    protocol/constants.py
     sensor/__init__.py
     sensor/loader.py
     sensor/warnings.py

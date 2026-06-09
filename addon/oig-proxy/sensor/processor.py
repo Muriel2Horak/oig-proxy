@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from protocol.constants import TRANSPORT_METADATA_KEYS
 from sensor.loader import SensorMapLoader
 from sensor.warnings import decode_warning_details, decode_warnings
 from mqtt.client import MQTTClient
@@ -14,6 +13,24 @@ from mqtt.client import MQTTClient
 logger = logging.getLogger(__name__)
 
 ISNEW_TABLES = {"IsNewFW", "IsNewSet", "IsNewWeather"}
+# NOTE: kept in sync with proxy/server.py:TRANSPORT_METADATA_KEYS. Not extracted to
+# a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
+# new untracked file before the image is built.
+TRANSPORT_METADATA_KEYS = frozenset(
+    {
+        "Confirm",
+        "ID",
+        "ID_Server",
+        "NewValue",
+        "Rdt",
+        "Result",
+        "TSec",
+        "TblItem",
+        "Tmr",
+        "ToDo",
+        "mytimediff",
+    }
+)
 
 
 class FrameProcessor:
