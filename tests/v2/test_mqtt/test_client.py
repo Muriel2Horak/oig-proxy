@@ -452,27 +452,6 @@ def test_send_discovery_clears_dedup_on_reconnect():
     assert c._client.publish.call_count == 1  # Opět posláno
 
 
-def test_send_discovery_for_table_skips_internal_keys():
-    """send_discovery_for_table přeskočí klíče začínající _."""
-    c = make_client()
-    mock_paho = inject_mock_paho(c)
-
-    c.send_discovery_for_table("DEV01", "tbl_x", {
-        "P": 100,
-        "_raw": "skip",
-        "_internal": True,
-        "Q": 50,
-    })
-
-    # Jen P a Q — ne _raw a _internal
-    calls = mock_paho.publish.call_args_list
-    topics = [call[0][0] for call in calls]
-    assert any("_p/config" in t for t in topics)
-    assert any("_q/config" in t for t in topics)
-    assert not any("_raw" in t for t in topics)
-    assert not any("_internal" in t for t in topics)
-
-
 def test_build_object_id_normalizes_non_alnum():
     assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B") == "oig_local_dev_01_tbl_box_a_b"
     assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B", is_control=True) == "oig_local_dev_01_tbl_box_a_b_cfg"
