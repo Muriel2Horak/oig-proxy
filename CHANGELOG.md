@@ -2,6 +2,23 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.1.0] - 2026-06-09
+
+### Changed
+- **Offline ACK odpovědi srovnané s cloudem**: v offline režimu proxy odpovídá na `IsNewSet`, `IsNewWeather` i `IsNewFW` přes `END + Time/UTCTime + GetActual` (jako cloud) místo holého `ACK`/`END`. Řeší zaseknutí BOXu ve smyčce `IsNewSet` a zbytečné reconnecty na novějších scénářích.
+- **Sjednocený setting-frame builder**: online (`build_setting_frame`) i offline (`TwinDelivery.build_setting_xml`) cesta nyní generují identický formát — `msg_id` v pásmu 14M, `DT` odvozené z `id_set` v českém civilním čase, `TSec` ≥ `id_set`. Konec tiché divergence mezi online/offline settingy (offline cesta startovala na 13M).
+
+### Fixed
+- **Bezpečnost – validace control zápisů**: 17 settings ve `CONTROL_WRITE_WHITELIST` nemělo `SettingConstraint`, takže procházely přes MQTT control bez kontroly rozsahu/typu. Tyto klíče (`V_MIN_AC`, `V_MAX_AC`, `F_MIN_AC`, `F_MAX_AC`, `GRID_PV_ON/OFF`, `TO_GRID`, `PRLL_OUT`, `P_ADJ_STRT`, `OFFSET`, `P_CAL_*`, `AAC_MAX_CHRG`, `V_CUT_GRID`, `V_RE_GRID`, `A_MAX_DIS_HYB`) jsou z whitelistu odebrané, dokud nebudou mít definované meze. **BREAKING: tyto klíče už nejde zapsat přes MQTT control.**
+- **Capture DB bloat**: `FrameCapture._iso_now` srovnán s prune cutoffem (bez mikrosekund), takže se hraniční řádky správně promazávají podle retention.
+
+### Removed
+- **Mrtvý kód** bez produkčních volajících napříč `protocol`/`proxy`/`twin`/`telemetry`/`mqtt`/`sensor`: duplicitní frame buildery v `protocol/frame.py`, `should_queue_frame`, nedosažitelná `has_queued_data` větev, `session_inflight`, `get_first_pending`, `record_pairing_confidence`, `is_terminal_step`, `switch_mode`, `get_current_mode`, `send_discovery_for_table`, `get_warnings`, mrtvá (a malformovaná) `TwinSetting.build_setting_xml`.
+- **Duplicity** sjednoceny: `is_stronger_ack`/ACK-precedence logika, identické `online`/`hybrid` větve v `apply_configured_mode`.
+
+### Deploy
+- `deploy_to_haos.sh`: doplněn `proxy/dns_resolve.py` do `DEPLOY_FILES` (latentní fresh-deploy mezera).
+
 ## [2.0.10] - 2026-04-21
 
 ### Fixed
