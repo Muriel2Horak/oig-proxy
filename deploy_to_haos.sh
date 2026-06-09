@@ -38,11 +38,13 @@ DEPLOY_FILES=(
     proxy/server.py
     proxy/mode.py
     proxy/local_ack.py
+    proxy/dns_resolve.py
     protocol/__init__.py
     protocol/parser.py
     protocol/frame.py
     protocol/crc.py
     protocol/frames.py
+    protocol/constants.py
     sensor/__init__.py
     sensor/loader.py
     sensor/warnings.py
