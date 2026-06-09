@@ -108,9 +108,6 @@ class TelemetryCollector:
         self.nack_reasons: Counter[str] = Counter()
         self.conn_mismatch_drops = 0
         self.cloud_gap_durations: deque[dict[str, Any]] = deque()
-        self.pairing_high = 0
-        self.pairing_medium = 0
-        self.pairing_low = 0
         self.frames_box_to_proxy = 0
         self.frames_cloud_to_proxy = 0
         self.frames_proxy_to_box = 0
@@ -264,14 +261,6 @@ class TelemetryCollector:
 
     def record_cloud_gap(self, duration_s: float) -> None:
         self.cloud_gap_durations.append({"timestamp": self._utc_iso(), "duration_s": duration_s})
-
-    def record_pairing_confidence(self, confidence: float) -> None:
-        if confidence >= 0.8:
-            self.pairing_high += 1
-        elif confidence >= 0.5:
-            self.pairing_medium += 1
-        else:
-            self.pairing_low += 1
 
     def record_frame_direction(self, direction: str) -> None:
         if direction == "box_to_proxy":
@@ -660,11 +649,6 @@ class TelemetryCollector:
             "nack_reasons": dict(self.nack_reasons),
             "conn_mismatch_drops": self.conn_mismatch_drops,
             "cloud_gap_histogram": self._build_cloud_gap_histogram(),
-            "pairing_confidence": {
-                "high": self.pairing_high,
-                "medium": self.pairing_medium,
-                "low": self.pairing_low,
-            },
             "frame_directions": {
                 "box_to_proxy": self.frames_box_to_proxy,
                 "cloud_to_proxy": self.frames_cloud_to_proxy,
@@ -682,9 +666,6 @@ class TelemetryCollector:
         self.nack_reasons.clear()
         self.conn_mismatch_drops = 0
         self.cloud_gap_durations.clear()
-        self.pairing_high = 0
-        self.pairing_medium = 0
-        self.pairing_low = 0
         self.frames_box_to_proxy = 0
         self.frames_cloud_to_proxy = 0
         self.frames_proxy_to_box = 0

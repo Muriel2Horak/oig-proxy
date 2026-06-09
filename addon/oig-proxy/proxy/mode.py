@@ -152,22 +152,6 @@ class ModeManager:
             return True
         return self.in_offline
 
-    async def switch_mode(self, new_mode: ConnectionMode) -> ConnectionMode:
-        """Atomicky přepne režim a vrátí předchozí hodnotu."""
-        async with self._mode_lock:
-            old_mode = self.runtime_mode
-            if old_mode != new_mode:
-                self.runtime_mode = new_mode
-                logger.info("Mode switched: %s → %s", old_mode.value, new_mode.value)
-            return old_mode
-
-    async def get_current_mode(self) -> ConnectionMode:
-        """Vrátí efektivní runtime režim."""
-        if self.force_offline_enabled():
-            return ConnectionMode.OFFLINE
-        async with self._mode_lock:
-            return self.runtime_mode
-
     async def apply_configured_mode(self, configured_mode: str) -> bool:
         mode = str(configured_mode).strip().lower()
         if mode not in {"online", "hybrid", "offline"}:
@@ -178,11 +162,8 @@ class ModeManager:
             if mode == "offline":
                 self.in_offline = True
                 self.runtime_mode = ConnectionMode.OFFLINE
-            elif mode == "online":
-                self.in_offline = False
-                self.fail_count = 0
-                self.runtime_mode = ConnectionMode.ONLINE
             else:
+                # online or hybrid — identical runtime behaviour
                 self.in_offline = False
                 self.fail_count = 0
                 self.runtime_mode = ConnectionMode.ONLINE

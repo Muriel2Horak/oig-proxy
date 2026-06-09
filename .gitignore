@@ -47,3 +47,8 @@ test-results/
 tools/monitoring/playwright/node_modules/
 tools/monitoring/playwright/playwright-report/
 tools/monitoring/playwright/test-results/
+
+# Local agent/tooling scratch (never committed)
+.omo/
+.sisyphus/
+.opencode/package-lock.json

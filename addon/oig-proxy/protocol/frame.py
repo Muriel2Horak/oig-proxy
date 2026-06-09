@@ -8,7 +8,6 @@ Formát: <Frame>{inner_xml}<CRC>xxxxx</CRC></Frame>\r\n
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 
 from .crc import crc16_modbus, strip_crc_tag
 
@@ -89,31 +88,3 @@ def infer_device_id(frame: str) -> str | None:
     """Extrahuje ID zařízení z XML frame."""
     m = _DEVICE_ID_RE.search(frame)
     return m.group(1) if m else None
-
-
-# ---------------------------------------------------------------------------
-# ACK frame builders
-# ---------------------------------------------------------------------------
-
-def build_ack_frame() -> bytes:
-    """Prostý ACK frame."""
-    return build_frame(RESULT_ACK).encode("utf-8")
-
-
-def build_end_time_frame() -> bytes:
-    """END frame s aktuálním časem a příkazem GetActual."""
-    now_local = datetime.now()
-    now_utc = datetime.now(timezone.utc)
-    inner = (
-        f"{RESULT_END}"
-        f"<Time>{now_local.strftime('%Y-%m-%d %H:%M:%S')}</Time>"
-        f"<UTCTime>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</UTCTime>"
-        "<ToDo>GetActual</ToDo>"
-    )
-    return build_frame(inner).encode("utf-8")
-
-
-def build_getactual_frame() -> bytes:
-    """ACK frame s příkazem GetActual."""
-    inner = f"{RESULT_ACK}<ToDo>GetActual</ToDo>"
-    return build_frame(inner).encode("utf-8")

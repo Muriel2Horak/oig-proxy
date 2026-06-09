@@ -173,8 +173,6 @@ def test_cached_state_value_device_specific_metrics_and_collect_metrics(monkeypa
     collector.record_conn_mismatch()
     for gap in (30, 90, 200, 500, 700):
         collector.record_cloud_gap(gap)
-    for confidence in (0.95, 0.6, 0.2):
-        collector.record_pairing_confidence(confidence)
     for direction in ("box_to_proxy", "cloud_to_proxy", "proxy_to_box"):
         collector.record_frame_direction(direction)
     collector.record_signal_class("ack")
@@ -201,7 +199,6 @@ def test_cached_state_value_device_specific_metrics_and_collect_metrics(monkeypa
         "300_600s": 1,
         "gt_600s": 1,
     }
-    assert metrics["pairing_confidence"] == {"high": 1, "medium": 1, "low": 1}
     assert metrics["frame_directions"] == {"box_to_proxy": 1, "cloud_to_proxy": 1, "proxy_to_box": 1}
     assert metrics["signal_distribution"] == {"ack": 2}
     assert metrics["end_frames"] == {"received": 1, "sent": 1, "time_since_last_s": 10}
@@ -222,7 +219,6 @@ def test_cached_state_value_device_specific_metrics_and_collect_metrics(monkeypa
         "300_600s": 0,
         "gt_600s": 0,
     }
-    assert reset_metrics["pairing_confidence"] == {"high": 0, "medium": 0, "low": 0}
     assert reset_metrics["frame_directions"] == {"box_to_proxy": 0, "cloud_to_proxy": 0, "proxy_to_box": 0}
     assert reset_metrics["signal_distribution"] == {}
 

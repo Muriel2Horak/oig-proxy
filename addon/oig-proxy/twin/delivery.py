@@ -5,15 +5,16 @@ from dataclasses import dataclass
 import logging
 import secrets
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from protocol.frames import czech_local_datetime_from_epoch
 from telemetry.settings_audit import (
-    ACK_TERMINAL_PRECEDENCE,
     TERMINAL_STEPS,
     SettingResult,
     SettingStep,
     _normalize_value_for_text,
+    is_stronger_ack,
     make_incoming_record,
     make_step_record,
 )
@@ -92,11 +93,9 @@ class TwinDelivery:
 
     def next_msg_id(self) -> int:
         if self._last_msg_id is None:
-            self._last_msg_id = secrets.randbelow(1_000_000) + 13_000_000
+            self._last_msg_id = secrets.randbelow(1_000_000) + 14_000_000
             return self._last_msg_id
         self._last_msg_id += 1
-        if self._last_msg_id > 13_999_999:
-            self._last_msg_id = 13_000_000
         return self._last_msg_id
 
     def _make_parent_record(self, setting: TwinSetting, device_id: str) -> Any:
@@ -128,11 +127,8 @@ class TwinDelivery:
         is_terminal = step in TERMINAL_STEPS and result != SettingResult.PENDING
         if is_terminal:
             existing = self._recorded_terminal.get(setting.audit_id)
-            if existing is not None:
-                existing_prec = ACK_TERMINAL_PRECEDENCE.get(existing, 0)
-                new_prec = ACK_TERMINAL_PRECEDENCE.get(step, 0)
-                if existing_prec >= new_prec:
-                    return
+            if existing is not None and not is_stronger_ack(step, existing):
+                return
             self._recorded_terminal[setting.audit_id] = step
         parent = self._make_parent_record(setting, device_id)
         record = make_step_record(
@@ -486,13 +482,6 @@ class TwinDelivery:
             return None
         return setting, self._inflight_device_id
 
-    def session_inflight(self, session_id: str) -> tuple[str, str] | None:
-        """Get current session inflight setting."""
-        data = self._session_inflight.get(session_id)
-        if data:
-            return (data[0], data[1])
-        return None
-
     def has_pending_or_inflight(self, session_id: str | None = None) -> bool:
         """Check if there are pending or inflight settings."""
         self._expire_cloud_pending()
@@ -623,11 +612,6 @@ class TwinDelivery:
         """Check if there are pending local settings."""
         return self._twin_queue.size() > 0
 
-    def get_first_pending(self) -> TwinSetting | None:
-        """Get first pending local setting without marking as inflight."""
-        pending = self._twin_queue.get_pending()
-        return pending[0] if pending else None
-
     @staticmethod
     def build_setting_xml(
         table: str,
@@ -640,10 +624,16 @@ class TwinDelivery:
     ) -> str:
         """Build XML payload for setting delivery."""
         if msg_id == 0:
-            msg_id = secrets.randbelow(1_000_000) + 13_000_000
+            msg_id = secrets.randbelow(1_000_000) + 14_000_000
 
         now_utc = datetime.now(timezone.utc)
-        now_local_cz = now_utc + timedelta(hours=1)
+        now_epoch = int(now_utc.timestamp())
+        tsec_utc = (
+            now_utc
+            if now_epoch >= id_set
+            else datetime.fromtimestamp(id_set, tz=timezone.utc)
+        )
+        setting_dt_cz = czech_local_datetime_from_epoch(id_set)
         ver = secrets.randbelow(65_535)
 
         return (
@@ -651,7 +641,7 @@ class TwinDelivery:
             f"<ID_Device>{device_id}</ID_Device>"
             f"<ID_Set>{id_set}</ID_Set>"
             "<ID_SubD>0</ID_SubD>"
-            f"<DT>{now_local_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
+            f"<DT>{setting_dt_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
             f"<NewValue>{value}</NewValue>"
             f"<Confirm>{confirm}</Confirm>"
             f"<TblName>{table}</TblName>"
@@ -659,6 +649,6 @@ class TwinDelivery:
             "<ID_Server>9</ID_Server>"
             "<mytimediff>0</mytimediff>"
             "<Reason>Setting</Reason>"
-            f"<TSec>{now_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
+            f"<TSec>{tsec_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
             f"<ver>{ver:05d}</ver>"
         )

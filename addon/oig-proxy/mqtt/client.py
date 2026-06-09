@@ -470,26 +470,6 @@ class MQTTClient:
             ("tbl_box_prms", "MODE"),
         }
 
-    def send_discovery_for_table(
-        self, device_id: str, table: str, data: dict[str, Any]
-    ) -> None:
-        """
-        Odešle discovery pro všechny klíče z parsovaných dat.
-
-        Ignoruje klíče začínající _ (interní metadata).
-        """
-        for key, value in data.items():
-            if key.startswith("_"):
-                continue
-            self.send_discovery(
-                device_id=device_id,
-                table=table,
-                sensor_key=key,
-                sensor_name=key,
-                # Základní typ inference
-                unit="",
-            )
-
     # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------

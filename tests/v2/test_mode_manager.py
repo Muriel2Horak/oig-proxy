@@ -252,41 +252,12 @@ def test_is_offline_hybrid_offline():
 # -----------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_switch_mode():
-    """switch_mode() atomicky přepne režim."""
+async def test_apply_configured_mode_offline_forces_runtime():
+    """apply_configured_mode('offline') přepne runtime na OFFLINE."""
     mm = ModeManager(MockConfig(proxy_mode="online"))
 
-    old_mode = await mm.switch_mode(ConnectionMode.OFFLINE)
-    assert old_mode == ConnectionMode.ONLINE
+    assert await mm.apply_configured_mode("offline") is True
     assert mm.runtime_mode == ConnectionMode.OFFLINE
 
-    old_mode = await mm.switch_mode(ConnectionMode.ONLINE)
-    assert old_mode == ConnectionMode.OFFLINE
+    assert await mm.apply_configured_mode("online") is True
     assert mm.runtime_mode == ConnectionMode.ONLINE
-
-
-@pytest.mark.asyncio
-async def test_switch_mode_same_mode():
-    """switch_mode() nezmění nic při stejném režimu."""
-    mm = ModeManager(MockConfig(proxy_mode="online"))
-
-    old_mode = await mm.switch_mode(ConnectionMode.ONLINE)
-    assert old_mode == ConnectionMode.ONLINE
-    assert mm.runtime_mode == ConnectionMode.ONLINE
-
-
-@pytest.mark.asyncio
-async def test_get_current_mode():
-    """get_current_mode() vrací aktuální režim."""
-    mm = ModeManager(MockConfig(proxy_mode="online"))
-    assert await mm.get_current_mode() == ConnectionMode.ONLINE
-
-    await mm.switch_mode(ConnectionMode.OFFLINE)
-    assert await mm.get_current_mode() == ConnectionMode.OFFLINE
-
-
-@pytest.mark.asyncio
-async def test_get_current_mode_offline_forced():
-    """get_current_mode() vrací OFFLINE když je force_offline_enabled."""
-    mm = ModeManager(MockConfig(proxy_mode="offline"))
-    assert await mm.get_current_mode() == ConnectionMode.OFFLINE

@@ -13,6 +13,9 @@ from mqtt.client import MQTTClient
 logger = logging.getLogger(__name__)
 
 ISNEW_TABLES = {"IsNewFW", "IsNewSet", "IsNewWeather"}
+# NOTE: kept in sync with proxy/server.py:TRANSPORT_METADATA_KEYS. Not extracted to
+# a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
+# new untracked file before the image is built.
 TRANSPORT_METADATA_KEYS = frozenset(
     {
         "Confirm",

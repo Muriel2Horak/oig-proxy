@@ -5,9 +5,6 @@ from protocol.frame import (
     extract_frame_from_buffer,
     infer_table_name,
     infer_device_id,
-    build_ack_frame,
-    build_getactual_frame,
-    build_end_time_frame,
 )
 from protocol.crc import crc16_modbus, strip_crc_tag
 
@@ -105,20 +102,3 @@ def test_infer_device_id():
 
 def test_infer_device_id_none():
     assert infer_device_id("<foo>bar</foo>") is None
-
-
-def test_build_ack_frame():
-    frame = build_ack_frame()
-    assert isinstance(frame, bytes)
-    assert b"ACK" in frame
-
-
-def test_build_getactual_frame():
-    frame = build_getactual_frame()
-    assert b"GetActual" in frame
-
-
-def test_build_end_time_frame():
-    frame = build_end_time_frame()
-    assert b"END" in frame
-    assert b"Time>" in frame

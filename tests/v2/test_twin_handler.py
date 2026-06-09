@@ -137,13 +137,22 @@ class TestTwinControlHandler:
         assert setting.value == 2
 
     def test_on_message_with_float_value(self, handler, twin_queue):
-        """Test _on_message handles float values."""
-        payload = json.dumps({"table": "tbl_invertor_prms", "key": "P_ADJ_STRT", "value": 56.5})
+        """Test _on_message coerces whole-number float to int for integer keys."""
+        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2.0})
 
         handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
 
-        setting = twin_queue.get("tbl_invertor_prms", "P_ADJ_STRT")
-        assert setting.value == 56.5
+        setting = twin_queue.get("tbl_box_prms", "MODE")
+        assert setting is not None
+        assert setting.value == 2
+
+    def test_on_message_rejects_non_integer_float(self, handler, twin_queue):
+        """Non-integer float on an integer-only control key is rejected (no unvalidated write)."""
+        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 56.5})
+
+        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
+
+        assert twin_queue.get("tbl_box_prms", "MODE") is None
 
     def test_on_message_with_boolean_value(self, handler, twin_queue):
         """Test _on_message handles boolean values."""
