@@ -1,1 +1,0 @@
-Attribute _pending_simple exists on DigitalTwin instance
