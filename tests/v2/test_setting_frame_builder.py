@@ -1,3 +1,4 @@
+"""Tests for the setting-frame builder: DT/TSec derivation and msg_id sequencing."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ def _frame_tags(frame_bytes: bytes) -> dict[str, str]:
 
 
 def test_build_setting_frame_derives_czech_dt_from_id_set_in_summer(monkeypatch) -> None:
+    """DT is the Czech civil time derived from id_set (summer = UTC+2)."""
     monkeypatch.setattr(frames, "datetime", _FrozenDateTime)
 
     frame = frames.build_setting_frame(
@@ -44,6 +46,7 @@ def test_build_setting_frame_derives_czech_dt_from_id_set_in_summer(monkeypatch)
 
 
 def test_build_setting_frame_keeps_tsec_at_or_after_id_set(monkeypatch) -> None:
+    """TSec is clamped to id_set when the local clock is behind it."""
     monkeypatch.setattr(frames, "datetime", _FrozenDateTime)
     id_set = int(datetime(2026, 5, 17, 10, 17, 45, tzinfo=timezone.utc).timestamp()) + 1
 
@@ -66,6 +69,7 @@ def test_build_setting_frame_keeps_tsec_at_or_after_id_set(monkeypatch) -> None:
 
 
 def test_next_msg_id_continues_after_observed_cloud_id_above_14m() -> None:
+    """next_msg_id continues sequentially from the highest observed cloud msg_id."""
     delivery = TwinDelivery(twin_queue=object(), mqtt=object())
     delivery.observe_msg_id(14416650)
 
