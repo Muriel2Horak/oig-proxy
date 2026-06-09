@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# Only keys that ALSO have a SETTING_CONSTRAINTS entry may be written via control.
+# Range-less keys (grid voltage/frequency limits, P_CAL_*, OFFSET, GRID_PV_*, ...)
+# are intentionally excluded until validated bounds exist, so they cannot be
+# written unvalidated over MQTT control.
 CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
     "proxy_control": {"PROXY_MODE"},
     "tbl_batt_prms": {"FMT_ON", "BAT_MIN", "BAT_GL_MIN", "BAT_AG_MIN"},
@@ -13,7 +17,6 @@ CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
         "SSR0",
         "SSR1",
         "SSR2",
-        "OFFSET",
         "PRRTY",
         "P_SET",
         "WD",
@@ -27,22 +30,7 @@ CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
         "ZONE4_E",
     },
     "tbl_box_prms": {"MODE", "BAT_AC", "BAT_FORMAT", "SA", "RQRESET"},
-    "tbl_invertor_prms": {"GRID_PV_ON", "GRID_PV_OFF", "TO_GRID", "PRLL_OUT", "P_ADJ_STRT"},
-    "tbl_invertor_prm1": {
-        "AAC_MAX_CHRG",
-        "V_MIN_AC",
-        "V_MAX_AC",
-        "F_MIN_AC",
-        "F_MAX_AC",
-        "V_CUT_GRID",
-        "V_RE_GRID",
-        "A_MAX_DIS_HYB",
-        "P_CAL_R",
-        "P_CAL_S",
-        "P_CAL_T",
-        "BUZ_MUT",
-        "GEN_AC_SRC",
-    },
+    "tbl_invertor_prm1": {"BUZ_MUT", "GEN_AC_SRC"},
 }
 
 
@@ -52,7 +40,6 @@ class SettingConstraint:
     max_value: float | None = None
     step: float | None = None
     integer_only: bool = False
-    allowed_values: tuple[float, ...] | None = None
 
 
 SETTING_CONSTRAINTS: dict[tuple[str, str], SettingConstraint] = {
@@ -130,9 +117,6 @@ def validate_setting_value(table: str, key: str, value: Any) -> tuple[bool, floa
         return False, None, f"value below min ({c.min_value})"
     if c.max_value is not None and parsed > c.max_value:
         return False, None, f"value above max ({c.max_value})"
-
-    if c.allowed_values is not None and parsed not in c.allowed_values:
-        return False, None, "value not in allowed set"
 
     out: float | int = int(parsed) if c.integer_only or float(parsed).is_integer() else parsed
     return True, out, ""
