@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
+    from ..protocol.constants import TRANSPORT_METADATA_KEYS
     from ..protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name
     from ..protocol.frames import build_setting_frame
     from ..protocol.parser import parse_xml_frame
@@ -33,6 +34,7 @@ try:
 except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
+    from protocol.constants import TRANSPORT_METADATA_KEYS  # type: ignore[no-redef]
     from protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
     from protocol.frames import build_setting_frame  # type: ignore[no-redef]
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
@@ -107,21 +109,6 @@ def _read_replay_frame_once(path: str) -> bytes | None:
 TRACE_LEVEL = 5
 TRANSPORT_RESULT_VALUES = frozenset({"ACK", "END"})
 POLL_RESULT_VALUES = frozenset({"IsNewSet", "IsNewWeather", "IsNewFW"})
-TRANSPORT_METADATA_KEYS = frozenset(
-    {
-        "Confirm",
-        "ID",
-        "ID_Server",
-        "NewValue",
-        "Rdt",
-        "Result",
-        "TSec",
-        "TblItem",
-        "Tmr",
-        "ToDo",
-        "mytimediff",
-    }
-)
 
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]

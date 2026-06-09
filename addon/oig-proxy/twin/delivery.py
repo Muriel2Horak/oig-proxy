@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from protocol.frames import czech_local_datetime_from_epoch
 from telemetry.settings_audit import (
-    ACK_TERMINAL_PRECEDENCE,
     TERMINAL_STEPS,
     SettingResult,
     SettingStep,
     _normalize_value_for_text,
+    is_stronger_ack,
     make_incoming_record,
     make_step_record,
 )
@@ -127,11 +127,8 @@ class TwinDelivery:
         is_terminal = step in TERMINAL_STEPS and result != SettingResult.PENDING
         if is_terminal:
             existing = self._recorded_terminal.get(setting.audit_id)
-            if existing is not None:
-                existing_prec = ACK_TERMINAL_PRECEDENCE.get(existing, 0)
-                new_prec = ACK_TERMINAL_PRECEDENCE.get(step, 0)
-                if existing_prec >= new_prec:
-                    return
+            if existing is not None and not is_stronger_ack(step, existing):
+                return
             self._recorded_terminal[setting.audit_id] = step
         parent = self._make_parent_record(setting, device_id)
         record = make_step_record(

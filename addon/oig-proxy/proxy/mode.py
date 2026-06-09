@@ -162,11 +162,8 @@ class ModeManager:
             if mode == "offline":
                 self.in_offline = True
                 self.runtime_mode = ConnectionMode.OFFLINE
-            elif mode == "online":
-                self.in_offline = False
-                self.fail_count = 0
-                self.runtime_mode = ConnectionMode.ONLINE
             else:
+                # online or hybrid — identical runtime behaviour
                 self.in_offline = False
                 self.fail_count = 0
                 self.runtime_mode = ConnectionMode.ONLINE

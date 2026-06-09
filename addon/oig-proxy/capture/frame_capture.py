@@ -245,4 +245,7 @@ def _prune_db(conn: sqlite3.Connection, retention_days: int) -> None:
 
 
 def _iso_now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    # microsecond=0 keeps stored timestamps at the same precision as the prune
+    # cutoff (_prune_db) so lexicographic `ts < cutoff` comparisons stay correct
+    # at the retention boundary.
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
