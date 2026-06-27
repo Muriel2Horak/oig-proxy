@@ -462,9 +462,12 @@ async def test_box_connection_closes_on_cloud_failure():
         writer.write(b"hello")
         await writer.drain()
 
-        # Server by měl zavřít spojení (cloud nedostupný)
-        data = await asyncio.wait_for(reader.read(100), timeout=2.0)
-        assert data == b""  # EOF — spojení zavřeno
+        # Server musí spojení ukončit; podle runtime se projeví EOF nebo reset.
+        try:
+            data = await asyncio.wait_for(reader.read(100), timeout=2.0)
+        except ConnectionResetError:
+            data = b""
+        assert data == b""
         writer.close()
         await writer.wait_closed()
     finally:
@@ -1017,11 +1020,15 @@ async def test_local_getactual_loop_disabled_does_not_write() -> None:
     cfg = make_config(local_getactual_enabled=False, local_getactual_interval_s=10)
     server = ProxyServer(cfg)
     box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing = MagicMock(
+        side_effect=AssertionError("disabled local GetActual must return before touching writer state")
+    )
     box_writer.write = MagicMock()
     box_writer.drain = AsyncMock()
 
     await server._local_getactual_loop(box_writer, conn_id=123, peer="box:1")
 
+    box_writer.is_closing.assert_not_called()
     box_writer.write.assert_not_called()
     box_writer.drain.assert_not_called()
 
@@ -1107,3 +1114,122 @@ async def test_stop_local_getactual_task_cancels_running_task() -> None:
     await server._stop_local_getactual_task(task)
 
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_handle_box_connection_offline_mode_cleans_up_local_getactual_task() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=telemetry)
+    server.mode_manager.should_try_cloud = MagicMock(return_value=False)
+    server.mode_manager.configured_mode = "offline"
+    server.mode_manager.runtime_mode = MagicMock(value="offline")
+
+    loop_started = asyncio.Event()
+    loop_cancelled = asyncio.Event()
+
+    async def fake_local_getactual_loop(
+        writer: asyncio.StreamWriter,
+        *,
+        conn_id: int,
+        peer: str | None,
+    ) -> None:
+        assert writer is box_writer
+        assert isinstance(conn_id, int)
+        assert peer == "127.0.0.1:12345"
+        loop_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            loop_cancelled.set()
+            raise
+
+    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
+
+    async def fake_pipe_box_offline(*args, **kwargs) -> None:
+        await asyncio.wait_for(loop_started.wait(), timeout=1.0)
+
+    server._pipe_box_offline = AsyncMock(side_effect=fake_pipe_box_offline)
+
+    box_reader = MagicMock(spec=asyncio.StreamReader)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.get_extra_info.return_value = ("127.0.0.1", 12345)
+
+    await server._handle_box_connection(box_reader, box_writer)
+
+    assert loop_started.is_set()
+    assert loop_cancelled.is_set()
+    server._pipe_box_offline.assert_awaited_once()
+    telemetry.record_offline_event.assert_called_once_with(
+        reason="configured_offline_mode",
+        local_ack=True,
+        mode="offline",
+    )
+    assert server._active_connection_count == 0
+    assert server.is_box_connected() is False
+    assert server.box_peer is None
+
+
+@pytest.mark.asyncio
+async def test_handle_box_connection_online_session_cleans_up_local_getactual_task() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    twin_delivery = MagicMock()
+    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+    server.mode_manager.should_try_cloud = MagicMock(return_value=True)
+    server.mode_manager.record_success = MagicMock()
+
+    loop_started = asyncio.Event()
+    loop_cancelled = asyncio.Event()
+
+    async def fake_local_getactual_loop(
+        writer: asyncio.StreamWriter,
+        *,
+        conn_id: int,
+        peer: str | None,
+    ) -> None:
+        assert writer is box_writer
+        assert isinstance(conn_id, int)
+        assert peer == "127.0.0.1:23456"
+        loop_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            loop_cancelled.set()
+            raise
+
+    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
+    async def fake_pipe_box_to_cloud(*args, **kwargs) -> None:
+        await asyncio.Event().wait()
+
+    async def fake_pipe_cloud_to_box(*args, **kwargs) -> None:
+        await asyncio.wait_for(loop_started.wait(), timeout=1.0)
+
+    server._pipe_box_to_cloud = AsyncMock(side_effect=fake_pipe_box_to_cloud)
+    server._pipe_cloud_to_box = AsyncMock(side_effect=fake_pipe_cloud_to_box)
+
+    box_reader = MagicMock(spec=asyncio.StreamReader)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.get_extra_info.return_value = ("127.0.0.1", 23456)
+    box_writer.is_closing.return_value = False
+    box_writer.close = MagicMock()
+    box_writer.wait_closed = AsyncMock()
+
+    cloud_reader = MagicMock(spec=asyncio.StreamReader)
+    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
+    cloud_writer.is_closing.return_value = False
+    cloud_writer.close = MagicMock()
+    cloud_writer.wait_closed = AsyncMock()
+
+    with patch("proxy.server.asyncio.open_connection", new=AsyncMock(return_value=(cloud_reader, cloud_writer))):
+        await server._handle_box_connection(box_reader, box_writer)
+
+    assert loop_started.is_set()
+    assert loop_cancelled.is_set()
+    server.mode_manager.record_success.assert_called_once_with()
+    server._pipe_box_to_cloud.assert_awaited_once()
+    server._pipe_cloud_to_box.assert_awaited_once()
+    twin_delivery.clear_session.assert_called_once()
+    box_writer.close.assert_called_once()
+    cloud_writer.close.assert_called_once()
+    assert server._active_connection_count == 0
+    assert server.is_box_connected() is False
