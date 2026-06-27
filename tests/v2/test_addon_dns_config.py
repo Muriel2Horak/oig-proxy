@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ADDON_DIR = ROOT / "addon" / "oig-proxy"
 CONFIG_PATH = ADDON_DIR / "config.py"
+DOCS_PATH = ROOT / "docs" / "v2" / "configuration.md"
 
 spec = importlib.util.spec_from_file_location("addon_oig_proxy_config", CONFIG_PATH)
 assert spec is not None
@@ -73,6 +74,24 @@ def test_addon_config_exposes_local_getactual_options() -> None:
     assert addon_config["options"]["local_getactual_interval_s"] == 10
     assert addon_config["schema"]["local_getactual_enabled"] == "bool?"
     assert addon_config["schema"]["local_getactual_interval_s"] == "int?"
+
+
+def test_configuration_docs_parameter_table_matches_addon_config() -> None:
+    addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
+    docs = DOCS_PATH.read_text(encoding="utf-8").splitlines()
+
+    parameter_names: list[str] = []
+    in_parameter_table = False
+    for line in docs:
+        if line.strip() == "## Parameter Table":
+            in_parameter_table = True
+            continue
+        if in_parameter_table and line.startswith("## "):
+            break
+        if in_parameter_table and line.startswith("| `"):
+            parameter_names.append(line.split("|")[1].strip().strip("`"))
+
+    assert parameter_names == list(addon_config["options"].keys())
 
 
 def test_run_exports_local_getactual_options() -> None:

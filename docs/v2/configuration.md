@@ -32,10 +32,12 @@ The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). T
 | `capture_payloads` | `CAPTURE_PAYLOADS` | bool? | `false` | Save all parsed frames to `/data/payloads.db` for debugging |
 | `capture_raw_bytes` | `CAPTURE_RAW_BYTES` | bool? | `false` | Include raw base64-encoded bytes in the capture database |
 | `capture_retention_days` | `CAPTURE_RETENTION_DAYS` | int? | `7` | Days to keep captured frames before pruning |
+| `capture_pcap` | `CAPTURE_PCAP` | bool? | `false` | Capture raw TCP traffic to `/data/capture.pcap` using the PCAP recorder |
 | `control_mqtt_enabled` | `CONTROL_MQTT_ENABLED` | bool? | `false` | Enable Twin control MQTT topic (device settings via `oig/{device_id}/control/set`) |
 | `telemetry_enabled` | `TELEMETRY_ENABLED` | bool? | `true` | Enable anonymous operational telemetry |
+| `max_concurrent_connections` | `MAX_CONCURRENT_CONNECTIONS` | int? | `5` | Maximum number of concurrent Box connections the proxy will keep open |
 
-**23 parameters total.**
+**26 parameters total.**
 
 ---
 
