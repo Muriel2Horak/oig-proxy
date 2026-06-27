@@ -330,7 +330,7 @@ class ProxyServer:
             try:
                 box_writer.write(frame)
                 await box_writer.drain()
-            except (OSError, ConnectionResetError) as exc:
+            except OSError as exc:
                 logger.debug("Local GetActual stopped for %s: %s", peer or "unknown", exc)
                 break
 
@@ -344,6 +344,47 @@ class ProxyServer:
                 interval_s,
             )
             await asyncio.sleep(interval_s)
+
+    async def _run_box_offline_session(
+        self,
+        box_reader: asyncio.StreamReader,
+        box_writer: asyncio.StreamWriter,
+        peer: Any,
+        *,
+        session_id: str,
+        conn_id: int,
+        peer_str: str,
+        box_connected_since_epoch: float,
+        box_disconnect_reason: str,
+        cloud_disconnect_reason: str,
+        current: asyncio.Task[Any] | None,
+    ) -> None:
+        local_getactual_task = self._start_local_getactual_task(
+            box_writer,
+            conn_id=conn_id,
+            peer=peer_str,
+        )
+        try:
+            await self._pipe_box_offline(
+                box_reader,
+                box_writer,
+                peer,
+                session_id=session_id,
+            )
+        finally:
+            await self._stop_local_getactual_task(local_getactual_task)
+            self._record_telemetry_connection_end(
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_reason=box_disconnect_reason,
+                box_peer=peer_str,
+                cloud_connected_since_epoch=None,
+                cloud_reason=cloud_disconnect_reason,
+            )
+            self._active_connection_count -= 1
+            self._box_connected = False
+            self.box_peer = None
+            if current is not None:
+                self._active_connections.discard(current)
 
     async def _handle_box_connection(
         self,
@@ -401,27 +442,18 @@ class ProxyServer:
                     local_ack=True,
                     mode=str(self.mode_manager.runtime_mode.value),
                 )
-            local_getactual_task = self._start_local_getactual_task(
+            await self._run_box_offline_session(
+                box_reader,
                 box_writer,
+                peer,
+                session_id=session_id,
                 conn_id=session_conn_id,
-                peer=peer_str,
+                peer_str=peer_str,
+                box_connected_since_epoch=box_connected_since_epoch,
+                box_disconnect_reason=box_disconnect_reason,
+                cloud_disconnect_reason=cloud_disconnect_reason,
+                current=current,
             )
-            try:
-                await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
-            finally:
-                await self._stop_local_getactual_task(local_getactual_task)
-                self._record_telemetry_connection_end(
-                    box_connected_since_epoch=box_connected_since_epoch,
-                    box_reason=box_disconnect_reason,
-                    box_peer=peer_str,
-                    cloud_connected_since_epoch=None,
-                    cloud_reason=cloud_disconnect_reason,
-                )
-                self._active_connection_count -= 1
-                self._box_connected = False
-                self.box_peer = None
-                if current is not None:
-                    self._active_connections.discard(current)
             return
 
         # Otevřeme spojení do cloudu
@@ -456,27 +488,18 @@ class ProxyServer:
             )
             if self.mode_manager.is_offline():
                 box_disconnect_reason = "offline_fallback_timeout"
-                local_getactual_task = self._start_local_getactual_task(
+                await self._run_box_offline_session(
+                    box_reader,
                     box_writer,
+                    peer,
+                    session_id=session_id,
                     conn_id=session_conn_id,
-                    peer=peer_str,
+                    peer_str=peer_str,
+                    box_connected_since_epoch=box_connected_since_epoch,
+                    box_disconnect_reason=box_disconnect_reason,
+                    cloud_disconnect_reason=cloud_disconnect_reason,
+                    current=current,
                 )
-                try:
-                    await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
-                finally:
-                    await self._stop_local_getactual_task(local_getactual_task)
-                    self._record_telemetry_connection_end(
-                        box_connected_since_epoch=box_connected_since_epoch,
-                        box_reason=box_disconnect_reason,
-                        box_peer=peer_str,
-                        cloud_connected_since_epoch=None,
-                        cloud_reason=cloud_disconnect_reason,
-                    )
-                    self._active_connection_count -= 1
-                    self._box_connected = False
-                    self.box_peer = None
-                    if current is not None:
-                        self._active_connections.discard(current)
                 return
             box_disconnect_reason = "cloud_connect_timeout"
             box_writer.close()
@@ -507,27 +530,18 @@ class ProxyServer:
             )
             if self.mode_manager.is_offline():
                 box_disconnect_reason = "offline_fallback_oserror"
-                local_getactual_task = self._start_local_getactual_task(
+                await self._run_box_offline_session(
+                    box_reader,
                     box_writer,
+                    peer,
+                    session_id=session_id,
                     conn_id=session_conn_id,
-                    peer=peer_str,
+                    peer_str=peer_str,
+                    box_connected_since_epoch=box_connected_since_epoch,
+                    box_disconnect_reason=box_disconnect_reason,
+                    cloud_disconnect_reason=cloud_disconnect_reason,
+                    current=current,
                 )
-                try:
-                    await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
-                finally:
-                    await self._stop_local_getactual_task(local_getactual_task)
-                    self._record_telemetry_connection_end(
-                        box_connected_since_epoch=box_connected_since_epoch,
-                        box_reason=box_disconnect_reason,
-                        box_peer=peer_str,
-                        cloud_connected_since_epoch=None,
-                        cloud_reason=cloud_disconnect_reason,
-                    )
-                    self._active_connection_count -= 1
-                    self._box_connected = False
-                    self.box_peer = None
-                    if current is not None:
-                        self._active_connections.discard(current)
                 return
             box_disconnect_reason = "cloud_connect_oserror"
             box_writer.close()
