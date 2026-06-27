@@ -462,9 +462,12 @@ async def test_box_connection_closes_on_cloud_failure():
         writer.write(b"hello")
         await writer.drain()
 
-        # Server by měl zavřít spojení (cloud nedostupný)
-        data = await asyncio.wait_for(reader.read(100), timeout=2.0)
-        assert data == b""  # EOF — spojení zavřeno
+        # Python 3.14 zde na lokálním reset-close path vrací místo EOF ConnectionResetError.
+        try:
+            data = await asyncio.wait_for(reader.read(100), timeout=2.0)
+        except ConnectionResetError:
+            data = b""
+        assert data == b""
         writer.close()
         await writer.wait_closed()
     finally:
@@ -1010,3 +1013,318 @@ async def test_setting_audit_nack_reuses_stored_raw_text() -> None:
     assert len(nack_records) == 1
     assert nack_records[0]["result"] == SettingResult.FAILED.value
     assert nack_records[0]["raw_text"] == raw_text
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_disabled_does_not_write() -> None:
+    cfg = make_config(local_getactual_enabled=False, local_getactual_interval_s=10)
+    server = ProxyServer(cfg)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing = MagicMock(
+        side_effect=AssertionError("disabled local GetActual must return before touching writer state")
+    )
+    box_writer.write = MagicMock()
+    box_writer.drain = AsyncMock()
+
+    await server._local_getactual_loop(box_writer, conn_id=123, peer="box:1")
+
+    box_writer.is_closing.assert_not_called()
+    box_writer.write.assert_not_called()
+    box_writer.drain.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_sends_immediate_frame_and_records_direction() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    frame_capture = MagicMock()
+    server = ProxyServer(cfg, frame_capture=frame_capture, telemetry_collector=telemetry)
+    sent: list[bytes] = []
+    sleep_calls: list[float] = []
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing.return_value = False
+    box_writer.write = MagicMock(side_effect=lambda data: sent.append(data))
+    box_writer.drain = AsyncMock()
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        box_writer.is_closing.return_value = True
+
+    with patch("proxy.server.asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
+        await server._local_getactual_loop(box_writer, conn_id=456, peer="box:2")
+
+    assert len(sent) == 1
+    assert b"<Result>ACK</Result>" in sent[0]
+    assert b"<ToDo>GetActual</ToDo>" in sent[0]
+    assert sleep_calls == [10]
+    frame_capture.capture.assert_called_once()
+    assert frame_capture.capture.call_args.kwargs["direction"] == "proxy_to_box"
+    telemetry.record_frame_direction.assert_called_once_with("proxy_to_box")
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_uses_minimum_interval() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=3)
+    server = ProxyServer(cfg)
+    sleep_calls: list[float] = []
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing.return_value = False
+    box_writer.write = MagicMock()
+    box_writer.drain = AsyncMock()
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        box_writer.is_closing.return_value = True
+
+    with patch("proxy.server.asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
+        await server._local_getactual_loop(box_writer, conn_id=789, peer="box:3")
+
+    assert sleep_calls == [10]
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_stops_on_writer_error() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=telemetry)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing.return_value = False
+    box_writer.write = MagicMock(side_effect=ConnectionResetError("gone"))
+    box_writer.drain = AsyncMock()
+
+    await server._local_getactual_loop(box_writer, conn_id=321, peer="box:4")
+
+    box_writer.write.assert_called_once()
+    box_writer.drain.assert_not_called()
+    telemetry.record_frame_direction.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_local_getactual_task_cancels_running_task() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    server = ProxyServer(cfg)
+
+    async def wait_forever() -> None:
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(wait_forever())
+
+    await server._stop_local_getactual_task(task)
+
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_handle_box_connection_offline_mode_cleans_up_local_getactual_task() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=telemetry)
+    server.mode_manager.should_try_cloud = MagicMock(return_value=False)
+    server.mode_manager.configured_mode = "offline"
+    server.mode_manager.runtime_mode = MagicMock(value="offline")
+
+    loop_started = asyncio.Event()
+    loop_cancelled = asyncio.Event()
+
+    async def fake_local_getactual_loop(
+        writer: asyncio.StreamWriter,
+        *,
+        conn_id: int,
+        peer: str | None,
+    ) -> None:
+        assert writer is box_writer
+        assert isinstance(conn_id, int)
+        assert peer == "127.0.0.1:12345"
+        loop_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            loop_cancelled.set()
+            raise
+
+    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
+
+    async def fake_pipe_box_offline(*args, **kwargs) -> None:
+        await asyncio.wait_for(loop_started.wait(), timeout=1.0)
+
+    server._pipe_box_offline = AsyncMock(side_effect=fake_pipe_box_offline)
+
+    box_reader = MagicMock(spec=asyncio.StreamReader)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.get_extra_info.return_value = ("127.0.0.1", 12345)
+
+    await server._handle_box_connection(box_reader, box_writer)
+
+    assert loop_started.is_set()
+    assert loop_cancelled.is_set()
+    server._pipe_box_offline.assert_awaited_once()
+    telemetry.record_offline_event.assert_called_once_with(
+        reason="configured_offline_mode",
+        local_ack=True,
+        mode="offline",
+    )
+    assert server._active_connection_count == 0
+    assert server.is_box_connected() is False
+    assert server.box_peer is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("open_exc", "expected_reason"),
+    [
+        (asyncio.TimeoutError("cloud timeout"), "offline_fallback_timeout"),
+        (OSError("cloud down"), "offline_fallback_oserror"),
+    ],
+)
+async def test_handle_box_connection_cloud_failure_offline_fallback_manages_local_getactual_lifecycle(
+    open_exc: BaseException,
+    expected_reason: str,
+) -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=telemetry)
+    server.mode_manager.should_try_cloud = MagicMock(return_value=True)
+    server.mode_manager.is_offline = MagicMock(return_value=True)
+    server.mode_manager.runtime_mode = MagicMock(value="offline")
+    server.mode_manager.record_failure = MagicMock()
+
+    local_task_started = asyncio.Event()
+    local_task_cancelled = asyncio.Event()
+
+    async def fake_local_getactual_loop(
+        writer: asyncio.StreamWriter,
+        *,
+        conn_id: int,
+        peer: str | None,
+    ) -> None:
+        assert writer is box_writer
+        assert isinstance(conn_id, int)
+        assert peer == "127.0.0.1:34567"
+        local_task_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            local_task_cancelled.set()
+            raise
+
+    local_task = None
+    original_start = server._start_local_getactual_task
+    original_stop = server._stop_local_getactual_task
+    start_local_getactual_task = MagicMock()
+    stop_local_getactual_task = AsyncMock(side_effect=original_stop)
+
+    def fake_start_local_getactual_task(
+        writer: asyncio.StreamWriter,
+        *,
+        conn_id: int,
+        peer: str | None,
+    ) -> asyncio.Task[None] | None:
+        nonlocal local_task
+        start_local_getactual_task(writer, conn_id=conn_id, peer=peer)
+        local_task = original_start(writer, conn_id=conn_id, peer=peer)
+        return local_task
+
+    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
+
+    async def fake_pipe_box_offline(*args, **kwargs) -> None:
+        await asyncio.wait_for(local_task_started.wait(), timeout=1.0)
+
+    server._pipe_box_offline = AsyncMock(side_effect=fake_pipe_box_offline)
+    server._start_local_getactual_task = fake_start_local_getactual_task  # type: ignore[method-assign]
+    server._stop_local_getactual_task = stop_local_getactual_task  # type: ignore[method-assign]
+
+    box_reader = MagicMock(spec=asyncio.StreamReader)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.get_extra_info.return_value = ("127.0.0.1", 34567)
+
+    with patch("proxy.server.asyncio.open_connection", new=AsyncMock(side_effect=open_exc)):
+        await server._handle_box_connection(box_reader, box_writer)
+
+    assert local_task is not None
+    assert local_task_started.is_set()
+    assert local_task_cancelled.is_set()
+    assert local_task.done()
+    start_local_getactual_task.assert_called_once()
+    assert start_local_getactual_task.call_args.args == (box_writer,)
+    assert isinstance(start_local_getactual_task.call_args.kwargs["conn_id"], int)
+    assert start_local_getactual_task.call_args.kwargs["peer"] == "127.0.0.1:34567"
+    stop_local_getactual_task.assert_awaited_once_with(local_task)
+    server._pipe_box_offline.assert_awaited_once()
+    server.mode_manager.record_failure.assert_called_once_with(reason=str(open_exc))
+    assert server._active_connection_count == 0
+    assert server.is_box_connected() is False
+    assert server.box_peer is None
+    telemetry.record_offline_event.assert_called_once_with(
+        reason=f"cloud_connect_{'timeout' if isinstance(open_exc, asyncio.TimeoutError) else 'oserror'}",
+        local_ack=True,
+        mode="offline",
+    )
+    telemetry.record_box_session_end.assert_called_once()
+    assert telemetry.record_box_session_end.call_args.kwargs["reason"] == expected_reason
+
+
+@pytest.mark.asyncio
+async def test_handle_box_connection_online_session_cleans_up_local_getactual_task() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    twin_delivery = MagicMock()
+    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+    server.mode_manager.should_try_cloud = MagicMock(return_value=True)
+    server.mode_manager.record_success = MagicMock()
+
+    loop_started = asyncio.Event()
+    loop_cancelled = asyncio.Event()
+
+    async def fake_local_getactual_loop(
+        writer: asyncio.StreamWriter,
+        *,
+        conn_id: int,
+        peer: str | None,
+    ) -> None:
+        assert writer is box_writer
+        assert isinstance(conn_id, int)
+        assert peer == "127.0.0.1:23456"
+        loop_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            loop_cancelled.set()
+            raise
+
+    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
+    async def fake_pipe_box_to_cloud(*args, **kwargs) -> None:
+        await asyncio.Event().wait()
+
+    async def fake_pipe_cloud_to_box(*args, **kwargs) -> None:
+        await asyncio.wait_for(loop_started.wait(), timeout=1.0)
+
+    server._pipe_box_to_cloud = AsyncMock(side_effect=fake_pipe_box_to_cloud)
+    server._pipe_cloud_to_box = AsyncMock(side_effect=fake_pipe_cloud_to_box)
+
+    box_reader = MagicMock(spec=asyncio.StreamReader)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.get_extra_info.return_value = ("127.0.0.1", 23456)
+    box_writer.is_closing.return_value = False
+    box_writer.close = MagicMock()
+    box_writer.wait_closed = AsyncMock()
+
+    cloud_reader = MagicMock(spec=asyncio.StreamReader)
+    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
+    cloud_writer.is_closing.return_value = False
+    cloud_writer.close = MagicMock()
+    cloud_writer.wait_closed = AsyncMock()
+
+    with patch("proxy.server.asyncio.open_connection", new=AsyncMock(return_value=(cloud_reader, cloud_writer))):
+        await server._handle_box_connection(box_reader, box_writer)
+
+    assert loop_started.is_set()
+    assert loop_cancelled.is_set()
+    server.mode_manager.record_success.assert_called_once_with()
+    server._pipe_box_to_cloud.assert_awaited_once()
+    server._pipe_cloud_to_box.assert_awaited_once()
+    twin_delivery.clear_session.assert_called_once()
+    box_writer.close.assert_called_once()
+    cloud_writer.close.assert_called_once()
+    assert server._active_connection_count == 0
+    assert server.is_box_connected() is False

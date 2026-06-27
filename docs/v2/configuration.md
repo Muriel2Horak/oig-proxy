@@ -15,6 +15,8 @@ The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). T
 | `proxy_port` | `PROXY_PORT` | int | `5710` | Local TCP port the proxy listens on for Box connections |
 | `proxy_mode` | `PROXY_MODE` | enum | `online` | Operating mode: `online`, `hybrid`, or `offline` |
 | `cloud_ack_timeout` | `CLOUD_ACK_TIMEOUT` | float | `30.0` | Seconds to wait for a cloud ACK before treating the request as failed |
+| `local_getactual_enabled` | `LOCAL_GETACTUAL_ENABLED` | bool? | `false` | Opt-in proxy-injected `GetActual` frames for boxes that do not receive cloud `GetActual` often enough |
+| `local_getactual_interval_s` | `LOCAL_GETACTUAL_INTERVAL_S` | int? | `10` | Seconds between proxy-injected `GetActual` frames when local GetActual is enabled; values below 10 are clamped to 10 |
 | `hybrid_retry_interval` | `HYBRID_RETRY_INTERVAL` | int | `60` | Seconds between cloud reconnection attempts in HYBRID offline state |
 | `hybrid_fail_threshold` | `HYBRID_FAIL_THRESHOLD` | int | `1` | Number of consecutive cloud failures before HYBRID switches to offline |
 | `mqtt_host` | `MQTT_HOST` | str | `core-mosquitto` | MQTT broker hostname |
@@ -30,10 +32,12 @@ The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). T
 | `capture_payloads` | `CAPTURE_PAYLOADS` | bool? | `false` | Save all parsed frames to `/data/payloads.db` for debugging |
 | `capture_raw_bytes` | `CAPTURE_RAW_BYTES` | bool? | `false` | Include raw base64-encoded bytes in the capture database |
 | `capture_retention_days` | `CAPTURE_RETENTION_DAYS` | int? | `7` | Days to keep captured frames before pruning |
+| `capture_pcap` | `CAPTURE_PCAP` | bool? | `false` | Capture raw TCP traffic to `/data/capture.pcap` using the PCAP recorder |
 | `control_mqtt_enabled` | `CONTROL_MQTT_ENABLED` | bool? | `false` | Enable Twin control MQTT topic (device settings via `oig/{device_id}/control/set`) |
 | `telemetry_enabled` | `TELEMETRY_ENABLED` | bool? | `true` | Enable anonymous operational telemetry |
+| `max_concurrent_connections` | `MAX_CONCURRENT_CONNECTIONS` | int? | `5` | Maximum number of concurrent Box connections the proxy will keep open |
 
-**21 parameters total.**
+**26 parameters total.**
 
 ---
 
@@ -72,6 +76,12 @@ See `proxy_modes.md` for full state machine details.
 In seconds (float). How long the proxy waits for a response from the cloud for a given Box request. If the cloud doesn't respond in time, `ModeManager.record_failure()` is called.
 
 Note: in `config.json` the default is 1800.0 (30 minutes), which is the conservative setting for the add-on. The Python `Config` class defaults to 30.0. If you're testing responsiveness of the HYBRID failover, set this lower.
+
+### `local_getactual_enabled` / `local_getactual_interval_s`
+
+These options are an opt-in workaround for boxes/FW combinations where the cloud does not send `GetActual` often enough while the box is otherwise online. When enabled, the proxy sends an ACK frame with `<ToDo>GetActual</ToDo>` to the connected box immediately after the TCP session is active and then every `local_getactual_interval_s` seconds.
+
+The default is disabled, so upgrades do not change existing behavior. The default interval is 10 seconds and values below 10 seconds are clamped to 10 seconds. Changing either option requires saving the HA add-on configuration and restarting the add-on.
 
 ### `hybrid_retry_interval`
 
@@ -200,6 +210,8 @@ export HYBRID_FAIL_THRESHOLD=1
 export TELEMETRY_ENABLED=true
 export PROXY_STATUS_INTERVAL=60
 export SENSOR_MAP_PATH=/data/sensor_map.json
+export LOCAL_GETACTUAL_ENABLED=false
+export LOCAL_GETACTUAL_INTERVAL_S=10
 ```
 
 Additional env vars not exposed in the HA config UI:

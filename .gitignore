@@ -52,3 +52,4 @@ tools/monitoring/playwright/test-results/
 .omo/
 .sisyphus/
 .opencode/package-lock.json
+.superpowers/

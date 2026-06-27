@@ -31,7 +31,11 @@ fi
 echo ""
 echo "2/8 Running Safety (Python dependencies security check)..."
 if "${PYTHON_BIN}" -m safety --version >/dev/null 2>&1; then
-  "${PYTHON_BIN}" -m safety check -r "${ROOT_DIR}/addon/oig-proxy/requirements.txt" --json --output "${REPORT_DIR}/safety.json" || true
+  "${PYTHON_BIN}" -m safety check \
+    -r "${ROOT_DIR}/addon/oig-proxy/requirements.txt" \
+    --output json \
+    --save-json "${REPORT_DIR}/safety.json" \
+    --exit-code || true
   echo "   ✅ Safety complete - report: ${REPORT_DIR}/safety.json"
 else
   echo "   ⚠️  Safety not found (install with: pip install safety)"
@@ -128,7 +132,11 @@ fi
 echo ""
 echo "2/4 Running Safety (Python dependencies security check)..."
 if "${PYTHON_BIN}" -m safety --version >/dev/null 2>&1; then
-  "${PYTHON_BIN}" -m safety check -r "${ROOT_DIR}/addon/oig-proxy/requirements.txt" --json --output "${REPORT_DIR}/safety.json" || true
+  "${PYTHON_BIN}" -m safety check \
+    -r "${ROOT_DIR}/addon/oig-proxy/requirements.txt" \
+    --output json \
+    --save-json "${REPORT_DIR}/safety.json" \
+    --exit-code || true
   echo "   ✅ Safety complete - report: ${REPORT_DIR}/safety.json"
 else
   echo "   ⚠️  Safety not found (install with: pip install safety)"
