@@ -110,6 +110,10 @@ tags = ["bearer", "token"]
 
 [allowlist]
 description = "Global allowlist"
+commits = [
+  # Historical docs-only placeholder: SONAR_TOKEN=your_sonar_token.
+  '''ed8aae1d43d6bee140b22494561c691573009c6a''',
+]
 paths = [
   '''\.venv/''',
   '''\.git/''',
@@ -152,4 +156,6 @@ regexes = [
   '''gitleaks-action@[a-f0-9]{40}''',
   '''sonarsource/sonarcloud-github-action@[a-f0-9]{40}''',
   '''SonarSource/sonarcloud-github-action@[a-f0-9]{40}''',
+  '''SONAR_TOKEN=your_sonar_token''',
+  '''SONAR_CLOUD_TOKEN=your_cloud_token''',
 ]

@@ -283,14 +283,14 @@ This runs:
 **Environment variables (`.env`):**
 ```bash
 # Required
-SONAR_TOKEN=your_sonar_token
+SONAR_TOKEN=<set in local .env or CI secret store>
 SONAR_HOST_URL=http://localhost:9001
 SONAR_PROJECT_KEY=oig_proxy
 SONAR_PROJECT_NAME=oig_proxy
 
 # Optional (for SonarCloud)
 SONAR_ORGANIZATION=your-org
-SONAR_CLOUD_TOKEN=your_cloud_token
+SONAR_CLOUD_TOKEN=<set in local .env or CI secret store>
 
 # Optional (for PR analysis)
 SONAR_PR_KEY=123

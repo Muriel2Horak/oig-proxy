@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_PYTHON_BIN="python3"
 if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
   DEFAULT_PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
@@ -70,7 +70,7 @@ echo "==========================================="
 echo "LOCAL CI FOR OIG PROXY"
 echo "==========================================="
 echo ""
-echo "Python: $(${PYTHON_BIN})"
+echo "Python: $(${PYTHON_BIN} --version)"
 echo "Report directory: ${REPORT_DIR}"
 echo ""
 echo "Flags:"
@@ -185,7 +185,11 @@ if [[ "${RUN_SECURITY}" == "1" ]]; then
   # Safety
   echo "  → Safety (Dependency vulnerabilities)..."
   if "${PYTHON_BIN}" -m safety --version >/dev/null 2>&1; then
-    "${PYTHON_BIN}" -m safety check -r "${ROOT_DIR}/addon/oig-proxy/requirements.txt" --json --output "${REPORT_DIR}/safety.json" || true
+    "${PYTHON_BIN}" -m safety check \
+      -r "${ROOT_DIR}/addon/oig-proxy/requirements.txt" \
+      --output json \
+      --save-json "${REPORT_DIR}/safety.json" \
+      --exit-code || true
     echo "    ✅ Safety complete"
   else
     echo "    ⚠️  Safety not found"
