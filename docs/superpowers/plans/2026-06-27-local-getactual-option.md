@@ -674,7 +674,7 @@ log_level: DEBUG
 Restart the add-on:
 
 ```bash
-ssh ha "ha addons restart d7b5d5b1_oig_proxy"
+ssh ha "ha apps restart d7b5d5b1_oig_proxy"
 ```
 
 Observe for at least 10 minutes. Query capture:
@@ -699,7 +699,7 @@ log_level: DEBUG
 Restart the add-on:
 
 ```bash
-ssh ha "ha addons restart d7b5d5b1_oig_proxy"
+ssh ha "ha apps restart d7b5d5b1_oig_proxy"
 ```
 
 Observe logs:
@@ -742,7 +742,7 @@ log_level: INFO
 Restart:
 
 ```bash
-ssh ha "ha addons restart d7b5d5b1_oig_proxy"
+ssh ha "ha apps restart d7b5d5b1_oig_proxy"
 ```
 
 Query for new rows after the restart timestamp:

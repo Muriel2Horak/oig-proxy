@@ -103,3 +103,11 @@ def test_run_exports_local_getactual_options() -> None:
     assert "LOCAL_GETACTUAL_INTERVAL_RAW=$(bashio::config 'local_getactual_interval_s')" in run_script
     assert "LOCAL_GETACTUAL_INTERVAL_RAW=10" in run_script
     assert "export LOCAL_GETACTUAL_INTERVAL_S=$LOCAL_GETACTUAL_INTERVAL_RAW" in run_script
+
+
+def test_run_exports_max_concurrent_connections_option() -> None:
+    run_script = (ADDON_DIR / "run").read_text(encoding="utf-8")
+
+    assert "MAX_CONCURRENT_CONNECTIONS_RAW=$(bashio::config 'max_concurrent_connections')" in run_script
+    assert "MAX_CONCURRENT_CONNECTIONS_RAW=5" in run_script
+    assert "export MAX_CONCURRENT_CONNECTIONS=$MAX_CONCURRENT_CONNECTIONS_RAW" in run_script

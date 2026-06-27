@@ -199,6 +199,13 @@ else
     export TELEMETRY_ENABLED="false"
 fi
 
+# max_concurrent_connections
+MAX_CONCURRENT_CONNECTIONS_RAW=$(bashio::config 'max_concurrent_connections')
+if [ -z "$MAX_CONCURRENT_CONNECTIONS_RAW" ] || [ "$MAX_CONCURRENT_CONNECTIONS_RAW" = "null" ]; then
+    MAX_CONCURRENT_CONNECTIONS_RAW=5
+fi
+export MAX_CONCURRENT_CONNECTIONS=$MAX_CONCURRENT_CONNECTIONS_RAW
+
 # Paths
 export SENSOR_MAP_PATH=/data/sensor_map.json
 export UNKNOWN_SENSORS_PATH=/data/unknown_sensors.json
