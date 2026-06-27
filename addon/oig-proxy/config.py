@@ -24,6 +24,8 @@ class Config:
     cloud_port: int = 5710
     cloud_connect_timeout: float = 10.0
     cloud_ack_timeout: float = 30.0
+    local_getactual_enabled: bool = False
+    local_getactual_interval_s: int = 10
 
     # MQTT
     mqtt_host: str = "core-mosquitto"
@@ -81,6 +83,17 @@ class Config:
             os.environ.get("CLOUD_CONNECT_TIMEOUT", "10.0"))
         self.cloud_ack_timeout = float(
             os.environ.get("CLOUD_ACK_TIMEOUT", "30.0"))
+        self.local_getactual_enabled = (
+            os.environ.get("LOCAL_GETACTUAL_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        try:
+            local_getactual_interval_s = int(
+                float(os.environ.get("LOCAL_GETACTUAL_INTERVAL_S", "10"))
+            )
+        except ValueError:
+            local_getactual_interval_s = 10
+        self.local_getactual_interval_s = max(10, local_getactual_interval_s)
 
         self.mqtt_host = os.environ.get("MQTT_HOST", "core-mosquitto")
         self.mqtt_port = int(os.environ.get("MQTT_PORT", "1883"))

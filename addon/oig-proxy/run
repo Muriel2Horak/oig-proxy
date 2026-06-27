@@ -59,7 +59,7 @@ if [ -f /app/sensor_map.json ]; then
   fi
 fi
 
-# Env pro proxy - all 21 parameters
+# Env pro proxy - HA add-on parameters
 export TARGET_SERVER=$TARGET_SERVER_RAW
 export TARGET_PORT=$(bashio::config 'target_port')
 export PROXY_PORT=$(bashio::config 'proxy_port')
@@ -77,6 +77,20 @@ if [ -z "$CLOUD_ACK_TIMEOUT_RAW" ] || [ "$CLOUD_ACK_TIMEOUT_RAW" = "null" ]; the
     CLOUD_ACK_TIMEOUT_RAW=1800.0
 fi
 export CLOUD_ACK_TIMEOUT=$CLOUD_ACK_TIMEOUT_RAW
+
+# LOCAL_GETACTUAL: opt-in proxy-injected GetActual cadence
+LOCAL_GETACTUAL_ENABLED_RAW=$(bashio::config 'local_getactual_enabled')
+if [ "$LOCAL_GETACTUAL_ENABLED_RAW" = "true" ] || [ "$LOCAL_GETACTUAL_ENABLED_RAW" = "1" ]; then
+    export LOCAL_GETACTUAL_ENABLED="true"
+else
+    export LOCAL_GETACTUAL_ENABLED="false"
+fi
+
+LOCAL_GETACTUAL_INTERVAL_RAW=$(bashio::config 'local_getactual_interval_s')
+if [ -z "$LOCAL_GETACTUAL_INTERVAL_RAW" ] || [ "$LOCAL_GETACTUAL_INTERVAL_RAW" = "null" ]; then
+    LOCAL_GETACTUAL_INTERVAL_RAW=10
+fi
+export LOCAL_GETACTUAL_INTERVAL_S=$LOCAL_GETACTUAL_INTERVAL_RAW
 
 # HYBRID mode settings
 HYBRID_RETRY_INTERVAL_RAW=$(bashio::config 'hybrid_retry_interval')
