@@ -1010,3 +1010,100 @@ async def test_setting_audit_nack_reuses_stored_raw_text() -> None:
     assert len(nack_records) == 1
     assert nack_records[0]["result"] == SettingResult.FAILED.value
     assert nack_records[0]["raw_text"] == raw_text
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_disabled_does_not_write() -> None:
+    cfg = make_config(local_getactual_enabled=False, local_getactual_interval_s=10)
+    server = ProxyServer(cfg)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.write = MagicMock()
+    box_writer.drain = AsyncMock()
+
+    await server._local_getactual_loop(box_writer, conn_id=123, peer="box:1")
+
+    box_writer.write.assert_not_called()
+    box_writer.drain.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_sends_immediate_frame_and_records_direction() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    frame_capture = MagicMock()
+    server = ProxyServer(cfg, frame_capture=frame_capture, telemetry_collector=telemetry)
+    sent: list[bytes] = []
+    sleep_calls: list[float] = []
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing.return_value = False
+    box_writer.write = MagicMock(side_effect=lambda data: sent.append(data))
+    box_writer.drain = AsyncMock()
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        box_writer.is_closing.return_value = True
+
+    with patch("proxy.server.asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
+        await server._local_getactual_loop(box_writer, conn_id=456, peer="box:2")
+
+    assert len(sent) == 1
+    assert b"<Result>ACK</Result>" in sent[0]
+    assert b"<ToDo>GetActual</ToDo>" in sent[0]
+    assert sleep_calls == [10]
+    frame_capture.capture.assert_called_once()
+    assert frame_capture.capture.call_args.kwargs["direction"] == "proxy_to_box"
+    telemetry.record_frame_direction.assert_called_once_with("proxy_to_box")
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_uses_minimum_interval() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=3)
+    server = ProxyServer(cfg)
+    sleep_calls: list[float] = []
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing.return_value = False
+    box_writer.write = MagicMock()
+    box_writer.drain = AsyncMock()
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        box_writer.is_closing.return_value = True
+
+    with patch("proxy.server.asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
+        await server._local_getactual_loop(box_writer, conn_id=789, peer="box:3")
+
+    assert sleep_calls == [10]
+
+
+@pytest.mark.asyncio
+async def test_local_getactual_loop_stops_on_writer_error() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    telemetry = MagicMock()
+    server = ProxyServer(cfg, telemetry_collector=telemetry)
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.is_closing.return_value = False
+    box_writer.write = MagicMock(side_effect=ConnectionResetError("gone"))
+    box_writer.drain = AsyncMock()
+
+    await server._local_getactual_loop(box_writer, conn_id=321, peer="box:4")
+
+    box_writer.write.assert_called_once()
+    box_writer.drain.assert_not_called()
+    telemetry.record_frame_direction.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_local_getactual_task_cancels_running_task() -> None:
+    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    server = ProxyServer(cfg)
+
+    async def wait_forever() -> None:
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(wait_forever())
+
+    await server._stop_local_getactual_task(task)
+
+    assert task.cancelled()
