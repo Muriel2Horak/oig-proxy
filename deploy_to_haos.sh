@@ -12,9 +12,15 @@ ADDON_SLUG="d7b5d5b1_oig_proxy"
 CONTAINER_NAME="addon_${ADDON_SLUG}"
 LOCAL_SOURCE="./addon/oig-proxy"
 
-HOST_ADDON_BASE="/mnt/data/supervisor/addons/git/d7b5d5b1/addon"
-HOST_ADDON_DIR_LEGACY="${HOST_ADDON_BASE}/oig-proxy"
-HOST_ADDON_DIR_V2="${HOST_ADDON_BASE}/oig-proxy-v2"
+HOST_ADDON_BASE_APPS="/mnt/data/supervisor/apps/git/d7b5d5b1/addon"
+HOST_ADDON_BASE_ADDONS="/mnt/data/supervisor/addons/git/d7b5d5b1/addon"
+HOST_ADDON_CANDIDATES=(
+    "${HOST_ADDON_BASE_APPS}/oig-proxy"
+    "${HOST_ADDON_BASE_APPS}/oig-proxy-v2"
+    "${HOST_ADDON_BASE_ADDONS}/oig-proxy"
+    "${HOST_ADDON_BASE_ADDONS}/oig-proxy-v2"
+)
+HOST_ADDON_FALLBACK="${HOST_ADDON_BASE_APPS}/oig-proxy"
 HOST_ADDON_DIR=""
 
 # Soubory k deployi
@@ -81,12 +87,15 @@ if [ ! -d "$LOCAL_SOURCE" ]; then
 fi
 
 echo "Detekuji aktivní addon adresář na HA hostu..."
-if ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c 'test -f /host${HOST_ADDON_DIR_LEGACY}/config.json'"; then
-    HOST_ADDON_DIR="$HOST_ADDON_DIR_LEGACY"
-elif ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c 'test -f /host${HOST_ADDON_DIR_V2}/config.json'"; then
-    HOST_ADDON_DIR="$HOST_ADDON_DIR_V2"
-else
-    HOST_ADDON_DIR="$HOST_ADDON_DIR_LEGACY"
+for candidate in "${HOST_ADDON_CANDIDATES[@]}"; do
+    if ssh "$HA_HOST" "sudo docker run --rm -v /:/host alpine sh -c 'test -f /host${candidate}/config.json'"; then
+        HOST_ADDON_DIR="$candidate"
+        break
+    fi
+done
+
+if [ -z "$HOST_ADDON_DIR" ]; then
+    HOST_ADDON_DIR="$HOST_ADDON_FALLBACK"
 fi
 
 echo " Cílový addon adresář: $HOST_ADDON_DIR"
@@ -148,19 +157,23 @@ fi
 echo " Soubory ověřeny ✓"
 echo ""
 
-# Krok 5: Zastavení addonu
-echo "[5/7] Zastavuji addon..."
-ssh "$HA_HOST" "sudo docker stop $CONTAINER_NAME" 2>/dev/null && echo " Addon zastaven" \
-|| echo " Addon byl již zastaven"
+# Krok 5: Přenechání lifecycle Supervisoru
+echo "[5/7] Přenechávám zastavení addonu Supervisoru..."
+echo " Rebuild si řídí stop/start sám; přímý docker stop by spustil watchdog job."
 echo ""
 
 # Krok 6: Rebuild a start
 echo "[6/7] Rebuild addonu..."
-ha_cli addons rebuild $ADDON_SLUG 2>&1 && echo " Rebuild OK" || echo " Rebuild selhal (možná není potřeba)"
+if ha_cli apps rebuild $ADDON_SLUG 2>&1; then
+    echo " Rebuild OK"
+else
+    echo " CHYBA: Rebuild selhal!"
+    exit 1
+fi
 echo ""
 
 echo " Startuji addon..."
-ha_cli addons start $ADDON_SLUG 2>&1 && echo " Addon nastartován" || echo " Start selhal"
+ha_cli apps start $ADDON_SLUG 2>&1 && echo " Addon nastartován" || echo " Start selhal nebo addon již běží"
 echo ""
 
 echo " Čekám 5 sekund na inicializaci..."
@@ -182,7 +195,7 @@ if [ "$STATUS" = "running" ]; then
     echo "✓ Deployment ÚSPĚŠNÝ!"
     echo ""
     echo "Ověření:"
-    echo "  ssh ha \"ha addons info $ADDON_SLUG | grep state\""
+    echo "  ssh ha \"ha apps info $ADDON_SLUG | grep state\""
     echo "  ssh ha \"sudo docker logs $CONTAINER_NAME -f --tail 50\""
 else
     echo "✗ VAROVÁNÍ: Kontejner neběží (stav: $STATUS)"
@@ -197,6 +210,6 @@ fi
 echo ""
 echo "Užitečné příkazy:"
 echo "  Logy:      ssh ha \"sudo docker logs $CONTAINER_NAME -f --tail 50\""
-echo "  Restart:   ssh ha \"ha addons restart $ADDON_SLUG\""
-echo "  Stop:      ssh ha \"ha addons stop $ADDON_SLUG\""
-echo "  Info:      ssh ha \"ha addons info $ADDON_SLUG\""
+echo "  Restart:   ssh ha \"ha apps restart $ADDON_SLUG\""
+echo "  Stop:      ssh ha \"ha apps stop $ADDON_SLUG\""
+echo "  Info:      ssh ha \"ha apps info $ADDON_SLUG\""

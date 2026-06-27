@@ -111,10 +111,11 @@ tags = ["bearer", "token"]
 [allowlist]
 description = "Global allowlist"
 commits = [
-  # Historical docs-only placeholder: SONAR_TOKEN=your_sonar_token.
+  # Historical docs-only Sonar placeholder commit.
   '''ed8aae1d43d6bee140b22494561c691573009c6a''',
 ]
 paths = [
+  '''^\.gitleaks\.toml$''',
   '''\.venv/''',
   '''\.git/''',
   '''node_modules/''',
