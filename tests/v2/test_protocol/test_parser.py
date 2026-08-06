@@ -1,5 +1,22 @@
 """Testy pro protocol/parser.py (OIG Proxy v2)."""
-from protocol.parser import parse_xml_frame
+# pylint: disable=missing-function-docstring,use-implicit-booleaness-not-comparison
+import pytest
+
+from protocol.crc import crc16_modbus
+from protocol.frame import ValidatedFrame
+from protocol.parser import FrameMetadata, parse_frame_metadata, parse_xml_frame
+
+
+def validated_frame(inner: bytes) -> ValidatedFrame:
+    crc = crc16_modbus(inner)
+    raw = b"<Frame>" + inner + f"<CRC>{crc:05d}</CRC>".encode("ascii") + b"</Frame>\r\n"
+    return ValidatedFrame(
+        raw=raw,
+        received_at_ms=1,
+        inner_without_crc=inner,
+        transmitted_crc=crc,
+        computed_crc=crc,
+    )
 
 
 def test_parse_tbl_actual_basic():
@@ -100,3 +117,113 @@ def test_parse_no_table_no_device():
     assert result.get("ENBL") == 1
     assert "_table" not in result
     assert "_device_id" not in result
+
+
+def test_parse_frame_metadata_extracts_direct_routing_fields() -> None:
+    frame = validated_frame(
+        b"<Result>IsNewSet</Result>"
+        b"<TblName>tbl_box_prms</TblName>"
+        b"<ID_Device>box-7</ID_Device>"
+        b"<Reason>Setting</Reason>"
+        b"<ToDo>Set</ToDo>"
+        b"<Rdt>06.08.2026 10:12:00</Rdt>"
+        b"<ID>12</ID><ID_Set>34</ID_Set>"
+        b"<TblItem>MODE</TblItem><NewValue>2</NewValue>"
+        b"<Type>Setting</Type><Content>content</Content>"
+    )
+
+    metadata = parse_frame_metadata(frame)
+
+    assert metadata == FrameMetadata(
+        result="IsNewSet",
+        table_name="tbl_box_prms",
+        device_id="box-7",
+        reason="Setting",
+        todo="Set",
+        rdt="06.08.2026 10:12:00",
+        message_id=12,
+        id_set=34,
+        item_name="MODE",
+        new_value="2",
+        event_type="Setting",
+        content="content",
+    )
+    assert metadata.is_isnewset is True
+
+
+def test_parse_frame_metadata_ignores_nested_lookalike_routing_fields() -> None:
+    frame = validated_frame(
+        b"<Wrapper><Result>ACK</Result><ID_Set>9</ID_Set></Wrapper>"
+        b"<TblName>tbl_events</TblName>"
+    )
+
+    metadata = parse_frame_metadata(frame)
+
+    assert metadata is not None
+    assert metadata.result is None
+    assert metadata.id_set is None
+    assert metadata.table_name == "tbl_events"
+
+
+@pytest.mark.parametrize(
+    ("tag", "value"),
+    [
+        ("Result", "ACK"),
+        ("TblName", "tbl_events"),
+        ("ID_Device", "box-7"),
+        ("Reason", "Setting"),
+        ("ToDo", "Set"),
+        ("Rdt", "06.08.2026 10:12:00"),
+        ("ID", "1"),
+        ("ID_Set", "2"),
+        ("TblItem", "MODE"),
+        ("NewValue", "2"),
+        ("Type", "Setting"),
+        ("Content", "event"),
+    ],
+)
+def test_parse_frame_metadata_rejects_every_duplicate_direct_routing_field(
+    tag: str, value: str
+) -> None:
+    repeated = f"<{tag}>{value}</{tag}><{tag}>{value}</{tag}>".encode("utf-8")
+
+    assert parse_frame_metadata(validated_frame(repeated)) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "",
+        "-1",
+        "+1",
+        " 1",
+        "1 ",
+        "1.0",
+        "1_000",
+        "9223372036854775808",
+        "99999999999999999999999999999999999999999999999999",
+    ),
+)
+@pytest.mark.parametrize("tag", ("ID", "ID_Set"))
+def test_parse_frame_metadata_fails_closed_on_invalid_integer_fields(
+    tag: str, value: str
+) -> None:
+    inner = f"<{tag}>{value}</{tag}>".encode("ascii")
+
+    assert parse_frame_metadata(validated_frame(inner)) is None
+
+
+def test_parse_frame_metadata_accepts_zero_and_signed_64_bit_maximum() -> None:
+    metadata = parse_frame_metadata(
+        validated_frame(b"<ID>0</ID><ID_Set>9223372036854775807</ID_Set>")
+    )
+
+    assert metadata is not None
+    assert metadata.message_id == 0
+    assert metadata.id_set == 9_223_372_036_854_775_807
+
+
+def test_parse_frame_metadata_rejects_complex_direct_routing_value() -> None:
+    frame = validated_frame(b"<Result><Value>ACK</Value></Result>")
+
+    assert parse_frame_metadata(frame) is None

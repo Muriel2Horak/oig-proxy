@@ -1,6 +1,9 @@
 """Testy pro protocol/crc.py (OIG Proxy v2)."""
+# pylint: disable=missing-function-docstring
+import pytest
+
 # sys.path je nastaven v conftest.py – importujeme přímo z v2 addon
-from protocol.crc import crc16_modbus, strip_crc_tag
+from protocol.crc import CrcError, crc16_modbus, strip_crc_tag, validate_crc_tag
 from tests.v2.local_oig_crc import crc16_modbus as ref_crc16  # z v1 (cross-reference)
 
 
@@ -54,3 +57,64 @@ def test_strip_crc_tag_five_digit():
     data = b"something<CRC>00001</CRC>rest"
     stripped = strip_crc_tag(data)
     assert stripped == b"somethingrest"
+
+
+def test_validate_crc_tag_accepts_exact_final_crc5_without_normalizing_payload() -> None:
+    payload = b"<A>\r\n  1 &amp; 2\t</A>"
+    transmitted = crc16_modbus(payload)
+
+    validation = validate_crc_tag(payload + f"<CRC>{transmitted:05d}</CRC>".encode("ascii"))
+
+    assert validation.valid is True
+    assert validation.payload_without_crc == payload
+    assert validation.transmitted == transmitted
+    assert validation.computed == transmitted
+    assert validation.error is None
+
+
+@pytest.mark.parametrize(
+    ("inner", "expected_error"),
+    [
+        (b"<A>1</A>", CrcError.MISSING),
+        (b"<A>1</A><CRC>1234</CRC>", CrcError.MALFORMED),
+        (b"<A>1</A><CRC>123456</CRC>", CrcError.MALFORMED),
+        (b"<A>1</A><CRC>12x45</CRC>", CrcError.MALFORMED),
+        (b"<A>1</A><CRC>\xb2\xb3\xb4\xb5\xb6</CRC>", CrcError.MALFORMED),
+        (b"<CRC>00000</CRC><A>1</A>", CrcError.NOT_FINAL),
+        (
+            b"<A>1</A><CRC>00000</CRC><CRC>00000</CRC>",
+            CrcError.DUPLICATE,
+        ),
+    ],
+)
+def test_validate_crc_tag_requires_one_final_ascii_crc5(
+    inner: bytes, expected_error: CrcError
+) -> None:
+    validation = validate_crc_tag(inner)
+
+    assert validation.valid is False
+    assert validation.error is expected_error
+
+
+def test_validate_crc_tag_crc_mismatch_preserves_exact_payload_and_values() -> None:
+    payload = b"<Result>ACK</Result><Reason>Setting</Reason>"
+    computed = crc16_modbus(payload)
+    transmitted = (computed + 1) % 65536
+
+    validation = validate_crc_tag(
+        payload + f"<CRC>{transmitted:05d}</CRC>".encode("ascii")
+    )
+
+    assert validation.valid is False
+    assert validation.payload_without_crc == payload
+    assert validation.transmitted == transmitted
+    assert validation.computed == computed
+    assert validation.error is CrcError.MISMATCH
+
+
+def test_validate_crc_tag_duplicate_precedes_malformed_and_not_final() -> None:
+    validation = validate_crc_tag(
+        b"<CRC>00000</CRC><A>1</A><CRC>broken</CRC>"
+    )
+
+    assert validation.error is CrcError.DUPLICATE
