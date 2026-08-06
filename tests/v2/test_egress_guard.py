@@ -50,6 +50,8 @@ def _run_isolated_pytest(
     report_path = tmp_path / "egress-guard.json"
     environment = os.environ.copy()
     environment["LOCAL_CONTROL_EGRESS_REPORT"] = str(report_path)
+    environment.pop("PYTEST_ADDOPTS", None)
+    environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     environment["PYTHONPATH"] = os.pathsep.join(
         [str(tmp_path), str(ROOT_DIR), environment.get("PYTHONPATH", "")]
     )
@@ -60,6 +62,7 @@ def _run_isolated_pytest(
         capture_output=True,
         text=True,
         env=environment,
+        timeout=30,
     )
     return result, json.loads(report_path.read_text(encoding="utf-8"))
 
@@ -204,7 +207,6 @@ def test_guard_preserves_reverse_name_api_signatures(  # pylint: disable=too-man
         (("127.0.0.1", -1), socket.NI_NUMERICHOST, socket.gaierror),
         (("127.0.0.1", 70000), socket.NI_NUMERICHOST, socket.gaierror),
         (("127.0.0.1", object()), socket.NI_NUMERICHOST, TypeError),
-        (("::1", 5710), socket.NI_NUMERICHOST, TypeError),
         (("::1", 5710, -1, 0), socket.NI_NUMERICHOST, OverflowError),
         (("::1", 5710, 0, -1), socket.NI_NUMERICHOST, OverflowError),
         (("::1", 5710, 0, object()), socket.NI_NUMERICHOST, TypeError),
@@ -224,6 +226,36 @@ def test_guard_rejects_malformed_numeric_nameinfo_without_policy_violation(
         cast(Callable[..., object], socket.getnameinfo)(sockaddr, flags)
     assert guard.blocked_violation_count == 0
     assert not guard.has_failures()
+
+
+def test_guard_matches_numeric_original_ipv6_nameinfo_forms(tmp_path: Path) -> None:
+    """Match numeric-only platform parsing for valid IPv6 sockaddr forms."""
+    numeric_flags = socket.NI_NUMERICHOST | socket.NI_NUMERICSERV
+    original = cast(Callable[..., tuple[str, str]], socket.getnameinfo)
+    guard = EgressGuard(tmp_path / "guard.json")
+    for sockaddr in (("::1", 5710), ("::1", 5710, 0), ("::1", 5710, 0, 0)):
+        expected = original(sockaddr, numeric_flags)
+        with guard.installed(probe=True):
+            assert cast(Callable[..., tuple[str, str]], socket.getnameinfo)(
+                sockaddr, numeric_flags
+            ) == expected
+
+
+def test_guard_matches_numeric_ipv6_flow_boundary_and_name_required(
+    tmp_path: Path,
+) -> None:
+    """Enforce platform flow limit and numeric/name-required incompatibility."""
+    numeric_flags = socket.NI_NUMERICHOST | socket.NI_NUMERICSERV
+    guard = EgressGuard(tmp_path / "guard.json")
+    with guard.installed(probe=True):
+        assert socket.getnameinfo(("::1", 5710, 1048575, 0), numeric_flags) == (
+            "::1", "5710"
+        )
+        with pytest.raises(OverflowError):
+            socket.getnameinfo(("::1", 5710, 1048576, 0), numeric_flags)
+        with pytest.raises(socket.gaierror) as error:
+            socket.getnameinfo(("::1", 5710), numeric_flags | socket.NI_NAMEREQD)
+    assert error.value.errno == socket.EAI_NONAME
 
 
 def test_guard_allows_ipv6_and_af_unix_local_transports(tmp_path: Path) -> None:

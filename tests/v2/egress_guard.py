@@ -328,6 +328,8 @@ class EgressGuard:
             raise TypeError("getnameinfo flags must be an integer")
         if flags < 0 or flags & ~_NAMEINFO_FLAG_MASK:
             raise socket.gaierror(socket.EAI_BADFLAGS, "invalid getnameinfo flags")
+        if flags & socket.NI_NAMEREQD:
+            raise socket.gaierror(socket.EAI_NONAME, "numeric host name is required")
         if not isinstance(sockaddr, tuple) or not sockaddr:
             raise TypeError("getnameinfo sockaddr must be a non-empty tuple")
         host = sockaddr[0]
@@ -337,8 +339,9 @@ class EgressGuard:
             address = ipaddress.ip_address(host)
         except ValueError:
             self._block("getnameinfo", sockaddr, probe)
-        expected_length = 4 if address.version == 6 else 2
-        if len(sockaddr) != expected_length:
+        if address.version == 4 and len(sockaddr) != 2:
+            raise TypeError("getnameinfo sockaddr has an invalid address family shape")
+        if address.version == 6 and len(sockaddr) not in (2, 3, 4):
             raise TypeError("getnameinfo sockaddr has an invalid address family shape")
         port = sockaddr[1]
         if not isinstance(port, int):
@@ -346,15 +349,17 @@ class EgressGuard:
         if port < 0 or port > 65535:
             raise socket.gaierror(socket.EAI_SERVICE, "invalid numeric service")
         if address.version == 6:
-            self._validated_unsigned(sockaddr[2], "flowinfo")
-            self._validated_unsigned(sockaddr[3], "scope_id")
+            flowinfo = sockaddr[2] if len(sockaddr) >= 3 else 0
+            scope_id = sockaddr[3] if len(sockaddr) == 4 else 0
+            self._validated_unsigned(flowinfo, "flowinfo", maximum=0xFFFFF)
+            self._validated_unsigned(scope_id, "scope_id", maximum=0xFFFFFFFF)
         return host, port
 
     @staticmethod
-    def _validated_unsigned(value: object, name: str) -> int:
+    def _validated_unsigned(value: object, name: str, *, maximum: int) -> int:
         if not isinstance(value, int):
             raise TypeError(f"getnameinfo {name} must be an integer")
-        if value < 0 or value > 0xFFFFFFFF:
+        if value < 0 or value > maximum:
             raise OverflowError(f"getnameinfo {name} is outside unsigned integer range")
         return value
 
