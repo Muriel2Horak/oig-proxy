@@ -1,11 +1,15 @@
 """Konfigurace testů pro OIG Proxy v2."""
 import asyncio
+from contextlib import ExitStack
 import os
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+
+from tests.v2.egress_guard import EgressGuard
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 V2_ADDON_DIR = os.path.join(ROOT_DIR, "addon", "oig-proxy")
@@ -21,6 +25,47 @@ if V2_ADDON_DIR not in sys.path:
 # v1 pro cross-referenční testy — přidáme na konec, aby v2 mělo přednost
 if V1_ADDON_DIR not in sys.path:
     sys.path.append(V1_ADDON_DIR)
+
+EGRESS_GUARD_KEY: pytest.StashKey[EgressGuard] = pytest.StashKey()
+EGRESS_CONTEXT_KEY: pytest.StashKey[ExitStack] = pytest.StashKey()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Run the hermetic boundary probes before any local-control tests."""
+    report_path = os.environ.get(
+        "LOCAL_CONTROL_EGRESS_REPORT", "reports/egress-guard.json"
+    )
+    guard = EgressGuard(Path(report_path))
+    guard.run_self_probes()
+    session.config.stash[EGRESS_GUARD_KEY] = guard
+    if guard.has_failures():
+        pytest.exit("local-control egress guard self-probe failed", returncode=1)
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Install the egress guard only around marked local-control tests."""
+    if item.get_closest_marker("local_control") or item.get_closest_marker("e2e"):
+        guard = item.config.stash[EGRESS_GUARD_KEY]
+        context = ExitStack()
+        context.enter_context(guard.installed(probe=False))
+        item.stash[EGRESS_CONTEXT_KEY] = context
+
+
+def pytest_runtest_teardown(item: pytest.Item) -> None:
+    """Restore socket and DNS functions after a marked test completes."""
+    context = item.stash.get(EGRESS_CONTEXT_KEY, None)
+    if context is not None:
+        context.close()
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Persist the local-control report and fail caught egress attempts."""
+    guard = session.config.stash.get(EGRESS_GUARD_KEY, None)
+    if guard is None:
+        return
+    if guard.has_failures() and exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    guard.write_report(pytest_exit_status=int(session.exitstatus))
 
 
 @pytest.fixture
