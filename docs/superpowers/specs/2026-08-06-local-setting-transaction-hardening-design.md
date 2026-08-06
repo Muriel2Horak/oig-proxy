@@ -1,6 +1,6 @@
 # Local Setting Transaction Hardening Design
 
-Status: Approved in operator discussion; written specification awaiting operator review.
+Status: Approved for implementation planning on 2026-08-06.
 Date: 2026-08-06
 Base branch: `main`
 Current released add-on version: `2.1.1`
