@@ -1,8 +1,14 @@
+"""Validate the committed local-setting traceability evidence."""
+
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[2]
-TRACE = ROOT / "docs/superpowers/reports/2026-08-06-local-setting-transaction-hardening-traceability.md"
+TRACE = (
+    ROOT
+    / "docs/superpowers/reports/"
+    "2026-08-06-local-setting-transaction-hardening-traceability.md"
+)
 ROW = re.compile(r"^\| SI-(\d+) \| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|$")
 
 
@@ -18,10 +24,12 @@ def _trace_rows() -> dict[int, tuple[str, str, str]]:
 
 
 def test_traceability_covers_si_1_through_si_15() -> None:
+    """Require one matrix row for every approved safety invariant."""
     assert set(_trace_rows()) == set(range(1, 16))
 
 
 def test_traceability_uses_unit_integration_and_e2e_nodes() -> None:
+    """Require each row to name the required test-layer nodes."""
     for unit, integration, e2e in _trace_rows().values():
         assert unit.startswith("tests/v2/")
         assert integration.startswith("tests/v2/")
