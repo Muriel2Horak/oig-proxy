@@ -12,6 +12,7 @@ from protocol.frame import (
     FrameStreamError,
     FrameValidationError,
     StreamErrorCode,
+    ValidatedFrame,
     build_frame,
     extract_frame_from_buffer,
     infer_device_id,
@@ -24,6 +25,47 @@ from protocol.frame import (
 def valid_frame(inner: bytes) -> bytes:
     crc = crc16_modbus(inner)
     return b"<Frame>" + inner + f"<CRC>{crc:05d}</CRC>".encode("ascii") + b"</Frame>\r\n"
+
+
+class _CountingFrameStreamAssembler(FrameStreamAssembler):
+    """Count incremental terminator inspections without using wall-clock timing."""
+
+    def __init__(self, **kwargs: int) -> None:
+        super().__init__(**kwargs)
+        self.inspected_bytes = 0
+
+    def _advance_terminator(self, value: int) -> bool:
+        self.inspected_bytes += 1
+        return super()._advance_terminator(value)
+
+
+class _BytesSubclass(bytes):
+    """Non-exact bytes input rejected by immutable evidence types."""
+
+
+class _IntSubclass(int):
+    """Non-exact int input rejected by immutable evidence types."""
+
+
+class _SideEffectBytes(bytes):
+    """Bytes subclass whose overridden operation must never be reached."""
+
+    operation_called = False
+
+    def startswith(self, *args: object, **kwargs: object) -> bool:
+        del args, kwargs
+        type(self).operation_called = True
+        raise AssertionError("untrusted bytes method called")
+
+
+class _SideEffectInt(int):
+    """Int subclass whose comparison must never be reached."""
+
+    operation_called = False
+
+    def __lt__(self, other: object) -> bool:
+        type(self).operation_called = True
+        raise AssertionError("untrusted int method called")
 
 
 def test_build_frame_contains_crc():
@@ -181,6 +223,78 @@ def test_stream_assembler_allows_exact_limit_and_rejects_next_byte() -> None:
     )[0].raw == exact
     with pytest.raises(FrameStreamError, match="buffer_overflow") as error:
         FrameStreamAssembler(max_frame_bytes=63).feed(exact, received_at_ms=1)
+    assert error.value.code is StreamErrorCode.BUFFER_OVERFLOW
+
+
+def test_stream_assembler_inspects_each_incomplete_byte_only_constant_times() -> None:
+    raw = b"<Frame>" + b"x" * 65_536
+    assembler = _CountingFrameStreamAssembler(max_frame_bytes=len(raw))
+
+    assert assembler.feed(raw, received_at_ms=1) == ()
+
+    assert assembler.inspected_bytes == len(raw) - len(b"<Frame>")
+
+
+def test_stream_assembler_inspects_complete_and_coalesced_bytes_linearly() -> None:
+    frame = b"<Frame>" + b"x" * 32_768 + b"</Frame>\r\n"
+    chunk = frame * 8
+    assembler = _CountingFrameStreamAssembler(max_frame_bytes=len(frame))
+
+    frames = assembler.feed(chunk, received_at_ms=2)
+
+    assert len(frames) == 8
+    assert assembler.inspected_bytes == 8 * (len(frame) - len(b"<Frame>"))
+
+
+def test_stream_assembler_handles_maximum_bounded_incomplete_frame() -> None:
+    raw = b"<Frame>" + b"x" * (1_048_576 - len(b"<Frame>"))
+    assembler = FrameStreamAssembler(max_frame_bytes=1_048_576)
+
+    assert assembler.feed(raw, received_at_ms=3) == ()
+    with pytest.raises(FrameStreamError, match="buffer_overflow"):
+        assembler.feed(b"x", received_at_ms=4)
+
+
+def test_stream_assembler_handles_maximum_bounded_complete_frame() -> None:
+    raw = (
+        b"<Frame>"
+        + b"x" * (1_048_576 - len(b"<Frame></Frame>\r\n"))
+        + b"</Frame>\r\n"
+    )
+
+    assert FrameStreamAssembler(max_frame_bytes=1_048_576).feed(
+        raw, received_at_ms=5
+    ) == (AssembledFrame(raw, 5),)
+
+
+def test_stream_assembler_handles_input_chunk_larger_than_frame_bound() -> None:
+    frame = b"<Frame>" + b"x" * 8_192 + b"</Frame>\r\n"
+    chunk = frame * 129
+    assembler = FrameStreamAssembler(max_frame_bytes=len(frame))
+
+    frames = assembler.feed(chunk, received_at_ms=6)
+
+    assert len(chunk) > 1_048_576
+    assert len(frames) == 129
+    assert all(assembled.raw == frame for assembled in frames)
+
+
+def test_stream_assembler_recovers_close_match_after_partial_mismatch() -> None:
+    raw = b"<Frame>payload</FraXmore</Frame>\r\n"
+
+    assert FrameStreamAssembler().feed(raw, received_at_ms=7) == (
+        AssembledFrame(raw, 7),
+    )
+
+
+def test_stream_assembler_overflow_precedes_bad_suffix_at_boundary() -> None:
+    partial = b"<Frame>x</Frame>"
+    assembler = FrameStreamAssembler(max_frame_bytes=len(partial))
+
+    assert assembler.feed(partial, received_at_ms=8) == ()
+    with pytest.raises(FrameStreamError) as error:
+        assembler.feed(b"X", received_at_ms=9)
+
     assert error.value.code is StreamErrorCode.BUFFER_OVERFLOW
 
 
@@ -377,6 +491,158 @@ def test_validate_frame_rejects_invalid_xml_and_declarations(inner: bytes) -> No
 
     assert validation.error is FrameValidationError.INVALID_XML
     assert validation.validated is None
+
+
+@pytest.mark.parametrize(
+    "crc_tag",
+    (
+        b'<CRC source="box">00000</CRC>',
+        b"<CRC>00<!--note-->000</CRC>",
+        b"<CRC>00<?note x?>000</CRC>",
+        b"<CRC><![CDATA[00000]]></CRC>",
+        b"<CRC><Value>00000</Value></CRC>",
+    ),
+)
+def test_validate_frame_rejects_non_simple_crc_syntax(crc_tag: bytes) -> None:
+    raw = b"<Frame>" + crc_tag + b"</Frame>\r\n"
+
+    validation = validate_frame(AssembledFrame(raw, 1))
+
+    assert validation.validated is None
+    assert validation.error is FrameValidationError.MALFORMED_CRC
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (bytearray(b"x"), memoryview(b"x"), _BytesSubclass(b"x")),
+)
+def test_assembled_frame_rejects_non_exact_bytes(raw: object) -> None:
+    with pytest.raises(TypeError, match="raw"):
+        AssembledFrame(raw=raw, received_at_ms=1)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("received_at_ms", (True, _IntSubclass(1), -1))
+def test_assembled_frame_rejects_non_contract_timestamp(received_at_ms: object) -> None:
+    error_type = TypeError if received_at_ms is True or isinstance(
+        received_at_ms, _IntSubclass
+    ) else ValueError
+    with pytest.raises(error_type, match="received_at_ms"):
+        AssembledFrame(b"x", received_at_ms)  # type: ignore[arg-type]
+
+
+def test_assembled_frame_rejects_bytes_subclass_before_side_effect() -> None:
+    raw = _SideEffectBytes(b"<Frame>x</Frame>\r\n")
+    _SideEffectBytes.operation_called = False
+
+    with pytest.raises(TypeError, match="raw"):
+        AssembledFrame(raw, 1)
+
+    assert _SideEffectBytes.operation_called is False
+
+
+def test_validated_frame_rejects_mutable_or_subclassed_byte_fields() -> None:
+    inner = b"<Result>ACK</Result>"
+    raw = valid_frame(inner)
+    crc = crc16_modbus(inner)
+
+    for field, invalid in (
+        ("raw", bytearray(raw)),
+        ("raw", memoryview(raw)),
+        ("raw", _BytesSubclass(raw)),
+        ("inner_without_crc", bytearray(inner)),
+        ("inner_without_crc", memoryview(inner)),
+        ("inner_without_crc", _BytesSubclass(inner)),
+    ):
+        values = {
+            "raw": raw,
+            "received_at_ms": 1,
+            "inner_without_crc": inner,
+            "transmitted_crc": crc,
+            "computed_crc": crc,
+        }
+        values[field] = invalid
+        with pytest.raises(TypeError, match=field):
+            ValidatedFrame(**values)  # type: ignore[arg-type]
+
+
+def test_validated_frame_rejects_subclasses_before_side_effects() -> None:
+    inner = b"<Result>ACK</Result>"
+    raw = valid_frame(inner)
+    crc = crc16_modbus(inner)
+    malicious_raw = _SideEffectBytes(raw)
+    malicious_time = _SideEffectInt(1)
+    _SideEffectBytes.operation_called = False
+    _SideEffectInt.operation_called = False
+
+    with pytest.raises(TypeError, match="raw"):
+        ValidatedFrame(malicious_raw, 1, inner, crc, crc)
+    with pytest.raises(TypeError, match="received_at_ms"):
+        ValidatedFrame(raw, malicious_time, inner, crc, crc)
+
+    assert _SideEffectBytes.operation_called is False
+    assert _SideEffectInt.operation_called is False
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid", "error_type"),
+    (
+        ("received_at_ms", True, TypeError),
+        ("received_at_ms", _IntSubclass(1), TypeError),
+        ("received_at_ms", -1, ValueError),
+        ("transmitted_crc", True, TypeError),
+        ("transmitted_crc", _IntSubclass(1), TypeError),
+        ("transmitted_crc", -1, ValueError),
+        ("transmitted_crc", 65_536, ValueError),
+        ("computed_crc", True, TypeError),
+        ("computed_crc", _IntSubclass(1), TypeError),
+        ("computed_crc", -1, ValueError),
+        ("computed_crc", 65_536, ValueError),
+    ),
+)
+def test_validated_frame_rejects_non_contract_integer_fields(
+    field: str, invalid: object, error_type: type[Exception]
+) -> None:
+    inner = b"<Result>ACK</Result>"
+    raw = valid_frame(inner)
+    crc = crc16_modbus(inner)
+    values = {
+        "raw": raw,
+        "received_at_ms": 1,
+        "inner_without_crc": inner,
+        "transmitted_crc": crc,
+        "computed_crc": crc,
+    }
+    values[field] = invalid
+
+    with pytest.raises(error_type, match=field):
+        ValidatedFrame(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("mutation", ("inner", "transmitted", "computed", "raw"))
+def test_validated_frame_rejects_internal_evidence_inconsistency(
+    mutation: str,
+) -> None:
+    inner = b"<Result>ACK</Result>"
+    raw = valid_frame(inner)
+    crc = crc16_modbus(inner)
+    values = {
+        "raw": raw,
+        "received_at_ms": 1,
+        "inner_without_crc": inner,
+        "transmitted_crc": crc,
+        "computed_crc": crc,
+    }
+    if mutation == "inner":
+        values["inner_without_crc"] = b"<Result>NACK</Result>"
+    elif mutation == "transmitted":
+        values["transmitted_crc"] = (crc + 1) % 65_536
+    elif mutation == "computed":
+        values["computed_crc"] = (crc + 1) % 65_536
+    else:
+        values["raw"] = valid_frame(b"<Result>NACK</Result>")
+
+    with pytest.raises(ValueError, match="inconsistent"):
+        ValidatedFrame(**values)  # type: ignore[arg-type]
 
 
 def test_parse_frame_compatibility_wrapper_rejects_bad_crc() -> None:

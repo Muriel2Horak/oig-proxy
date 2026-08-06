@@ -14,7 +14,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
 
-from .frame import AssembledFrame, ValidatedFrame, validate_frame
+from .frame import (
+    AssembledFrame,
+    ValidatedFrame,
+    _parse_xml_preserving_structure,
+    validate_frame,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,7 @@ _ROUTING_TAGS = {
 _INTEGER_TAGS = frozenset({"ID", "ID_Set"})
 _STRICT_INTEGER_RE = re.compile(r"[0-9]+")
 _MAX_SIGNED_64 = (1 << 63) - 1
+_MAX_SIGNED_64_TEXT = str(_MAX_SIGNED_64)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,22 +76,15 @@ def parse_frame_metadata(  # pylint: disable=too-many-return-statements
     frame: ValidatedFrame,
 ) -> FrameMetadata | None:
     """Extract unambiguous direct routing fields from validated raw bytes."""
-    revalidation = validate_frame(AssembledFrame(frame.raw, frame.received_at_ms))
-    if revalidation.validated != frame:
-        return None
-
-    try:
-        root = ET.fromstring(frame.raw[:-2])
-    except (ET.ParseError, ValueError):
-        return None
-    if root.tag != "Frame":
+    root = _validated_root(frame)
+    if root is None:
         return None
 
     direct_values: dict[str, str] = {}
     for child in root:
         if child.tag not in _ROUTING_TAGS:
             continue
-        if child.tag in direct_values or len(child) != 0:
+        if child.tag in direct_values or child.attrib or len(child) != 0:
             return None
         direct_values[child.tag] = child.text or ""
 
@@ -93,11 +92,8 @@ def parse_frame_metadata(  # pylint: disable=too-many-return-statements
     for tag in _INTEGER_TAGS:
         if tag not in direct_values:
             continue
-        value = direct_values[tag]
-        if _STRICT_INTEGER_RE.fullmatch(value) is None:
-            return None
-        parsed = int(value)
-        if parsed > _MAX_SIGNED_64:
+        parsed = _parse_nonnegative_int64(direct_values[tag])
+        if parsed is None:
             return None
         integers[tag] = parsed
 
@@ -118,6 +114,56 @@ def parse_frame_metadata(  # pylint: disable=too-many-return-statements
         event_type=text("Type"),
         content=text("Content"),
     )
+
+
+def _parse_nonnegative_int64(value: str) -> int | None:
+    if _STRICT_INTEGER_RE.fullmatch(value) is None:
+        return None
+
+    first_significant = 0
+    while first_significant < len(value) and value[first_significant] == "0":
+        first_significant += 1
+    if first_significant == len(value):
+        return 0
+
+    significant_length = len(value) - first_significant
+    if significant_length > len(_MAX_SIGNED_64_TEXT):
+        return None
+    significant = value[first_significant:]
+    if (
+        significant_length == len(_MAX_SIGNED_64_TEXT)
+        and significant > _MAX_SIGNED_64_TEXT
+    ):
+        return None
+    try:
+        return int(significant)
+    except ValueError:
+        return None
+
+
+def parse_direct_text(frame: ValidatedFrame, tag: str) -> str | None:
+    """Return one simple direct field, or no value for any ambiguity."""
+    root = _validated_root(frame)
+    if root is None:
+        return None
+    matching = [child for child in root if child.tag == tag]
+    if len(matching) != 1:
+        return None
+    child = matching[0]
+    if child.attrib or len(child) != 0:
+        return None
+    return child.text or ""
+
+
+def _validated_root(frame: ValidatedFrame) -> ET.Element | None:
+    revalidation = validate_frame(AssembledFrame(frame.raw, frame.received_at_ms))
+    if revalidation.validated != frame:
+        return None
+    try:
+        root = _parse_xml_preserving_structure(frame.raw)
+    except (ET.ParseError, ValueError):
+        return None
+    return root if root.tag == "Frame" else None
 
 
 def parse_xml_frame(data: str) -> dict[str, Any]:

@@ -223,6 +223,91 @@ def test_parse_frame_metadata_accepts_zero_and_signed_64_bit_maximum() -> None:
     assert metadata.id_set == 9_223_372_036_854_775_807
 
 
+@pytest.mark.parametrize("digit_count", (4_300, 5_000))
+@pytest.mark.parametrize("tag", ("ID", "ID_Set"))
+def test_parse_frame_metadata_rejects_unbounded_significant_digits_without_raising(
+    tag: str, digit_count: int
+) -> None:
+    inner = f"<{tag}>{'9' * digit_count}</{tag}>".encode("ascii")
+
+    assert parse_frame_metadata(validated_frame(inner)) is None
+
+
+@pytest.mark.parametrize("leading_zero_count", (4_300, 5_000))
+def test_parse_frame_metadata_accepts_long_leading_zero_representation(
+    leading_zero_count: int,
+) -> None:
+    value = "0" * leading_zero_count + "9223372036854775807"
+    inner = f"<ID>{value}</ID><ID_Set>{'0' * leading_zero_count}</ID_Set>".encode(
+        "ascii"
+    )
+
+    metadata = parse_frame_metadata(validated_frame(inner))
+
+    assert metadata is not None
+    assert metadata.message_id == 9_223_372_036_854_775_807
+    assert metadata.id_set == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("999999999999999999", 999_999_999_999_999_999),
+        ("1000000000000000000", 1_000_000_000_000_000_000),
+        ("9223372036854775807", 9_223_372_036_854_775_807),
+    ),
+)
+def test_parse_frame_metadata_accepts_bounded_decimal_boundaries(
+    value: str, expected: int
+) -> None:
+    metadata = parse_frame_metadata(validated_frame(f"<ID>{value}</ID>".encode()))
+
+    assert metadata is not None
+    assert metadata.message_id == expected
+
+
+def test_parse_frame_metadata_rejects_max_int64_plus_one() -> None:
+    frame = validated_frame(b"<ID>9223372036854775808</ID>")
+
+    assert parse_frame_metadata(frame) is None
+
+
+@pytest.mark.parametrize(
+    "result_xml",
+    (
+        b'<Result source="box">ACK</Result>',
+        b"<Result>ACK<!--note--></Result>",
+        b"<Result>ACK<?notice x?></Result>",
+        b"<Result><Value>ACK</Value></Result>",
+    ),
+)
+def test_parse_frame_metadata_rejects_non_simple_routing_value(
+    result_xml: bytes,
+) -> None:
+    assert parse_frame_metadata(validated_frame(result_xml)) is None
+
+
+def test_parse_frame_metadata_preserves_inter_element_whitespace_and_tails() -> None:
+    frame = validated_frame(
+        b"\n  <Result>ACK</Result>\n  <Reason>Setting</Reason>\n"
+    )
+
+    metadata = parse_frame_metadata(frame)
+
+    assert metadata is not None
+    assert metadata.result == "ACK"
+    assert metadata.reason == "Setting"
+
+
+def test_parse_frame_metadata_treats_cdata_as_simple_xml_text() -> None:
+    metadata = parse_frame_metadata(
+        validated_frame(b"<Result><![CDATA[ACK]]></Result>")
+    )
+
+    assert metadata is not None
+    assert metadata.result == "ACK"
+
+
 def test_parse_frame_metadata_rejects_complex_direct_routing_value() -> None:
     frame = validated_frame(b"<Result><Value>ACK</Value></Result>")
 

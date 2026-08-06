@@ -24,6 +24,18 @@ _FRAME_CLOSE = b"</Frame>"
 MAX_FRAME_BYTES = 1_048_576
 
 
+def _require_exact_type(value: object, expected: type[object], field: str) -> None:
+    if type(value) is not expected:  # pylint: disable=unidiomatic-typecheck
+        raise TypeError(f"{field} must be exact {expected.__name__}")
+
+
+def _parse_xml_preserving_structure(raw: bytes) -> ET.Element:
+    parser = ET.XMLParser(
+        target=ET.TreeBuilder(insert_comments=True, insert_pis=True)
+    )
+    return ET.fromstring(raw[:-2], parser=parser)
+
+
 class FrameDirection(str, Enum):
     """Direction in which an assembled frame travelled."""
 
@@ -67,6 +79,12 @@ class AssembledFrame:
     raw: bytes
     received_at_ms: int
 
+    def __post_init__(self) -> None:
+        _require_exact_type(self.raw, bytes, "raw")
+        _require_exact_type(self.received_at_ms, int, "received_at_ms")
+        if self.received_at_ms < 0:
+            raise ValueError("received_at_ms must be non-negative")
+
 
 @dataclass(frozen=True, slots=True)
 class ValidatedFrame:
@@ -77,6 +95,33 @@ class ValidatedFrame:
     inner_without_crc: bytes
     transmitted_crc: int
     computed_crc: int
+
+    def __post_init__(self) -> None:
+        _require_exact_type(self.raw, bytes, "raw")
+        _require_exact_type(self.received_at_ms, int, "received_at_ms")
+        _require_exact_type(self.inner_without_crc, bytes, "inner_without_crc")
+        _require_exact_type(self.transmitted_crc, int, "transmitted_crc")
+        _require_exact_type(self.computed_crc, int, "computed_crc")
+        if self.received_at_ms < 0:
+            raise ValueError("received_at_ms must be non-negative")
+        if not 0 <= self.transmitted_crc <= 0xFFFF:
+            raise ValueError("transmitted_crc must be a 16-bit unsigned integer")
+        if not 0 <= self.computed_crc <= 0xFFFF:
+            raise ValueError("computed_crc must be a 16-bit unsigned integer")
+
+        computed = crc16_modbus(self.inner_without_crc)
+        expected_raw = (
+            FRAME_PREFIX
+            + self.inner_without_crc
+            + f"<CRC>{self.transmitted_crc:05d}</CRC>".encode("ascii")
+            + FRAME_TERMINATOR
+        )
+        if (
+            self.transmitted_crc != self.computed_crc
+            or self.computed_crc != computed
+            or self.raw != expected_raw
+        ):
+            raise ValueError("validated frame evidence is internally inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,28 +149,36 @@ class FrameStreamAssembler:
     """Bounded incremental assembler for exact OIG TCP frames."""
 
     def __init__(self, *, max_frame_bytes: int = MAX_FRAME_BYTES) -> None:
+        _require_exact_type(max_frame_bytes, int, "max_frame_bytes")
         if max_frame_bytes <= 0:
             raise ValueError("max_frame_bytes must be positive")
         self._max_frame_bytes = max_frame_bytes
         self._buffer = bytearray()
+        self._close_match_length = 0
+        self._suffix_length = 0
 
     def feed(
         self, chunk: bytes, *, received_at_ms: int
     ) -> tuple[AssembledFrame, ...]:
         """Consume a TCP chunk and return every frame completed by it."""
+        _require_exact_type(received_at_ms, int, "received_at_ms")
+        if received_at_ms < 0:
+            raise ValueError("received_at_ms must be non-negative")
         completed: list[AssembledFrame] = []
         try:
             for value in chunk:
-                self._buffer.append(value)
-                self._validate_prefix()
-                if len(self._buffer) > self._max_frame_bytes:
+                next_length = len(self._buffer) + 1
+                in_prefix = next_length <= len(FRAME_PREFIX)
+                if in_prefix:
+                    self._validate_prefix_byte(value, next_length - 1)
+                if next_length > self._max_frame_bytes:
                     raise FrameStreamError(StreamErrorCode.BUFFER_OVERFLOW)
-
-                frame_end = self._complete_frame_end()
-                if frame_end is None:
+                self._buffer.append(value)
+                if in_prefix or not self._advance_terminator(value):
                     continue
-                raw = bytes(self._buffer[:frame_end])
-                del self._buffer[:frame_end]
+                raw = bytes(self._buffer)
+                self._buffer = bytearray()
+                self._reset_scan_state()
                 completed.append(AssembledFrame(raw, received_at_ms))
         except FrameStreamError:
             self.reset()
@@ -141,29 +194,30 @@ class FrameStreamAssembler:
 
     def reset(self) -> None:
         """Discard all pending bytes."""
-        self._buffer.clear()
+        self._buffer = bytearray()
+        self._reset_scan_state()
 
-    def _validate_prefix(self) -> None:
-        probe_length = min(len(self._buffer), len(FRAME_PREFIX))
-        if self._buffer[:probe_length] != FRAME_PREFIX[:probe_length]:
+    def _validate_prefix_byte(self, value: int, prefix_offset: int) -> None:
+        if value != FRAME_PREFIX[prefix_offset]:
             raise FrameStreamError(StreamErrorCode.INVALID_PREFIX)
 
-    def _complete_frame_end(self) -> int | None:
-        close_at = self._buffer.find(_FRAME_CLOSE, len(FRAME_PREFIX))
-        if close_at < 0:
-            return None
+    def _advance_terminator(self, value: int) -> bool:
+        if self._close_match_length == len(_FRAME_CLOSE):
+            expected = ord("\r") if self._suffix_length == 0 else ord("\n")
+            if value != expected:
+                raise FrameStreamError(StreamErrorCode.FORBIDDEN_TERMINATOR)
+            self._suffix_length += 1
+            return self._suffix_length == 2
 
-        suffix_at = close_at + len(_FRAME_CLOSE)
-        available = len(self._buffer) - suffix_at
-        if available == 0:
-            return None
-        if self._buffer[suffix_at] != ord("\r"):
-            raise FrameStreamError(StreamErrorCode.FORBIDDEN_TERMINATOR)
-        if available == 1:
-            return None
-        if self._buffer[suffix_at + 1] != ord("\n"):
-            raise FrameStreamError(StreamErrorCode.FORBIDDEN_TERMINATOR)
-        return suffix_at + 2
+        if value == _FRAME_CLOSE[self._close_match_length]:
+            self._close_match_length += 1
+        else:
+            self._close_match_length = int(value == _FRAME_CLOSE[0])
+        return False
+
+    def _reset_scan_state(self) -> None:
+        self._close_match_length = 0
+        self._suffix_length = 0
 
 
 def build_frame(inner_xml: str, *, add_crlf: bool = True) -> str:
@@ -211,13 +265,15 @@ def validate_frame(  # pylint: disable=too-many-return-statements
         return FrameValidation(frame, None, FrameValidationError.INVALID_XML)
 
     try:
-        root = ET.fromstring(raw[:-2])
+        root = _parse_xml_preserving_structure(raw)
     except (ET.ParseError, ValueError):
         return FrameValidation(frame, None, FrameValidationError.INVALID_XML)
     if root.tag != "Frame":
         return FrameValidation(frame, None, FrameValidationError.INVALID_XML)
     direct_crc = [child for child in root if child.tag == "CRC"]
     if len(direct_crc) != 1 or root[-1] is not direct_crc[0]:
+        return FrameValidation(frame, None, FrameValidationError.INVALID_XML)
+    if direct_crc[0].attrib or len(direct_crc[0]) != 0:
         return FrameValidation(frame, None, FrameValidationError.INVALID_XML)
 
     payload = crc_validation.payload_without_crc

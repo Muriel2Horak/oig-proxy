@@ -1,5 +1,5 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring
-# pylint: disable=redefined-outer-name,wrong-import-position
+# pylint: disable=protected-access,redefined-outer-name,wrong-import-position
 import hashlib
 import os
 import sys
@@ -32,6 +32,7 @@ from twin.ack_parser import (  # noqa: E402
     parse_setting_response,
     parse_tbl_events_ack,
 )
+from twin import ack_parser as ack_parser_module  # noqa: E402
 
 
 def make_validated(inner: bytes, *, received_at_ms: int = 1) -> ValidatedFrame:
@@ -159,6 +160,33 @@ def test_parse_setting_response_rejects_duplicate_and_nested_result() -> None:
     assert parse_setting_response(nested, direction=FrameDirection.BOX_TO_PROXY) is None
 
 
+@pytest.mark.parametrize(
+    "result_xml",
+    (
+        b'<Result source="box">ACK</Result>',
+        b"<Result>ACK<!--note--></Result>",
+        b"<Result>ACK<?notice x?></Result>",
+        b"<Result><Value>ACK</Value></Result>",
+    ),
+)
+def test_parse_setting_response_rejects_non_simple_result(result_xml: bytes) -> None:
+    frame = make_validated(result_xml + b"<Reason>Setting</Reason>")
+
+    assert parse_setting_response(frame, direction=FrameDirection.BOX_TO_PROXY) is None
+
+
+def test_parse_setting_response_treats_cdata_as_simple_xml_text() -> None:
+    frame = make_validated(
+        b"<Result><![CDATA[ACK]]></Result><Reason><![CDATA[Setting]]></Reason>"
+    )
+
+    response = parse_setting_response(frame, direction=FrameDirection.BOX_TO_PROXY)
+
+    assert response is not None
+    assert response.result == "ACK"
+    assert response.reason == "Setting"
+
+
 def test_parse_setting_event_returns_strict_old_and_new_values(
     validated_event: ValidatedFrame,
 ) -> None:
@@ -267,6 +295,119 @@ def test_parse_setting_event_rejects_duplicate_device_dt() -> None:
     )
 
     assert parse_setting_event(frame, direction=FrameDirection.BOX_TO_PROXY) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "field_xml"),
+    (
+        ("DT", b'<DT source="box">2026-08-06</DT>'),
+        ("DT", b"<DT>2026-08-06<!--note--></DT>"),
+        ("DT", b"<DT>2026-08-06<?notice x?></DT>"),
+        ("DT", b"<DT><Value>2026-08-06</Value></DT>"),
+        (
+            "Content",
+            b'<Content source="box">Remotely: tbl/a:[1]-&gt;[2]</Content>',
+        ),
+        (
+            "Content",
+            b"<Content>Remotely: tbl/a:[1]-&gt;[2]<!--note--></Content>",
+        ),
+        (
+            "Content",
+            b"<Content>Remotely: tbl/a:[1]-&gt;[2]<?notice x?></Content>",
+        ),
+        (
+            "Content",
+            b"<Content><Value>Remotely: tbl/a:[1]-&gt;[2]</Value></Content>",
+        ),
+    ),
+)
+def test_parse_setting_event_rejects_non_simple_evidence_field(
+    field: str, field_xml: bytes
+) -> None:
+    dt = field_xml if field == "DT" else b"<DT>2026-08-06</DT>"
+    content = (
+        field_xml
+        if field == "Content"
+        else b"<Content>Remotely: tbl/a:[1]-&gt;[2]</Content>"
+    )
+    frame = make_validated(
+        b"<TblName>tbl_events</TblName><ID_Device>box-7</ID_Device>"
+        b"<ID_Set>42</ID_Set>"
+        + dt
+        + b"<Type>Setting</Type>"
+        + content
+    )
+
+    assert parse_setting_event(frame, direction=FrameDirection.BOX_TO_PROXY) is None
+
+
+def test_parse_setting_event_treats_cdata_as_simple_xml_text() -> None:
+    frame = make_validated(
+        b"<TblName>tbl_events</TblName><ID_Device>box-7</ID_Device>"
+        b"<ID_Set>42</ID_Set><DT><![CDATA[2026-08-06]]></DT>"
+        b"<Type>Setting</Type>"
+        b"<Content><![CDATA[Remotely: tbl/a:[1]->[2]]]></Content>"
+    )
+
+    event = parse_setting_event(frame, direction=FrameDirection.BOX_TO_PROXY)
+
+    assert event is not None
+    assert event.device_dt == "2026-08-06"
+    assert event.content_text == "Remotely: tbl/a:[1]->[2]"
+
+
+def test_setting_event_content_parser_has_linear_inspection_bound() -> None:
+    content = "Remotely:" + " " * 65_536 + "X"
+    parser_type = ack_parser_module._SettingEventContentParser
+    parser = parser_type(content)
+
+    assert parser.parse() is None
+    assert 0 < parser.inspected_character_count <= 4 * len(content)
+
+
+def test_setting_event_content_parser_preserves_exact_capture_semantics() -> None:
+    content = "Remotely :  tbl_box_prms  /  MODE  : [ old ]->[ new ]"
+    parser_type = ack_parser_module._SettingEventContentParser
+    parser = parser_type(content)
+
+    assert parser.parse() == ("tbl_box_prms", "MODE", " old ", " new ")
+    assert parser.inspected_character_count <= 4 * len(content)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    (
+        ("Remotely\u2003:\t table:part / item/name : []->[]", ("table:part", "item/name", "", "")),
+        ("Remotely: tbl/item: [[old]->[new\nvalue]", ("tbl", "item", "[old", "new\nvalue")),
+    ),
+)
+def test_setting_event_content_parser_preserves_full_grammar_edges(
+    content: str, expected: tuple[str, str, str, str]
+) -> None:
+    parser_type = ack_parser_module._SettingEventContentParser
+    parser = parser_type(content)
+
+    assert parser.parse() == expected
+    assert parser.inspected_character_count <= 4 * len(content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "Remotely: tbl/item: [old",
+        "Remotely: tbl/item: [old]->[new",
+        "Remotely: tbl/item: [old] ->[new]",
+        "Remotely: tbl/item: [old]->[new] trailing",
+        "Remotely: tbl[bad/item: [old]->[new]",
+    ),
+)
+def test_setting_event_content_parser_rejects_linear_near_misses(content: str) -> None:
+    parser_type = ack_parser_module._SettingEventContentParser
+    parser = parser_type(content)
+
+    assert parser.parse() is None
+    assert parser.inspected_character_count <= 4 * len(content)
 
 
 def test_invalid_crc_cannot_produce_a_validated_ack_or_event() -> None:

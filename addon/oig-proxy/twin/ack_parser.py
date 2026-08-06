@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from protocol.frame import FrameDirection, ValidatedFrame
-from protocol.parser import parse_frame_metadata
+from protocol.parser import parse_direct_text, parse_frame_metadata
 
 _RESULT_RE = re.compile(rb"<Result>(ACK|END|NACK)</Result>")  # NOSONAR
 _TABLE_RE = re.compile(rb"<TblName>([^<]+)</TblName>")  # NOSONAR
@@ -20,10 +19,90 @@ _REASON_RE = re.compile(rb"<Reason>([^<]+)</Reason>")  # NOSONAR
 _TBL_EVENT_CONTENT_RE = re.compile(  # NOSONAR
     r"Remotely\s*:\s*([A-Za-z0-9_]+)\s*/\s*([A-Za-z0-9_]+)\s*:\s*\[[^\]]*\]->\[([^\]]*)\]"
 )
-_SETTING_EVENT_CONTENT_RE = re.compile(  # NOSONAR
-    r"Remotely\s*:\s*([^/\[\]]+)\s*/\s*([^:\[\]]+)\s*:\s*\[([^\]]*)\]->\[([^\]]*)\]"
-)
 _MAX_SIGNED_64 = (1 << 63) - 1
+
+
+class _SettingEventContentParser:  # pylint: disable=too-few-public-methods
+    """Monotonic parser for the exact Setting event content grammar."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+        self._position = 0
+        self._inspected_character_count = 0
+
+    @property
+    def inspected_character_count(self) -> int:
+        """Return deterministic character-inspection work for diagnostics."""
+        return self._inspected_character_count
+
+    def parse(  # pylint: disable=too-many-return-statements
+        self,
+    ) -> tuple[str, str, str, str] | None:
+        """Return table, item, old, and new values for one full exact match."""
+        if not self._consume_literal("Remotely"):
+            return None
+        self._consume_whitespace()
+        if not self._consume_literal(":"):
+            return None
+        self._consume_whitespace()
+
+        table = self._consume_until("/", forbidden="[]")
+        if table is None:
+            return None
+        self._consume_whitespace()
+        item = self._consume_until(":", forbidden="[]")
+        if item is None:
+            return None
+        self._consume_whitespace()
+        if not self._consume_literal("["):
+            return None
+        old_value = self._consume_until("]")
+        if old_value is None or not self._consume_literal("->["):
+            return None
+        new_value = self._consume_until("]")
+        if new_value is None or self._position != len(self._content):
+            return None
+
+        table_name = table.strip()
+        item_name = item.strip()
+        if not table_name or not item_name:
+            return None
+        return table_name, item_name, old_value, new_value
+
+    def _consume_literal(self, literal: str) -> bool:
+        for expected in literal:
+            if self._take() != expected:
+                return False
+        return True
+
+    def _consume_whitespace(self) -> None:
+        while self._position < len(self._content):
+            self._inspected_character_count += 1
+            if not self._content[self._position].isspace():
+                return
+            self._position += 1
+
+    def _consume_until(
+        self, delimiter: str, *, forbidden: str = ""
+    ) -> str | None:
+        start = self._position
+        while self._position < len(self._content):
+            value = self._take()
+            if value is None:
+                return None
+            if value == delimiter:
+                return self._content[start:self._position - 1]
+            if value in forbidden:
+                return None
+        return None
+
+    def _take(self) -> str | None:
+        if self._position >= len(self._content):
+            return None
+        self._inspected_character_count += 1
+        value = self._content[self._position]
+        self._position += 1
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,16 +241,13 @@ def parse_setting_event(  # pylint: disable=too-many-return-statements
     if not metadata.device_id or metadata.id_set is None or metadata.content is None:
         return None
 
-    device_dt = _one_direct_text(frame, "DT")
+    device_dt = parse_direct_text(frame, "DT")
     if not device_dt:
         return None
-    match = _SETTING_EVENT_CONTENT_RE.fullmatch(metadata.content)
-    if match is None:
+    parsed_content = _SettingEventContentParser(metadata.content).parse()
+    if parsed_content is None:
         return None
-    table_name = match.group(1).strip()
-    item_name = match.group(2).strip()
-    if not table_name or not item_name:
-        return None
+    table_name, item_name, old_value, new_value = parsed_content
 
     evidence_id = derive_event_evidence_id(
         metadata.device_id, metadata.id_set, device_dt, metadata.content
@@ -184,17 +260,6 @@ def parse_setting_event(  # pylint: disable=too-many-return-statements
         content_text=metadata.content,
         table_name=table_name,
         item_name=item_name,
-        old_value_text=match.group(3),
-        new_value_text=match.group(4),
+        old_value_text=old_value,
+        new_value_text=new_value,
     )
-
-
-def _one_direct_text(frame: ValidatedFrame, tag: str) -> str | None:
-    try:
-        root = ET.fromstring(frame.raw[:-2])
-    except (ET.ParseError, ValueError):
-        return None
-    matching = [child for child in root if child.tag == tag]
-    if len(matching) != 1 or len(matching[0]) != 0:
-        return None
-    return matching[0].text or ""
