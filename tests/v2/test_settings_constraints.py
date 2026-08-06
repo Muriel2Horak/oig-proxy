@@ -167,7 +167,7 @@ def test_normalizes_compact_extreme_zero_before_alignment(
     assert result == SettingValueResult(True, "0", "")
 
 
-def test_rejects_raw_numeric_text_beyond_work_limit() -> None:
+def test_rejects_129_significant_digit_numeric_text() -> None:
     raw = "9" * 129
 
     assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
@@ -175,12 +175,197 @@ def test_rejects_raw_numeric_text_beyond_work_limit() -> None:
     )
 
 
+_NEGATIVE_128_DIGIT_INTEGER = "-" + "9" * 128
+_POSITIVE_128_DIGIT_INTEGER = "9" * 128
+_FRACTION_WITH_127_DIGITS = "0." + "1" * 127
+_CANONICAL_TRAILING_ZERO_INTEGER = "1" + "0" * 128
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _NEGATIVE_128_DIGIT_INTEGER,
+        int(_NEGATIVE_128_DIGIT_INTEGER),
+        Decimal(_NEGATIVE_128_DIGIT_INTEGER),
+    ],
+    ids=["canonical-str", "built-in-int", "built-in-decimal"],
+)
+def test_negative_128_digit_integer_boundary_is_type_invariant(raw: object) -> None:
+    constraint = SettingConstraint(
+        min_value=Decimal(_NEGATIVE_128_DIGIT_INTEGER),
+        max_value=Decimal(0),
+        step=Decimal(1),
+        integer_only=True,
+    )
+
+    assert validate_constraint_value(raw, constraint) == SettingValueResult(
+        True, _NEGATIVE_128_DIGIT_INTEGER, ""
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "+" + _POSITIVE_128_DIGIT_INTEGER,
+        int(_POSITIVE_128_DIGIT_INTEGER),
+        Decimal(_POSITIVE_128_DIGIT_INTEGER),
+    ],
+    ids=["signed-canonical-str", "built-in-int", "built-in-decimal"],
+)
+def test_positive_sign_at_128_digit_boundary_is_type_invariant(raw: object) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        True, _POSITIVE_128_DIGIT_INTEGER, ""
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [_FRACTION_WITH_127_DIGITS, Decimal(_FRACTION_WITH_127_DIGITS)],
+    ids=["canonical-str", "built-in-decimal"],
+)
+def test_127_digit_fraction_boundary_is_type_invariant(raw: object) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        True, _FRACTION_WITH_127_DIGITS, ""
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _CANONICAL_TRAILING_ZERO_INTEGER,
+        int(_CANONICAL_TRAILING_ZERO_INTEGER),
+        Decimal("1E+128"),
+    ],
+    ids=["canonical-str", "built-in-int", "built-in-decimal"],
+)
+def test_trailing_zero_integer_semantics_are_type_invariant(raw: object) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        True, _CANONICAL_TRAILING_ZERO_INTEGER, ""
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("-1", "-1"),
+        (-1, "-1"),
+        (Decimal("-1"), "-1"),
+        (-1.0, "-1"),
+        ("0.5", "0.5"),
+        (Decimal("0.5"), "0.5"),
+        (0.5, "0.5"),
+    ],
+    ids=[
+        "integer-str",
+        "integer-int",
+        "integer-decimal",
+        "integer-exact-float",
+        "fraction-str",
+        "fraction-decimal",
+        "fraction-exact-float",
+    ],
+)
+def test_exactly_representable_float_boundaries_match_exact_types(
+    raw: object,
+    expected: str,
+) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        True, expected, ""
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "9" * 129,
+        int("9" * 129),
+        Decimal("9" * 129),
+        "-" + "9" * 129,
+        -int("9" * 129),
+        Decimal("-" + "9" * 129),
+    ],
+    ids=[
+        "positive-str",
+        "positive-int",
+        "positive-decimal",
+        "negative-str",
+        "negative-int",
+        "negative-decimal",
+    ],
+)
+def test_129_significant_digit_boundary_is_type_invariant(raw: object) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+def test_bounded_whitespace_and_exponent_syntax_are_accepted() -> None:
+    raw = " " * 16 + "+1E+127" + "\t" * 16
+
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        True, "1" + "0" * 127, ""
+    )
+
+
+@pytest.mark.parametrize("raw", [" " * 17 + "1", "1" + "\t" * 17])
+def test_rejects_whitespace_beyond_the_bounded_allowance(raw: str) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+class _HostilePreprocessingText(str):
+    def __len__(self) -> int:
+        raise AssertionError("virtual length must not run")
+
+    def __str__(self) -> str:
+        raise AssertionError("virtual string conversion must not run")
+
+    def strip(self, _chars: str | None = None) -> str:
+        raise AssertionError("virtual strip must not run")
+
+    def lstrip(self, _chars: str | None = None) -> str:
+        raise AssertionError("virtual left strip must not run")
+
+    def rstrip(self, _chars: str | None = None) -> str:
+        raise AssertionError("virtual right strip must not run")
+
+    def lower(self) -> str:
+        raise AssertionError("virtual lower must not run")
+
+
+def test_oversized_switch_text_rejects_before_alias_preprocessing() -> None:
+    constraint = SettingConstraint(boolean_aliases=True)
+    raw = _HostilePreprocessingText(" " * 400 + "ON")
+
+    try:
+        result = validate_constraint_value(raw, constraint)
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+def test_string_subclass_uses_non_virtual_bounded_preprocessing() -> None:
+    constraint = SettingConstraint(boolean_aliases=True)
+    raw = _HostilePreprocessingText(" ON ")
+
+    try:
+        result = validate_constraint_value(raw, constraint)
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(True, "1", "")
+
+
 class _HugeDecimalWithoutStringConversion(Decimal):  # pylint: disable=too-few-public-methods
     def __str__(self) -> str:
         raise AssertionError("oversized Decimal must be rejected before string conversion")
 
 
-def test_rejects_large_decimal_coefficient_before_string_conversion() -> None:
+def test_large_decimal_subclass_fails_closed_before_string_conversion() -> None:
     raw = _HugeDecimalWithoutStringConversion("9" * 129)
 
     try:
@@ -189,7 +374,7 @@ def test_rejects_large_decimal_coefficient_before_string_conversion() -> None:
         pytest.fail(str(error))
 
     assert result == SettingValueResult(
-        False, None, "numeric value exceeds work limits"
+        False, None, "value is not numeric"
     )
 
 
@@ -198,7 +383,7 @@ class _HugeIntWithoutStringConversion(int):
         raise AssertionError("oversized int must be rejected before string conversion")
 
 
-def test_rejects_large_int_before_decimal_text_conversion() -> None:
+def test_large_int_subclass_fails_closed_before_decimal_text_conversion() -> None:
     raw = _HugeIntWithoutStringConversion(10**200)
 
     try:
@@ -207,7 +392,58 @@ def test_rejects_large_int_before_decimal_text_conversion() -> None:
         pytest.fail(str(error))
 
     assert result == SettingValueResult(
-        False, None, "numeric value exceeds work limits"
+        False, None, "value is not numeric"
+    )
+
+
+class _HostileDecimal(Decimal):
+    def is_finite(self) -> bool:
+        raise AssertionError("virtual Decimal.is_finite must not run")
+
+    def as_tuple(self):
+        raise AssertionError("virtual Decimal.as_tuple must not run")
+
+
+class _HostileInt(int):
+    def __int__(self) -> int:
+        raise AssertionError("virtual int conversion must not run")
+
+    def __str__(self) -> str:
+        raise AssertionError("virtual int string conversion must not run")
+
+
+class _HostileFloat(float):
+    def __float__(self) -> float:
+        raise AssertionError("virtual float conversion must not run")
+
+    def __str__(self) -> str:
+        raise AssertionError("virtual float string conversion must not run")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [_HostileDecimal("1"), _HostileInt(1), _HostileFloat(1.0)],
+    ids=["decimal-subclass", "int-subclass", "float-subclass"],
+)
+def test_numeric_subclasses_fail_closed_without_virtual_hooks(raw: object) -> None:
+    try:
+        result = validate_constraint_value(raw, SettingConstraint())
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(False, None, "value is not numeric")
+
+
+def test_decimal_subclass_constraint_fails_closed_without_virtual_hooks() -> None:
+    constraint = SettingConstraint(min_value=_HostileDecimal("0"))
+
+    try:
+        result = validate_constraint_value("1", constraint)
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(
+        False, None, "setting constraint is invalid"
     )
 
 
