@@ -197,6 +197,35 @@ def test_guard_preserves_reverse_name_api_signatures(  # pylint: disable=too-man
             cast(Callable[..., object], socket.getfqdn)("127.0.0.1", "unexpected")
 
 
+@pytest.mark.parametrize(
+    ("sockaddr", "flags", "exception_type"),
+    [
+        (("127.0.0.1",), socket.NI_NUMERICHOST, TypeError),
+        (("127.0.0.1", -1), socket.NI_NUMERICHOST, socket.gaierror),
+        (("127.0.0.1", 70000), socket.NI_NUMERICHOST, socket.gaierror),
+        (("127.0.0.1", object()), socket.NI_NUMERICHOST, TypeError),
+        (("::1", 5710), socket.NI_NUMERICHOST, TypeError),
+        (("::1", 5710, -1, 0), socket.NI_NUMERICHOST, OverflowError),
+        (("::1", 5710, 0, -1), socket.NI_NUMERICHOST, OverflowError),
+        (("::1", 5710, 0, object()), socket.NI_NUMERICHOST, TypeError),
+        (("127.0.0.1", 5710), "invalid", TypeError),
+        (("127.0.0.1", 5710), 1 << 30, socket.gaierror),
+    ],
+)
+def test_guard_rejects_malformed_numeric_nameinfo_without_policy_violation(
+    tmp_path: Path,
+    sockaddr: tuple[object, ...],
+    flags: object,
+    exception_type: type[Exception],
+) -> None:
+    """Keep malformed numeric sockaddr errors out of policy-violation accounting."""
+    guard = EgressGuard(tmp_path / "guard.json")
+    with guard.installed(probe=False), pytest.raises(exception_type):
+        cast(Callable[..., object], socket.getnameinfo)(sockaddr, flags)
+    assert guard.blocked_violation_count == 0
+    assert not guard.has_failures()
+
+
 def test_guard_allows_ipv6_and_af_unix_local_transports(tmp_path: Path) -> None:
     """Permit direct IPv6 loopback and AF_UNIX datagrams under the guard."""
     guard = EgressGuard(tmp_path / "guard.json")
@@ -244,6 +273,15 @@ def test_guard_accepts_safe_config_and_rejects_each_later_rule(tmp_path: Path) -
         guard.validate_config(_local_config(twin_db_path="/data/twin_queue.db"))
 
 
+def test_guard_counts_caught_config_policy_violation(tmp_path: Path) -> None:
+    """Count a caught invalid transport configuration as a failed guard policy."""
+    guard = EgressGuard(tmp_path / "guard.json")
+    with pytest.raises(EgressViolation):
+        guard.validate_config(_local_config(cloud_host="bridge.oigpower.cz"))
+    assert guard.blocked_violation_count == 1
+    assert guard.has_failures()
+
+
 def test_plugin_guards_fixture_finalizers_and_restores_sentinel(
     tmp_path: Path,
 ) -> None:
@@ -288,6 +326,7 @@ def test_plugin_guards_fixture_finalizers_and_restores_sentinel(
     )
     assert result.returncode == 1
     assert "resolver original called" not in result.stdout + result.stderr
+    assert "stale guard wrapper restored" not in result.stdout + result.stderr
     assert report["blocked_violation_count"] == 3
     assert report["status"] == "fail"
 
@@ -340,8 +379,12 @@ def test_plugin_reports_failed_and_caught_egress_tests(tmp_path: Path) -> None:
         def test_caught_violation():
             with pytest.raises(EgressViolation):
                 socket.getaddrinfo("bridge.oigpower.cz", 5710)
+            with pytest.raises(EgressViolation):
+                socket.getnameinfo(("8.8.8.8", 53), 0)
+            with pytest.raises(EgressViolation):
+                socket.getfqdn()
         """,
     )
     assert caught_result.returncode == 1
     assert caught_report["status"] == "fail"
-    assert caught_report["blocked_violation_count"] == 1
+    assert caught_report["blocked_violation_count"] == 3

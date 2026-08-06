@@ -9,6 +9,25 @@ import socket
 from typing import Any, Callable, Iterator, Protocol
 
 
+def _nameinfo_flag_mask() -> int:
+    mask = 0
+    for flag_name in (
+        "NI_NOFQDN",
+        "NI_NUMERICHOST",
+        "NI_NAMEREQD",
+        "NI_NUMERICSERV",
+        "NI_DGRAM",
+        "NI_IDN",
+        "NI_IDN_ALLOW_UNASSIGNED",
+        "NI_IDN_USE_STD3_ASCII_RULES",
+    ):
+        mask |= getattr(socket, flag_name, 0)
+    return mask
+
+
+_NAMEINFO_FLAG_MASK = _nameinfo_flag_mask()
+
+
 class EgressViolation(AssertionError):
     """Raised when a local-control test attempts non-loopback egress."""
 
@@ -56,11 +75,26 @@ class EgressGuard:
             str(config.telemetry_mqtt_broker).rsplit(":", 1)[0],
         )
         if not all(_loopback_address(host) for host in hosts):
-            raise EgressViolation("local-control E2E config contains non-loopback host")
+            self._block(
+                "validate_config",
+                hosts,
+                probe=False,
+                message="local-control E2E config contains non-loopback host",
+            )
         if config.telemetry_enabled:
-            raise EgressViolation("telemetry must be disabled in local-control E2E")
+            self._block(
+                "validate_config",
+                config.telemetry_enabled,
+                probe=False,
+                message="telemetry must be disabled in local-control E2E",
+            )
         if str(config.twin_db_path).startswith("/data/"):
-            raise EgressViolation("E2E requires a temporary twin database")
+            self._block(
+                "validate_config",
+                config.twin_db_path,
+                probe=False,
+                message="E2E requires a temporary twin database",
+            )
 
     @contextmanager
     def installed(self, *, probe: bool) -> Iterator[None]:
@@ -79,9 +113,9 @@ class EgressGuard:
             return wrapper
 
         def guarded_getnameinfo(_original: Callable[..., Any]) -> Callable[..., Any]:
-            def wrapper(sockaddr: object, _flags: int) -> tuple[str, str]:
-                self._require_socket_address(sockaddr, "getnameinfo", probe, None)
-                host, port = self._numeric_nameinfo(sockaddr)
+            def wrapper(sockaddr: object, flags: int) -> tuple[str, str]:
+                host, port = self._validated_nameinfo(sockaddr, flags, probe)
+                self._require_loopback(host, "getnameinfo", probe)
                 return host, str(port)
 
             return wrapper
@@ -287,11 +321,42 @@ class EgressGuard:
             return _loopback_address(address[0])
         return False
 
+    def _validated_nameinfo(
+        self, sockaddr: object, flags: object, probe: bool
+    ) -> tuple[str, int]:
+        if not isinstance(flags, int):
+            raise TypeError("getnameinfo flags must be an integer")
+        if flags < 0 or flags & ~_NAMEINFO_FLAG_MASK:
+            raise socket.gaierror(socket.EAI_BADFLAGS, "invalid getnameinfo flags")
+        if not isinstance(sockaddr, tuple) or not sockaddr:
+            raise TypeError("getnameinfo sockaddr must be a non-empty tuple")
+        host = sockaddr[0]
+        if not isinstance(host, str):
+            raise TypeError("getnameinfo host must be a string")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            self._block("getnameinfo", sockaddr, probe)
+        expected_length = 4 if address.version == 6 else 2
+        if len(sockaddr) != expected_length:
+            raise TypeError("getnameinfo sockaddr has an invalid address family shape")
+        port = sockaddr[1]
+        if not isinstance(port, int):
+            raise TypeError("getnameinfo port must be an integer")
+        if port < 0 or port > 65535:
+            raise socket.gaierror(socket.EAI_SERVICE, "invalid numeric service")
+        if address.version == 6:
+            self._validated_unsigned(sockaddr[2], "flowinfo")
+            self._validated_unsigned(sockaddr[3], "scope_id")
+        return host, port
+
     @staticmethod
-    def _numeric_nameinfo(sockaddr: object) -> tuple[str, object]:
-        if isinstance(sockaddr, tuple) and len(sockaddr) >= 2:
-            return str(sockaddr[0]), sockaddr[1]
-        raise EgressViolation(f"blocked malformed getnameinfo address: {sockaddr!r}")
+    def _validated_unsigned(value: object, name: str) -> int:
+        if not isinstance(value, int):
+            raise TypeError(f"getnameinfo {name} must be an integer")
+        if value < 0 or value > 0xFFFFFFFF:
+            raise OverflowError(f"getnameinfo {name} is outside unsigned integer range")
+        return value
 
     @staticmethod
     def _peer_address(sock_obj: socket.socket) -> object:
@@ -300,9 +365,11 @@ class EgressGuard:
         except OSError:
             return None
 
-    def _block(self, method: str, target: object, probe: bool) -> None:
+    def _block(
+        self, method: str, target: object, probe: bool, message: str | None = None
+    ) -> None:
         if probe:
             self.probe_violation_count += 1
         else:
             self.blocked_violation_count += 1
-        raise EgressViolation(f"blocked non-loopback egress via {method}: {target!r}")
+        raise EgressViolation(message or f"blocked non-loopback egress via {method}: {target!r}")
