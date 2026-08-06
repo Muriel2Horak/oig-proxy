@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException
 from typing import Any, Iterator
 
 
@@ -130,6 +130,66 @@ def canonical_decimal_text(value: Decimal) -> str:
     return fixed.rstrip("0").rstrip(".") if "." in fixed else fixed
 
 
+def _decimal_parts(value: Decimal) -> tuple[int, int]:
+    """Return signed coefficient and base-10 exponent without using context."""
+    sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("value must be finite")
+    coefficient = 0
+    for digit in digits:
+        coefficient = coefficient * 10 + digit
+    return (-coefficient if sign else coefficient), exponent
+
+
+def _is_integral_decimal(value: Decimal) -> bool:
+    """Return exact integrality from the Decimal tuple."""
+    _sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        return False
+    if not any(digits) or exponent >= 0:
+        return True
+    fractional_digits = -exponent
+    if fractional_digits > len(digits):
+        return False
+    return not any(digits[-fractional_digits:])
+
+
+def _constraint_is_valid(constraint: SettingConstraint) -> bool:
+    """Return whether all numeric constraint members are usable and finite."""
+    values = (constraint.min_value, constraint.max_value, constraint.step)
+    if any(
+        value is not None
+        and (not isinstance(value, Decimal) or not value.is_finite())
+        for value in values
+    ):
+        return False
+    if constraint.step is not None and _decimal_parts(constraint.step)[0] == 0:
+        return False
+    if (
+        constraint.min_value is not None
+        and constraint.max_value is not None
+        and constraint.min_value > constraint.max_value
+    ):
+        return False
+    return True
+
+
+def _is_exact_step_aligned(
+    value: Decimal,
+    origin: Decimal,
+    step: Decimal,
+) -> bool:
+    """Check min-origin step divisibility using only arbitrary-precision integers."""
+    value_coefficient, value_exponent = _decimal_parts(value)
+    origin_coefficient, origin_exponent = _decimal_parts(origin)
+    step_coefficient, step_exponent = _decimal_parts(step)
+    common_exponent = min(value_exponent, origin_exponent, step_exponent)
+    value_integer = value_coefficient * 10 ** (value_exponent - common_exponent)
+    origin_integer = origin_coefficient * 10 ** (origin_exponent - common_exponent)
+    step_integer = step_coefficient * 10 ** (step_exponent - common_exponent)
+    return (value_integer - origin_integer) % abs(step_integer) == 0
+
+
 def _parse_decimal_text(  # pylint: disable=too-many-return-statements
     value: object,
     constraint: SettingConstraint,
@@ -159,7 +219,7 @@ def _parse_decimal_text(  # pylint: disable=too-many-return-statements
         return None
     try:
         return Decimal(text)
-    except (InvalidOperation, ValueError):
+    except (DecimalException, ValueError):
         return None
 
 
@@ -176,7 +236,13 @@ def validate_constraint_value(
         return SettingValueResult(False, None, "value is not numeric")
     if not parsed.is_finite():
         return SettingValueResult(False, None, "value must be finite")
-    if constraint.integer_only and parsed != parsed.to_integral_value():
+    try:
+        constraint_valid = _constraint_is_valid(constraint)
+    except (ArithmeticError, TypeError, ValueError):
+        constraint_valid = False
+    if not constraint_valid:
+        return SettingValueResult(False, None, "setting constraint is invalid")
+    if constraint.integer_only and not _is_integral_decimal(parsed):
         return SettingValueResult(False, None, "value must be integer")
     if constraint.min_value is not None and parsed < constraint.min_value:
         minimum = canonical_decimal_text(constraint.min_value)
@@ -188,9 +254,9 @@ def validate_constraint_value(
     origin = constraint.min_value if constraint.min_value is not None else Decimal(0)
     if constraint.step is not None:
         try:
-            aligned = (parsed - origin) % constraint.step == 0
-        except InvalidOperation:
-            aligned = False
+            aligned = _is_exact_step_aligned(parsed, origin, constraint.step)
+        except (ArithmeticError, TypeError, ValueError):
+            return SettingValueResult(False, None, "setting constraint is invalid")
         if not aligned:
             return SettingValueResult(False, None, "value is not aligned to step")
 

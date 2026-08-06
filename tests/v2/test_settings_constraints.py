@@ -1,7 +1,19 @@
 """Exact Decimal validation tests for locally authorized settings."""
 # pylint: disable=missing-function-docstring
 
-from decimal import Decimal
+from decimal import (
+    Clamped,
+    Decimal,
+    DecimalException,
+    DivisionByZero,
+    Inexact,
+    InvalidOperation,
+    Overflow,
+    Rounded,
+    Subnormal,
+    Underflow,
+    localcontext,
+)
 
 import pytest
 
@@ -99,6 +111,93 @@ def test_step_is_relative_to_declared_minimum() -> None:
     )
     assert validate_constraint_value("0.3", constraint).accepted is True
     assert validate_constraint_value("0.2", constraint).reason == "value is not aligned to step"
+
+
+def test_step_alignment_is_exact_for_coefficients_larger_than_context_precision() -> None:
+    constraint = SettingConstraint(step=Decimal("0.1"))
+
+    assert validate_constraint_value(
+        "123456789012345678901234567890.0",
+        constraint,
+    ) == SettingValueResult(
+        True,
+        "123456789012345678901234567890",
+        "",
+    )
+    assert validate_constraint_value(
+        "123456789012345678901234567890.05",
+        constraint,
+    ) == SettingValueResult(False, None, "value is not aligned to step")
+
+
+def test_step_alignment_ignores_precision_exponent_and_trap_context() -> None:
+    with localcontext() as context:
+        context.prec = 1
+        context.Emax = 1
+        context.Emin = -1
+        for signal in (
+            Clamped,
+            DivisionByZero,
+            Inexact,
+            InvalidOperation,
+            Overflow,
+            Rounded,
+            Subnormal,
+            Underflow,
+        ):
+            context.traps[signal] = True
+        try:
+            result = validate_setting_value("tbl_boiler_prms", "P_SET", "100")
+        except DecimalException as error:
+            pytest.fail(f"Decimal context signal escaped: {type(error).__name__}")
+
+    assert result == SettingValueResult(True, "100", "")
+
+
+def test_fractional_min_origin_step_is_exact_under_hostile_context() -> None:
+    constraint = SettingConstraint(
+        min_value=Decimal("1E-100"),
+        step=Decimal("2E-100"),
+    )
+
+    with localcontext() as context:
+        context.prec = 2
+        context.Emax = 2
+        context.Emin = -2
+        context.traps[Underflow] = True
+        context.traps[Subnormal] = True
+        context.traps[Inexact] = True
+        context.traps[Rounded] = True
+        try:
+            aligned = validate_constraint_value("7E-100", constraint)
+            neighbor = validate_constraint_value("8E-100", constraint)
+        except DecimalException as error:
+            pytest.fail(f"Decimal context signal escaped: {type(error).__name__}")
+
+    assert aligned.accepted is True
+    assert neighbor == SettingValueResult(False, None, "value is not aligned to step")
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        SettingConstraint(step=Decimal("0")),
+        SettingConstraint(step=Decimal("NaN")),
+        SettingConstraint(min_value=Decimal("sNaN")),
+        SettingConstraint(max_value=Decimal("Infinity")),
+    ],
+)
+def test_malformed_constraint_returns_stable_rejection(
+    constraint: SettingConstraint,
+) -> None:
+    with localcontext() as context:
+        context.traps[InvalidOperation] = True
+        try:
+            result = validate_constraint_value("1", constraint)
+        except DecimalException as error:
+            pytest.fail(f"Decimal context signal escaped: {type(error).__name__}")
+
+    assert result == SettingValueResult(False, None, "setting constraint is invalid")
 
 
 @pytest.mark.parametrize("raw", ["1.5", Decimal("2.0001"), "1E-100"])

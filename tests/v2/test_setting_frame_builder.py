@@ -11,6 +11,11 @@ frames = importlib.import_module("protocol.frames")
 TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
 
 
+class _HostileReplaceText(str):
+    def replace(self, _old: str, _new: str, _count: int = -1) -> str:
+        return "\ud800"
+
+
 def independent_modbus_crc(data: bytes) -> int:
     """Return CRC-16/MODBUS without using production CRC helpers."""
     crc = 0xFFFF
@@ -84,6 +89,25 @@ def test_build_setting_frame_escapes_dynamic_text_once() -> None:
     assert b"<TblName>tbl_box&amp;prms</TblName>" in rendered.wire_frame
     assert b"<TblItem>MO&quot;DE</TblItem>" in rendered.wire_frame
     assert b"<NewValue>1 &lt; 2 &amp; 3 &gt; 2&#x27;s</NewValue>" in rendered.wire_frame
+
+
+def test_build_setting_frame_normalizes_str_subclass_before_escaping() -> None:
+    try:
+        rendered = _setting_frame(value_text=_HostileReplaceText("safe"))
+    except UnicodeError as error:
+        pytest.fail(f"raw codec error escaped: {type(error).__name__}")
+
+    assert b"<NewValue>safe</NewValue>" in rendered.wire_frame
+
+
+def test_build_setting_frame_normalizes_post_escape_encoding_failure(monkeypatch) -> None:
+    monkeypatch.setattr(frames, "escape_xml_text", lambda _text: "\ud800")
+
+    with pytest.raises(
+        ValueError,
+        match="dynamic Setting text is not valid XML 1.0",
+    ):
+        _setting_frame()
 
 
 @pytest.mark.parametrize("bad_text", ["bad\x00value", "bad\x1fvalue", "bad\ud800value"])

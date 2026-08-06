@@ -101,6 +101,7 @@ class RenderedSettingFrame:
     wire_length: int
 
 
+# pylint: disable=too-many-arguments,too-many-locals
 def build_setting_frame(
     *,
     device_id: str,
@@ -112,17 +113,22 @@ def build_setting_frame(
     wire_dt: str,
     tsec_text: str,
     ver_text: str,
-) -> RenderedSettingFrame:  # pylint: disable=too-many-arguments
+) -> RenderedSettingFrame:
     """Render one deterministic, XML-safe Setting wire frame."""
-    dynamic = (device_id, table_name, item_name, value_text, wire_dt, tsec_text)
-    if not all(isinstance(text, str) and is_xml_1_0_text(text) for text in dynamic):
+    supplied_dynamic = (device_id, table_name, item_name, value_text, wire_dt, tsec_text)
+    if not all(isinstance(text, str) for text in supplied_dynamic):
         raise ValueError("dynamic Setting text is not valid XML 1.0")
+    dynamic = tuple(str.__str__(text) for text in supplied_dynamic)
+    if not all(is_xml_1_0_text(text) for text in dynamic):
+        raise ValueError("dynamic Setting text is not valid XML 1.0")
+    device_id, table_name, item_name, value_text, wire_dt, tsec_text = dynamic
     if (
         not isinstance(ver_text, str)
         or not re.fullmatch(r"[0-9]{5}", ver_text)
         or int(ver_text) > 65535
     ):
         raise ValueError("ver_text must be a zero-padded uint16 decimal")
+    ver_text = str.__str__(ver_text)
     for field_name, field_value in (
         ("wire_id", wire_id),
         ("wire_id_set", wire_id_set),
@@ -130,22 +136,25 @@ def build_setting_frame(
         if isinstance(field_value, bool) or not isinstance(field_value, int) or field_value < 0:
             raise ValueError(f"{field_name} must be a non-negative integer")
 
-    inner = (
-        f"<ID>{wire_id}</ID>"
-        f"<ID_Device>{escape_xml_text(device_id)}</ID_Device>"
-        f"<ID_Set>{wire_id_set}</ID_Set>"
-        "<ID_SubD>0</ID_SubD>"
-        f"<DT>{escape_xml_text(wire_dt)}</DT>"
-        f"<NewValue>{escape_xml_text(value_text)}</NewValue>"
-        "<Confirm>New</Confirm>"
-        f"<TblName>{escape_xml_text(table_name)}</TblName>"
-        f"<TblItem>{escape_xml_text(item_name)}</TblItem>"
-        "<ID_Server>9</ID_Server>"
-        "<mytimediff>0</mytimediff>"
-        "<Reason>Setting</Reason>"
-        f"<TSec>{escape_xml_text(tsec_text)}</TSec>"
-        f"<ver>{ver_text}</ver>"
-    ).encode("utf-8")
+    try:
+        inner = (
+            f"<ID>{wire_id}</ID>"
+            f"<ID_Device>{escape_xml_text(device_id)}</ID_Device>"
+            f"<ID_Set>{wire_id_set}</ID_Set>"
+            "<ID_SubD>0</ID_SubD>"
+            f"<DT>{escape_xml_text(wire_dt)}</DT>"
+            f"<NewValue>{escape_xml_text(value_text)}</NewValue>"
+            "<Confirm>New</Confirm>"
+            f"<TblName>{escape_xml_text(table_name)}</TblName>"
+            f"<TblItem>{escape_xml_text(item_name)}</TblItem>"
+            "<ID_Server>9</ID_Server>"
+            "<mytimediff>0</mytimediff>"
+            "<Reason>Setting</Reason>"
+            f"<TSec>{escape_xml_text(tsec_text)}</TSec>"
+            f"<ver>{ver_text}</ver>"
+        ).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError("dynamic Setting text is not valid XML 1.0") from error
     crc_text = f"{crc16_modbus(inner):05d}"
     wire = (
         b"<Frame>"
@@ -155,3 +164,4 @@ def build_setting_frame(
         + b"</CRC></Frame>\r\n"
     )
     return RenderedSettingFrame(wire, crc_text, len(wire))
+# pylint: enable=too-many-arguments,too-many-locals
