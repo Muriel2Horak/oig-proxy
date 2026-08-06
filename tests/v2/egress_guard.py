@@ -78,18 +78,26 @@ class EgressGuard:
 
             return wrapper
 
-        def guarded_getnameinfo(original: Callable[..., Any]) -> Callable[..., Any]:
-            def wrapper(sockaddr: object, *args: Any, **kwargs: Any) -> Any:
+        def guarded_getnameinfo(_original: Callable[..., Any]) -> Callable[..., Any]:
+            def wrapper(sockaddr: object, _flags: int) -> tuple[str, str]:
                 self._require_socket_address(sockaddr, "getnameinfo", probe, None)
-                return original(sockaddr, *args, **kwargs)
+                host, port = self._numeric_nameinfo(sockaddr)
+                return host, str(port)
 
             return wrapper
 
-        def guarded_getfqdn(original: Callable[..., Any]) -> Callable[..., Any]:
-            def wrapper(*args: Any, **kwargs: Any) -> Any:
-                name = args[0] if args else kwargs.get("name", "")
+        def guarded_gethostbyaddr(_original: Callable[..., Any]) -> Callable[..., Any]:
+            def wrapper(host: object) -> tuple[str, list[str], list[str]]:
+                self._require_loopback(host, "gethostbyaddr", probe)
+                numeric_host = str(host)
+                return numeric_host, [], [numeric_host]
+
+            return wrapper
+
+        def guarded_getfqdn(_original: Callable[..., Any]) -> Callable[..., Any]:
+            def wrapper(name: object = "") -> str:
                 self._require_loopback(name, "getfqdn", probe)
-                return original(*args, **kwargs)
+                return str(name)
 
             return wrapper
 
@@ -127,7 +135,11 @@ class EgressGuard:
             "gethostbyname_ex",
             guarded_dns("gethostbyname_ex", socket.gethostbyname_ex),
         )
-        patch(socket, "gethostbyaddr", guarded_dns("gethostbyaddr", socket.gethostbyaddr))
+        patch(
+            socket,
+            "gethostbyaddr",
+            guarded_gethostbyaddr(socket.gethostbyaddr),
+        )
         patch(socket, "getnameinfo", guarded_getnameinfo(socket.getnameinfo))
         patch(socket, "getfqdn", guarded_getfqdn(socket.getfqdn))
         patch(socket.socket, "connect", guarded_connect("connect", socket.socket.connect))
@@ -175,6 +187,10 @@ class EgressGuard:
         return self.blocked_violation_count > 0 or any(
             result != "pass" for result in self.self_probes.values()
         )
+
+    def record_startup_failure(self, error: BaseException) -> None:
+        """Record a startup exception before the session exits."""
+        self.self_probes["startup"] = f"fail: {type(error).__name__}"
 
     def _report_status(self, pytest_exit_status: int) -> str:
         if pytest_exit_status == 0 and not self.has_failures():
@@ -270,6 +286,12 @@ class EgressGuard:
         if isinstance(address, tuple) and address:
             return _loopback_address(address[0])
         return False
+
+    @staticmethod
+    def _numeric_nameinfo(sockaddr: object) -> tuple[str, object]:
+        if isinstance(sockaddr, tuple) and len(sockaddr) >= 2:
+            return str(sockaddr[0]), sockaddr[1]
+        raise EgressViolation(f"blocked malformed getnameinfo address: {sockaddr!r}")
 
     @staticmethod
     def _peer_address(sock_obj: socket.socket) -> object:
