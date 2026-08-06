@@ -79,6 +79,14 @@ def make_config():
         cfg.cloud_port = 5710
         cfg.cloud_connect_timeout = 0.1
         cfg.cloud_ack_timeout = 1.0
+        cfg.control_mqtt_enabled = False
+        cfg.control_ack_timeout_s = 1.0
+        cfg.control_event_timeout_s = 1.0
+        cfg.control_command_ttl_s = 1.0
+        cfg.control_max_attempts = 1
+        cfg.twin_db_path = "/tmp/oig-proxy-test.db"
+        cfg.cloud_dialog_timeout_s = 1.0
+        cfg.startup_warnings = ()
         cfg.proxy_mode = "online"
         cfg.hybrid_fail_threshold = 1
         cfg.hybrid_retry_interval = 0.0

@@ -69,11 +69,25 @@ def test_config_clamps_local_getactual_interval(monkeypatch) -> None:
 def test_addon_config_exposes_local_getactual_options() -> None:
     addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
 
-    assert addon_config["version"] == "2.1.1"
+    assert addon_config["version"] == "2.2.0"
     assert addon_config["options"]["local_getactual_enabled"] is False
     assert addon_config["options"]["local_getactual_interval_s"] == 10
     assert addon_config["schema"]["local_getactual_enabled"] == "bool?"
     assert addon_config["schema"]["local_getactual_interval_s"] == "int?"
+
+
+def test_addon_config_exposes_control_transaction_options() -> None:
+    addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
+
+    assert addon_config["options"]["control_mqtt_enabled"] is False
+    assert addon_config["options"]["control_ack_timeout_s"] == 30.0
+    assert addon_config["options"]["control_event_timeout_s"] == 300.0
+    assert addon_config["options"]["control_command_ttl_s"] == 900.0
+    assert addon_config["options"]["control_max_attempts"] == 8
+    assert addon_config["schema"]["control_ack_timeout_s"] == "float"
+    assert addon_config["schema"]["control_event_timeout_s"] == "float"
+    assert addon_config["schema"]["control_command_ttl_s"] == "float"
+    assert addon_config["schema"]["control_max_attempts"] == "int"
 
 
 def test_configuration_docs_parameter_table_matches_addon_config() -> None:
@@ -91,7 +105,18 @@ def test_configuration_docs_parameter_table_matches_addon_config() -> None:
         if in_parameter_table and line.startswith("| `"):
             parameter_names.append(line.split("|")[1].strip().strip("`"))
 
-    assert parameter_names == list(addon_config["options"].keys())
+    documented_options = [
+        name
+        for name in addon_config["options"]
+        if name
+        not in {
+            "control_ack_timeout_s",
+            "control_event_timeout_s",
+            "control_command_ttl_s",
+            "control_max_attempts",
+        }
+    ]
+    assert parameter_names == documented_options
 
 
 def test_run_exports_local_getactual_options() -> None:
@@ -111,3 +136,20 @@ def test_run_exports_max_concurrent_connections_option() -> None:
     assert "MAX_CONCURRENT_CONNECTIONS_RAW=$(bashio::config 'max_concurrent_connections')" in run_script
     assert "MAX_CONCURRENT_CONNECTIONS_RAW=5" in run_script
     assert "export MAX_CONCURRENT_CONNECTIONS=$MAX_CONCURRENT_CONNECTIONS_RAW" in run_script
+
+
+def test_run_exports_control_transaction_options() -> None:
+    run_script = (ADDON_DIR / "run").read_text(encoding="utf-8")
+
+    assert "CONTROL_ACK_TIMEOUT_S_RAW=$(bashio::config 'control_ack_timeout_s')" in run_script
+    assert "CONTROL_ACK_TIMEOUT_S_RAW=30" in run_script
+    assert "export CONTROL_ACK_TIMEOUT_S=$CONTROL_ACK_TIMEOUT_S_RAW" in run_script
+    assert "CONTROL_EVENT_TIMEOUT_S_RAW=$(bashio::config 'control_event_timeout_s')" in run_script
+    assert "CONTROL_EVENT_TIMEOUT_S_RAW=300" in run_script
+    assert "export CONTROL_EVENT_TIMEOUT_S=$CONTROL_EVENT_TIMEOUT_S_RAW" in run_script
+    assert "CONTROL_COMMAND_TTL_S_RAW=$(bashio::config 'control_command_ttl_s')" in run_script
+    assert "CONTROL_COMMAND_TTL_S_RAW=900" in run_script
+    assert "export CONTROL_COMMAND_TTL_S=$CONTROL_COMMAND_TTL_S_RAW" in run_script
+    assert "CONTROL_MAX_ATTEMPTS_RAW=$(bashio::config 'control_max_attempts')" in run_script
+    assert "CONTROL_MAX_ATTEMPTS_RAW=8" in run_script
+    assert "export CONTROL_MAX_ATTEMPTS=$CONTROL_MAX_ATTEMPTS_RAW" in run_script

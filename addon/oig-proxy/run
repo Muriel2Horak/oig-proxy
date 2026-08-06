@@ -188,6 +188,31 @@ else
     export CONTROL_MQTT_ENABLED="false"
 fi
 
+# Local-control transaction limits
+CONTROL_ACK_TIMEOUT_S_RAW=$(bashio::config 'control_ack_timeout_s')
+if [ -z "$CONTROL_ACK_TIMEOUT_S_RAW" ] || [ "$CONTROL_ACK_TIMEOUT_S_RAW" = "null" ]; then
+    CONTROL_ACK_TIMEOUT_S_RAW=30
+fi
+export CONTROL_ACK_TIMEOUT_S=$CONTROL_ACK_TIMEOUT_S_RAW
+
+CONTROL_EVENT_TIMEOUT_S_RAW=$(bashio::config 'control_event_timeout_s')
+if [ -z "$CONTROL_EVENT_TIMEOUT_S_RAW" ] || [ "$CONTROL_EVENT_TIMEOUT_S_RAW" = "null" ]; then
+    CONTROL_EVENT_TIMEOUT_S_RAW=300
+fi
+export CONTROL_EVENT_TIMEOUT_S=$CONTROL_EVENT_TIMEOUT_S_RAW
+
+CONTROL_COMMAND_TTL_S_RAW=$(bashio::config 'control_command_ttl_s')
+if [ -z "$CONTROL_COMMAND_TTL_S_RAW" ] || [ "$CONTROL_COMMAND_TTL_S_RAW" = "null" ]; then
+    CONTROL_COMMAND_TTL_S_RAW=900
+fi
+export CONTROL_COMMAND_TTL_S=$CONTROL_COMMAND_TTL_S_RAW
+
+CONTROL_MAX_ATTEMPTS_RAW=$(bashio::config 'control_max_attempts')
+if [ -z "$CONTROL_MAX_ATTEMPTS_RAW" ] || [ "$CONTROL_MAX_ATTEMPTS_RAW" = "null" ]; then
+    CONTROL_MAX_ATTEMPTS_RAW=8
+fi
+export CONTROL_MAX_ATTEMPTS=$CONTROL_MAX_ATTEMPTS_RAW
+
 # telemetry_enabled (default true)
 TELEMETRY_ENABLED_RAW=$(bashio::config 'telemetry_enabled')
 if [ -z "$TELEMETRY_ENABLED_RAW" ] || [ "$TELEMETRY_ENABLED_RAW" = "null" ]; then

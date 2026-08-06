@@ -4,12 +4,81 @@
 Nacita se z env vars (override) nebo defaults.
 Zadne feature flagy.
 """
+# pylint: disable=too-few-public-methods,too-many-instance-attributes,too-many-statements
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
+
+
+def _append_warning(warnings: list[str], warning: str) -> None:
+    """Record each startup warning at most once."""
+    if warning not in warnings:
+        warnings.append(warning)
+
+
+def _bounded_float(
+    name: str,
+    default: float,
+    minimum: float,
+    warnings: list[str],
+) -> float:
+    """Read a finite, lower-bounded float without aborting startup."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        _append_warning(warnings, f"invalid {name}; using {default:g}")
+        return default
+    if not math.isfinite(parsed):
+        _append_warning(warnings, f"invalid {name}; using {default:g}")
+        return default
+    return max(minimum, parsed)
+
+
+def _ack_timeout(warnings: list[str]) -> float:
+    """Read the local-control ACK timeout with legacy compatibility."""
+    if "CONTROL_ACK_TIMEOUT_S" in os.environ:
+        return _bounded_float("CONTROL_ACK_TIMEOUT_S", 30.0, 1.0, warnings)
+    if "CLOUD_ACK_TIMEOUT" not in os.environ:
+        return 30.0
+    value = _bounded_float("CLOUD_ACK_TIMEOUT", 30.0, 1.0, warnings)
+    if not any(warning.startswith("invalid CLOUD_ACK_TIMEOUT") for warning in warnings):
+        _append_warning(warnings, "CLOUD_ACK_TIMEOUT is deprecated for local control")
+    return value
+
+
+def _control_mqtt_enabled(warnings: list[str]) -> bool:
+    """Read the local-control gate, defaulting to disabled."""
+    raw = os.environ.get("CONTROL_MQTT_ENABLED")
+    if raw is None:
+        return False
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true"}:
+        return True
+    if normalized in {"0", "false"}:
+        return False
+    _append_warning(
+        warnings, "invalid CONTROL_MQTT_ENABLED; local control remains disabled"
+    )
+    return False
+
+
+def _control_max_attempts() -> int:
+    """Read a bounded base-10 transaction attempt count."""
+    raw = os.environ.get("CONTROL_MAX_ATTEMPTS")
+    if raw is None:
+        return 8
+    try:
+        parsed = int(raw, 10)
+    except (TypeError, ValueError):
+        return 8
+    return min(8, max(1, parsed))
 
 
 class Config:
@@ -24,6 +93,14 @@ class Config:
     cloud_port: int = 5710
     cloud_connect_timeout: float = 10.0
     cloud_ack_timeout: float = 30.0
+    control_mqtt_enabled: bool = False
+    control_ack_timeout_s: float = 30.0
+    control_event_timeout_s: float = 300.0
+    control_command_ttl_s: float = 900.0
+    control_max_attempts: int = 8
+    twin_db_path: str = "/data/twin_queue.db"
+    cloud_dialog_timeout_s: float = 30.0
+    startup_warnings: tuple[str, ...] = ()
     local_getactual_enabled: bool = False
     local_getactual_interval_s: int = 10
 
@@ -66,6 +143,7 @@ class Config:
     capture_pcap_max_size_mb: int = 100
 
     def __init__(self) -> None:
+        warnings: list[str] = []
         _config_path = os.path.join(os.path.dirname(__file__), "config.json")
         try:
             with open(_config_path, encoding="utf-8") as _f:
@@ -81,8 +159,21 @@ class Config:
         self.cloud_port = int(os.environ.get("TARGET_PORT", "5710"))
         self.cloud_connect_timeout = float(
             os.environ.get("CLOUD_CONNECT_TIMEOUT", "10.0"))
-        self.cloud_ack_timeout = float(
-            os.environ.get("CLOUD_ACK_TIMEOUT", "30.0"))
+        self.control_mqtt_enabled = _control_mqtt_enabled(warnings)
+        self.control_ack_timeout_s = _ack_timeout(warnings)
+        self.control_event_timeout_s = _bounded_float(
+            "CONTROL_EVENT_TIMEOUT_S", 300.0, 1.0, warnings
+        )
+        self.control_command_ttl_s = _bounded_float(
+            "CONTROL_COMMAND_TTL_S", 900.0, 1.0, warnings
+        )
+        self.control_max_attempts = _control_max_attempts()
+        self.twin_db_path = os.environ.get("TWIN_DB_PATH", "/data/twin_queue.db")
+        self.cloud_dialog_timeout_s = _bounded_float(
+            "CLOUD_DIALOG_TIMEOUT_S", 30.0, 1.0, warnings
+        )
+        self.cloud_ack_timeout = self.control_ack_timeout_s
+        self.startup_warnings = tuple(warnings)
         self.local_getactual_enabled = (
             os.environ.get("LOCAL_GETACTUAL_ENABLED", "false").strip().lower()
             in {"1", "true", "yes", "on"}
