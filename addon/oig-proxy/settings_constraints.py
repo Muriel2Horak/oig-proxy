@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
-from decimal import Decimal, DecimalException
+from decimal import Decimal, DecimalException, DecimalTuple
 from typing import Any, Iterator
 
 
@@ -20,6 +21,12 @@ MAX_RAW_NUMERIC_TEXT_LENGTH = (
     + 2 * MAX_NUMERIC_WHITESPACE_PER_SIDE
 )
 MAX_DECIMAL_REPRESENTATION_DIGITS = MAX_RAW_NUMERIC_TEXT_LENGTH
+# CPython's C Decimal stores several base-10 digits per allocation word. A
+# trusted size threshold may therefore admit a short plateau past the exact
+# tuple limit. Capacity can exceed logical digits after arithmetic; such an
+# overallocated value fails closed because reading its logical length would
+# materialize the coefficient. Calibration must find the next size increase.
+MAX_DECIMAL_PREFILTER_SLACK_DIGITS = 32
 MAX_DECIMAL_COEFFICIENT_DIGITS = 128
 MAX_DECIMAL_EXPONENT = 256
 MAX_DECIMAL_ALIGNMENT_GAP = 256
@@ -32,6 +39,125 @@ NUMERIC_WORK_LIMIT_REASON = "numeric value exceeds work limits"
 
 class _NumericWorkLimitError(ValueError):
     """Raised before numeric work would exceed the synchronous budget."""
+
+
+def _decimal_backing_size(value: Decimal) -> int | None:
+    """Return CPython Decimal backing bytes without inspecting its coefficient."""
+    try:
+        size = Decimal.__sizeof__(value)
+    except (ArithmeticError, AttributeError, TypeError, ValueError):
+        return None
+    if type(size) is not int or size <= 0:  # pylint: disable=unidiomatic-typecheck
+        return None
+    return size
+
+
+def _decimal_size_sentinel(digit_count: int) -> Decimal:
+    """Build one bounded exact Decimal used only during import calibration."""
+    return Decimal((0, (9,) * digit_count, 0))
+
+
+def _calibrate_decimal_tuple_prefilter(  # pylint: disable=too-many-return-statements
+) -> tuple[int | None, int | None]:
+    """Calibrate a conservative O(1) gate for Decimal tuple materialization."""
+    if sys.implementation.name != "cpython":
+        return None, None
+    try:
+        digits = (9,) * MAX_DECIMAL_REPRESENTATION_DIGITS
+        trailing_zeros = (1,) + (0,) * (
+            MAX_DECIMAL_REPRESENTATION_DIGITS - 1
+        )
+        supported_shapes = (
+            Decimal((0, digits, 0)),
+            Decimal((1, digits, 0)),
+            Decimal((0, digits, -MAX_DECIMAL_REPRESENTATION_DIGITS)),
+            Decimal(
+                (
+                    0,
+                    trailing_zeros,
+                    -(MAX_DECIMAL_REPRESENTATION_DIGITS - 1),
+                )
+            ),
+        )
+        supported_sizes = [
+            _decimal_backing_size(value) for value in supported_shapes
+        ]
+        exact_boundary_size = _decimal_backing_size(
+            _decimal_size_sentinel(MAX_DECIMAL_REPRESENTATION_DIGITS + 1)
+        )
+        baseline_size = _decimal_backing_size(Decimal(0))
+    except (ArithmeticError, TypeError, ValueError):
+        return None, None
+
+    if (
+        baseline_size is None
+        or exact_boundary_size is None
+        or any(size is None for size in supported_sizes)
+    ):
+        return None, None
+    concrete_sizes = [size for size in supported_sizes if size is not None]
+    if (
+        not concrete_sizes
+        or len(set(concrete_sizes)) != 1
+        or concrete_sizes[0] <= baseline_size
+        or exact_boundary_size != concrete_sizes[0]
+    ):
+        return None, None
+
+    size_limit = concrete_sizes[0]
+    probe_sizes: list[int] = [exact_boundary_size]
+    for extra_digits in range(2, MAX_DECIMAL_PREFILTER_SLACK_DIGITS + 2):
+        size = _decimal_backing_size(
+            _decimal_size_sentinel(
+                MAX_DECIMAL_REPRESENTATION_DIGITS + extra_digits
+            )
+        )
+        if size is None:
+            return None, None
+        probe_sizes.append(size)
+    if any(
+        later < earlier
+        for earlier, later in zip(probe_sizes, probe_sizes[1:])
+    ):
+        return None, None
+
+    first_growth = next(
+        (
+            extra_digits
+            for extra_digits, size in enumerate(probe_sizes, start=1)
+            if size > size_limit
+        ),
+        None,
+    )
+    if first_growth is None:
+        return None, None
+    return size_limit, first_growth - 1
+
+
+(
+    _DECIMAL_TUPLE_PREFILTER_SIZE_LIMIT,
+    _DECIMAL_TUPLE_PREFILTER_SLACK_DIGITS,
+) = _calibrate_decimal_tuple_prefilter()
+
+
+def _materialize_decimal_tuple(value: Decimal) -> DecimalTuple:
+    """Materialize a Decimal tuple only after the backing-size guard."""
+    return Decimal.as_tuple(value)
+
+
+def _bounded_decimal_tuple(value: Decimal) -> DecimalTuple:
+    """Return an exact bounded tuple, failing closed before proportional work."""
+    size = _decimal_backing_size(value)
+    if (
+        _DECIMAL_TUPLE_PREFILTER_SIZE_LIMIT is None
+        or size is None
+        or size > _DECIMAL_TUPLE_PREFILTER_SIZE_LIMIT
+    ):
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+    value_tuple = _materialize_decimal_tuple(value)
+    if len(value_tuple.digits) > MAX_DECIMAL_REPRESENTATION_DIGITS:
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+    return value_tuple
 
 
 # Only keys that ALSO have a SETTING_CONSTRAINTS entry may be written via control.
@@ -165,7 +291,7 @@ def canonical_decimal_text(value: Decimal) -> str:
 
 def _canonical_decimal_text_length(value: Decimal) -> int:
     """Return canonical fixed-text length without allocating that text."""
-    sign, digits, exponent = value.as_tuple()
+    sign, digits, exponent = _bounded_decimal_tuple(value)
     if not isinstance(exponent, int):
         raise ValueError("value must be finite")
     if not any(digits):
@@ -196,11 +322,9 @@ def _normalize_decimal_for_semantics(
     require_canonical: bool = False,
 ) -> Decimal:
     """Return a representation-invariant Decimal within semantic work limits."""
-    sign, digits, exponent = value.as_tuple()
+    sign, digits, exponent = _bounded_decimal_tuple(value)
     if not isinstance(exponent, int):
         raise ValueError("value must be finite")
-    if len(digits) > MAX_DECIMAL_REPRESENTATION_DIGITS:
-        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
     if not any(digits):
         return Decimal(0)
 
@@ -229,7 +353,7 @@ def _normalize_decimal_for_semantics(
 
 def _decimal_parts(value: Decimal) -> tuple[int, int]:
     """Return signed coefficient and base-10 exponent without using context."""
-    sign, digits, exponent = value.as_tuple()
+    sign, digits, exponent = _bounded_decimal_tuple(value)
     if not isinstance(exponent, int):
         raise ValueError("value must be finite")
     coefficient = 0
@@ -240,7 +364,7 @@ def _decimal_parts(value: Decimal) -> tuple[int, int]:
 
 def _is_integral_decimal(value: Decimal) -> bool:
     """Return exact integrality from the Decimal tuple."""
-    _sign, digits, exponent = value.as_tuple()
+    _sign, digits, exponent = _bounded_decimal_tuple(value)
     if not isinstance(exponent, int):
         return False
     if not any(digits) or exponent >= 0:

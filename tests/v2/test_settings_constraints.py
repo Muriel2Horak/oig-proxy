@@ -167,6 +167,209 @@ def test_normalizes_compact_extreme_zero_before_alignment(
     assert result == SettingValueResult(True, "0", "")
 
 
+def _install_tuple_materialization_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    *forbidden: Decimal,
+) -> list[Decimal]:
+    materialized: list[Decimal] = []
+
+    def materialize(value: Decimal):
+        if any(value is candidate for candidate in forbidden):
+            raise AssertionError("oversized Decimal tuple must not materialize")
+        materialized.append(value)
+        return Decimal.as_tuple(value)
+
+    monkeypatch.setattr(
+        settings_module,
+        "_materialize_decimal_tuple",
+        materialize,
+        raising=False,
+    )
+    return materialized
+
+
+def test_oversized_exact_decimal_rejects_before_tuple_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supported = Decimal("1")
+    oversized = Decimal("9" * 10_000)
+    materialized = _install_tuple_materialization_probe(
+        monkeypatch,
+        oversized,
+    )
+
+    try:
+        oversized_result = validate_constraint_value(
+            oversized,
+            SettingConstraint(),
+        )
+    except AssertionError as error:
+        pytest.fail(str(error))
+    supported_result = validate_constraint_value(supported, SettingConstraint())
+
+    assert oversized_result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+    assert all(value is not oversized for value in materialized)
+    assert any(value is supported for value in materialized)
+    assert supported_result == SettingValueResult(True, "1", "")
+
+
+def test_canonical_decimal_rejects_oversize_before_tuple_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supported = Decimal("1")
+    oversized = Decimal("9" * 10_000)
+    materialized = _install_tuple_materialization_probe(
+        monkeypatch,
+        oversized,
+    )
+
+    try:
+        with pytest.raises(ValueError, match="numeric value exceeds work limits"):
+            canonical_decimal_text(oversized)
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert canonical_decimal_text(supported) == "1"
+    assert all(value is not oversized for value in materialized)
+    assert any(value is supported for value in materialized)
+
+
+@pytest.mark.parametrize("member", ["min_value", "max_value", "step"])
+def test_oversized_exact_decimal_constraint_rejects_before_tuple_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+    member: str,
+) -> None:
+    supported = Decimal("1")
+    oversized = Decimal("9" * 10_000)
+    materialized = _install_tuple_materialization_probe(
+        monkeypatch,
+        oversized,
+    )
+    supported_constraint = SettingConstraint(**{member: supported})
+    oversized_constraint = SettingConstraint(**{member: oversized})
+
+    try:
+        supported_result = validate_constraint_value(
+            Decimal("1"),
+            supported_constraint,
+        )
+        oversized_result = validate_constraint_value(
+            Decimal("1"),
+            oversized_constraint,
+        )
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert supported_result == SettingValueResult(True, "1", "")
+    assert any(value is supported for value in materialized)
+    assert oversized_result == SettingValueResult(
+        False, None, "setting constraint is invalid"
+    )
+    assert all(value is not oversized for value in materialized)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (Decimal("1" + "0" * 295 + "E-295"), "1"),
+        (Decimal("-1" + "0" * 295 + "E-295"), "-1"),
+        (Decimal("0." + "1" + "0" * 295), "0.1"),
+        (Decimal((0, (1,) + (0,) * 295, -295)), "1"),
+    ],
+    ids=["positive", "negative", "fractional", "tuple-constructed"],
+)
+def test_every_supported_296_digit_decimal_shape_reaches_exact_tuple_check(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: Decimal,
+    expected: str,
+) -> None:
+    materialized = _install_tuple_materialization_probe(monkeypatch)
+
+    result = validate_constraint_value(raw, SettingConstraint())
+
+    assert any(value is raw for value in materialized)
+    assert result == SettingValueResult(True, expected, "")
+
+
+def test_297_digit_decimal_rejects_through_exact_tuple_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = Decimal("1" + "0" * 296 + "E-296")
+    materialized = _install_tuple_materialization_probe(monkeypatch)
+
+    result = validate_constraint_value(raw, SettingConstraint())
+
+    assert any(value is raw for value in materialized)
+    assert result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+def test_decimal_prefilter_rejects_at_calibrated_slack_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slack = getattr(
+        settings_module,
+        "_DECIMAL_TUPLE_PREFILTER_SLACK_DIGITS",
+        None,
+    )
+    assert type(slack) is int  # pylint: disable=unidiomatic-typecheck
+    assert 1 <= slack <= settings_module.MAX_DECIMAL_PREFILTER_SLACK_DIGITS
+    last_tuple_checked = Decimal(
+        "9" * (settings_module.MAX_DECIMAL_REPRESENTATION_DIGITS + slack)
+    )
+    first_prefiltered = Decimal(
+        "9" * (settings_module.MAX_DECIMAL_REPRESENTATION_DIGITS + slack + 1)
+    )
+    materialized = _install_tuple_materialization_probe(
+        monkeypatch,
+        first_prefiltered,
+    )
+
+    assert validate_constraint_value(
+        last_tuple_checked,
+        SettingConstraint(),
+    ) == SettingValueResult(False, None, "numeric value exceeds work limits")
+    try:
+        first_result = validate_constraint_value(
+            first_prefiltered,
+            SettingConstraint(),
+        )
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert any(value is last_tuple_checked for value in materialized)
+    assert all(value is not first_prefiltered for value in materialized)
+    assert first_result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+def test_decimal_prefilter_fails_closed_without_trustworthy_size_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = Decimal("1")
+    materialized = _install_tuple_materialization_probe(monkeypatch, raw)
+    monkeypatch.setattr(
+        settings_module,
+        "_decimal_backing_size",
+        lambda _value: None,
+        raising=False,
+    )
+
+    try:
+        result = validate_constraint_value(raw, SettingConstraint())
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert not materialized
+    assert result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
 def test_rejects_129_significant_digit_numeric_text() -> None:
     raw = "9" * 129
 
