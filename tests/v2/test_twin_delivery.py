@@ -78,15 +78,18 @@ async def test_deliver_pending_drops_after_inflight_timeout() -> None:
 
 
 def test_build_setting_frame_format() -> None:
-    frame = build_setting_frame(
+    rendered = build_setting_frame(
         device_id="2206237016",
-        table="tbl_box_prms",
-        key="MODE",
-        value=1,
-        id_set=844979473,
-        msg_id=12345678,
+        table_name="tbl_box_prms",
+        item_name="MODE",
+        value_text="1",
+        wire_id=12345678,
+        wire_id_set=844979473,
+        wire_dt="11.10.1996 22:31:13",
+        tsec_text="2026-08-06 08:11:13",
+        ver_text="00042",
     )
-    frame_str = frame.decode("utf-8")
+    frame_str = rendered.wire_frame.decode("utf-8")
     assert "<ID>12345678</ID>" in frame_str
     assert "<ID_Device>2206237016</ID_Device>" in frame_str
     assert "<ID_Set>844979473</ID_Set>" in frame_str
@@ -98,9 +101,9 @@ def test_build_setting_frame_format() -> None:
     assert "<ID_Server>9</ID_Server>" in frame_str
     assert "<mytimediff>0</mytimediff>" in frame_str
     assert "<Reason>Setting</Reason>" in frame_str
-    assert "<ver>" in frame_str and "</ver>" in frame_str
-    assert "<TSec>" in frame_str and "</TSec>" in frame_str
-    assert "<DT>" in frame_str and "</DT>" in frame_str
+    assert "<ver>00042</ver>" in frame_str
+    assert "<TSec>2026-08-06 08:11:13</TSec>" in frame_str
+    assert "<DT>11.10.1996 22:31:13</DT>" in frame_str
     assert "<CRC>" in frame_str and "</CRC>" in frame_str
     assert frame_str.endswith("\r\n")
 

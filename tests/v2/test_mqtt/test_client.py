@@ -6,13 +6,16 @@ from __future__ import annotations
 # pyright: reportMissingImports=false
 
 import asyncio
+from decimal import Decimal
 import json
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
 # sys.path nastaven v conftest.py
+from mqtt import client as mqtt_client
 from mqtt.client import MQTTClient
+from settings_constraints import SettingConstraint
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +244,43 @@ def test_send_discovery_creates_number_command_entity_for_whitelisted_setting():
     assert control_payload["min"] == 20
     assert control_payload["max"] == 100
     assert control_payload["step"] == 1
+    assert type(control_payload["min"]) is int
+    assert type(control_payload["max"]) is int
+    assert type(control_payload["step"]) is int
+
+
+def test_send_discovery_projects_fractional_decimal_constraint_as_json_numbers(monkeypatch):
+    c = make_client(namespace="oig_local")
+    mock_paho = inject_mock_paho(c)
+    monkeypatch.setitem(
+        mqtt_client.CONTROL_WRITE_WHITELIST,
+        "tbl_decimal_test",
+        {"TARGET"},
+    )
+    monkeypatch.setitem(
+        mqtt_client.SETTING_CONSTRAINTS,
+        ("tbl_decimal_test", "TARGET"),
+        SettingConstraint(
+            min_value=Decimal("0.1"),
+            max_value=Decimal("1.5"),
+            step=Decimal("0.05"),
+        ),
+    )
+
+    assert c.send_discovery(
+        device_id="DEV01",
+        table="tbl_decimal_test",
+        sensor_key="TARGET",
+        sensor_name="Decimal target",
+    ) is True
+
+    control_payload = json.loads(mock_paho.publish.call_args[0][1])
+    assert control_payload["min"] == 0.1
+    assert control_payload["max"] == 1.5
+    assert control_payload["step"] == 0.05
+    assert type(control_payload["min"]) is float
+    assert type(control_payload["max"]) is float
+    assert type(control_payload["step"]) is float
 
 
 def test_send_discovery_creates_switch_for_zero_one_setting_constraint():

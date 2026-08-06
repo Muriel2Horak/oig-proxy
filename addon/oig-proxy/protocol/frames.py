@@ -7,13 +7,17 @@ Extends protocol.frame with higher-level frame builders for local/offline mode.
 
 from __future__ import annotations
 
-import secrets
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+import html
+import re
 
 try:
     from .frame import build_frame, RESULT_ACK, RESULT_END
+    from .crc import crc16_modbus
 except ImportError:
     from frame import build_frame, RESULT_ACK, RESULT_END  # type: ignore[no-redef]
+    from crc import crc16_modbus  # type: ignore[no-redef]
 
 
 def _last_sunday(year: int, month: int) -> datetime:
@@ -72,56 +76,82 @@ def build_end_time_frame() -> bytes:
     return build_frame(inner).encode("utf-8")
 
 
-def build_setting_frame(
-    device_id: str,
-    table: str,
-    key: str,
-    value: str | int | float,
-    id_set: int,
-    msg_id: int | None = None,
-    todo: str = "New",
-    confirm: str = "New",
-) -> bytes:
-    """Sestaví Setting frame pro odeslání do BOXu.
-
-    Args:
-        device_id: ID zařízení
-        table: Název tabulky (např. tbl_box_prms)
-        key: Klíč nastavení (např. MODE)
-        value: Hodnota nastavení
-        id_set: Unikátní ID settingu
-        todo: ToDo příkaz (default "New")
-        confirm: Confirm flag (default "New")
-
-    Returns:
-        Setting frame bytes
-    """
-    _ = todo
-    now_utc = datetime.now(timezone.utc)
-    now_epoch = int(now_utc.timestamp())
-    tsec_utc = (
-        now_utc
-        if now_epoch >= id_set
-        else datetime.fromtimestamp(id_set, tz=timezone.utc)
+def is_xml_1_0_text(text: str) -> bool:
+    """Return whether every code point is allowed by XML 1.0."""
+    return all(
+        char in "\t\n\r"
+        or "\x20" <= char <= "\ud7ff"
+        or "\ue000" <= char <= "\ufffd"
+        or "\U00010000" <= char <= "\U0010ffff"
+        for char in text
     )
-    setting_dt_cz = czech_local_datetime_from_epoch(id_set)
-    if msg_id is None:
-        msg_id = secrets.randbelow(1_000_000) + 14_000_000
-    ver = secrets.randbelow(65_535)
+
+
+def escape_xml_text(text: str) -> str:
+    """Escape one dynamic XML text-node value exactly once."""
+    return html.escape(text, quote=True)
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedSettingFrame:
+    """Serialized Setting bytes with their CRC and exact wire length."""
+
+    wire_frame: bytes
+    crc_text: str
+    wire_length: int
+
+
+def build_setting_frame(
+    *,
+    device_id: str,
+    table_name: str,
+    item_name: str,
+    value_text: str,
+    wire_id: int,
+    wire_id_set: int,
+    wire_dt: str,
+    tsec_text: str,
+    ver_text: str,
+) -> RenderedSettingFrame:  # pylint: disable=too-many-arguments
+    """Render one deterministic, XML-safe Setting wire frame."""
+    dynamic = (device_id, table_name, item_name, value_text, wire_dt, tsec_text)
+    if not all(isinstance(text, str) and is_xml_1_0_text(text) for text in dynamic):
+        raise ValueError("dynamic Setting text is not valid XML 1.0")
+    if (
+        not isinstance(ver_text, str)
+        or not re.fullmatch(r"[0-9]{5}", ver_text)
+        or int(ver_text) > 65535
+    ):
+        raise ValueError("ver_text must be a zero-padded uint16 decimal")
+    for field_name, field_value in (
+        ("wire_id", wire_id),
+        ("wire_id_set", wire_id_set),
+    ):
+        if isinstance(field_value, bool) or not isinstance(field_value, int) or field_value < 0:
+            raise ValueError(f"{field_name} must be a non-negative integer")
+
     inner = (
-        f"<ID>{msg_id}</ID>"
-        f"<ID_Device>{device_id}</ID_Device>"
-        f"<ID_Set>{id_set}</ID_Set>"
+        f"<ID>{wire_id}</ID>"
+        f"<ID_Device>{escape_xml_text(device_id)}</ID_Device>"
+        f"<ID_Set>{wire_id_set}</ID_Set>"
         "<ID_SubD>0</ID_SubD>"
-        f"<DT>{setting_dt_cz.strftime('%d.%m.%Y %H:%M:%S')}</DT>"
-        f"<NewValue>{value}</NewValue>"
-        f"<Confirm>{confirm}</Confirm>"
-        f"<TblName>{table}</TblName>"
-        f"<TblItem>{key}</TblItem>"
+        f"<DT>{escape_xml_text(wire_dt)}</DT>"
+        f"<NewValue>{escape_xml_text(value_text)}</NewValue>"
+        "<Confirm>New</Confirm>"
+        f"<TblName>{escape_xml_text(table_name)}</TblName>"
+        f"<TblItem>{escape_xml_text(item_name)}</TblItem>"
         "<ID_Server>9</ID_Server>"
         "<mytimediff>0</mytimediff>"
         "<Reason>Setting</Reason>"
-        f"<TSec>{tsec_utc.strftime('%Y-%m-%d %H:%M:%S')}</TSec>"
-        f"<ver>{ver:05d}</ver>"
+        f"<TSec>{escape_xml_text(tsec_text)}</TSec>"
+        f"<ver>{ver_text}</ver>"
+    ).encode("utf-8")
+    crc_text = f"{crc16_modbus(inner):05d}"
+    wire = (
+        b"<Frame>"
+        + inner
+        + b"<CRC>"
+        + crc_text.encode("ascii")
+        + b"</CRC></Frame>\r\n"
     )
-    return build_frame(inner).encode("utf-8")
+    return RenderedSettingFrame(wire, crc_text, len(wire))

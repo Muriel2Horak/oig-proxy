@@ -11,6 +11,7 @@ Paho-mqtt wrapper s:
 
 from __future__ import annotations
 
+from decimal import Decimal
 import json
 import logging
 import re
@@ -20,6 +21,13 @@ from typing import Any, Callable
 from settings_constraints import CONTROL_WRITE_WHITELIST, SETTING_CONSTRAINTS, SettingConstraint
 
 logger = logging.getLogger(__name__)
+
+
+def _json_number_from_decimal(value: Decimal) -> int | float:
+    """Project authoritative Decimal metadata to a JSON-native number."""
+    if value == value.to_integral_value():
+        return int(value)
+    return float(value)
 
 DEVICE_NAMES: dict[str, str] = {
     "inverter": "Střídač",
@@ -383,11 +391,17 @@ class MQTTClient:
                         control_payload["device_class"] = device_class
                     if constraint is not None:
                         if constraint.min_value is not None:
-                            control_payload["min"] = constraint.min_value
+                            control_payload["min"] = _json_number_from_decimal(
+                                constraint.min_value
+                            )
                         if constraint.max_value is not None:
-                            control_payload["max"] = constraint.max_value
+                            control_payload["max"] = _json_number_from_decimal(
+                                constraint.max_value
+                            )
                         if constraint.step is not None:
-                            control_payload["step"] = constraint.step
+                            control_payload["step"] = _json_number_from_decimal(
+                                constraint.step
+                            )
                 elif control_component == "switch":
                     control_payload["payload_on"] = 1
                     control_payload["payload_off"] = 0

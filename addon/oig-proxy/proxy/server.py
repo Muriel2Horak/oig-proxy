@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,11 @@ try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
     from ..protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name
-    from ..protocol.frames import build_getactual_frame, build_setting_frame
+    from ..protocol.frames import (
+        build_getactual_frame,
+        build_setting_frame,
+        czech_local_datetime_from_epoch,
+    )
     from ..protocol.parser import parse_xml_frame
     from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
@@ -34,7 +40,11 @@ except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
     from protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
-    from protocol.frames import build_getactual_frame, build_setting_frame  # type: ignore[no-redef]
+    from protocol.frames import (  # type: ignore[no-redef]
+        build_getactual_frame,
+        build_setting_frame,
+        czech_local_datetime_from_epoch,
+    )
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
     from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
@@ -728,15 +738,29 @@ class ProxyServer:
                         audit_session_id = session_id or ""
                         next_id_set = self.twin_delivery.next_id_set()
                         next_msg_id = self.twin_delivery.next_msg_id()
-                        setting_frame = build_setting_frame(
-                            device_id=device_id,
-                            table=setting.table,
-                            key=setting.key,
-                            value=setting.value,
-                            id_set=next_id_set,
-                            msg_id=next_msg_id,
+                        now_utc = datetime.now(timezone.utc)
+                        tsec_utc = (
+                            now_utc
+                            if int(now_utc.timestamp()) >= next_id_set
+                            else datetime.fromtimestamp(next_id_set, tz=timezone.utc)
                         )
-                        logger.debug("Setting frame to BOX: %s", setting_frame.decode("utf-8", errors="replace"))
+                        wire_dt = czech_local_datetime_from_epoch(next_id_set)
+                        rendered_setting = build_setting_frame(
+                            device_id=device_id,
+                            table_name=setting.table,
+                            item_name=setting.key,
+                            value_text=str(setting.value),
+                            wire_id=next_msg_id,
+                            wire_id_set=next_id_set,
+                            wire_dt=wire_dt.strftime("%d.%m.%Y %H:%M:%S"),
+                            tsec_text=tsec_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                            ver_text=f"{secrets.randbelow(65_536):05d}",
+                        )
+                        setting_frame = rendered_setting.wire_frame
+                        logger.debug(
+                            "Setting frame to BOX: %s",
+                            setting_frame.decode("utf-8", errors="replace"),
+                        )
                         try:
                             box_writer.write(setting_frame)
                             await box_writer.drain()
