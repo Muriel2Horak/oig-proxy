@@ -7,6 +7,23 @@ from decimal import Decimal, DecimalException
 from typing import Any, Iterator
 
 
+# Synchronous control validation runs on the MQTT/event-loop path. These limits
+# sit far above every current allowlisted value (largest: 100000) and the
+# 30-digit exact-arithmetic regression while bounding parsing, integer scaling,
+# and fixed-format output to a few hundred digits.
+MAX_RAW_NUMERIC_TEXT_LENGTH = 128
+MAX_DECIMAL_COEFFICIENT_DIGITS = 128
+MAX_DECIMAL_EXPONENT = 256
+MAX_DECIMAL_ALIGNMENT_GAP = 256
+MAX_CANONICAL_DECIMAL_TEXT_LENGTH = 256
+MAX_INTEGER_BIT_LENGTH = 426
+NUMERIC_WORK_LIMIT_REASON = "numeric value exceeds work limits"
+
+
+class _NumericWorkLimitError(ValueError):
+    """Raised before numeric work would exceed the synchronous budget."""
+
+
 # Only keys that ALSO have a SETTING_CONSTRAINTS entry may be written via control.
 # Range-less keys (grid voltage/frequency limits, P_CAL_*, OFFSET, GRID_PV_*, ...)
 # are intentionally excluded until validated bounds exist, so they cannot be
@@ -126,8 +143,62 @@ def canonical_decimal_text(value: Decimal) -> str:
         raise ValueError("value must be finite")
     if value == 0:
         return "0"
+    _ensure_decimal_work_bounds(value, require_canonical=True)
     fixed = format(value, "f")
-    return fixed.rstrip("0").rstrip(".") if "." in fixed else fixed
+    canonical = fixed.rstrip("0").rstrip(".") if "." in fixed else fixed
+    if len(canonical) > MAX_CANONICAL_DECIMAL_TEXT_LENGTH:
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+    return canonical
+
+
+def _canonical_decimal_text_length(value: Decimal) -> int:
+    """Return canonical fixed-text length without allocating that text."""
+    sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("value must be finite")
+    if not any(digits):
+        return 1
+
+    digit_count = len(digits)
+    if exponent < 0:
+        trailing_zeros = 0
+        for digit in reversed(digits):
+            if digit != 0 or trailing_zeros == -exponent:
+                break
+            trailing_zeros += 1
+        digit_count -= trailing_zeros
+        exponent += trailing_zeros
+
+    sign_length = int(bool(sign))
+    if exponent >= 0:
+        return sign_length + digit_count + exponent
+    point_position = digit_count + exponent
+    if point_position > 0:
+        return sign_length + digit_count + 1
+    return sign_length + 2 + (-point_position) + digit_count
+
+
+def _ensure_decimal_work_bounds(
+    value: Decimal,
+    *,
+    require_canonical: bool = False,
+) -> None:
+    """Reject a Decimal tuple before coefficient, exponent, or format work."""
+    _sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("value must be finite")
+    if len(digits) > MAX_DECIMAL_COEFFICIENT_DIGITS:
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+    if not any(digits):
+        return
+    if abs(exponent) > MAX_DECIMAL_EXPONENT:
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+    if (
+        require_canonical
+        and _canonical_decimal_text_length(value)
+        > MAX_CANONICAL_DECIMAL_TEXT_LENGTH
+    ):
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
 
 
 def _decimal_parts(value: Decimal) -> tuple[int, int]:
@@ -163,8 +234,13 @@ def _constraint_is_valid(constraint: SettingConstraint) -> bool:
         for value in values
     ):
         return False
-    if constraint.step is not None and _decimal_parts(constraint.step)[0] == 0:
-        return False
+    for bound in (constraint.min_value, constraint.max_value):
+        if bound is not None:
+            _ensure_decimal_work_bounds(bound, require_canonical=True)
+    if constraint.step is not None:
+        _ensure_decimal_work_bounds(constraint.step)
+        if _decimal_parts(constraint.step)[0] <= 0:
+            return False
     if (
         constraint.min_value is not None
         and constraint.max_value is not None
@@ -183,6 +259,12 @@ def _is_exact_step_aligned(
     value_coefficient, value_exponent = _decimal_parts(value)
     origin_coefficient, origin_exponent = _decimal_parts(origin)
     step_coefficient, step_exponent = _decimal_parts(step)
+    if (
+        max(value_exponent, origin_exponent, step_exponent)
+        - min(value_exponent, origin_exponent, step_exponent)
+        > MAX_DECIMAL_ALIGNMENT_GAP
+    ):
+        raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
     common_exponent = min(value_exponent, origin_exponent, step_exponent)
     value_integer = value_coefficient * 10 ** (value_exponent - common_exponent)
     origin_integer = origin_coefficient * 10 ** (origin_exponent - common_exponent)
@@ -190,7 +272,7 @@ def _is_exact_step_aligned(
     return (value_integer - origin_integer) % abs(step_integer) == 0
 
 
-def _parse_decimal_text(  # pylint: disable=too-many-return-statements
+def _parse_decimal_text(  # pylint: disable=too-many-branches,too-many-return-statements
     value: object,
     constraint: SettingConstraint,
 ) -> Decimal | None:
@@ -200,7 +282,7 @@ def _parse_decimal_text(  # pylint: disable=too-many-return-statements
             return None
         return Decimal(int(value))
     if isinstance(value, str):
-        raw = value.strip()
+        raw = str.__str__(value).strip()
         if not raw:
             return None
         if constraint.boolean_aliases:
@@ -212,30 +294,58 @@ def _parse_decimal_text(  # pylint: disable=too-many-return-statements
             }.get(raw.lower())
             if alias is not None:
                 return alias
+        if len(raw) > MAX_RAW_NUMERIC_TEXT_LENGTH:
+            raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
         text = raw
-    elif isinstance(value, (int, float, Decimal)):
-        text = str(value)
+    elif isinstance(value, Decimal):
+        if value.is_finite():
+            _ensure_decimal_work_bounds(value)
+        sign, digits, exponent = value.as_tuple()
+        if not isinstance(exponent, int):
+            return value
+        return Decimal((sign, digits, exponent))
+    elif isinstance(value, int):
+        if int.bit_length(value) > MAX_INTEGER_BIT_LENGTH:
+            raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+        text = str(int(value))
+        if len(text) > MAX_RAW_NUMERIC_TEXT_LENGTH:
+            raise _NumericWorkLimitError(NUMERIC_WORK_LIMIT_REASON)
+    elif isinstance(value, float):
+        text = str(float(value))
     else:
         return None
     try:
-        return Decimal(text)
+        parsed = Decimal(text)
     except (DecimalException, ValueError):
         return None
+    if parsed.is_finite():
+        _ensure_decimal_work_bounds(parsed)
+    return parsed
 
 
+# pylint: disable=too-many-branches,too-many-return-statements
 def validate_constraint_value(
     value: object,
     constraint: SettingConstraint,
-) -> SettingValueResult:  # pylint: disable=too-many-return-statements
+) -> SettingValueResult:
     """Validate and canonicalize one value against an exact constraint."""
     if isinstance(value, bool) and not constraint.boolean_aliases:
         return SettingValueResult(False, None, "boolean alias is not allowed")
 
-    parsed = _parse_decimal_text(value, constraint)
+    try:
+        parsed = _parse_decimal_text(value, constraint)
+    except _NumericWorkLimitError:
+        return SettingValueResult(False, None, NUMERIC_WORK_LIMIT_REASON)
     if parsed is None:
         return SettingValueResult(False, None, "value is not numeric")
     if not parsed.is_finite():
         return SettingValueResult(False, None, "value must be finite")
+    if parsed.is_zero():
+        parsed = Decimal(0)
+    try:
+        _ensure_decimal_work_bounds(parsed, require_canonical=True)
+    except _NumericWorkLimitError:
+        return SettingValueResult(False, None, NUMERIC_WORK_LIMIT_REASON)
     try:
         constraint_valid = _constraint_is_valid(constraint)
     except (ArithmeticError, TypeError, ValueError):
@@ -252,15 +362,31 @@ def validate_constraint_value(
         return SettingValueResult(False, None, f"value above max ({maximum})")
 
     origin = constraint.min_value if constraint.min_value is not None else Decimal(0)
+    if origin.is_zero():
+        origin = Decimal(0)
     if constraint.step is not None:
-        try:
-            aligned = _is_exact_step_aligned(parsed, origin, constraint.step)
-        except (ArithmeticError, TypeError, ValueError):
-            return SettingValueResult(False, None, "setting constraint is invalid")
+        if parsed == origin:
+            aligned = True
+        else:
+            try:
+                aligned = _is_exact_step_aligned(parsed, origin, constraint.step)
+            except _NumericWorkLimitError:
+                return SettingValueResult(False, None, NUMERIC_WORK_LIMIT_REASON)
+            except (ArithmeticError, TypeError, ValueError):
+                return SettingValueResult(False, None, "setting constraint is invalid")
         if not aligned:
             return SettingValueResult(False, None, "value is not aligned to step")
 
-    return SettingValueResult(True, canonical_decimal_text(parsed), "")
+    try:
+        value_text = canonical_decimal_text(parsed)
+    except _NumericWorkLimitError:
+        return SettingValueResult(False, None, NUMERIC_WORK_LIMIT_REASON)
+    except (ArithmeticError, TypeError, ValueError):
+        if parsed.is_finite():
+            return SettingValueResult(False, None, "setting constraint is invalid")
+        return SettingValueResult(False, None, "value must be finite")
+    return SettingValueResult(True, value_text, "")
+# pylint: enable=too-many-branches,too-many-return-statements
 
 
 def validate_setting_value(

@@ -133,7 +133,8 @@ def build_setting_frame(
         ("wire_id", wire_id),
         ("wire_id_set", wire_id_set),
     ):
-        if isinstance(field_value, bool) or not isinstance(field_value, int) or field_value < 0:
+        # Exact built-in ints prevent subclass formatting hooks from reaching XML.
+        if type(field_value) is not int or field_value < 0:  # pylint: disable=unidiomatic-typecheck
             raise ValueError(f"{field_name} must be a non-negative integer")
 
     try:

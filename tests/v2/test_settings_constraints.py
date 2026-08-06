@@ -16,6 +16,7 @@ from decimal import (
 )
 
 import pytest
+import settings_constraints as settings_module
 
 from settings_constraints import (
     CONTROL_WRITE_WHITELIST,
@@ -130,6 +131,91 @@ def test_step_alignment_is_exact_for_coefficients_larger_than_context_precision(
     ) == SettingValueResult(False, None, "value is not aligned to step")
 
 
+@pytest.mark.parametrize("raw", ["1E+257", "1E-257"])
+def test_rejects_compact_nonzero_exponents_beyond_work_limit(raw: str) -> None:
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+def test_rejects_alignment_exponent_gap_before_integer_scaling() -> None:
+    constraint = SettingConstraint(step=Decimal("1E+200"))
+
+    assert validate_constraint_value("1E-200", constraint) == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+@pytest.mark.parametrize("raw", ["0E+1000000", "0E-1000000"])
+def test_normalizes_compact_extreme_zero_before_alignment(
+    monkeypatch,
+    raw: str,
+) -> None:
+    def unexpected_alignment(*_args: object) -> bool:
+        raise AssertionError("zero must not enter exponent scaling")
+
+    monkeypatch.setattr(
+        settings_module,
+        "_is_exact_step_aligned",
+        unexpected_alignment,
+    )
+    try:
+        result = validate_setting_value("tbl_boiler_prms", "P_SET", raw)
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(True, "0", "")
+
+
+def test_rejects_raw_numeric_text_beyond_work_limit() -> None:
+    raw = "9" * 129
+
+    assert validate_constraint_value(raw, SettingConstraint()) == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+class _HugeDecimalWithoutStringConversion(Decimal):  # pylint: disable=too-few-public-methods
+    def __str__(self) -> str:
+        raise AssertionError("oversized Decimal must be rejected before string conversion")
+
+
+def test_rejects_large_decimal_coefficient_before_string_conversion() -> None:
+    raw = _HugeDecimalWithoutStringConversion("9" * 129)
+
+    try:
+        result = validate_constraint_value(raw, SettingConstraint())
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+class _HugeIntWithoutStringConversion(int):
+    def __str__(self) -> str:
+        raise AssertionError("oversized int must be rejected before string conversion")
+
+
+def test_rejects_large_int_before_decimal_text_conversion() -> None:
+    raw = _HugeIntWithoutStringConversion(10**200)
+
+    try:
+        result = validate_constraint_value(raw, SettingConstraint())
+    except AssertionError as error:
+        pytest.fail(str(error))
+
+    assert result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
+
+
+def test_canonical_decimal_text_rejects_output_beyond_work_limit() -> None:
+    with pytest.raises(ValueError, match="numeric value exceeds work limits"):
+        canonical_decimal_text(Decimal("1E+256"))
+
+
 def test_step_alignment_ignores_precision_exponent_and_trap_context() -> None:
     with localcontext() as context:
         context.prec = 1
@@ -200,15 +286,43 @@ def test_malformed_constraint_returns_stable_rejection(
     assert result == SettingValueResult(False, None, "setting constraint is invalid")
 
 
+@pytest.mark.parametrize(
+    "step",
+    [
+        Decimal("-1"),
+        Decimal("-0.1"),
+        Decimal("-1E-100"),
+        Decimal("-0"),
+        Decimal("-0E+1000000"),
+    ],
+)
+def test_rejects_every_non_positive_step_under_hostile_context(step: Decimal) -> None:
+    with localcontext() as context:
+        context.prec = 1
+        context.Emax = 1
+        context.Emin = -1
+        context.traps[InvalidOperation] = True
+        context.traps[Overflow] = True
+        context.traps[Underflow] = True
+        try:
+            result = validate_constraint_value("2", SettingConstraint(step=step))
+        except DecimalException as error:
+            pytest.fail(f"Decimal context signal escaped: {type(error).__name__}")
+
+    assert result == SettingValueResult(False, None, "setting constraint is invalid")
+
+
 @pytest.mark.parametrize("raw", ["1.5", Decimal("2.0001"), "1E-100"])
 def test_integer_constraint_rejects_fractional_decimal_extremes(raw: object) -> None:
     result = validate_constraint_value(raw, SettingConstraint(integer_only=True))
     assert result == SettingValueResult(False, None, "value must be integer")
 
 
-def test_extreme_exponent_is_rejected_by_range_before_step_arithmetic() -> None:
+def test_extreme_exponent_is_rejected_by_work_limit_before_range_arithmetic() -> None:
     result = validate_setting_value("tbl_boiler_prms", "P_SET", "1E+100000")
-    assert result == SettingValueResult(False, None, "value above max (10000)")
+    assert result == SettingValueResult(
+        False, None, "numeric value exceeds work limits"
+    )
 
 
 def test_canonicalizes_decimal_without_exponent() -> None:

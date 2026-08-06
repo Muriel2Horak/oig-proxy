@@ -16,6 +16,14 @@ class _HostileReplaceText(str):
         return "\ud800"
 
 
+class _HostileWireInt(int):
+    def __format__(self, _format_spec: str) -> str:
+        return "1</ID><Injected>yes</Injected><ID>"
+
+    def __str__(self) -> str:
+        return "1</ID><Injected>yes</Injected><ID>"
+
+
 def independent_modbus_crc(data: bytes) -> int:
     """Return CRC-16/MODBUS without using production CRC helpers."""
     crc = 0xFFFF
@@ -171,6 +179,12 @@ def test_build_setting_frame_rejects_invalid_versions(ver_text: object) -> None:
 def test_build_setting_frame_rejects_invalid_wire_ids(field: str, value: object) -> None:
     with pytest.raises(ValueError, match=f"{field} must be a non-negative integer"):
         _setting_frame(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["wire_id", "wire_id_set"])
+def test_build_setting_frame_rejects_hostile_int_subclasses(field: str) -> None:
+    with pytest.raises(ValueError, match=f"{field} must be a non-negative integer"):
+        _setting_frame(**{field: _HostileWireInt(1)})
 
 
 def test_build_setting_frame_accepts_zero_and_large_integer_wire_ids() -> None:
