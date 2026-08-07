@@ -1,229 +1,91 @@
-# OIG Proxy v2: Configuration Reference
+# OIG Proxy v2.2 Configuration Reference
 
-All configuration is loaded from environment variables at startup. In the Home Assistant add-on, these map to fields in the add-on **Configuration** tab.
-
-The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). The `config.json` schema defines the HA UI form, allowed types, and the option names.
-
----
+Configuration is sampled once at add-on startup. Save changes and restart the add-on to apply them. The Home Assistant add-on exposes exactly 30 add-on parameters; `addon/oig-proxy/config.json` is the authoritative UI schema and `addon/oig-proxy/run` maps it to environment variables.
 
 ## Parameter Table
 
-| Parameter | Env var | Type | Default | Description |
-|---|---|---|---|---|
-| `target_server` | `TARGET_SERVER` | str | `bridge.oigpower.cz` | Cloud hostname the OIG Box normally connects to |
-| `target_port` | `TARGET_PORT` | int | `5710` | Cloud TCP port |
-| `proxy_port` | `PROXY_PORT` | int | `5710` | Local TCP port the proxy listens on for Box connections |
-| `proxy_mode` | `PROXY_MODE` | enum | `online` | Operating mode: `online`, `hybrid`, or `offline` |
-| `cloud_ack_timeout` | `CLOUD_ACK_TIMEOUT` | float | `30.0` | Seconds to wait for a cloud ACK before treating the request as failed |
-| `local_getactual_enabled` | `LOCAL_GETACTUAL_ENABLED` | bool? | `false` | Opt-in proxy-injected `GetActual` frames for boxes that do not receive cloud `GetActual` often enough |
-| `local_getactual_interval_s` | `LOCAL_GETACTUAL_INTERVAL_S` | int? | `10` | Seconds between proxy-injected `GetActual` frames when local GetActual is enabled; values below 10 are clamped to 10 |
-| `hybrid_retry_interval` | `HYBRID_RETRY_INTERVAL` | int | `60` | Seconds between cloud reconnection attempts in HYBRID offline state |
-| `hybrid_fail_threshold` | `HYBRID_FAIL_THRESHOLD` | int | `1` | Number of consecutive cloud failures before HYBRID switches to offline |
-| `mqtt_host` | `MQTT_HOST` | str | `core-mosquitto` | MQTT broker hostname |
-| `mqtt_port` | `MQTT_PORT` | int | `1883` | MQTT broker port |
-| `mqtt_username` | `MQTT_USERNAME` | str | `` | MQTT username (empty = no auth) |
-| `mqtt_password` | `MQTT_PASSWORD` | str | `` | MQTT password |
-| `ha_ip` | `HA_IP` | str? | `` | HA LAN IP for dnsmasq override (empty = auto-detect) |
-| `dns_override_ip` | `DNS_OVERRIDE_IP` | str? | `` | Explicit DNS target IP for the configured `target_server` override (takes priority over `ha_ip`) |
-| `dns_upstream` | `DNS_UPSTREAM` | str? | `8.8.8.8` | Upstream DNS server for dnsmasq |
-| `log_level` | `LOG_LEVEL` | enum | `INFO` | Log verbosity: `INFO`, `DEBUG`, or `TRACE` |
-| `proxy_status_interval` | `PROXY_STATUS_INTERVAL` | int | `60` | Seconds between periodic proxy status MQTT publishes |
-| `full_refresh_interval_hours` | `FULL_REFRESH_INTERVAL_HOURS` | int | `24` | Hours between forced HA discovery re-publish (0 = disabled) |
-| `capture_payloads` | `CAPTURE_PAYLOADS` | bool? | `false` | Save all parsed frames to `/data/payloads.db` for debugging |
-| `capture_raw_bytes` | `CAPTURE_RAW_BYTES` | bool? | `false` | Include raw base64-encoded bytes in the capture database |
-| `capture_retention_days` | `CAPTURE_RETENTION_DAYS` | int? | `7` | Days to keep captured frames before pruning |
-| `capture_pcap` | `CAPTURE_PCAP` | bool? | `false` | Capture raw TCP traffic to `/data/capture.pcap` using the PCAP recorder |
-| `control_mqtt_enabled` | `CONTROL_MQTT_ENABLED` | bool? | `false` | Enable Twin control MQTT topic (device settings via `oig/{device_id}/control/set`) |
-| `telemetry_enabled` | `TELEMETRY_ENABLED` | bool? | `true` | Enable anonymous operational telemetry |
-| `max_concurrent_connections` | `MAX_CONCURRENT_CONNECTIONS` | int? | `5` | Maximum number of concurrent Box connections the proxy will keep open |
-
-**26 parameters total.**
-
----
-
-## Detailed Descriptions
-
-### `target_server` / `target_port`
-
-The OIG cloud service the proxy forwards traffic to. Change these only if OIG changes their endpoint. Together with `proxy_port`, the proxy acts as a man-in-the-middle: the Box connects to the proxy port, and the proxy opens a separate TCP connection to `target_server:target_port`.
-
-```
-Box ──TCP:5710──> Proxy ──TCP:5710──> bridge.oigpower.cz
-```
-
-The DNS override makes the Box resolve the configured `target_server` to the HA host IP, so it connects to the proxy without any changes on the Box itself. When `target_server` is `bridge.oigpower.cz`, the add-on also keeps a legacy alias for `oigservis.cz` so older installs still land on the proxy.
-
-Changes to `target_server`, `dns_override_ip`, `ha_ip`, or `dns_upstream` are applied on add-on startup, so save the config and restart the add-on after editing these fields.
-
-### `proxy_port`
-
-The TCP port the proxy listens on. Must match the port the Box connects to. Since the Box always connects to port 5710, this should not be changed unless you're running the proxy behind a port-mapping NAT.
-
-The add-on exposes this via `host_network: true`, so the container shares the host's network namespace.
-
-### `proxy_mode`
-
-Controls cloud connectivity behavior. Three options:
-
-- `online`: Always tries to forward to cloud. If the cloud is unavailable, logs an error and drops the Box connection.
-- `hybrid`: Starts online. Falls back to local ACK generation after `hybrid_fail_threshold` consecutive failures. Retries cloud after `hybrid_retry_interval` seconds.
-- `offline`: Never connects to cloud. All Box frames get local ACK responses.
-
-See `proxy_modes.md` for full state machine details.
-
-### `cloud_ack_timeout`
-
-In seconds (float). How long the proxy waits for a response from the cloud for a given Box request. If the cloud doesn't respond in time, `ModeManager.record_failure()` is called.
-
-Note: in `config.json` the default is 1800.0 (30 minutes), which is the conservative setting for the add-on. The Python `Config` class defaults to 30.0. If you're testing responsiveness of the HYBRID failover, set this lower.
-
-### `local_getactual_enabled` / `local_getactual_interval_s`
-
-These options are an opt-in workaround for boxes/FW combinations where the cloud does not send `GetActual` often enough while the box is otherwise online. When enabled, the proxy sends an ACK frame with `<ToDo>GetActual</ToDo>` to the connected box immediately after the TCP session is active and then every `local_getactual_interval_s` seconds.
-
-The default is disabled, so upgrades do not change existing behavior. The default interval is 10 seconds and values below 10 seconds are clamped to 10 seconds. Changing either option requires saving the HA add-on configuration and restarting the add-on.
-
-### `hybrid_retry_interval`
-
-How long (seconds) the proxy waits in the offline state before attempting a cloud reconnection. After the interval, the next Box connection attempt will try the cloud first. If it succeeds, `ModeManager.record_success()` flips back to ONLINE. If it fails, the offline window restarts.
-
-### `hybrid_fail_threshold`
-
-Number of consecutive cloud connection failures (or timeouts) before HYBRID enters offline state. Default is 1, meaning a single failure triggers offline mode. Raise this if you have a flaky connection and want more tolerance before going offline.
-
-### `mqtt_host` / `mqtt_port`
-
-The MQTT broker the proxy publishes sensor data to. In HA, the standard Mosquitto add-on is accessible at `core-mosquitto:1883` from other add-ons. If you're running the proxy outside HA, set these to your broker's address.
-
-### `mqtt_username` / `mqtt_password`
-
-Credentials for MQTT broker authentication. In HA, create a dedicated MQTT user in the Mosquitto add-on configuration. Leave both empty only if your broker allows anonymous access (not recommended in production).
-
-### `ha_ip`
-
-The LAN IP address of your Home Assistant instance. Used by the built-in dnsmasq server (port 53) to override the configured `target_server` DNS record. If left empty, the proxy attempts to auto-detect it. Set this explicitly if auto-detection picks the wrong interface.
-
-Only relevant if you're using the proxy's DNS feature. If your router already handles the DNS override, leave this empty and don't worry about dnsmasq.
-
-### `dns_override_ip`
-
-Optional explicit override target for the built-in dnsmasq mapping (`address=/<target_server>/...`).
-
-Priority order at startup:
-
-1. `dns_override_ip` (if set)
-2. `ha_ip` (if set)
-3. auto-detected host IP
-
-Use this when you want the Box to resolve the configured `target_server` to a non-HA endpoint (for example a NAS relay/sniffer IP) without changing `target_server` forwarding behavior.
-
-### `dns_upstream`
-
-Upstream DNS server for queries that aren't handled by the local override. Default is Google's `8.8.8.8`. Set this to your router's IP if you want LAN names to resolve correctly, or to another trusted resolver.
-
-### `log_level`
-
-Controls Python logging verbosity:
-
-- `INFO`: normal operation messages, connections, mode changes, MQTT publishes
-- `DEBUG`: frame content, sensor map lookups, MQTT discovery decisions
-- `TRACE`: raw bytes, buffer state, very verbose per-frame output
-
-Start with `INFO`. Switch to `DEBUG` when diagnosing specific issues.
-
-### `proxy_status_interval`
-
-The proxy publishes a `proxy_status` JSON payload to MQTT at this interval (seconds). This ensures HA shows current status even after a HA restart (retained topics restore on reconnect, but fresh data requires a new publish). Set to 0 to disable periodic publishing.
-
-### `full_refresh_interval_hours`
-
-How often to re-send all HA discovery messages (hours). Useful if HA restarts and loses entity configuration, though retained discovery topics normally handle this. Set to 0 to disable.
-
-### `capture_payloads`
-
-When enabled, every parsed frame is stored in `/data/payloads.db` (SQLite). Useful for debugging sensor map gaps or protocol analysis. Captures parsed data only (not raw bytes) unless `capture_raw_bytes` is also enabled.
-
-### `capture_raw_bytes`
-
-When enabled alongside `capture_payloads`, the raw base64-encoded frame bytes are included in the capture. Needed for low-level protocol analysis.
-
-### `capture_retention_days`
-
-Automatic pruning of capture database entries older than this many days. Prevents unbounded disk growth.
-
-### `control_mqtt_enabled`
-
-When enabled, the proxy subscribes to `oig/{device_id}/control/set` and accepts JSON settings payloads. These are queued and delivered to the Box on the next `IsNewSet` frame. See `twin.md` for the full flow.
-
-### `telemetry_enabled`
-
-When enabled, the proxy sends anonymous operational metrics to `telemetry.muriel-cz.cz` every 5 minutes. The data includes connection counts, frame rates, HYBRID state transitions, and error patterns. No personal data or sensor values are included.
-
-Set to `false` if you don't want any outbound connections to external services beyond `bridge.oigpower.cz`.
-
----
-
-## Minimal Working Configuration
-
-For a typical Home Assistant add-on setup:
-
-```yaml
-target_server: bridge.oigpower.cz
-target_port: 5710
-proxy_port: 5710
-proxy_mode: hybrid
-mqtt_host: core-mosquitto
-mqtt_port: 1883
-mqtt_username: oig_proxy
-mqtt_password: your_password_here
-log_level: INFO
-hybrid_retry_interval: 60
-hybrid_fail_threshold: 1
-```
-
-If using the proxy's built-in DNS:
-
-```yaml
-ha_ip: 192.168.1.100      # your HA LAN IP
-dns_override_ip: ""       # optional; e.g. 10.0.0.160 for NAS relay
-dns_upstream: 192.168.1.1  # your router
-```
-
----
-
-## Environment Variable Reference
-
-For running outside the HA add-on:
-
-```bash
-export TARGET_SERVER=bridge.oigpower.cz
-export TARGET_PORT=5710
-export PROXY_PORT=5710
-export PROXY_MODE=hybrid
-export MQTT_HOST=localhost
-export MQTT_PORT=1883
-export MQTT_USERNAME=oig
-export MQTT_PASSWORD=secret
-export LOG_LEVEL=INFO
-export HYBRID_RETRY_INTERVAL=60
-export HYBRID_FAIL_THRESHOLD=1
-export TELEMETRY_ENABLED=true
-export PROXY_STATUS_INTERVAL=60
-export SENSOR_MAP_PATH=/data/sensor_map.json
-export LOCAL_GETACTUAL_ENABLED=false
-export LOCAL_GETACTUAL_INTERVAL_S=10
-```
-
-Additional env vars not exposed in the HA config UI:
-
-| Env var | Default | Description |
-|---|---|---|
-| `PROXY_HOST` | `0.0.0.0` | Local bind address |
-| `CLOUD_CONNECT_TIMEOUT` | `10.0` | TCP connect timeout to cloud (seconds) |
-| `MQTT_NAMESPACE` | `oig_local` | MQTT topic prefix |
-| `MQTT_QOS` | `1` | MQTT QoS level |
-| `MQTT_STATE_RETAIN` | `true` | Whether state publishes use retain flag |
-| `PROXY_DEVICE_ID` | `oig_proxy` | Fixed device ID for proxy status entities |
-| `SENSOR_MAP_PATH` | `/data/sensor_map.json` | Path to sensor map file |
-| `TELEMETRY_MQTT_BROKER` | `telemetry.muriel-cz.cz:1883` | Telemetry broker address |
-| `TELEMETRY_INTERVAL_S` | `300` | Telemetry publish interval (seconds) |
+| Parameter | Environment | Default | Purpose |
+|---|---|---:|---|
+| `target_server` | `TARGET_SERVER` | `bridge.oigpower.cz` | Cloud hostname |
+| `target_port` | `TARGET_PORT` | `5710` | Cloud TCP port |
+| `proxy_port` | `PROXY_PORT` | `5710` | BOX-facing TCP port |
+| `proxy_mode` | `PROXY_MODE` | `online` | `online`, `hybrid`, or `offline` |
+| `cloud_ack_timeout` | `CLOUD_ACK_TIMEOUT` | `1800` | Legacy add-on timeout input; see precedence below |
+| `local_getactual_enabled` | `LOCAL_GETACTUAL_ENABLED` | `false` | Opt-in local `GetActual` trigger |
+| `local_getactual_interval_s` | `LOCAL_GETACTUAL_INTERVAL_S` | `10` | Trigger interval; clamped to at least 10 seconds |
+| `hybrid_retry_interval` | `HYBRID_RETRY_INTERVAL` | `60` | Cloud retry interval |
+| `hybrid_fail_threshold` | `HYBRID_FAIL_THRESHOLD` | `1` | Failures before HYBRID degrades |
+| `mqtt_host` | `MQTT_HOST` | `core-mosquitto` | MQTT broker host |
+| `mqtt_port` | `MQTT_PORT` | `1883` | MQTT broker port |
+| `mqtt_username` | `MQTT_USERNAME` | empty | MQTT username |
+| `mqtt_password` | `MQTT_PASSWORD` | empty | MQTT password |
+| `ha_ip` | `HA_IP` | empty | HA address used by DNS override |
+| `dns_override_ip` | `DNS_OVERRIDE_IP` | empty | Explicit DNS override destination |
+| `dns_upstream` | `DNS_UPSTREAM` | `8.8.8.8` | Upstream DNS server |
+| `log_level` | `LOG_LEVEL` | `INFO` | `INFO`, `DEBUG`, or `TRACE` |
+| `proxy_status_interval` | `PROXY_STATUS_INTERVAL` | `60` | Proxy status publish interval |
+| `full_refresh_interval_hours` | `FULL_REFRESH_INTERVAL_HOURS` | `24` | HA discovery refresh interval |
+| `capture_payloads` | `CAPTURE_PAYLOADS` | `false` | Store parsed frame captures |
+| `capture_raw_bytes` | `CAPTURE_RAW_BYTES` | `false` | Store raw base64 frame bytes |
+| `capture_retention_days` | `CAPTURE_RETENTION_DAYS` | `7` | Capture retention |
+| `capture_pcap` | `CAPTURE_PCAP` | `false` | Enable bounded PCAP capture |
+| `control_mqtt_enabled` | `CONTROL_MQTT_ENABLED` | `false` | Enable local-setting ingress |
+| `control_ack_timeout_s` | `CONTROL_ACK_TIMEOUT_S` | `30` | Delivery ACK/NACK deadline |
+| `control_event_timeout_s` | `CONTROL_EVENT_TIMEOUT_S` | `300` | Exact execution-event deadline |
+| `control_command_ttl_s` | `CONTROL_COMMAND_TTL_S` | `900` | Pending command lifetime |
+| `control_max_attempts` | `CONTROL_MAX_ATTEMPTS` | `8` | Hard retry ceiling, clamped to 1–8 |
+| `telemetry_enabled` | `TELEMETRY_ENABLED` | `true` | Anonymous operational telemetry |
+| `max_concurrent_connections` | `MAX_CONCURRENT_CONNECTIONS` | `5` | Concurrent BOX connection limit |
+
+The parameter order above intentionally matches `config.json` so documentation tests detect additions, removals, or reordered UI options.
+
+## Local-control gate and restart behavior
+
+`control_mqtt_enabled` is false by default and accepts only exact `true`/`false` or `1`/`0` environment values. Invalid input fails closed. On every start, including a disabled restart, the runtime opens and validates `/data/twin_queue.db` and performs recovery before it can start a control handler. With the gate disabled it creates no control subscription and performs no local write, but it preserves the database and its terminal/nonterminal history.
+
+Changing the gate or any deadline requires an add-on restart. Runtime MQTT messages cannot enable the feature.
+
+## Deadline precedence and compatibility
+
+For the 2.2.x compatibility window, `CONTROL_ACK_TIMEOUT_S has precedence` whenever it is present. If it is absent, `CLOUD_ACK_TIMEOUT` is accepted as a deprecated local-control ACK timeout and emits a startup warning. If neither exists, the local-control default is 30 seconds. Values must be finite and are clamped to at least one second.
+
+`CONTROL_EVENT_TIMEOUT_S` is the only execution-event deadline; there is no event-timeout alias. `CONTROL_COMMAND_TTL_S` likewise has no legacy alias. `CONTROL_MAX_ATTEMPTS` is parsed as base-10 and clamped to the shipped hard range 1–8.
+
+The add-on UI still defaults `cloud_ack_timeout` to 1800 seconds for legacy installations. The dedicated `control_ack_timeout_s` value is authoritative for local transactions.
+
+## Local-setting storage and failure behavior
+
+`TWIN_DB_PATH` defaults to `/data/twin_queue.db`. It is an internal environment-only path, not an add-on UI field. Startup validates SQLite schema version, integrity, pragmas, transaction accounting, and recovery. A missing or corrupt store, a future schema, a lock or migration error, or inconsistent accounting disables local control instead of recreating or downgrading the database. Cloud forwarding remains transparent when the proxy has not taken ownership of a local dialogue.
+
+`CLOUD_DIALOG_TIMEOUT_S` defaults to 30 seconds and bounds a correlated cloud-first ONLINE/HYBRID `IsNewSet` dialogue. It is separate from the local ACK and execution-event deadlines.
+
+## Modes
+
+- `online`: open the cloud dialogue first. Eligible local work may replace only its correlated cloud `END`; otherwise every cloud byte is forwarded unchanged.
+- `hybrid`: identical cloud-first behavior while online; after the configured failure threshold it uses the offline response contract until the retry window opens.
+- `offline`: never opens the cloud connection. Every complete BOX request gets exactly one local response; `IsNewSet` receives one Setting when eligible, otherwise `END`.
+
+See [proxy_modes.md](proxy_modes.md) and [twin.md](twin.md) for ownership and correlation details.
+
+## DNS and network settings
+
+DNS override destination precedence is `dns_override_ip`, then `ha_ip`, then auto-detection. `target_server`, DNS values, and the upstream resolver are assembled at add-on start, so they also require a restart. `PROXY_HOST` defaults to `0.0.0.0` because the Home Assistant service must be reachable by the BOX LAN.
+
+Additional internal environment defaults include:
+
+| Environment | Default |
+|---|---:|
+| `TWIN_DB_PATH` | `/data/twin_queue.db` |
+| `DEVICE_ID_PATH` | `/data/device_id.json` |
+| `CLOUD_DIALOG_TIMEOUT_S` | `30` |
+| `CLOUD_CONNECT_TIMEOUT` | `10` |
+| `MQTT_NAMESPACE` | `oig_local` |
+| `MQTT_QOS` | `1` |
+| `MQTT_STATE_RETAIN` | `true` |
+| `SENSOR_MAP_PATH` | `/data/sensor_map.json` |
+| `CAPTURE_DB_PATH` | `/data/payloads.db` |
+| `CAPTURE_PCAP_PATH` | `/data/capture.pcap` |
+
+## Rollback
+
+A 2.1.1 rollback does not understand schema v1 local-setting transactions. It ignores and preserves `/data/twin_queue.db`; do not delete the file during rollback. Returning to 2.2.0 reopens and validates it. Version 2.2.0 never downgrades or recreates a future or corrupt database.

@@ -105,17 +105,7 @@ def test_configuration_docs_parameter_table_matches_addon_config() -> None:
         if in_parameter_table and line.startswith("| `"):
             parameter_names.append(line.split("|")[1].strip().strip("`"))
 
-    documented_options = [
-        name
-        for name in addon_config["options"]
-        if name
-        not in {
-            "control_ack_timeout_s",
-            "control_event_timeout_s",
-            "control_command_ttl_s",
-            "control_max_attempts",
-        }
-    ]
+    documented_options = list(addon_config["options"])
     assert parameter_names == documented_options
 
 

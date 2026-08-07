@@ -157,9 +157,9 @@ External stack path: `telemetry.muriel-cz.cz:1883` via MQTT, stored in
 - `superseded` - prior pending setting replaced by new one
 - `deliver_selected` - chosen from queue for delivery
 - `injected_box` - sent to BOX device
-- `ack_box_observed` - BOX acknowledged the setting
-- `ack_tbl_events` - confirmed via tbl_events
-- `ack_reason_setting` - confirmed via cloud reason=Setting
+- `ack_box_observed` - BOX transport ACK observed; delivery only, not execution
+- `ack_tbl_events` - legacy audit label for exact event-confirmed evidence
+- `ack_reason_setting` - legacy passive cloud-observation label; never confirms a local transaction
 - `nack` - BOX or cloud rejected
 - `timeout` - no response within timeout window
 - `session_cleared` - session ended without ACK (graceful shutdown)

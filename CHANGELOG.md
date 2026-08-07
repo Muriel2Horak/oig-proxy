@@ -2,6 +2,33 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0] - 2026-08-06
+
+### Security
+- Bound local control to an exact learned device, non-retained MQTT input, CRC-valid BOX evidence, UUID connection ownership, allowlisted Decimal constraints, and XML-safe serialization.
+- Fail local control closed on store, lock, migration, render, write-outcome, session, direction, deadline, or correlation failure while preserving transparent cloud forwarding where the dialogue is not proxy-owned.
+- Replaced the untrusted-frame XML parser with `defusedxml`, removed dynamic SQLite query construction, and made Bandit, Semgrep, Gitleaks, Safety, Pylint, mypy, Flake8, E2E, and separate statement/branch coverage evidence blocking.
+
+### Added
+- Durable `/data/twin_queue.db` transaction, attempt, transition, ingress, and event-receipt history with restart recovery.
+- Cloud-first ONLINE/HYBRID substitution, exactly-once OFFLINE decisions, stable bounded retry identity, and exact execution-event confirmation.
+- Hermetic fake-endpoint E2E, SI-1 through SI-15 traceability, statement/branch coverage gates, and blocking security evidence.
+
+### Changed
+- `ACK/Setting` now means delivered/pending execution; only an exact `tbl_events`, `Type=Setting` event publishes confirmed state.
+- Local Setting retries preserve stable fields and refresh only `TSec`, `ver`, and CRC, with a shipped and hard maximum of eight attempts.
+
+### Removed
+- Process-memory overwrite/delete delivery, wildcard-device control topics, pre-cloud setting injection, firmware/weather triggers, ACK-based state publication, duplicate serializer paths, and `/data/replay_setting_frame.xml` injection.
+
+## [2.1.1] - 2026-06-27
+
+### Added
+- Optional `local_getactual_enabled` trigger with a bounded `local_getactual_interval_s` configuration value, disabled by default.
+
+### Changed
+- Updated add-on deployment tooling to deploy from the current source tree and refactored offline fallback lifecycle handling without duplicate paths.
+
 ## [2.1.0] - 2026-06-09
 
 ### Changed
