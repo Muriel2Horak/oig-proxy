@@ -58,13 +58,17 @@ from twin.store import StoreRecordNotFound, TwinCommandStore
 def _race_owner_cancellation_after_done(
     real_shield: Callable[[Any], Any],
     outer_errors: list[asyncio.CancelledError],
+    *,
+    selected_call: int = 1,
 ) -> Callable[[Any], Any]:
     """Inject owner cancellation only after the wrapped worker is definitive."""
     selected = False
+    shield_calls = 0
 
     def controlled_shield(awaitable: Any) -> Any:
-        nonlocal selected
-        if selected:
+        nonlocal selected, shield_calls
+        shield_calls += 1
+        if selected or shield_calls != selected_call:
             return real_shield(awaitable)
         selected = True
 
@@ -87,6 +91,26 @@ def _race_owner_cancellation_after_done(
         return inject_outer_after_worker()
 
     return controlled_shield
+
+
+def _capture_pending_owner_cancellation(
+    real_shield: Callable[[Any], Any],
+    outer_errors: list[asyncio.CancelledError],
+) -> Callable[[Any], Any]:
+    """Capture exact task cancellation while a shielded worker is pending."""
+
+    def observed(awaitable: Any) -> Any:
+        async def wait() -> Any:
+            try:
+                return await real_shield(awaitable)
+            except asyncio.CancelledError as caught:
+                if not awaitable.done():
+                    outer_errors.append(caught)
+                raise
+
+        return wait()
+
+    return observed
 
 
 def _enqueue(
@@ -616,12 +640,144 @@ async def test_outer_cancellation_racing_executor_cancellation_is_latched(
     )
     draining = asyncio.create_task(TwinCoordinator._drain_future(worker))  # pylint: disable=protected-access
 
-    result, error, cancellation_latched = await draining
+    result, error, owner_cancellation = await draining
 
     assert result is None
     assert error is worker_error
-    assert cancellation_latched is True
     assert len(outer_errors) == 1
+    assert owner_cancellation is outer_errors[0]
+
+
+@pytest.mark.parametrize(
+    "selected_call",
+    [
+        pytest.param(1, id="primary-mutation"),
+        pytest.param(2, id="status-reconciliation"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_mutation_cleanup_preserves_exact_owner_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    selected_call: int,
+) -> None:
+    outer_errors: list[asyncio.CancelledError] = []
+    status_calls = 0
+    original_status = store.status_snapshot
+
+    def observed_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        nonlocal status_calls
+        status_calls += 1
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", observed_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _race_owner_cancellation_after_done(
+            asyncio.shield,
+            outer_errors,
+            selected_call=selected_call,
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            lambda: "committed",
+            snapshots=lambda _result: (),
+        )
+
+    assert len(outer_errors) == 1
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("outer cancelled",)
+    assert status_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_post_ack_status_preserves_exact_owner_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _race_owner_cancellation_after_done(
+            asyncio.shield,
+            outer_errors,
+            selected_call=3,
+        ),
+    )
+    raw = b"post-ack-owner-cancel"
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.handle_local_response(
+            active=active,
+            response=_response(raw),
+            context=_context(active, raw, received_at_ms=220),
+            writer=writer,
+        )
+
+    assert len(outer_errors) == 1
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("outer cancelled",)
+    assert store.read_command(active.command_id).state is CommandState.AWAITING_EVENT
+    assert coordinator.cached_status_snapshot.awaiting_event == 1
+    assert coordinator._device_lock("123").locked() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize(
+    "selected_call",
+    [
+        pytest.param(1, id="aggregate-status"),
+        pytest.param(2, id="final-status"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_deadline_status_preserves_exact_owner_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    selected_call: int,
+) -> None:
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _race_owner_cancellation_after_done(
+            asyncio.shield,
+            outer_errors,
+            selected_call=selected_call,
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.sweep_deadlines(now_ms=1)
+
+    assert len(outer_errors) == 1
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("outer cancelled",)
+    assert coordinator._deadline_sweep_lock.locked() is False  # pylint: disable=protected-access
 
 
 @pytest.mark.asyncio
@@ -656,6 +812,67 @@ async def test_status_worker_cancellation_is_terminal_without_retry(
 
     assert caught.value is sentinel
     assert status_calls == 1
+
+
+@pytest.mark.parametrize("cancel_owner", [False, True], ids=["worker", "owner"])
+@pytest.mark.asyncio
+async def test_mutation_retains_primary_and_status_worker_chain(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_owner: bool,
+) -> None:
+    mutation_error = asyncio.CancelledError("mutation worker cancelled")
+    status_error = asyncio.CancelledError("status worker cancelled")
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+
+    def cancelled_mutation() -> None:
+        if cancel_owner:
+            mutation_entered.set()
+            assert mutation_release.wait(timeout=1)
+        raise mutation_error
+
+    def cancelled_status() -> StoreStatus:
+        raise status_error
+
+    monkeypatch.setattr(store, "status_snapshot", cancelled_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    if cancel_owner:
+        owner = asyncio.create_task(
+            coordinator._run_mutation_locked(  # pylint: disable=protected-access
+                cancelled_mutation,
+                snapshots=lambda _result: (),
+            )
+        )
+        assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+        owner.cancel("mutation owner cancelled")
+        while not outer_errors:
+            await asyncio.sleep(0)
+        mutation_release.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await owner
+        assert caught.value is outer_errors[0]
+        assert caught.value.__cause__ is mutation_error
+    else:
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await coordinator._run_mutation_locked(  # pylint: disable=protected-access
+                cancelled_mutation,
+                snapshots=lambda _result: (),
+            )
+        assert caught.value is mutation_error
+
+    assert mutation_error.__cause__ is status_error
 
 
 @pytest.mark.asyncio
@@ -2381,7 +2598,10 @@ async def test_cancelled_event_after_store_completion_drains_reconciliation(
     refresh_release = asyncio.Event()
     original_refresh = coordinator._refresh_status  # pylint: disable=protected-access
 
-    async def blocked_refresh() -> tuple[BaseException | None, bool]:
+    async def blocked_refresh() -> tuple[
+        BaseException | None,
+        asyncio.CancelledError | None,
+    ]:
         refresh_entered.set()
         await refresh_release.wait()
         return await original_refresh()
@@ -2806,6 +3026,76 @@ async def test_direct_publication_cancellation_finishes_before_device_unlock(
     assert coordinator.cached_status_snapshot.awaiting_ack == 1
 
 
+def test_control_flow_chain_keeps_first_repeated_identity() -> None:
+    first = asyncio.CancelledError("first worker cancellation")
+    second = asyncio.CancelledError("second worker cancellation")
+
+    chain = TwinCoordinator._control_flow_chain(  # pylint: disable=protected-access
+        first,
+        second,
+        first,
+    )
+
+    assert chain is first
+    assert first.__cause__ is second
+    assert second.__cause__ is None
+
+
+def test_owner_control_flow_chain_excludes_repeated_owner_identity() -> None:
+    owner = asyncio.CancelledError("owner cancellation")
+    worker = asyncio.CancelledError("worker cancellation")
+    tail = SystemExit("cleanup control flow")
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        TwinCoordinator._raise_owner_over_control_flow(  # pylint: disable=protected-access
+            owner,
+            worker,
+            owner,
+            tail,
+        )
+
+    assert caught.value is owner
+    assert owner.__cause__ is worker
+    assert worker.__cause__ is tail
+    assert tail.__cause__ is None
+
+
+def test_latched_owner_cancellation_breaks_existing_self_cycle() -> None:
+    owner = asyncio.CancelledError("self-caused owner cancellation")
+    owner.__cause__ = owner
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        TwinCoordinator._raise_latched_cancellation(  # pylint: disable=protected-access
+            owner,
+            None,
+        )
+
+    assert caught.value is owner
+    assert owner.__cause__ is None
+
+
+def test_owner_chain_keeps_shared_tail_before_distinct_workers() -> None:
+    owner = asyncio.CancelledError("owner cancellation")
+    prior_error = RuntimeError("shared prior cause")
+    first_worker = asyncio.CancelledError("first worker cancellation")
+    second_worker = asyncio.CancelledError("second worker cancellation")
+    owner.__cause__ = prior_error
+    first_worker.__cause__ = prior_error
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        TwinCoordinator._raise_owner_over_control_flow(  # pylint: disable=protected-access
+            owner,
+            first_worker,
+            second_worker,
+        )
+
+    assert caught.value is owner
+    assert owner.__cause__ is prior_error
+    assert prior_error.__cause__ is first_worker
+    assert first_worker.__cause__ is second_worker
+    assert second_worker.__cause__ is None
+
+
 @pytest.mark.asyncio
 async def test_publisher_worker_cancellation_remains_exact_after_reconciliation(
     store: TwinCommandStore,
@@ -2907,6 +3197,822 @@ async def test_owner_cancellation_dominates_prior_publisher_worker_cancellation(
 
 
 @pytest.mark.asyncio
+async def test_publication_retains_multiple_worker_cancellations_in_order(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    worker_errors = (
+        asyncio.CancelledError("first publisher worker cancelled"),
+        asyncio.CancelledError("second publisher worker cancelled"),
+    )
+
+    class SequencedCancelledPublisher:
+        """Return distinct exact cancellations for consecutive snapshots."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            error = worker_errors[self.calls]
+            self.calls += 1
+            raise error
+
+    publisher = SequencedCancelledPublisher()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=publisher,
+        clock_ms=_Clock(),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator._publish(  # pylint: disable=protected-access
+            (snapshot, snapshot)
+        )
+
+    assert caught.value is worker_errors[0]
+    assert worker_errors[0].__cause__ is worker_errors[1]
+    assert publisher.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_publication_retains_existing_worker_cause_before_next_worker(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    prior_error = RuntimeError("first publisher cancellation cause")
+    first_worker = asyncio.CancelledError("first publisher worker cancelled")
+    second_worker = asyncio.CancelledError("second publisher worker cancelled")
+
+    class ChainedThenCancelledPublisher:
+        """Return a nested first cancellation and a distinct second one."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise first_worker from prior_error
+            raise second_worker
+
+    publisher = ChainedThenCancelledPublisher()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=publisher,
+        clock_ms=_Clock(),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator._publish(  # pylint: disable=protected-access
+            (snapshot, snapshot)
+        )
+
+    assert caught.value is first_worker
+    assert first_worker.__cause__ is prior_error
+    assert prior_error.__cause__ is second_worker
+    assert second_worker.__cause__ is None
+    assert publisher.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_direct_publication_owner_retains_error_and_worker_chain(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker_error = asyncio.CancelledError("publisher worker cancelled")
+    publication_error = RuntimeError("later publication failed")
+    second_entered = asyncio.Event()
+    second_release = asyncio.Event()
+
+    class WorkerThenFailPublisher:
+        """Return worker control flow before a later ordinary failure."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise worker_error
+            second_entered.set()
+            await second_release.wait()
+            raise publication_error
+
+    publisher = WorkerThenFailPublisher()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=publisher,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+    owner = asyncio.create_task(
+        coordinator._publish(  # pylint: disable=protected-access
+            (snapshot, snapshot)
+        )
+    )
+    await second_entered.wait()
+    owner.cancel("publication owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    second_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is publication_error
+    assert publication_error.__cause__ is worker_error
+    assert publisher.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_mutation_owner_retains_publication_error_before_worker(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker_error = asyncio.CancelledError("publisher worker cancelled")
+    publication_error = RuntimeError("later publication failed")
+    second_entered = asyncio.Event()
+    second_release = asyncio.Event()
+
+    class WorkerThenFailPublisher:
+        """Expose an owner cancellation after one exact worker cancellation."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise worker_error
+            second_entered.set()
+            await second_release.wait()
+            raise publication_error
+
+    publisher = WorkerThenFailPublisher()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=publisher,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+    owner = asyncio.create_task(
+        coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            lambda: "committed",
+            snapshots=lambda _result: (snapshot, snapshot),
+        )
+    )
+    await second_entered.wait()
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    second_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is publication_error
+    assert publication_error.__cause__ is worker_error
+    assert worker_error.__cause__ is None
+    assert publisher.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_mutation_owner_during_status_dominates_publisher_worker_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker_error = asyncio.CancelledError("publisher worker cancelled")
+    status_entered = threading.Event()
+    status_release = threading.Event()
+    original_status = store.status_snapshot
+
+    class CancelledPublisher:
+        """Return one exact worker cancellation before status cleanup."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise worker_error
+
+    def blocked_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        status_entered.set()
+        assert status_release.wait(timeout=1)
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", blocked_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+
+    async def mutate_under_device_lock() -> None:
+        async with coordinator._device_lock("123"):  # pylint: disable=protected-access
+            await coordinator._run_mutation_locked(  # pylint: disable=protected-access
+                lambda: "committed",
+                snapshots=lambda _result: (snapshot,),
+            )
+
+    owner = asyncio.create_task(mutate_under_device_lock())
+    assert await asyncio.to_thread(status_entered.wait, 0.1)
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    assert owner.done() is False
+    status_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("mutation owner cancelled",)
+    assert caught.value.__cause__ is worker_error
+    assert coordinator._device_lock("123").locked() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_mutation_owner_retains_publication_and_status_worker_chain(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication_error = asyncio.CancelledError("publisher worker cancelled")
+    status_error = asyncio.CancelledError("status worker cancelled")
+    status_entered = threading.Event()
+    status_release = threading.Event()
+
+    class CancelledPublisher:
+        """Return the first exact worker cancellation before status cleanup."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise publication_error
+
+    def cancelled_status() -> StoreStatus:
+        status_entered.set()
+        assert status_release.wait(timeout=1)
+        raise status_error
+
+    monkeypatch.setattr(store, "status_snapshot", cancelled_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+    owner = asyncio.create_task(
+        coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            lambda: "committed",
+            snapshots=lambda _result: (snapshot,),
+        )
+    )
+    assert await asyncio.to_thread(status_entered.wait, 0.1)
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    status_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is publication_error
+    assert publication_error.__cause__ is status_error
+
+
+@pytest.mark.asyncio
+async def test_prior_mutation_owner_retains_publisher_worker_as_cause(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+    worker_error = asyncio.CancelledError("publisher worker cancelled")
+
+    class CancelledPublisher:
+        """Return one exact worker cancellation after the owner is cancelled."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise worker_error
+
+    def blocked_mutation() -> str:
+        mutation_entered.set()
+        assert mutation_release.wait(timeout=1)
+        return "committed"
+
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    snapshot = cast(TransitionAuditSnapshot, object())
+    owner = asyncio.create_task(
+        coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            blocked_mutation,
+            snapshots=lambda _result: (snapshot,),
+        )
+    )
+    assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    mutation_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("mutation owner cancelled",)
+    assert caught.value.__cause__ is worker_error
+
+
+@pytest.mark.asyncio
+async def test_prior_mutation_owner_retains_snapshot_worker_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+    snapshot_error = asyncio.CancelledError("snapshot projection cancelled")
+
+    def blocked_mutation() -> str:
+        mutation_entered.set()
+        assert mutation_release.wait(timeout=1)
+        return "committed"
+
+    def cancelled_snapshots(
+        _result: Any,
+    ) -> tuple[TransitionAuditSnapshot, ...]:
+        raise snapshot_error
+
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    owner = asyncio.create_task(
+        coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            blocked_mutation,
+            snapshots=cancelled_snapshots,
+        )
+    )
+    assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    mutation_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is snapshot_error
+    assert snapshot_error.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_later_mutation_owner_dominates_snapshot_worker_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_error = asyncio.CancelledError("snapshot projection cancelled")
+    status_entered = threading.Event()
+    status_release = threading.Event()
+    original_status = store.status_snapshot
+
+    def cancelled_snapshots(
+        _result: Any,
+    ) -> tuple[TransitionAuditSnapshot, ...]:
+        raise snapshot_error
+
+    def blocked_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        status_entered.set()
+        assert status_release.wait(timeout=1)
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", blocked_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    owner = asyncio.create_task(
+        coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            lambda: "committed",
+            snapshots=cancelled_snapshots,
+        )
+    )
+    assert await asyncio.to_thread(status_entered.wait, 0.1)
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    status_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is snapshot_error
+    assert snapshot_error.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_mutation_owner_dominates_publication_task_creation_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+    status_entered = threading.Event()
+    status_release = threading.Event()
+    worker_error = asyncio.CancelledError("publication task creation cancelled")
+    original_status = store.status_snapshot
+
+    class UnusedPublisher:
+        """The injected task-creation failure prevents publication."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise AssertionError("publisher must not run")
+
+    def blocked_mutation() -> str:
+        mutation_entered.set()
+        assert mutation_release.wait(timeout=1)
+        return "committed"
+
+    def blocked_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        status_entered.set()
+        assert status_release.wait(timeout=1)
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", blocked_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=UnusedPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    loop = asyncio.get_running_loop()
+    original_create_task = loop.create_task
+    snapshot = cast(TransitionAuditSnapshot, object())
+    owner = original_create_task(
+        coordinator._run_mutation_locked(  # pylint: disable=protected-access
+            blocked_mutation,
+            snapshots=lambda _result: (snapshot,),
+        )
+    )
+    assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+
+    def fail_publication_task_creation(coroutine: Any, **_kwargs: Any) -> Any:
+        coroutine.close()
+        raise worker_error
+
+    monkeypatch.setattr(loop, "create_task", fail_publication_task_creation)
+    mutation_release.set()
+    assert await asyncio.to_thread(status_entered.wait, 0.1)
+    monkeypatch.setattr(loop, "create_task", original_create_task)
+    owner.cancel("mutation owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    status_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("mutation owner cancelled",)
+    assert caught.value.__cause__ is worker_error
+
+
+@pytest.mark.asyncio
+async def test_aggregate_owner_during_status_dominates_publisher_worker_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    worker_error = asyncio.CancelledError("aggregate publisher cancelled")
+    status_entered = threading.Event()
+    status_release = threading.Event()
+    status_calls = 0
+    original_status = store.status_snapshot
+
+    class CancelledPublisher:
+        """Cancel aggregate publication after the device commit."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise worker_error
+
+    def block_aggregate_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        nonlocal status_calls
+        status_calls += 1
+        if status_calls == 2:
+            status_entered.set()
+            assert status_release.wait(timeout=1)
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", block_aggregate_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    owner = asyncio.create_task(
+        coordinator.sweep_deadlines(
+            now_ms=command.pending_expires_at_ms + 1
+        )
+    )
+    assert await asyncio.to_thread(status_entered.wait, 0.1)
+    owner.cancel("aggregate owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    assert owner.done() is False
+    status_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("aggregate owner cancelled",)
+    assert caught.value.__cause__ is worker_error
+    assert status_calls == 2
+    assert store.read_command(command.command_id).state is CommandState.EXPIRED
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 1
+    assert coordinator._device_lock("123").locked() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_aggregate_owner_retains_publication_and_status_worker_chain(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    publication_error = asyncio.CancelledError("aggregate publisher cancelled")
+    status_error = asyncio.CancelledError("aggregate status cancelled")
+    status_entered = threading.Event()
+    status_release = threading.Event()
+    status_calls = 0
+    original_status = store.status_snapshot
+
+    class CancelledPublisher:
+        """Return the first exact aggregate worker cancellation."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise publication_error
+
+    def cancel_aggregate_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        nonlocal status_calls
+        status_calls += 1
+        if status_calls == 2:
+            status_entered.set()
+            assert status_release.wait(timeout=1)
+            raise status_error
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", cancel_aggregate_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    owner = asyncio.create_task(
+        coordinator.sweep_deadlines(
+            now_ms=command.pending_expires_at_ms + 1
+        )
+    )
+    assert await asyncio.to_thread(status_entered.wait, 0.1)
+    owner.cancel("aggregate owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    status_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is publication_error
+    assert publication_error.__cause__ is status_error
+    assert store.read_command(command.command_id).state is CommandState.EXPIRED
+    assert coordinator._device_lock("123").locked() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_aggregate_owner_retains_publication_error_before_worker(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    worker_error = asyncio.CancelledError("aggregate publisher cancelled")
+    publication_error = RuntimeError("later aggregate publication failed")
+    second_entered = asyncio.Event()
+    second_release = asyncio.Event()
+
+    class WorkerThenFailPublisher:
+        """Expose aggregate owner cancellation after a worker cancellation."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise worker_error
+            second_entered.set()
+            await second_release.wait()
+            raise publication_error
+
+    publisher = WorkerThenFailPublisher()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=publisher,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    owner = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    await second_entered.wait()
+    owner.cancel("aggregate owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    second_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.__cause__ is publication_error
+    assert publication_error.__cause__ is worker_error
+    assert worker_error.__cause__ is None
+    assert publisher.calls == 2
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.asyncio
+async def test_aggregate_publisher_worker_dominates_later_status_worker(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    publication_error = asyncio.CancelledError("aggregate publisher cancelled")
+    status_error = asyncio.CancelledError("aggregate status cancelled")
+    status_calls = 0
+    original_status = store.status_snapshot
+
+    class CancelledPublisher:
+        """Return one exact publication-worker cancellation."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise publication_error
+
+    def cancel_aggregate_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        nonlocal status_calls
+        status_calls += 1
+        if status_calls == 2:
+            raise status_error
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", cancel_aggregate_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.sweep_deadlines(
+            now_ms=command.pending_expires_at_ms + 1
+        )
+
+    assert caught.value is publication_error
+    assert caught.value.__cause__ is status_error
+    assert status_calls == 2
+    assert store.read_command(command.command_id).state is CommandState.EXPIRED
+    assert coordinator._device_lock("123").locked() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
 async def test_busy_audit_stripe_cancellation_finishes_before_device_unlock(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -2934,10 +4040,11 @@ async def test_busy_audit_stripe_cancellation_finishes_before_device_unlock(
     )
     original_accept = store.accept_audit_delivery
 
-    async def observed_acquire(lock) -> bool:
+    async def observed_acquire(
+        lock: Any,
+    ) -> asyncio.CancelledError | None:
         acquisition_entered.set()
-        result = await original_acquire(lock)
-        return bool(result)
+        return await original_acquire(lock)
 
     def observed_accept(**kwargs):
         accepted_while_locked.append(
@@ -3675,7 +4782,10 @@ async def test_deadline_sweep_retains_device_locks_through_reconciliation(
     original_refresh = coordinator._refresh_status  # pylint: disable=protected-access
     sweep_owner: asyncio.Task[SweepReport] | None = None
 
-    async def observe_base_refresh() -> tuple[BaseException | None, bool]:
+    async def observe_base_refresh() -> tuple[
+        BaseException | None,
+        asyncio.CancelledError | None,
+    ]:
         outcome = await original_refresh()
         if asyncio.current_task() is sweep_owner:
             base_refresh_completed.set()
@@ -3840,6 +4950,57 @@ async def test_deadline_sweep_reconciles_commit_after_task_creation_failure(
 
 
 @pytest.mark.asyncio
+async def test_deadline_creation_error_retains_prior_and_device_failure(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    device_error = RuntimeError("first device sweep failure")
+    prior_error = RuntimeError("prior creation failure cause")
+    creation_error = RuntimeError("second task creation failure")
+    loop = asyncio.get_running_loop()
+    create_calls = 0
+
+    def fail_workers_and_creation(
+        coroutine: Any, **_kwargs: Any
+    ) -> asyncio.Task[Any]:
+        nonlocal create_calls
+        create_calls += 1
+        coroutine.close()
+        if create_calls == 1:
+            completed = loop.create_future()
+            completed.set_exception(device_error)
+            return cast(asyncio.Task[Any], completed)
+        raise creation_error from prior_error
+
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    monkeypatch.setattr(asyncio, "create_task", fail_workers_and_creation)
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+
+    with pytest.raises(RuntimeError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert caught.value is creation_error
+    assert creation_error.__cause__ is prior_error
+    aggregate_error = prior_error.__cause__
+    assert isinstance(aggregate_error, DeadlineSweepError)
+    assert aggregate_error.failures == ((first.device_id, device_error),)
+    assert aggregate_error.partial_report.snapshots == ()
+    assert create_calls == 2
+    assert store.read_command(first.command_id).state is CommandState.PENDING
+    assert store.read_command(second.command_id).state is CommandState.PENDING
+
+
+@pytest.mark.asyncio
 async def test_deadline_sweep_cleanup_cancellation_dominates_creation_failure(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -3908,6 +5069,281 @@ async def test_deadline_sweep_cleanup_cancellation_dominates_creation_failure(
         not lock.locked()
         for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
     )
+
+
+@pytest.mark.asyncio
+async def test_deadline_owner_dominates_device_task_creation_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    worker_error = asyncio.CancelledError("device task creation cancelled")
+    sweep_entered = threading.Event()
+    sweep_release = threading.Event()
+    original_sweep = store.sweep_device_deadlines
+
+    def blocked_first_sweep(*, device_id: str, now_ms: int) -> SweepReport:
+        if device_id == first.device_id:
+            sweep_entered.set()
+            assert sweep_release.wait(timeout=1)
+        return original_sweep(device_id=device_id, now_ms=now_ms)
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", blocked_first_sweep)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    original_create_task = asyncio.create_task
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_calls = 0
+
+    def cancel_second_task_creation(
+        coroutine: Any, **kwargs: Any
+    ) -> asyncio.Task[Any]:
+        nonlocal create_calls
+        create_calls += 1
+        if create_calls == 2:
+            coroutine.close()
+            raise worker_error
+        task = original_create_task(coroutine, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    monkeypatch.setattr(asyncio, "create_task", cancel_second_task_creation)
+    owner = original_create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    assert await asyncio.to_thread(sweep_entered.wait, 0.1)
+    assert create_calls == 2
+    monkeypatch.setattr(asyncio, "create_task", original_create_task)
+    owner.cancel("deadline owner cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    sweep_release.set()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await owner
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("deadline owner cancelled",)
+    assert caught.value.__cause__ is worker_error
+    assert len(created_tasks) == 1
+    assert created_tasks[0].done()
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.PENDING
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_task_creation_worker_dominates_later_status_worker(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    creation_error = asyncio.CancelledError("device task creation cancelled")
+    status_error = asyncio.CancelledError("aggregate status cancelled")
+
+    def cancelled_status() -> StoreStatus:
+        raise status_error
+
+    monkeypatch.setattr(store, "status_snapshot", cancelled_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+
+    def cancel_task_creation(
+        coroutine: Any, **_kwargs: Any
+    ) -> asyncio.Task[Any]:
+        coroutine.close()
+        raise creation_error
+
+    monkeypatch.setattr(asyncio, "create_task", cancel_task_creation)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.sweep_deadlines(
+            now_ms=command.pending_expires_at_ms + 1
+        )
+
+    assert caught.value is creation_error
+    assert creation_error.__cause__ is status_error
+    assert store.read_command(command.command_id).state is CommandState.PENDING
+    assert coordinator._device_lock("123").locked() is False  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("cancel_owner", [False, True], ids=["worker", "owner"])
+@pytest.mark.asyncio
+# pylint: disable-next=too-many-statements
+async def test_deadline_retains_creation_publication_status_control_flow_chain(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_owner: bool,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    creation_error = asyncio.CancelledError("device task creation cancelled")
+    publication_error = asyncio.CancelledError("aggregate publisher cancelled")
+    status_error = asyncio.CancelledError("aggregate status cancelled")
+    status_entered = threading.Event()
+    status_release = threading.Event()
+    status_calls = 0
+    original_status = store.status_snapshot
+
+    class CancelledPublisher:
+        """Return the middle control-flow object in the aggregate chain."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise publication_error
+
+    def cancel_aggregate_status(*args: Any, **kwargs: Any) -> StoreStatus:
+        nonlocal status_calls
+        status_calls += 1
+        if status_calls == 2:
+            status_entered.set()
+            if cancel_owner:
+                assert status_release.wait(timeout=1)
+            raise status_error
+        return original_status(*args, **kwargs)
+
+    monkeypatch.setattr(store, "status_snapshot", cancel_aggregate_status)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    outer_errors: list[asyncio.CancelledError] = []
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _capture_pending_owner_cancellation(asyncio.shield, outer_errors),
+    )
+    original_create_task = asyncio.create_task
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_calls = 0
+
+    def cancel_second_task_creation(
+        coroutine: Any, **kwargs: Any
+    ) -> asyncio.Task[Any]:
+        nonlocal create_calls
+        create_calls += 1
+        if create_calls == 2:
+            coroutine.close()
+            raise creation_error
+        task = original_create_task(coroutine, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    monkeypatch.setattr(asyncio, "create_task", cancel_second_task_creation)
+    if cancel_owner:
+        owner = original_create_task(
+            coordinator.sweep_deadlines(now_ms=effective_now)
+        )
+        assert await asyncio.to_thread(status_entered.wait, 0.1)
+        owner.cancel("deadline owner cancelled")
+        while not outer_errors:
+            await asyncio.sleep(0)
+        status_release.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await owner
+        assert caught.value is outer_errors[0]
+        assert caught.value.__cause__ is creation_error
+    else:
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await coordinator.sweep_deadlines(now_ms=effective_now)
+        assert caught.value is creation_error
+
+    assert creation_error.__cause__ is publication_error
+    assert publication_error.__cause__ is status_error
+    assert len(created_tasks) == 1
+    assert created_tasks[0].done()
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.PENDING
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.asyncio
+async def test_deadline_retains_multiple_device_worker_cancellations(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    worker_errors = (
+        asyncio.CancelledError("first device worker cancelled"),
+        asyncio.CancelledError("second device worker cancelled"),
+    )
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+    loop = asyncio.get_running_loop()
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_calls = 0
+
+    def completed_device_worker(
+        coroutine: Any, **_kwargs: Any
+    ) -> asyncio.Task[Any]:
+        nonlocal create_calls
+        coroutine.close()
+        device_id = (first.device_id, second.device_id)[create_calls]
+        report = store.sweep_device_deadlines(
+            device_id=device_id,
+            now_ms=effective_now,
+        )
+        completed = loop.create_future()
+        completed.set_result((report, worker_errors[create_calls]))
+        task = cast(asyncio.Task[Any], completed)
+        created_tasks.append(task)
+        create_calls += 1
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", completed_device_worker)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert caught.value is worker_errors[0]
+    assert worker_errors[0].__cause__ is worker_errors[1]
+    assert create_calls == 2
+    assert all(task.done() for task in created_tasks)
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
 
 
 @pytest.mark.asyncio
@@ -4012,19 +5448,23 @@ async def test_concurrent_deadline_sweeps_serialize_base_reconciliation(
         return original_read(now_ms=now_ms)
 
     monkeypatch.setattr(store, "read_deadline_devices", observe_enumeration)
-    original_publish = coordinator._publish  # pylint: disable=protected-access
+    original_publish = coordinator._publish_completion  # pylint: disable=protected-access
     publish_entered = asyncio.Event()
     publish_release = asyncio.Event()
 
     async def block_first_aggregate(
         snapshots: tuple[TransitionAuditSnapshot, ...],
-    ) -> None:
+    ) -> Any:
         if snapshots and not publish_entered.is_set():
             publish_entered.set()
             await publish_release.wait()
-        await original_publish(snapshots)
+        return await original_publish(snapshots)
 
-    monkeypatch.setattr(coordinator, "_publish", block_first_aggregate)
+    monkeypatch.setattr(
+        coordinator,
+        "_publish_completion",
+        block_first_aggregate,
+    )
     effective_now = max(
         first.pending_expires_at_ms,
         second.pending_expires_at_ms,
@@ -4229,6 +5669,125 @@ async def test_deadline_sweep_reconciles_success_before_sibling_failure(
     assert dict(coordinator.cached_status_snapshot.state_counts)[
         CommandState.PENDING
     ] == 1
+
+
+@pytest.mark.asyncio
+async def test_deadline_publication_worker_retains_all_device_failures(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    successful = _enqueue(store)
+    failed_first = _enqueue(store, device_id="456")
+    failed_second = _enqueue(store, device_id="789")
+    device_errors = (
+        RuntimeError("first device sweep failure"),
+        RuntimeError("second device sweep failure"),
+    )
+    publication_error = asyncio.CancelledError(
+        "aggregate publisher worker cancelled"
+    )
+    original_sweep = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int) -> SweepReport:
+        if device_id == failed_first.device_id:
+            raise device_errors[0]
+        if device_id == failed_second.device_id:
+            raise device_errors[1]
+        return original_sweep(device_id=device_id, now_ms=now_ms)
+
+    class CancelledPublisher:
+        """Return exact publication control flow after sibling settlement."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise publication_error
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=CancelledPublisher(),
+        clock_ms=_Clock(),
+    )
+    effective_now = max(
+        successful.pending_expires_at_ms,
+        failed_first.pending_expires_at_ms,
+        failed_second.pending_expires_at_ms,
+    ) + 1
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert caught.value is publication_error
+    aggregate_error = caught.value.__cause__
+    assert isinstance(aggregate_error, DeadlineSweepError)
+    assert aggregate_error.failures == (
+        (failed_first.device_id, device_errors[0]),
+        (failed_second.device_id, device_errors[1]),
+    )
+    assert aggregate_error.partial_report.expired_pending == 1
+    assert len(aggregate_error.partial_report.snapshots) == 1
+    assert aggregate_error.partial_report.snapshots[0].command.command_id == (
+        successful.command_id
+    )
+    assert store.read_command(successful.command_id).state is CommandState.EXPIRED
+    assert store.read_command(failed_first.command_id).state is CommandState.PENDING
+    assert store.read_command(failed_second.command_id).state is CommandState.PENDING
+
+
+@pytest.mark.asyncio
+async def test_deadline_publication_error_retains_device_failure_report(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    successful = _enqueue(store)
+    failed = _enqueue(store, device_id="456")
+    device_error = RuntimeError("device sweep failure")
+    publication_error = RuntimeError("aggregate publication failure")
+    original_sweep = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int) -> SweepReport:
+        if device_id == failed.device_id:
+            raise device_error
+        return original_sweep(device_id=device_id, now_ms=now_ms)
+
+    class FailedPublisher:
+        """Return one ordinary aggregate publication failure."""
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            raise publication_error
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=FailedPublisher(),
+        clock_ms=_Clock(),
+    )
+    effective_now = max(
+        successful.pending_expires_at_ms,
+        failed.pending_expires_at_ms,
+    ) + 1
+
+    with pytest.raises(RuntimeError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert caught.value is publication_error
+    aggregate_error = caught.value.__cause__
+    assert isinstance(aggregate_error, DeadlineSweepError)
+    assert aggregate_error.failures == ((failed.device_id, device_error),)
+    assert aggregate_error.partial_report.expired_pending == 1
+    assert len(aggregate_error.partial_report.snapshots) == 1
+    assert aggregate_error.partial_report.snapshots[0].command.command_id == (
+        successful.command_id
+    )
+    assert store.read_command(successful.command_id).state is CommandState.EXPIRED
+    assert store.read_command(failed.command_id).state is CommandState.PENDING
 
 
 @pytest.mark.asyncio
@@ -4961,11 +6520,14 @@ async def test_pre_settlement_cancellation_drains_workers_before_propagating(
 
     monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
 
-    async def immediate_refresh() -> tuple[BaseException | None, bool]:
+    async def immediate_refresh() -> tuple[
+        BaseException | None,
+        asyncio.CancelledError | None,
+    ]:
         coordinator._cached_status = (  # pylint: disable=protected-access
             store.status_snapshot()
         )
-        return None, False
+        return None, None
 
     monkeypatch.setattr(coordinator, "_refresh_status", immediate_refresh)
     original_create_task = asyncio.create_task
@@ -5134,7 +6696,10 @@ async def test_cancelled_aggregate_publication_still_refreshes_final_status(
     refresh_calls = 0
     original_refresh = coordinator._refresh_status  # pylint: disable=protected-access
 
-    async def observed_refresh() -> tuple[BaseException | None, bool]:
+    async def observed_refresh() -> tuple[
+        BaseException | None,
+        asyncio.CancelledError | None,
+    ]:
         nonlocal refresh_calls
         refresh_calls += 1
         return await original_refresh()

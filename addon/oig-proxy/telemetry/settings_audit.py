@@ -34,7 +34,7 @@ import re
 import secrets
 import threading
 import time
-from typing import Any, cast, Protocol, TYPE_CHECKING
+from typing import Any, cast, NoReturn, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from protocol.frame import ValidatedFrame
@@ -931,7 +931,62 @@ class _AuditLedgerCompletion:
 
     result: Any | None
     error: BaseException | None
-    cancellation_latched: bool
+    owner_cancellation: asyncio.CancelledError | None
+
+
+def _audit_control_flow_chain(
+    *errors: BaseException | None,
+    excluded: tuple[BaseException, ...] = (),
+) -> BaseException | None:
+    """Compose exact audit errors and explicit causes without cycles."""
+    unique_errors: list[BaseException] = []
+    seen = {id(error) for error in excluded}
+    for error in errors:
+        current = error
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            unique_errors.append(current)
+            current = current.__cause__
+    chain: BaseException | None = None
+    for error in reversed(unique_errors):
+        if chain is None:
+            if error.__cause__ is not None:
+                error.__cause__ = None
+            chain = error
+            continue
+        if error.__cause__ is chain:
+            chain = error
+            continue
+        try:
+            raise error from chain
+        except BaseException as chained:  # pylint: disable=broad-exception-caught
+            chain = chained
+    return chain
+
+
+def _raise_audit_owner_cancellation(
+    owner_cancellation: asyncio.CancelledError,
+    cause: BaseException | None = None,
+) -> NoReturn:
+    """Raise one exact audit owner with cycle-free cleanup provenance."""
+    chain = _audit_control_flow_chain(
+        owner_cancellation.__cause__,
+        cause,
+        excluded=(owner_cancellation,),
+    )
+    if chain is None:
+        if owner_cancellation.__cause__ is owner_cancellation:
+            owner_cancellation.__cause__ = None
+        raise owner_cancellation
+    raise owner_cancellation from chain
+
+
+def _first_audit_owner_cancellation(
+    current: asyncio.CancelledError | None,
+    candidate: asyncio.CancelledError | None,
+) -> asyncio.CancelledError | None:
+    """Retain the first exact owner cancellation across cleanup phases."""
+    return current if current is not None else candidate
 
 
 async def _offload_audit_ledger(
@@ -940,7 +995,7 @@ async def _offload_audit_ledger(
     """Own a raw executor completion independently of asyncio wrappers."""
     worker = _AUDIT_LEDGER_EXECUTOR.submit(operation)
     wrapped = asyncio.wrap_future(worker)
-    cancellation_latched = False
+    owner_cancellation: asyncio.CancelledError | None = None
     result: Any = None
     worker_error: BaseException | None = None
     while True:
@@ -954,19 +1009,22 @@ async def _offload_audit_ledger(
             if wrapped.done():
                 operation_error = wrapped.exception()
                 if isinstance(operation_error, asyncio.CancelledError):
-                    cancellation_latched = (
-                        cancellation_latched or error is not operation_error
-                    )
+                    if (
+                        error is not operation_error
+                        and owner_cancellation is None
+                    ):
+                        owner_cancellation = error
                     worker_error = operation_error
                     break
-            cancellation_latched = True
+            if owner_cancellation is None:
+                owner_cancellation = error
         except BaseException as error:  # pylint: disable=broad-exception-caught
             worker_error = error
             break
     return _AuditLedgerCompletion(
         result,
         worker_error,
-        cancellation_latched,
+        owner_cancellation,
     )
 
 
@@ -976,8 +1034,10 @@ def _audit_lifecycle_lock(audit_id: str) -> _AuditLifecycleStripe:
     return _AUDIT_LIFECYCLE_LOCKS[stripe]
 
 
-async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
-    """Acquire one stripe and report cancellation retained by its owner."""
+async def _acquire_audit_lifecycle_lock(
+    lock: Any,
+) -> asyncio.CancelledError | None:
+    """Acquire one stripe and return exact cancellation retained by its owner."""
     executor = (
         lock.executor
         if isinstance(lock, _AuditLifecycleStripe)
@@ -985,7 +1045,6 @@ async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
     )
     worker = executor.submit(lock.acquire)
     wrapped = asyncio.wrap_future(worker)
-    cancellation_latched = False
     outer_cancellation: asyncio.CancelledError | None = None
     acquired = False
     worker_error: BaseException | None = None
@@ -1000,11 +1059,13 @@ async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
             if wrapped.done():
                 operation_error = wrapped.exception()
                 if isinstance(operation_error, asyncio.CancelledError):
-                    if error is not operation_error:
-                        raise error from operation_error
+                    if (
+                        error is not operation_error
+                        and outer_cancellation is None
+                    ):
+                        outer_cancellation = error
                     worker_error = operation_error
                     break
-            cancellation_latched = True
             if outer_cancellation is None:
                 outer_cancellation = error
         except BaseException as error:  # pylint: disable=broad-exception-caught
@@ -1012,23 +1073,27 @@ async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
             break
     if worker_error is not None:
         if outer_cancellation is not None:
-            raise outer_cancellation from worker_error
+            _raise_audit_owner_cancellation(
+                outer_cancellation,
+                worker_error,
+            )
         raise worker_error
     if not acquired:
         acquisition_error = RuntimeError(
             "audit lifecycle lock acquisition failed"
         )
         if outer_cancellation is not None:
-            raise outer_cancellation from acquisition_error
+            _raise_audit_owner_cancellation(
+                outer_cancellation,
+                acquisition_error,
+            )
         raise acquisition_error
-    if cancellation_latched:
+    if outer_cancellation is not None:
         if isinstance(lock, _AuditLifecycleStripe):
-            return True
+            return outer_cancellation
         lock.release()
-        if outer_cancellation is not None:
-            raise outer_cancellation
-        raise asyncio.CancelledError()
-    return False
+        _raise_audit_owner_cancellation(outer_cancellation)
+    return None
 
 
 class SettingsAuditPublisher:
@@ -1198,12 +1263,15 @@ class SettingsAuditPublisher:
                 snapshot.transition.transition_id,
             )
         )
-        cancellation_latched = authority.cancellation_latched
+        owner_cancellation = authority.owner_cancellation
         cancellation_cause = authority.error
         if authority.error is not None:
             if not isinstance(authority.error, Exception):
-                if cancellation_latched:
-                    raise asyncio.CancelledError() from authority.error
+                if owner_cancellation is not None:
+                    _raise_audit_owner_cancellation(
+                        owner_cancellation,
+                        authority.error,
+                    )
                 raise authority.error
             logger.error(
                 "settings audit authoritative projection failed",
@@ -1213,8 +1281,11 @@ class SettingsAuditPublisher:
                     authority.error.__traceback__,
                 ),
             )
-            if cancellation_latched:
-                raise asyncio.CancelledError() from authority.error
+            if owner_cancellation is not None:
+                _raise_audit_owner_cancellation(
+                    owner_cancellation,
+                    authority.error,
+                )
             return
         try:
             record = _project_committed(
@@ -1222,12 +1293,12 @@ class SettingsAuditPublisher:
             )
         except Exception as error:  # pylint: disable=broad-exception-caught
             logger.exception("settings audit authoritative projection failed")
-            if cancellation_latched:
-                raise asyncio.CancelledError() from error
+            if owner_cancellation is not None:
+                _raise_audit_owner_cancellation(owner_cancellation, error)
             return
         except BaseException as error:  # pylint: disable=broad-exception-caught
-            if cancellation_latched:
-                raise asyncio.CancelledError() from error
+            if owner_cancellation is not None:
+                _raise_audit_owner_cancellation(owner_cancellation, error)
             raise
         try:
             canonical_digest = self._assert_authoritative_projection(
@@ -1238,15 +1309,16 @@ class SettingsAuditPublisher:
             if record.command_id is None:
                 raise ValueError("committed audit record requires command_id")
             lifecycle_lock = _audit_lifecycle_lock(audit_id)
-            acquisition_cancelled = bool(
+            acquisition_cancellation = (
                 await _acquire_audit_lifecycle_lock(lifecycle_lock)
             )
         except BaseException as error:  # pylint: disable=broad-exception-caught
-            if cancellation_latched:
-                raise asyncio.CancelledError() from error
+            if owner_cancellation is not None:
+                _raise_audit_owner_cancellation(owner_cancellation, error)
             raise
-        cancellation_latched = (
-            cancellation_latched or acquisition_cancelled
+        owner_cancellation = _first_audit_owner_cancellation(
+            owner_cancellation,
+            acquisition_cancellation,
         )
         integrity_error: ValueError | None = None
         control_flow_error: BaseException | None = None
@@ -1264,8 +1336,9 @@ class SettingsAuditPublisher:
                     ),
                 )
             )
-            cancellation_latched = (
-                cancellation_latched or proposal.cancellation_latched
+            owner_cancellation = _first_audit_owner_cancellation(
+                owner_cancellation,
+                proposal.owner_cancellation,
             )
             cancellation_cause = proposal.error
             if proposal.error is not None:
@@ -1304,9 +1377,9 @@ class SettingsAuditPublisher:
                                 transition_id=transition_id,
                             )
                         )
-                        cancellation_latched = (
-                            cancellation_latched
-                            or rejection.cancellation_latched
+                        owner_cancellation = _first_audit_owner_cancellation(
+                            owner_cancellation,
+                            rejection.owner_cancellation,
                         )
                         if rejection.error is not None:
                             cancellation_cause = rejection.error
@@ -1331,9 +1404,9 @@ class SettingsAuditPublisher:
                                 transition_id=transition_id,
                             )
                         )
-                        cancellation_latched = (
-                            cancellation_latched
-                            or acceptance.cancellation_latched
+                        owner_cancellation = _first_audit_owner_cancellation(
+                            owner_cancellation,
+                            acceptance.owner_cancellation,
                         )
                         if acceptance.error is not None:
                             cancellation_cause = acceptance.error
@@ -1353,12 +1426,21 @@ class SettingsAuditPublisher:
         finally:
             lifecycle_lock.release()
         if body_error is not None:
-            if cancellation_latched:
-                raise asyncio.CancelledError() from body_error
+            if owner_cancellation is not None:
+                _raise_audit_owner_cancellation(
+                    owner_cancellation,
+                    body_error,
+                )
             raise body_error
-        if cancellation_latched:
-            raise asyncio.CancelledError() from (
-                cancellation_cause or integrity_error or control_flow_error
+        if owner_cancellation is not None:
+            owner_cause = cancellation_cause
+            if owner_cause is None:
+                owner_cause = integrity_error
+            if owner_cause is None:
+                owner_cause = control_flow_error
+            _raise_audit_owner_cancellation(
+                owner_cancellation,
+                owner_cause,
             )
         if control_flow_error is not None:
             raise control_flow_error
@@ -1408,11 +1490,14 @@ class SettingsAuditPublisher:
                 )
             )
             if page.error is not None:
-                if page.cancellation_latched:
-                    raise asyncio.CancelledError() from page.error
+                if page.owner_cancellation is not None:
+                    _raise_audit_owner_cancellation(
+                        page.owner_cancellation,
+                        page.error,
+                    )
                 raise page.error
-            if page.cancellation_latched:
-                raise asyncio.CancelledError()
+            if page.owner_cancellation is not None:
+                _raise_audit_owner_cancellation(page.owner_cancellation)
             transition_ids = page.result
             if not transition_ids:
                 break
@@ -1424,11 +1509,16 @@ class SettingsAuditPublisher:
                     )
                 )
                 if snapshot_result.error is not None:
-                    if snapshot_result.cancellation_latched:
-                        raise asyncio.CancelledError() from snapshot_result.error
+                    if snapshot_result.owner_cancellation is not None:
+                        _raise_audit_owner_cancellation(
+                            snapshot_result.owner_cancellation,
+                            snapshot_result.error,
+                        )
                     raise snapshot_result.error
-                if snapshot_result.cancellation_latched:
-                    raise asyncio.CancelledError()
+                if snapshot_result.owner_cancellation is not None:
+                    _raise_audit_owner_cancellation(
+                        snapshot_result.owner_cancellation
+                    )
                 await self.publish_committed_async(
                     cast(
                         "TransitionAuditSnapshot",

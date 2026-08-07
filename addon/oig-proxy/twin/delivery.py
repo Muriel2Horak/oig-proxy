@@ -96,6 +96,15 @@ class DeadlineSweepError(RuntimeError):
         self.partial_report = partial_report
 
 
+@dataclass(frozen=True, slots=True)
+class _PublicationCompletion:
+    """Definitive publication outcome with exact cancellation provenance."""
+
+    error: BaseException | None
+    worker_cancellations: tuple[asyncio.CancelledError, ...]
+    owner_cancellation: asyncio.CancelledError | None
+
+
 def _validate_device_deadline_snapshot(
     snapshot: TransitionAuditSnapshot,
 ) -> None:
@@ -377,13 +386,13 @@ class TwinCoordinator:
             raise RuntimeError("TwinCoordinator event state belongs to another loop")
         return loop
 
-    async def _publish(
+    async def _publish_completion(
         self, snapshots: tuple[TransitionAuditSnapshot, ...]
-    ) -> None:
+    ) -> _PublicationCompletion:
         audit = self._audit
         if audit is None:
-            return
-        worker_cancellation: asyncio.CancelledError | None = None
+            return _PublicationCompletion(None, (), None)
+        worker_cancellations: list[asyncio.CancelledError] = []
         owner_cancellation: asyncio.CancelledError | None = None
         publication_error: BaseException | None = None
 
@@ -407,8 +416,11 @@ class TwinCoordinator:
             except BaseException as caught:  # pylint: disable=broad-exception-caught
                 _close_coroutine(publication)
                 if isinstance(caught, asyncio.CancelledError):
-                    if owner_cancellation is None:
-                        owner_cancellation = caught
+                    if all(
+                        caught is not retained
+                        for retained in worker_cancellations
+                    ):
+                        worker_cancellations.append(caught)
                 else:
                     publication_error = caught
                 break
@@ -421,8 +433,11 @@ class TwinCoordinator:
             if completion_error is None:
                 continue
             if isinstance(completion_error, asyncio.CancelledError):
-                if worker_cancellation is None:
-                    worker_cancellation = completion_error
+                if all(
+                    completion_error is not retained
+                    for retained in worker_cancellations
+                ):
+                    worker_cancellations.append(completion_error)
             elif isinstance(completion_error, BaseException):
                 publication_error = completion_error
                 break
@@ -431,75 +446,170 @@ class TwinCoordinator:
                     "audit publisher returned an invalid completion"
                 )
                 break
-        if owner_cancellation is not None:
-            self._raise_latched_cancellation(
-                owner_cancellation,
-                publication_error or worker_cancellation,
+        return _PublicationCompletion(
+            publication_error,
+            tuple(worker_cancellations),
+            owner_cancellation,
+        )
+
+    async def _publish(
+        self, snapshots: tuple[TransitionAuditSnapshot, ...]
+    ) -> None:
+        completion = await self._publish_completion(snapshots)
+        if completion.owner_cancellation is not None:
+            self._raise_owner_over_control_flow(
+                completion.owner_cancellation,
+                completion.error,
+                *completion.worker_cancellations,
             )
-        if worker_cancellation is not None:
-            self._raise_latched_cancellation(
-                worker_cancellation,
-                publication_error,
+        if completion.worker_cancellations:
+            self._raise_control_flow_chain(
+                *completion.worker_cancellations,
+                completion.error,
             )
-        if publication_error is not None:
-            raise publication_error
+        if completion.error is not None:
+            raise completion.error
 
     @staticmethod
     def _raise_latched_cancellation(
-        cancellation_error: asyncio.CancelledError | None,
+        cancellation_error: asyncio.CancelledError,
         cause: BaseException | None,
     ) -> NoReturn:
-        """Raise a retained cancellation identity or synthesize one if lost."""
-        if cancellation_error is not None:
-            if cause is None or cause is cancellation_error:
-                raise cancellation_error
-            raise cancellation_error from cause
-        raise asyncio.CancelledError() from cause
+        """Raise one exact retained cancellation with a cycle-free cause."""
+        chain = TwinCoordinator._control_flow_chain(
+            cancellation_error.__cause__,
+            cause,
+            excluded=(cancellation_error,),
+        )
+        if chain is None:
+            if cancellation_error.__cause__ is cancellation_error:
+                cancellation_error.__cause__ = None
+            raise cancellation_error
+        raise cancellation_error from chain
 
-    async def _refresh_status(self) -> tuple[BaseException | None, bool]:
+    @staticmethod
+    def _raise_control_flow(
+        error: BaseException,
+        cause: BaseException | None,
+    ) -> NoReturn:
+        """Raise one exact worker control-flow object with an optional cause."""
+        if cause is None or cause is error:
+            raise error
+        raise error from cause
+
+    @staticmethod
+    def _control_flow_chain(
+        *errors: BaseException | None,
+        excluded: tuple[BaseException, ...] = (),
+    ) -> BaseException | None:
+        """Compose exact errors and their explicit causes without cycles."""
+        unique_errors: list[BaseException] = []
+        seen = {id(error) for error in excluded}
+        for error in errors:
+            current = error
+            while current is not None and id(current) not in seen:
+                seen.add(id(current))
+                unique_errors.append(current)
+                current = current.__cause__
+        chain: BaseException | None = None
+        for error in reversed(unique_errors):
+            if chain is None:
+                if error.__cause__ is not None:
+                    error.__cause__ = None
+                chain = error
+                continue
+            if error.__cause__ is chain:
+                chain = error
+                continue
+            try:
+                TwinCoordinator._raise_control_flow(error, chain)
+            except BaseException as chained:  # pylint: disable=broad-exception-caught
+                chain = chained
+        return chain
+
+    @staticmethod
+    def _raise_control_flow_chain(
+        *errors: BaseException | None,
+    ) -> NoReturn:
+        """Raise the exact head of a complete ordered control-flow chain."""
+        chain = TwinCoordinator._control_flow_chain(*errors)
+        if chain is None:
+            raise RuntimeError("control-flow chain requires one error")
+        raise chain
+
+    @staticmethod
+    def _raise_owner_over_control_flow(
+        owner_cancellation: asyncio.CancelledError,
+        *worker_control_flow: BaseException | None,
+    ) -> NoReturn:
+        """Preserve owner above a complete ordered worker-control-flow chain."""
+        chain = TwinCoordinator._control_flow_chain(
+            owner_cancellation.__cause__,
+            *worker_control_flow,
+            excluded=(owner_cancellation,),
+        )
+        if chain is None:
+            if owner_cancellation.__cause__ is owner_cancellation:
+                owner_cancellation.__cause__ = None
+            raise owner_cancellation
+        raise owner_cancellation from chain
+
+    async def _refresh_status(
+        self,
+    ) -> tuple[BaseException | None, asyncio.CancelledError | None]:
         """Refresh passive status and return definitive worker control flow."""
         worker = _COORDINATOR_MUTATION_EXECUTOR.submit(
             self._store.status_snapshot
         )
-        status, error, cancellation_latched = await self._drain_future(worker)
+        status, error, owner_cancellation = await self._drain_future(worker)
         if error is None:
             self._cached_status = cast(StoreStatus, status)
         elif isinstance(error, Exception):
             logger.warning("TwinCoordinator: passive status refresh failed", exc_info=True)
-        return error, cancellation_latched
+        return error, owner_cancellation
 
     async def _refresh_status_or_raise(self) -> None:
         """Refresh status and preserve owner versus worker control flow."""
-        error, cancellation_latched = await self._refresh_status()
-        if cancellation_latched:
-            raise asyncio.CancelledError() from error
+        error, owner_cancellation = await self._refresh_status()
+        if owner_cancellation is not None:
+            self._raise_latched_cancellation(owner_cancellation, error)
         if error is not None and not isinstance(error, Exception):
             raise error
 
     @staticmethod
     async def _drain_future(
         future: Future[Any],
-    ) -> tuple[Any | None, BaseException | None, bool]:
+    ) -> tuple[
+        Any | None,
+        BaseException | None,
+        asyncio.CancelledError | None,
+    ]:
         """Drain an executor future whose completion survives task cancellation."""
-        cancellation_latched = False
+        owner_cancellation: asyncio.CancelledError | None = None
         wrapped = asyncio.wrap_future(future)
         while True:
             try:
-                return await asyncio.shield(wrapped), None, cancellation_latched
+                return await asyncio.shield(wrapped), None, owner_cancellation
             except asyncio.CancelledError as error:
                 if wrapped.cancelled():
-                    return None, error, cancellation_latched
+                    return None, error, owner_cancellation
                 if wrapped.done():
                     operation_error = wrapped.exception()
                     if isinstance(operation_error, asyncio.CancelledError):
+                        if (
+                            error is not operation_error
+                            and owner_cancellation is None
+                        ):
+                            owner_cancellation = error
                         return (
                             None,
                             operation_error,
-                            cancellation_latched or error is not operation_error,
+                            owner_cancellation,
                         )
-                cancellation_latched = True
+                if owner_cancellation is None:
+                    owner_cancellation = error
             except BaseException as error:  # pylint: disable=broad-exception-caught
-                return None, error, cancellation_latched
+                return None, error, owner_cancellation
 
     async def _drain_task(
         self,
@@ -557,47 +667,75 @@ class TwinCoordinator:
     ) -> Any:
         """Drain one device-owned store mutation before cancellation escapes."""
         worker = _COORDINATOR_MUTATION_EXECUTOR.submit(operation)
-        result, error, cancellation_latched = await self._drain_future(worker)
-        cancellation_identity_lost = cancellation_latched
-        cancellation_error: asyncio.CancelledError | None = None
+        result, error, cancellation_error = await self._drain_future(worker)
+        mutation_control_flow_error = (
+            error
+            if error is not None and not isinstance(error, Exception)
+            else None
+        )
+        publication_error: BaseException | None = None
         reconciliation_error: BaseException | None = None
+        snapshot_control_flow_error: BaseException | None = None
+        publication_control_flow_errors: tuple[
+            asyncio.CancelledError, ...
+        ] = ()
         status_control_flow_error: BaseException | None = None
         try:
             if error is None:
                 if on_success is not None:
                     on_success(result)
                 try:
-                    await self._publish(snapshots(result))
-                except asyncio.CancelledError as caught:
-                    cancellation_latched = True
-                    if cancellation_error is None:
-                        cancellation_error = caught
-                    if (
-                        reconciliation_error is None
-                        and caught.__cause__ is not None
-                    ):
-                        reconciliation_error = caught.__cause__
+                    committed_snapshots = snapshots(result)
+                except BaseException as caught:  # pylint: disable=broad-exception-caught
+                    if isinstance(caught, Exception):
+                        reconciliation_error = caught
+                    else:
+                        snapshot_control_flow_error = caught
+                else:
+                    try:
+                        publication = await self._publish_completion(
+                            committed_snapshots
+                        )
+                    except asyncio.CancelledError as caught:
+                        if cancellation_error is None:
+                            cancellation_error = caught
+                        if (
+                            reconciliation_error is None
+                            and caught.__cause__ is not None
+                        ):
+                            reconciliation_error = caught.__cause__
+                    else:
+                        if (
+                            cancellation_error is None
+                            and publication.owner_cancellation is not None
+                        ):
+                            cancellation_error = publication.owner_cancellation
+                        publication_control_flow_errors = (
+                            publication.worker_cancellations
+                        )
+                        publication_error = publication.error
             elif on_failure is not None:
                 on_failure(error)
         except BaseException as caught:  # pylint: disable=broad-exception-caught
             reconciliation_error = caught
         while True:
             try:
-                status_error, status_cancelled = await self._refresh_status()
-                cancellation_latched = (
-                    cancellation_latched or status_cancelled
-                )
-                cancellation_identity_lost = (
-                    cancellation_identity_lost or status_cancelled
-                )
+                status_error, status_cancellation = await self._refresh_status()
+                if (
+                    cancellation_error is None
+                    and status_cancellation is not None
+                ):
+                    cancellation_error = status_cancellation
                 if status_error is not None:
                     if not isinstance(status_error, Exception):
                         status_control_flow_error = status_error
-                    elif status_cancelled and reconciliation_error is None:
+                    elif (
+                        status_cancellation is not None
+                        and reconciliation_error is None
+                    ):
                         reconciliation_error = status_error
                 break
             except asyncio.CancelledError as caught:
-                cancellation_latched = True
                 if cancellation_error is None:
                     cancellation_error = caught
                 if (
@@ -609,27 +747,82 @@ class TwinCoordinator:
                 if reconciliation_error is None:
                     reconciliation_error = caught
                 break
-        if status_control_flow_error is not None:
-            if cancellation_latched:
-                self._raise_latched_cancellation(
-                    None if cancellation_identity_lost else cancellation_error,
+        if cancellation_error is not None:
+            if mutation_control_flow_error is not None:
+                self._raise_owner_over_control_flow(
+                    cancellation_error,
+                    mutation_control_flow_error,
+                    snapshot_control_flow_error,
+                    publication_error,
+                    *publication_control_flow_errors,
                     status_control_flow_error,
-                )
-            if reconciliation_error is not None:
-                raise status_control_flow_error from reconciliation_error
-            raise status_control_flow_error
-        if reconciliation_error is not None:
-            if cancellation_latched:
-                self._raise_latched_cancellation(
-                    None if cancellation_identity_lost else cancellation_error,
                     reconciliation_error,
                 )
-            raise reconciliation_error
-        if cancellation_latched:
-            self._raise_latched_cancellation(
-                None if cancellation_identity_lost else cancellation_error,
+            if publication_error is not None:
+                self._raise_owner_over_control_flow(
+                    cancellation_error,
+                    snapshot_control_flow_error,
+                    publication_error,
+                    *publication_control_flow_errors,
+                    status_control_flow_error,
+                    reconciliation_error,
+                    error,
+                )
+            if publication_control_flow_errors:
+                self._raise_owner_over_control_flow(
+                    cancellation_error,
+                    snapshot_control_flow_error,
+                    *publication_control_flow_errors,
+                    status_control_flow_error,
+                    reconciliation_error,
+                    error,
+                )
+            self._raise_owner_over_control_flow(
+                cancellation_error,
+                snapshot_control_flow_error,
+                status_control_flow_error,
+                reconciliation_error,
                 error,
             )
+        if mutation_control_flow_error is not None:
+            self._raise_control_flow_chain(
+                mutation_control_flow_error,
+                snapshot_control_flow_error,
+                *publication_control_flow_errors,
+                status_control_flow_error,
+                publication_error,
+                reconciliation_error,
+            )
+        if snapshot_control_flow_error is not None:
+            self._raise_control_flow_chain(
+                snapshot_control_flow_error,
+                *publication_control_flow_errors,
+                status_control_flow_error,
+                publication_error,
+                reconciliation_error,
+                error,
+            )
+        if publication_control_flow_errors:
+            self._raise_control_flow_chain(
+                *publication_control_flow_errors,
+                status_control_flow_error,
+                publication_error,
+                reconciliation_error,
+            )
+        if status_control_flow_error is not None:
+            self._raise_control_flow_chain(
+                status_control_flow_error,
+                publication_error,
+                reconciliation_error,
+                error,
+            )
+        if publication_error is not None:
+            self._raise_control_flow_chain(
+                publication_error,
+                reconciliation_error,
+            )
+        if reconciliation_error is not None:
+            raise reconciliation_error
         if error is not None:
             raise error
         return result
@@ -1452,8 +1645,6 @@ class TwinCoordinator:
             )
             device_tasks: list[tuple[str, asyncio.Task[Any]]] = []
             settled_tasks: set[asyncio.Task[Any]] = set()
-            cancellation_latched = False
-            cancellation_identity_lost = False
             cancellation_error: asyncio.CancelledError | None = None
             creation_failure: tuple[str, BaseException] | None = None
             try:
@@ -1464,10 +1655,6 @@ class TwinCoordinator:
                     except BaseException as caught:  # pylint: disable=broad-exception-caught
                         worker.close()  # pylint: disable=no-member
                         creation_failure = (lease.device_id, caught)
-                        if isinstance(caught, asyncio.CancelledError):
-                            cancellation_latched = True
-                            if cancellation_error is None:
-                                cancellation_error = caught
                         break
                     device_tasks.append((lease.device_id, task))
                 outcomes: list[tuple[str, Any]] = []
@@ -1477,7 +1664,6 @@ class TwinCoordinator:
                     )
                     settled_tasks.add(task)
                     if wait_cancellation is not None:
-                        cancellation_latched = True
                         if cancellation_error is None:
                             cancellation_error = wait_cancellation
                     if error is not None:
@@ -1543,12 +1729,17 @@ class TwinCoordinator:
                         key=lambda snapshot: snapshot.transition.transition_id,
                     )
                 )
+                publication_error: BaseException | None = None
                 reconciliation_error: BaseException | None = None
+                publication_control_flow_errors: tuple[
+                    asyncio.CancelledError, ...
+                ] = ()
                 status_control_flow_error: BaseException | None = None
                 try:
-                    await self._publish(base_snapshots)
+                    publication = await self._publish_completion(
+                        base_snapshots
+                    )
                 except asyncio.CancelledError as caught:
-                    cancellation_latched = True
                     if cancellation_error is None:
                         cancellation_error = caught
                     if (
@@ -1558,28 +1749,36 @@ class TwinCoordinator:
                         reconciliation_error = caught.__cause__
                 except BaseException as caught:  # pylint: disable=broad-exception-caught
                     reconciliation_error = caught
+                else:
+                    if (
+                        cancellation_error is None
+                        and publication.owner_cancellation is not None
+                    ):
+                        cancellation_error = publication.owner_cancellation
+                    publication_control_flow_errors = (
+                        publication.worker_cancellations
+                    )
+                    publication_error = publication.error
                 while True:
                     try:
-                        status_error, status_cancelled = (
+                        status_error, status_cancellation = (
                             await self._refresh_status()
                         )
-                        cancellation_latched = (
-                            cancellation_latched or status_cancelled
-                        )
-                        cancellation_identity_lost = (
-                            cancellation_identity_lost or status_cancelled
-                        )
+                        if (
+                            cancellation_error is None
+                            and status_cancellation is not None
+                        ):
+                            cancellation_error = status_cancellation
                         if status_error is not None:
                             if not isinstance(status_error, Exception):
                                 status_control_flow_error = status_error
                             elif (
-                                status_cancelled
+                                status_cancellation is not None
                                 and reconciliation_error is None
                             ):
                                 reconciliation_error = status_error
                         break
                     except asyncio.CancelledError as caught:
-                        cancellation_latched = True
                         if cancellation_error is None:
                             cancellation_error = caught
                         if (
@@ -1603,61 +1802,129 @@ class TwinCoordinator:
                     0,
                     base_snapshots,
                 )
+                aggregate_failure_error = (
+                    DeadlineSweepError(tuple(failures), base_report)
+                    if failures
+                    else None
+                )
+                device_control_flow_errors = tuple(
+                    error for _device_id, error in control_flow_errors
+                )
+                device_control_flow_error = (
+                    device_control_flow_errors[0]
+                    if device_control_flow_errors
+                    else None
+                )
                 control_flow_error = (
-                    control_flow_errors[0][1]
-                    if control_flow_errors
+                    device_control_flow_error
+                    if device_control_flow_error is not None
                     else status_control_flow_error
                 )
-                if control_flow_error is not None:
-                    if cancellation_latched:
-                        self._raise_latched_cancellation(
-                            (
-                                None
-                                if cancellation_identity_lost
-                                else cancellation_error
-                            ),
-                            control_flow_error,
-                        )
-                    if reconciliation_error is not None:
-                        raise control_flow_error from reconciliation_error
-                    if creation_failure is not None:
-                        raise control_flow_error from creation_failure[1]
-                    if failures:
-                        raise control_flow_error from DeadlineSweepError(
-                            tuple(failures),
-                            base_report,
-                        )
-                    raise control_flow_error
-                if reconciliation_error is not None:
-                    if cancellation_latched:
-                        self._raise_latched_cancellation(
-                            (
-                                None
-                                if cancellation_identity_lost
-                                else cancellation_error
-                            ),
+                creation_error = (
+                    creation_failure[1]
+                    if creation_failure is not None
+                    else None
+                )
+                creation_control_flow_error = (
+                    creation_error
+                    if creation_error is not None
+                    and not isinstance(creation_error, Exception)
+                    else None
+                )
+                if cancellation_error is not None:
+                    if creation_control_flow_error is not None:
+                        self._raise_owner_over_control_flow(
+                            cancellation_error,
+                            creation_control_flow_error,
+                            publication_error,
+                            *publication_control_flow_errors,
+                            *device_control_flow_errors,
+                            status_control_flow_error,
                             reconciliation_error,
+                            aggregate_failure_error,
                         )
-                    raise reconciliation_error
-                if cancellation_latched:
-                    cause = failures[0][1] if failures else None
-                    self._raise_latched_cancellation(
-                        (
-                            None
-                            if cancellation_identity_lost
-                            else cancellation_error
-                        ),
-                        cause,
+                    if publication_error is not None:
+                        self._raise_owner_over_control_flow(
+                            cancellation_error,
+                            publication_error,
+                            *publication_control_flow_errors,
+                            *device_control_flow_errors,
+                            status_control_flow_error,
+                            reconciliation_error,
+                            creation_error,
+                            aggregate_failure_error,
+                        )
+                    if publication_control_flow_errors:
+                        self._raise_owner_over_control_flow(
+                            cancellation_error,
+                            *publication_control_flow_errors,
+                            *device_control_flow_errors,
+                            status_control_flow_error,
+                            reconciliation_error,
+                            creation_error,
+                            aggregate_failure_error,
+                        )
+                    self._raise_owner_over_control_flow(
+                        cancellation_error,
+                        *device_control_flow_errors,
+                        status_control_flow_error,
+                        publication_error,
+                        reconciliation_error,
+                        creation_error,
+                        aggregate_failure_error,
+                    )
+                if creation_control_flow_error is not None:
+                    self._raise_control_flow_chain(
+                        creation_control_flow_error,
+                        *publication_control_flow_errors,
+                        *device_control_flow_errors,
+                        status_control_flow_error,
+                        publication_error,
+                        reconciliation_error,
+                        aggregate_failure_error,
+                    )
+                if publication_control_flow_errors:
+                    self._raise_control_flow_chain(
+                        *publication_control_flow_errors,
+                        *device_control_flow_errors,
+                        status_control_flow_error,
+                        publication_error,
+                        reconciliation_error,
+                        creation_error,
+                        aggregate_failure_error,
+                    )
+                if control_flow_error is not None:
+                    self._raise_control_flow_chain(
+                        *device_control_flow_errors,
+                        status_control_flow_error,
+                        publication_error,
+                        reconciliation_error,
+                        creation_error,
+                        aggregate_failure_error,
+                    )
+                if publication_error is not None:
+                    self._raise_control_flow_chain(
+                        publication_error,
+                        reconciliation_error,
+                        creation_error,
+                        aggregate_failure_error,
+                    )
+                if reconciliation_error is not None:
+                    self._raise_control_flow_chain(
+                        reconciliation_error,
+                        creation_error,
+                        aggregate_failure_error,
                     )
                 if creation_failure is not None:
                     _device_id, creation_error = creation_failure
-                    if failures:
-                        raise creation_error from DeadlineSweepError(
-                            tuple(failures), base_report
+                    if aggregate_failure_error is not None:
+                        self._raise_control_flow_chain(
+                            creation_error,
+                            aggregate_failure_error,
                         )
                     raise creation_error
-                if failures:
-                    raise DeadlineSweepError(tuple(failures), base_report)
+                if aggregate_failure_error is not None:
+                    raise aggregate_failure_error
             finally:
                 cleanup_cancellation_error: asyncio.CancelledError | None = None
                 for _device_id, task in device_tasks:
