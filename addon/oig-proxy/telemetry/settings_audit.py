@@ -954,6 +954,9 @@ async def _offload_audit_ledger(
             if wrapped.done():
                 operation_error = wrapped.exception()
                 if isinstance(operation_error, asyncio.CancelledError):
+                    cancellation_latched = (
+                        cancellation_latched or error is not operation_error
+                    )
                     worker_error = operation_error
                     break
             cancellation_latched = True
@@ -983,32 +986,47 @@ async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
     worker = executor.submit(lock.acquire)
     wrapped = asyncio.wrap_future(worker)
     cancellation_latched = False
+    outer_cancellation: asyncio.CancelledError | None = None
     acquired = False
     worker_error: BaseException | None = None
     while True:
         try:
             acquired = await asyncio.shield(wrapped)
             break
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
             if wrapped.cancelled():
-                raise
+                worker_error = error
+                break
             if wrapped.done():
                 operation_error = wrapped.exception()
                 if isinstance(operation_error, asyncio.CancelledError):
+                    if error is not operation_error:
+                        raise error from operation_error
                     worker_error = operation_error
                     break
             cancellation_latched = True
+            if outer_cancellation is None:
+                outer_cancellation = error
         except BaseException as error:  # pylint: disable=broad-exception-caught
             worker_error = error
             break
     if worker_error is not None:
+        if outer_cancellation is not None:
+            raise outer_cancellation from worker_error
         raise worker_error
     if not acquired:
-        raise RuntimeError("audit lifecycle lock acquisition failed")
+        acquisition_error = RuntimeError(
+            "audit lifecycle lock acquisition failed"
+        )
+        if outer_cancellation is not None:
+            raise outer_cancellation from acquisition_error
+        raise acquisition_error
     if cancellation_latched:
         if isinstance(lock, _AuditLifecycleStripe):
             return True
         lock.release()
+        if outer_cancellation is not None:
+            raise outer_cancellation
         raise asyncio.CancelledError()
     return False
 
@@ -1207,22 +1225,32 @@ class SettingsAuditPublisher:
             if cancellation_latched:
                 raise asyncio.CancelledError() from error
             return
-        canonical_digest = self._assert_authoritative_projection(
-            caller_record,
-            record,
-        )
-        audit_id, transition_id = self._identity(record)
-        if record.command_id is None:
-            raise ValueError("committed audit record requires command_id")
-        lifecycle_lock = _audit_lifecycle_lock(audit_id)
-        acquisition_cancelled = bool(
-            await _acquire_audit_lifecycle_lock(lifecycle_lock)
-        )
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            if cancellation_latched:
+                raise asyncio.CancelledError() from error
+            raise
+        try:
+            canonical_digest = self._assert_authoritative_projection(
+                caller_record,
+                record,
+            )
+            audit_id, transition_id = self._identity(record)
+            if record.command_id is None:
+                raise ValueError("committed audit record requires command_id")
+            lifecycle_lock = _audit_lifecycle_lock(audit_id)
+            acquisition_cancelled = bool(
+                await _acquire_audit_lifecycle_lock(lifecycle_lock)
+            )
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            if cancellation_latched:
+                raise asyncio.CancelledError() from error
+            raise
         cancellation_latched = (
             cancellation_latched or acquisition_cancelled
         )
         integrity_error: ValueError | None = None
         control_flow_error: BaseException | None = None
+        body_error: BaseException | None = None
         try:
             proposal = await _offload_audit_ledger(
                 partial(
@@ -1282,6 +1310,8 @@ class SettingsAuditPublisher:
                         )
                         if rejection.error is not None:
                             cancellation_cause = rejection.error
+                            if not isinstance(rejection.error, Exception):
+                                control_flow_error = rejection.error
                             logger.error(
                                 "settings audit proposal rollback failed",
                                 exc_info=(
@@ -1307,6 +1337,8 @@ class SettingsAuditPublisher:
                         )
                         if acceptance.error is not None:
                             cancellation_cause = acceptance.error
+                            if not isinstance(acceptance.error, Exception):
+                                control_flow_error = acceptance.error
                             logger.error(
                                 "settings audit acceptance finalization failed; "
                                 "replay remains pending",
@@ -1316,8 +1348,14 @@ class SettingsAuditPublisher:
                                     acceptance.error.__traceback__,
                                 ),
                             )
+        except BaseException as caught:  # pylint: disable=broad-exception-caught
+            body_error = caught
         finally:
             lifecycle_lock.release()
+        if body_error is not None:
+            if cancellation_latched:
+                raise asyncio.CancelledError() from body_error
+            raise body_error
         if cancellation_latched:
             raise asyncio.CancelledError() from (
                 cancellation_cause or integrity_error or control_flow_error

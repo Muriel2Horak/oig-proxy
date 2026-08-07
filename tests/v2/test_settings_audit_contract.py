@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -46,6 +46,62 @@ from twin.state import (
     TransitionAuditSnapshot,
 )
 from twin.store import CorruptStoreError, TwinCommandStore, TwinStoreError
+
+
+def _race_owner_cancellation_after_done(
+    real_shield: Callable[[Any], Any],
+    outer_errors: list[asyncio.CancelledError],
+) -> Callable[[Any], Any]:
+    """Inject owner cancellation only after the wrapped worker is definitive."""
+    selected = False
+
+    def controlled_shield(awaitable: Any) -> Any:
+        nonlocal selected
+        if selected:
+            return real_shield(awaitable)
+        selected = True
+
+        async def inject_outer_after_worker() -> Any:
+            while not awaitable.done():
+                await asyncio.sleep(0)
+            owner = asyncio.current_task()
+            assert owner is not None
+            asyncio.get_running_loop().call_soon(
+                owner.cancel,
+                "outer cancelled",
+            )
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError as outer_error:
+                outer_errors.append(outer_error)
+                raise
+            raise AssertionError("owner cancellation was not injected")
+
+        return inject_outer_after_worker()
+
+    return controlled_shield
+
+
+def _latch_first_audit_offload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[int]:
+    """Mark the authoritative offload as owner-cancelled after it settles."""
+    original = settings_audit_module._offload_audit_ledger  # pylint: disable=protected-access
+    calls: list[int] = []
+
+    async def latch_first(operation: Callable[[], Any]):
+        completion = await original(operation)
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            return replace(completion, cancellation_latched=True)
+        return completion
+
+    monkeypatch.setattr(
+        settings_audit_module,
+        "_offload_audit_ledger",
+        latch_first,
+    )
+    return calls
 
 
 def test_settings_audit_imports_in_fresh_interpreter_without_cycle() -> None:
@@ -1033,6 +1089,45 @@ async def test_executor_ledger_cancellation_is_returned_without_reawait(
 
 
 @pytest.mark.asyncio
+async def test_outer_cancellation_racing_ledger_cancellation_is_latched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker: Future[Any] = Future()
+    worker_error = asyncio.CancelledError("ledger worker cancelled")
+    worker.set_exception(worker_error)
+    outer_errors: list[asyncio.CancelledError] = []
+
+    class FixedExecutor:  # pylint: disable=too-few-public-methods
+        """Return one caller-controlled concurrent future."""
+
+        def submit(self, _operation: Any) -> Future[Any]:
+            return worker
+
+    monkeypatch.setattr(
+        settings_audit_module,
+        "_AUDIT_LEDGER_EXECUTOR",
+        FixedExecutor(),
+    )
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _race_owner_cancellation_after_done(asyncio.shield, outer_errors),
+    )
+    draining = asyncio.create_task(
+        settings_audit_module._offload_audit_ledger(  # pylint: disable=protected-access
+            lambda: None
+        )
+    )
+
+    completion = await draining
+
+    assert completion.result is None
+    assert completion.error is worker_error
+    assert completion.cancellation_latched is True
+    assert len(outer_errors) == 1
+
+
+@pytest.mark.asyncio
 async def test_async_publisher_worker_cancellation_releases_stripe_and_retries(
     store: TwinCommandStore,
     deterministic_renderer: AttemptRenderer,
@@ -1084,6 +1179,148 @@ async def test_async_publisher_worker_cancellation_releases_stripe_and_retries(
     assert proposal_calls == 2
     assert len(delivered) == 1
     assert store.audit_delivery_decision_count() == 1
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_async_acceptance_worker_cancellation_propagates_then_retries(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _large_lifecycle_snapshots(store, deterministic_renderer)[0]
+    sentinel = asyncio.CancelledError("acceptance cancelled")
+    original_acceptance = store.accept_audit_delivery
+    acceptance_calls = 0
+    delivered: list[SettingsAuditRecord] = []
+    real_shield = asyncio.shield
+    shielded: list[Any] = []
+
+    def cancel_first_acceptance(**kwargs):
+        nonlocal acceptance_calls
+        acceptance_calls += 1
+        if acceptance_calls == 1:
+            raise sentinel
+        return original_acceptance(**kwargs)
+
+    def reject_reawait(awaitable: Any) -> asyncio.Future[Any]:
+        if any(candidate is awaitable for candidate in shielded):
+            raise AssertionError("executor future was awaited more than once")
+        shielded.append(awaitable)
+        return real_shield(awaitable)
+
+    monkeypatch.setattr(
+        store,
+        "accept_audit_delivery",
+        cancel_first_acceptance,
+    )
+    monkeypatch.setattr(asyncio, "shield", reject_reawait)
+    publisher = SettingsAuditPublisher(
+        delivered.append,
+        acceptance_ledger=store,
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        snapshot.command.audit_id
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await publisher.publish_committed_async(snapshot)
+
+    assert caught.value is sentinel
+    assert acceptance_calls == 1
+    assert len(delivered) == 1
+    assert store.read_audit_delivery_decision(
+        audit_id=snapshot.command.audit_id,
+        transition_id=snapshot.transition.transition_id,
+    ).state.value == "pending"
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+    await publisher.publish_committed_async(snapshot)
+
+    assert acceptance_calls == 2
+    assert len(delivered) == 2
+    assert store.read_audit_delivery_decision(
+        audit_id=snapshot.command.audit_id,
+        transition_id=snapshot.transition.transition_id,
+    ).state.value == "accepted"
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_async_rejection_worker_cancellation_propagates_then_retries(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _large_lifecycle_snapshots(store, deterministic_renderer)[0]
+    sentinel = asyncio.CancelledError("rejection cancelled")
+    original_rejection = store.reject_audit_delivery
+    rejection_calls = 0
+    sink_calls = 0
+    delivered: list[SettingsAuditRecord] = []
+    real_shield = asyncio.shield
+    shielded: list[Any] = []
+
+    def cancel_first_rejection(**kwargs):
+        nonlocal rejection_calls
+        rejection_calls += 1
+        if rejection_calls == 1:
+            raise sentinel
+        return original_rejection(**kwargs)
+
+    def fail_first_sink(record: SettingsAuditRecord) -> None:
+        nonlocal sink_calls
+        sink_calls += 1
+        if sink_calls == 1:
+            raise RuntimeError("sink rejected first delivery")
+        delivered.append(record)
+
+    def reject_reawait(awaitable: Any) -> asyncio.Future[Any]:
+        if any(candidate is awaitable for candidate in shielded):
+            raise AssertionError("executor future was awaited more than once")
+        shielded.append(awaitable)
+        return real_shield(awaitable)
+
+    monkeypatch.setattr(
+        store,
+        "reject_audit_delivery",
+        cancel_first_rejection,
+    )
+    monkeypatch.setattr(asyncio, "shield", reject_reawait)
+    publisher = SettingsAuditPublisher(
+        fail_first_sink,
+        acceptance_ledger=store,
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        snapshot.command.audit_id
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await publisher.publish_committed_async(snapshot)
+
+    assert caught.value is sentinel
+    assert rejection_calls == 1
+    assert sink_calls == 1
+    assert delivered == []
+    assert store.read_audit_delivery_decision(
+        audit_id=snapshot.command.audit_id,
+        transition_id=snapshot.transition.transition_id,
+    ).state.value == "pending"
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+    await publisher.publish_committed_async(snapshot)
+
+    assert rejection_calls == 1
+    assert sink_calls == 2
+    assert len(delivered) == 1
+    assert store.read_audit_delivery_decision(
+        audit_id=snapshot.command.audit_id,
+        transition_id=snapshot.transition.transition_id,
+    ).state.value == "accepted"
     assert lifecycle_lock.acquire(blocking=False) is True
     lifecycle_lock.release()
 
@@ -1148,6 +1385,217 @@ async def test_executor_lock_cancellation_is_raised_without_reawait(
     lock.release()
     assert lock.release_calls == 1
     assert lock.locked is False
+
+
+@pytest.mark.asyncio
+async def test_outer_cancellation_dominates_racing_lock_worker_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker: Future[Any] = Future()
+    worker_error = asyncio.CancelledError("lock worker cancelled")
+    worker.set_exception(worker_error)
+    outer_errors: list[asyncio.CancelledError] = []
+
+    class FixedExecutor:  # pylint: disable=too-few-public-methods
+        """Return one caller-controlled concurrent future."""
+
+        def submit(self, _operation: Any) -> Future[Any]:
+            return worker
+
+    class UnusedLock:
+        """The fixed executor never invokes this lock."""
+
+        def acquire(self) -> bool:
+            raise AssertionError("acquire must not run")
+
+        def release(self) -> None:
+            raise AssertionError("release must not run")
+
+    monkeypatch.setattr(
+        settings_audit_module,
+        "_AUDIT_EXTERNAL_LOCK_EXECUTOR",
+        FixedExecutor(),
+    )
+    monkeypatch.setattr(
+        asyncio,
+        "shield",
+        _race_owner_cancellation_after_done(asyncio.shield, outer_errors),
+    )
+    acquisition = asyncio.create_task(
+        settings_audit_module._acquire_audit_lifecycle_lock(  # pylint: disable=protected-access
+            UnusedLock()
+        )
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await acquisition
+
+    assert len(outer_errors) == 1
+    assert caught.value is outer_errors[0]
+    assert caught.value is not worker_error
+    assert caught.value.args == ("outer cancelled",)
+    assert caught.value.__cause__ is worker_error
+
+
+@pytest.mark.asyncio
+async def test_latched_owner_cancellation_dominates_cancelled_lock_future(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker: Future[Any] = Future()
+    outer_errors: list[asyncio.CancelledError] = []
+    real_shield = asyncio.shield
+
+    class FixedExecutor:  # pylint: disable=too-few-public-methods
+        """Return one caller-controlled concurrent future."""
+
+        def submit(self, _operation: Any) -> Future[Any]:
+            return worker
+
+    class UnusedLock:
+        """The fixed executor never invokes this lock."""
+
+        def acquire(self) -> bool:
+            raise AssertionError("acquire must not run")
+
+        def release(self) -> None:
+            raise AssertionError("release must not run")
+
+    def capture_owner_cancellation(awaitable: Any) -> Any:
+        async def observed_shield() -> Any:
+            try:
+                return await real_shield(awaitable)
+            except asyncio.CancelledError as caught:
+                if not awaitable.cancelled():
+                    outer_errors.append(caught)
+                raise
+
+        return observed_shield()
+
+    monkeypatch.setattr(
+        settings_audit_module,
+        "_AUDIT_EXTERNAL_LOCK_EXECUTOR",
+        FixedExecutor(),
+    )
+    monkeypatch.setattr(asyncio, "shield", capture_owner_cancellation)
+    acquisition = asyncio.create_task(
+        settings_audit_module._acquire_audit_lifecycle_lock(  # pylint: disable=protected-access
+            UnusedLock()
+        )
+    )
+    await asyncio.sleep(0)
+
+    acquisition.cancel("outer cancelled")
+    while not outer_errors:
+        await asyncio.sleep(0)
+    assert acquisition.done() is False
+    assert worker.cancel() is True
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await acquisition
+
+    assert caught.value is outer_errors[0]
+    assert caught.value.args == ("outer cancelled",)
+    assert isinstance(caught.value.__cause__, asyncio.CancelledError)
+    assert caught.value.__cause__ is not caught.value
+
+
+@pytest.mark.asyncio
+async def test_latched_owner_cancellation_dominates_prelock_validation(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _large_lifecycle_snapshots(store, deterministic_renderer)[0]
+    forged = replace(
+        snapshot,
+        command=replace(snapshot.command, value_text="forged"),
+    )
+    offload_calls = _latch_first_audit_offload(monkeypatch)
+    publisher = SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        snapshot.command.audit_id
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await publisher.publish_committed_async(forged)
+
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value.__cause__) == (
+        "audit delivery canonical identity changed"
+    )
+    assert offload_calls == [1]
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_latched_owner_cancellation_dominates_lock_worker_control_flow(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _large_lifecycle_snapshots(store, deterministic_renderer)[0]
+    worker_error = asyncio.CancelledError("lock worker cancelled")
+    offload_calls = _latch_first_audit_offload(monkeypatch)
+
+    async def cancel_lock(_lock: Any) -> bool:
+        raise worker_error
+
+    monkeypatch.setattr(
+        settings_audit_module,
+        "_acquire_audit_lifecycle_lock",
+        cancel_lock,
+    )
+    publisher = SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        snapshot.command.audit_id
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await publisher.publish_committed_async(snapshot)
+
+    assert caught.value is not worker_error
+    assert caught.value.__cause__ is worker_error
+    assert offload_calls == [1]
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_latched_owner_cancellation_dominates_sink_control_flow(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _large_lifecycle_snapshots(store, deterministic_renderer)[0]
+    sink_error = asyncio.CancelledError("sink worker cancelled")
+    offload_calls = _latch_first_audit_offload(monkeypatch)
+
+    def cancelled_sink(_record: SettingsAuditRecord) -> None:
+        raise sink_error
+
+    publisher = SettingsAuditPublisher(
+        cancelled_sink,
+        acceptance_ledger=store,
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        snapshot.command.audit_id
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await publisher.publish_committed_async(snapshot)
+
+    assert caught.value is not sink_error
+    assert caught.value.__cause__ is sink_error
+    assert offload_calls == [1, 2]
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
 
 
 @pytest.mark.asyncio
