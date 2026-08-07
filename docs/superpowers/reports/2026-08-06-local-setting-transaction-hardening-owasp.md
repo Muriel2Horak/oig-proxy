@@ -3,8 +3,8 @@
 ## Scope and decision
 
 - Release: OIG Proxy `2.2.0`
-- Evidence checkout: `0050c23fea0bb4dd3a4eb8526e31e2ac9ce569d9`
-- Verification window: `2026-08-07T17:28:06Z` through `2026-08-07T17:31:42Z`
+- Evidence checkout: `10404123f798fc67ea58d703de9b22d37ac5bf26`
+- Verification window: `2026-08-07T17:59:03Z` through `2026-08-07T18:00:35Z`
 - Boundary: repository code plus hermetic numeric-loopback fake endpoints
 - Excluded: live BOX commands, production cloud/MQTT/telemetry, Home Assistant
   deployment, control enablement, and active network probing
@@ -12,7 +12,7 @@
 
 ## Reproducible gate evidence
 
-Full test and exclusive coverage gate, completed at `2026-08-07T17:28:31Z`:
+Full test and exclusive coverage gate, completed at `2026-08-07T17:59:28Z`:
 
 ```bash
 LOCAL_CONTROL_EGRESS_REPORT=reports/egress-guard.json .venv/bin/python -m pytest tests/v2 \
@@ -27,11 +27,11 @@ LOCAL_CONTROL_EGRESS_REPORT=reports/egress-guard.json .venv/bin/python -m pytest
   --minimum 80.0 --output reports/coverage-gate.json
 ```
 
-Result: `1410 passed`; statement coverage `89.1542%` (`7653/8584`), branch
-coverage `80.0744%` (`2367/2956`), with both percentages strictly greater than
+Result: `1421 passed`; statement coverage `89.6881%` (`7706/8592`), branch
+coverage `80.5799%` (`2390/2966`), with both percentages strictly greater than
 `80.0`.
 
-MNP/smoke E2E, completed at `2026-08-07T17:31:36Z`:
+MNP/smoke E2E, completed at `2026-08-07T18:00:35Z`:
 
 ```bash
 LOCAL_CONTROL_EGRESS_REPORT=reports/egress-guard.json .venv/bin/python -m pytest \
@@ -43,7 +43,7 @@ LOCAL_CONTROL_EGRESS_REPORT=reports/egress-guard.json .venv/bin/python -m pytest
 Result: `2 passed`; egress status `pass`, five self-probes `pass`,
 `blocked_violation_count=0`, and eight allowed numeric-loopback attempts.
 
-Type, lint, and security gates completed by `2026-08-07T17:30:51Z`:
+Type, lint, and security gates completed by `2026-08-07T18:00:05Z`:
 
 ```bash
 MYPYPATH=addon/oig-proxy .venv/bin/python -m mypy addon/oig-proxy --ignore-missing-imports
@@ -64,15 +64,15 @@ diff checks clean.
 
 | Artifact | SHA-256 |
 |---|---|
-| `reports/junit.xml` | `e1cf2987e49be8a59d02230130850c0dc92246b9a3b576ff17ab92a19a14b649` |
-| `reports/coverage.xml` | `0616bd72f46157dbb14c6a2b985b6bbe64a72b1285e9bcdfb4305c5df025180d` |
-| `reports/coverage-gate.json` | `e91a0a586991004a87e676f17d0ed651b84a37c90bb9382bc39a9d104055fb73` |
-| `reports/egress-guard.json` | `6e1b20cde9fe31eaf87e9305552095f80946382f7ef1cd8c9e76b78dd753a60d` |
+| `reports/junit.xml` | `d9fab3524ea51fff188f1e21305e6e2b09f1c79e4f555b3345fab439c1e5a1dc` |
+| `reports/coverage.xml` | `d3bf982db5c47efb955561164d5a95fce0d982d19b0dbf7d6d2c53544e42e9da` |
+| `reports/coverage-gate.json` | `7c38b885d61e1eb8a5f593df1383bc68ac5ada96da058c23c35c96cb27199a6e` |
+| `reports/egress-guard.json` | `cbe77e8d7463d54c9fafc539d3e8b9f4bdcdd96ec441094f643046e6cc45a592` |
 | `reports/pylint.json` | `37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570` |
-| `reports/bandit.json` | `0b6f2c1bf01803def411b5d30c16f91f8be702d7d2ce5f5c008559752df2f2c1` |
+| `reports/bandit.json` | `2f4df5288e52d3cab3dc0a4b39751bde8f7d3bae327ccb3a206b59693d7566b0` |
 | `reports/semgrep.json` | `9bbc1b0986b4024967faa0d21155662a60e6d664c6a40b1ce8f59aa8ddbe5acf` |
 | `reports/gitleaks.json` | `37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570` |
-| `reports/safety.json` | `67ab1258b6d5596df2267ca80443bf2189fa2ad673b53d88bb281918c5935bb0` |
+| `reports/safety.json` | `c1f669c51c7ae33779189399df5b89fd2db3dda9a22b32937c907b93616816cc` |
 
 ## OWASP risk review
 
