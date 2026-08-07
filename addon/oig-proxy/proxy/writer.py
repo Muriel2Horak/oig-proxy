@@ -71,6 +71,12 @@ class SerializedBoxWriter:
         self._write_lock = asyncio.Lock()
         self._owner_changed = asyncio.Condition(self._write_lock)
         self._dialogue_owner: str | None = None
+        self._invocation_count = 0
+
+    @property
+    def invocation_count(self) -> int:
+        """Return attempted underlying writer calls, including failures."""
+        return self._invocation_count
 
     async def acquire_dialogue(self, session_id: str) -> None:
         """Wait for and claim exclusive semantic output ownership."""
@@ -163,6 +169,15 @@ class SerializedBoxWriter:
                     "local write does not belong to the current dialogue owner"
                 )
             return
+        if (
+            purpose is BoxWritePurpose.OFFLINE_RESPONSE
+            and owner_session_id is not None
+        ):
+            if self._dialogue_owner != owner_session_id:
+                raise DialogStateError(
+                    "offline response does not belong to the current dialogue owner"
+                )
+            return
         await self._owner_changed.wait_for(
             lambda: self._dialogue_owner is None
         )
@@ -180,6 +195,7 @@ class SerializedBoxWriter:
         started_at_ms = self._clock_ms()
 
         write_error: Exception | None = None
+        self._invocation_count += 1
         try:
             self._writer.write(frame)
         except Exception as error:  # noqa: BLE001

@@ -250,6 +250,36 @@ class SettingDialog:
         self.active_attempt = attempt
         expectation.phase = CyclePhase.LOCAL_AWAITING_ACK
 
+    def begin_offline_attempt(self, attempt: ActiveLocalAttempt) -> None:
+        """Attach one attempt without inventing a cloud expectation or END."""
+        if self.route is not SessionRoute.OFFLINE:
+            raise DialogStateError("offline attempt requires an offline route")
+        self._validate_attempt(attempt)
+        if self.active_attempt is not None:
+            raise DialogStateError("a local attempt is already active")
+        if self._expectations or self.deferred_end is not None:
+            raise DialogStateError("offline attempt cannot own cloud state")
+        self.active_attempt = attempt
+
+    def replace_offline_attempt(self, attempt: ActiveLocalAttempt) -> None:
+        """Replace one ACKed OFFLINE attempt with its prepared successor."""
+        if self.route is not SessionRoute.OFFLINE:
+            raise DialogStateError("offline attempt requires an offline route")
+        self._validate_attempt(attempt)
+        if self.active_attempt is None:
+            raise DialogStateError("no local attempt is active")
+        self.active_attempt = attempt
+
+    def close_offline_attempt(self) -> ActiveLocalAttempt:
+        """Detach and return the one OFFLINE attempt after terminal handling."""
+        if self.route is not SessionRoute.OFFLINE:
+            raise DialogStateError("offline attempt requires an offline route")
+        if self.active_attempt is None:
+            raise DialogStateError("no local attempt is active")
+        active = self.active_attempt
+        self.active_attempt = None
+        return active
+
     def take_deferred_end_and_close_cycle(self) -> bytes:
         """Return the exact END and erase all state for the FIFO-head cycle."""
         if self.deferred_end is None:

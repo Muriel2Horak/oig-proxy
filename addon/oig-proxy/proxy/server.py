@@ -39,6 +39,7 @@ try:
     )
     from ..protocol.frames import (
         build_getactual_frame,
+        build_end_time_frame,
         build_setting_frame,
         czech_local_datetime_from_epoch,
     )
@@ -55,6 +56,7 @@ try:
         ActiveLocalAttempt,
         ConfirmedSetting,
         DeliveryDisposition,
+        DeliveryTrigger,
         EvidenceContext,
         LocalResponseDisposition,
         RegisteredEventToken,
@@ -87,6 +89,7 @@ except ImportError:
     )
     from protocol.frames import (  # type: ignore[no-redef]
         build_getactual_frame,
+        build_end_time_frame,
         build_setting_frame,
         czech_local_datetime_from_epoch,
     )
@@ -103,6 +106,7 @@ except ImportError:
         ActiveLocalAttempt,
         ConfirmedSetting,
         DeliveryDisposition,
+        DeliveryTrigger,
         EvidenceContext,
         LocalResponseDisposition,
         RegisteredEventToken,
@@ -256,6 +260,24 @@ class StreamTimeoutEvent:
 StreamEvent = StreamFrameEvent | StreamClosedEvent | StreamTimeoutEvent
 
 
+class OfflineDecisionKind(str, Enum):
+    """Exactly one application response selected for one OFFLINE frame."""
+
+    LOCAL_SETTING = "local_setting"
+    SYNTHESIZED_END = "synthesized_end"
+    GENERIC_RESPONSE = "generic_response"
+    CLOSE_WITHOUT_SECOND_WRITE = "close_without_second_write"
+
+
+@dataclass(frozen=True, slots=True)
+class OfflineResponseDecision:
+    """Observable result of one complete OFFLINE semantic decision."""
+
+    kind: OfflineDecisionKind
+    frame: bytes | None
+    active_attempt: ActiveLocalAttempt | None
+
+
 @dataclass(slots=True)
 class ProxyConnectionContext:
     """All mutable semantic state owned by one BOX/cloud connection pair."""
@@ -401,6 +423,341 @@ class ProxyServer:
             await self._route_box_frame(context, event)
             return
         await self._route_cloud_frame(context, event)
+
+    async def route_offline_stream_event(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamEvent,
+    ) -> OfflineResponseDecision | None:
+        """Select at most one OFFLINE application response per input frame."""
+        if context.route is not SessionRoute.OFFLINE:
+            raise DialogStateError("offline router requires an offline context")
+        if isinstance(event, StreamClosedEvent):
+            context.close_requested.set()
+            return None
+        if isinstance(event, StreamTimeoutEvent):
+            await self._route_timeout(context, event)
+            return None
+        if event.direction is not FrameDirection.BOX_TO_PROXY:
+            context.close_requested.set()
+            return None
+        return await self._route_offline_frame(context, event)
+
+    async def _route_offline_frame(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamFrameEvent,
+    ) -> OfflineResponseDecision:
+        frame = event.frame
+        self._capture_frame(
+            frame.raw,
+            "box_to_cloud",
+            conn_id=context.conn_id,
+            peer=context.peer,
+        )
+        validation = validate_frame(frame)
+        validated = validation.validated
+        if validated is None:
+            if context.dialog.active_attempt is not None:
+                context.close_requested.set()
+                return OfflineResponseDecision(
+                    OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+                    None,
+                    None,
+                )
+            return await self._write_offline_generic(context, frame.raw)
+
+        metadata = parse_frame_metadata(validated)
+        if metadata is None:
+            return await self._write_offline_generic(context, frame.raw)
+
+        identity_accepted = False
+        if metadata.device_id:
+            try:
+                context.dialog.bind_device(metadata.device_id)
+            except DialogStateError:
+                identity_accepted = False
+            else:
+                if (
+                    self.on_valid_device is not None
+                    and metadata.message_id is not None
+                    and metadata.message_id >= 0
+                    and metadata.id_set is not None
+                    and metadata.id_set >= 0
+                ):
+                    identity_accepted = await self.on_valid_device(
+                        metadata.device_id,
+                        metadata.message_id,
+                        metadata.id_set,
+                    )
+
+        token = event.registered_event
+        if token is None and self.twin_coordinator is not None:
+            setting_event = parse_setting_event(
+                validated,
+                direction=FrameDirection.BOX_TO_PROXY,
+            )
+            if setting_event is not None:
+                token = self.twin_coordinator.register_setting_event(
+                    event=setting_event,
+                    context=EvidenceContext(
+                        FrameDirection.BOX_TO_PROXY,
+                        context.session_id,
+                        setting_event.device_id,
+                        frame.received_at_ms,
+                        frame.raw,
+                    ),
+                )
+        if token is not None:
+            decision = await self._handle_offline_registered_event(
+                context,
+                token,
+                frame.raw,
+            )
+            await self._process_frame(frame.raw)
+            return decision
+
+        active = context.dialog.active_attempt
+        if active is not None:
+            response = parse_setting_response(
+                validated,
+                direction=FrameDirection.BOX_TO_PROXY,
+            )
+            if response is None:
+                await self._abort_active_dialogue(
+                    context,
+                    RetryReason.UNEXPECTED_RESPONSE,
+                    frame.received_at_ms,
+                )
+                context.close_requested.set()
+                return OfflineResponseDecision(
+                    OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+                    None,
+                    None,
+                )
+            decision = await self._handle_offline_local_response(
+                context,
+                frame,
+                response,
+            )
+            await self._process_frame(frame.raw)
+            return decision
+
+        if (
+            metadata.result == "IsNewSet"
+            and identity_accepted
+            and context.dialog.bound_device_id is not None
+            and self.twin_coordinator is not None
+        ):
+            decision = await self._begin_offline_delivery(context, frame)
+            await self._process_frame(frame.raw)
+            return decision
+
+        decision = await self._write_offline_generic(context, frame.raw)
+        await self._process_frame(frame.raw)
+        return decision
+
+    async def _begin_offline_delivery(
+        self,
+        context: ProxyConnectionContext,
+        frame: AssembledFrame,
+    ) -> OfflineResponseDecision:
+        coordinator = self.twin_coordinator
+        device_id = context.dialog.bound_device_id
+        if coordinator is None or device_id is None:
+            return await self._write_offline_end(context)
+        await context.box_writer.acquire_dialogue(context.session_id)
+        invocation_count = context.box_writer.invocation_count
+        try:
+            result = await coordinator.claim_and_write_next(
+                device_id=device_id,
+                session_id=context.session_id,
+                received_at_ms=frame.received_at_ms,
+                trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+                writer=context.box_writer,
+            )
+        except Exception:  # noqa: BLE001
+            if context.box_writer.invocation_count == invocation_count:
+                return await self._write_offline_end(
+                    context,
+                    owner_session_id=context.session_id,
+                    release_owner=True,
+                )
+            context.dialog.clear_socket_state()
+            await context.box_writer.release_dialogue(context.session_id)
+            context.close_requested.set()
+            return OfflineResponseDecision(
+                OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+                None,
+                None,
+            )
+        if result.disposition is DeliveryDisposition.SENT:
+            active = result.active_attempt
+            if active is None:
+                raise RuntimeError("sent OFFLINE delivery omitted its attempt")
+            context.dialog.begin_offline_attempt(active)
+            self._arm_ack_timer(context, active)
+            return OfflineResponseDecision(
+                OfflineDecisionKind.LOCAL_SETTING,
+                active.wire_frame,
+                active,
+            )
+        if result.disposition in {
+            DeliveryDisposition.NO_ELIGIBLE,
+            DeliveryDisposition.CONTROL_DISABLED,
+            DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE,
+            DeliveryDisposition.RENDER_FAILED,
+        }:
+            return await self._write_offline_end(
+                context,
+                owner_session_id=context.session_id,
+                release_owner=True,
+            )
+        context.dialog.clear_socket_state()
+        await context.box_writer.release_dialogue(context.session_id)
+        context.close_requested.set()
+        return OfflineResponseDecision(
+            OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+            None,
+            None,
+        )
+
+    async def _handle_offline_local_response(
+        self,
+        context: ProxyConnectionContext,
+        frame: AssembledFrame,
+        response: Any,
+    ) -> OfflineResponseDecision:
+        active = context.dialog.active_attempt
+        coordinator = self.twin_coordinator
+        if active is None or coordinator is None:
+            raise RuntimeError("OFFLINE response lost its active attempt")
+        decision = await coordinator.handle_local_response(
+            active=active,
+            response=response,
+            context=EvidenceContext(
+                FrameDirection.BOX_TO_PROXY,
+                context.session_id,
+                context.dialog.bound_device_id or active.device_id,
+                frame.received_at_ms,
+                frame.raw,
+            ),
+            writer=context.box_writer,
+        )
+        if decision.next_attempt is not None:
+            context.dialog.replace_offline_attempt(decision.next_attempt)
+            self._arm_ack_timer(context, decision.next_attempt)
+            return OfflineResponseDecision(
+                OfflineDecisionKind.LOCAL_SETTING,
+                decision.next_attempt.wire_frame,
+                decision.next_attempt,
+            )
+        if decision.send_final_end:
+            self._cancel_ack_timer(context)
+            context.dialog.close_offline_attempt()
+            return await self._write_offline_end(
+                context,
+                owner_session_id=context.session_id,
+                release_owner=True,
+            )
+        self._cancel_ack_timer(context)
+        context.dialog.clear_socket_state()
+        await context.box_writer.release_dialogue(context.session_id)
+        context.close_requested.set()
+        return OfflineResponseDecision(
+            OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+            None,
+            None,
+        )
+
+    async def _handle_offline_registered_event(
+        self,
+        context: ProxyConnectionContext,
+        token: RegisteredEventToken,
+        raw: bytes,
+    ) -> OfflineResponseDecision:
+        coordinator = self.twin_coordinator
+        if coordinator is None:
+            return await self._write_offline_generic(context, raw)
+        result = await coordinator.handle_registered_event(token)
+        if result.confirmation is not None and self.on_committed_confirmation is not None:
+            await self.on_committed_confirmation(result.confirmation)
+        active = context.dialog.active_attempt
+        if active is None:
+            return await self._write_offline_generic(context, raw)
+        self._cancel_ack_timer(context)
+        if result.command is None or result.command.command_id != active.command_id:
+            await self._abort_active_dialogue(
+                context,
+                RetryReason.UNEXPECTED_RESPONSE,
+                self._clock_ms(),
+            )
+            context.close_requested.set()
+            return OfflineResponseDecision(
+                OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+                None,
+                None,
+            )
+        context.dialog.close_offline_attempt()
+        return await self._write_offline_end(
+            context,
+            owner_session_id=context.session_id,
+            release_owner=True,
+        )
+
+    async def _write_offline_end(
+        self,
+        context: ProxyConnectionContext,
+        *,
+        owner_session_id: str | None = None,
+        release_owner: bool = False,
+    ) -> OfflineResponseDecision:
+        frame = build_end_time_frame()
+        result = await context.box_writer.write_frame(
+            frame,
+            purpose=BoxWritePurpose.OFFLINE_RESPONSE,
+            owner_session_id=owner_session_id,
+        )
+        if release_owner and owner_session_id is not None:
+            await context.box_writer.release_dialogue(owner_session_id)
+        if result.outcome is not BoxWriteOutcome.DRAINED:
+            context.close_requested.set()
+            return OfflineResponseDecision(
+                OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+                None,
+                None,
+            )
+        return OfflineResponseDecision(
+            OfflineDecisionKind.SYNTHESIZED_END,
+            frame,
+            None,
+        )
+
+    async def _write_offline_generic(
+        self,
+        context: ProxyConnectionContext,
+        raw: bytes,
+    ) -> OfflineResponseDecision:
+        table_name = infer_table_name(
+            raw.decode("utf-8", errors="replace")
+        ) or ""
+        frame = build_local_ack(table_name)
+        result = await context.box_writer.write_frame(
+            frame,
+            purpose=BoxWritePurpose.OFFLINE_RESPONSE,
+        )
+        if result.outcome is not BoxWriteOutcome.DRAINED:
+            context.close_requested.set()
+            return OfflineResponseDecision(
+                OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+                None,
+                None,
+            )
+        return OfflineResponseDecision(
+            OfflineDecisionKind.GENERIC_RESPONSE,
+            frame,
+            None,
+        )
 
     async def pump_stream_events(
         self,
@@ -1037,6 +1394,46 @@ class ProxyServer:
             peer=peer,
         )
 
+    def _create_offline_context(
+        self,
+        *,
+        session_id: str,
+        box_writer: asyncio.StreamWriter,
+        conn_id: int,
+        peer: str,
+    ) -> ProxyConnectionContext:
+        def capture_invocation(
+            raw: bytes,
+            _purpose: BoxWritePurpose,
+            attempt_link: AttemptCaptureLink | None,
+        ) -> None:
+            self._capture_frame(
+                raw,
+                "proxy_to_box",
+                conn_id=conn_id,
+                peer=peer,
+                attempt_link=attempt_link,
+            )
+
+        return ProxyConnectionContext(
+            session_id=session_id,
+            route=SessionRoute.OFFLINE,
+            dialog=SettingDialog(session_id, SessionRoute.OFFLINE),
+            box_assembler=FrameStreamAssembler(),
+            cloud_assembler=FrameStreamAssembler(),
+            box_writer=SerializedBoxWriter(
+                box_writer,
+                clock_ms=self._clock_ms,
+                on_invoked=capture_invocation,
+            ),
+            cloud_audit=CloudSettingAuditObserver(None),
+            semantic_events=asyncio.Queue(maxsize=1),
+            cloud_writer=None,
+            close_requested=asyncio.Event(),
+            conn_id=conn_id,
+            peer=peer,
+        )
+
     async def run_connection_context(
         self,
         context: ProxyConnectionContext,
@@ -1072,6 +1469,32 @@ class ProxyServer:
                 if not pump.done():
                     pump.cancel()
             await asyncio.gather(*pumps, return_exceptions=True)
+            await self._stop_local_getactual_task(getactual)
+            await self._cleanup_connection_context(context)
+
+    async def run_offline_context(
+        self,
+        context: ProxyConnectionContext,
+        box_reader: asyncio.StreamReader,
+    ) -> None:
+        """Run one bounded BOX pump through the sole OFFLINE router."""
+        pump = asyncio.create_task(
+            self.pump_stream_events(
+                context,
+                box_reader,
+                direction=FrameDirection.BOX_TO_PROXY,
+            ),
+            name=f"box-offline-pump-{context.session_id}",
+        )
+        getactual = self._start_semantic_getactual_task(context)
+        try:
+            while not context.close_requested.is_set():
+                event = await context.semantic_events.get()
+                await self.route_offline_stream_event(context, event)
+        finally:
+            if not pump.done():
+                pump.cancel()
+            await asyncio.gather(pump, return_exceptions=True)
             await self._stop_local_getactual_task(getactual)
             await self._cleanup_connection_context(context)
 
@@ -1273,20 +1696,39 @@ class ProxyServer:
         cloud_disconnect_reason: str,
         current: asyncio.Task[Any] | None,
     ) -> None:
-        local_getactual_task = self._start_local_getactual_task(
-            box_writer,
-            conn_id=conn_id,
-            peer=peer_str,
-        )
+        local_getactual_task: asyncio.Task[None] | None = None
         try:
-            await self._pipe_box_offline(
-                box_reader,
-                box_writer,
-                peer,
-                session_id=session_id,
-            )
+            if self.twin_coordinator is not None:
+                context = self._create_offline_context(
+                    session_id=session_id,
+                    box_writer=box_writer,
+                    conn_id=conn_id,
+                    peer=peer_str,
+                )
+                await self.run_offline_context(context, box_reader)
+            else:
+                local_getactual_task = self._start_local_getactual_task(
+                    box_writer,
+                    conn_id=conn_id,
+                    peer=peer_str,
+                )
+                await self._pipe_box_offline(
+                    box_reader,
+                    box_writer,
+                    peer,
+                    session_id=session_id,
+                )
         finally:
             await self._stop_local_getactual_task(local_getactual_task)
+            if not box_writer.is_closing():
+                box_writer.close()
+                try:
+                    await box_writer.wait_closed()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "wait_closed error in offline cleanup: %s",
+                        exc,
+                    )
             self._record_telemetry_connection_end(
                 box_connected_since_epoch=box_connected_since_epoch,
                 box_reason=box_disconnect_reason,

@@ -269,6 +269,20 @@ def test_local_attempt_requires_dialog_session_and_single_active_attempt() -> No
     assert dialog.active_attempt is replacement
 
 
+def test_offline_attempt_uses_session_ownership_without_cloud_cycle() -> None:
+    dialog = SettingDialog("session-1", SessionRoute.OFFLINE)
+    dialog.bind_device("device-1")
+    first = _active_attempt()
+
+    dialog.begin_offline_attempt(first)
+    replacement = _active_attempt("command-2", 2)
+    dialog.replace_offline_attempt(replacement)
+
+    assert dialog.active_attempt is replacement
+    dialog.close_offline_attempt()
+    assert dialog.active_attempt is None
+
+
 def test_clear_socket_state_erases_all_connection_local_mutable_state() -> None:
     dialog = _cloud_waiting_dialog()
     dialog.bind_device("device-1")
