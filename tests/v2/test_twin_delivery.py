@@ -1,422 +1,1282 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,too-few-public-methods
-import os
-import sys
-import time
+"""Behavioral tests for per-device durable local-setting coordination."""
+
+# pyright: reportMissingImports=false
+# pylint: disable=import-error,missing-function-docstring,too-many-lines
+# pylint: disable=too-few-public-methods,too-many-instance-attributes
+# pylint: disable=too-many-arguments,use-implicit-booleaness-not-comparison
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from typing import Literal
 
 import pytest
 
-# pyright: reportMissingImports=false
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "addon", "oig-proxy")))
-
-from unittest.mock import MagicMock  # pylint: disable=wrong-import-position
-
-from protocol.frames import build_setting_frame  # pylint: disable=wrong-import-position
-from telemetry.settings_audit import SettingResult, SettingStep, record_to_dict  # pylint: disable=wrong-import-position
-from twin.delivery import TwinDelivery  # pylint: disable=wrong-import-position
-from twin.state import TwinQueue  # pylint: disable=wrong-import-position
-
-
-class _MQTTStub:
-    pass
-
-
-def _make_collector():
-    collector = MagicMock()
-    collector.settings_audit = []
-    collector.record_setting_audit_step = lambda r: collector.settings_audit.append(record_to_dict(r))
-    return collector
+from protocol.frame import FrameDirection
+from telemetry.settings_audit import SettingsAuditPublisher, SettingsAuditRecord
+from twin.ack_parser import SettingEvent, SettingResponse, derive_event_evidence_id
+from twin.delivery import TwinCoordinator
+from twin.state import (
+    ActiveLocalAttempt,
+    AttemptWriteOutcome,
+    AttemptWriteResult,
+    CommandState,
+    ControlIngress,
+    DeliveryDisposition,
+    DeliveryTrigger,
+    EvidenceContext,
+    EventDisposition,
+    LocalResponseDisposition,
+    RetryReason,
+    TwinCommand,
+)
+from twin.store import StoreRecordNotFound, TwinCommandStore
 
 
-@pytest.mark.asyncio
-async def test_deliver_pending_returns_twin_settings() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    queue.enqueue("tbl_set", "T_Mode", "AUTO")
-    delivery = TwinDelivery(queue, _MQTTStub())
-
-    pending = await delivery.deliver_pending("12345")
-
-    assert len(pending) == 1
-    assert pending[0].table == "tbl_set"
-    assert pending[0].key == "T_Room"
-    assert pending[0].value == 22
-
-
-@pytest.mark.asyncio
-async def test_deliver_pending_blocks_until_ack() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    queue.enqueue("tbl_set", "T_Mode", "AUTO")
-    delivery = TwinDelivery(queue, _MQTTStub())
-
-    first = await delivery.deliver_pending("12345")
-    second = await delivery.deliver_pending("12345")
-
-    assert len(first) == 1
-    assert second == []
-
-    delivery.acknowledge("tbl_set", "T_Room")
-    third = await delivery.deliver_pending("12345")
-    assert len(third) == 1
-    assert third[0].key == "T_Mode"
-
-
-@pytest.mark.asyncio
-async def test_deliver_pending_drops_after_inflight_timeout() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "SA", 1)
-    delivery = TwinDelivery(queue, _MQTTStub(), inflight_timeout_s=0.0)
-
-    first = await delivery.deliver_pending("12345")
-    assert len(first) == 1
-    assert first[0].key == "SA"
-
-    second = await delivery.deliver_pending("12345")
-    assert second == []
-    assert queue.size() == 0
-
-
-def test_build_setting_frame_format() -> None:
-    rendered = build_setting_frame(
-        device_id="2206237016",
+def _enqueue(
+    store: TwinCommandStore,
+    *,
+    value_text: str = "2",
+    received_at_ms: int = 100,
+    device_id: str = "123",
+    item_name: str = "MODE",
+) -> TwinCommand:
+    try:
+        store.read_device(device_id)
+    except StoreRecordNotFound:
+        store.observe_device(
+            device_id=device_id,
+            observed_at_ms=max(1, received_at_ms - 10),
+            observed_wire_id=14_000_000,
+            observed_wire_id_set=1_786_000_000,
+        )
+    ingress = ControlIngress(
+        f"ing-{device_id}-{item_name}-{received_at_ms}-{value_text}",
+        received_at_ms,
+        f"oig/{device_id}/control/set",
+        device_id,
+        False,
+        f'{{"value":"{value_text}"}}',
+    )
+    return store.enqueue_command(
+        ingress,
+        device_id=device_id,
         table_name="tbl_box_prms",
-        item_name="MODE",
-        value_text="1",
-        wire_id=12345678,
-        wire_id_set=844979473,
-        wire_dt="11.10.1996 22:31:13",
-        tsec_text="2026-08-06 08:11:13",
-        ver_text="00042",
+        item_name=item_name,
+        value_text=value_text,
+    ).command
+
+
+class _Clock:
+    def __init__(self, value: int = 201) -> None:
+        self.value = value
+
+    def __call__(self) -> int:
+        value = self.value
+        self.value += 1
+        return value
+
+
+class ScriptedLocalSettingWriter:
+    """Writer double that observes durable state at the invocation boundary."""
+
+    def __init__(
+        self,
+        store: TwinCommandStore,
+        *,
+        outcome: AttemptWriteOutcome = AttemptWriteOutcome.DRAINED,
+        error_text: str | None = None,
+        entered: asyncio.Event | None = None,
+        release: asyncio.Event | None = None,
+    ) -> None:
+        self.store = store
+        self.outcome = outcome
+        self.error_text = error_text
+        self.entered = entered
+        self.release = release
+        self.frames: list[bytes] = []
+        self.attempts: list[ActiveLocalAttempt] = []
+        self.states_at_invocation: list[CommandState] = []
+
+    async def write_attempt(
+        self,
+        attempt: ActiveLocalAttempt,
+        *,
+        before_write: Callable[[], Awaitable[None]],
+    ) -> AttemptWriteResult:
+        prepared_at_ms = (
+            attempt.ack_deadline_ms - self.store.policy.ack_timeout_ms
+        )
+        if self.outcome is AttemptWriteOutcome.FAILED:
+            return AttemptWriteResult(
+                outcome=self.outcome,
+                started_at_ms=prepared_at_ms + 1,
+                drain_completed_at_ms=None,
+                error_text=self.error_text or "write rejected before invocation",
+            )
+        await before_write()
+        self.states_at_invocation.append(
+            self.store.read_command(attempt.command_id).state
+        )
+        self.frames.append(attempt.wire_frame)
+        self.attempts.append(attempt)
+        if self.entered is not None:
+            self.entered.set()
+        if self.release is not None:
+            await self.release.wait()
+        if self.outcome is AttemptWriteOutcome.DRAINED:
+            return AttemptWriteResult(
+                outcome=self.outcome,
+                started_at_ms=prepared_at_ms + 1,
+                drain_completed_at_ms=prepared_at_ms + 2,
+                error_text=None,
+            )
+        return AttemptWriteResult(
+            outcome=AttemptWriteOutcome.UNKNOWN,
+            started_at_ms=prepared_at_ms + 1,
+            drain_completed_at_ms=None,
+            error_text=self.error_text or "drain completion unknown",
+        )
+
+
+@pytest.fixture
+def coordinator(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> TwinCoordinator:
+    _enqueue(store)
+    return TwinCoordinator(
+        store,
+        control_enabled=True,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
     )
-    frame_str = rendered.wire_frame.decode("utf-8")
-    assert "<ID>12345678</ID>" in frame_str
-    assert "<ID_Device>2206237016</ID_Device>" in frame_str
-    assert "<ID_Set>844979473</ID_Set>" in frame_str
-    assert "<ID_SubD>0</ID_SubD>" in frame_str
-    assert "<NewValue>1</NewValue>" in frame_str
-    assert "<Confirm>New</Confirm>" in frame_str
-    assert "<TblName>tbl_box_prms</TblName>" in frame_str
-    assert "<TblItem>MODE</TblItem>" in frame_str
-    assert "<ID_Server>9</ID_Server>" in frame_str
-    assert "<mytimediff>0</mytimediff>" in frame_str
-    assert "<Reason>Setting</Reason>" in frame_str
-    assert "<ver>00042</ver>" in frame_str
-    assert "<TSec>2026-08-06 08:11:13</TSec>" in frame_str
-    assert "<DT>11.10.1996 22:31:13</DT>" in frame_str
-    assert "<CRC>" in frame_str and "</CRC>" in frame_str
-    assert frame_str.endswith("\r\n")
+
+
+@pytest.fixture
+def disabled_coordinator(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> TwinCoordinator:
+    _enqueue(store)
+    return TwinCoordinator(
+        store,
+        control_enabled=False,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+
+
+def _response(
+    raw: bytes,
+    *,
+    result: Literal["ACK", "NACK"] = "ACK",
+    rdt_text: str | None = "06.08.2026 10:12:00",
+) -> SettingResponse:
+    return SettingResponse(
+        result=result,
+        reason="Setting" if result == "ACK" else "Rejected",
+        rdt_text=rdt_text,
+        fingerprint=hashlib.sha256(raw).hexdigest(),
+    )
+
+
+def _context(
+    active: ActiveLocalAttempt,
+    raw: bytes,
+    *,
+    session_id: str | None = None,
+    device_id: str | None = None,
+    received_at_ms: int | None = None,
+    direction: FrameDirection = FrameDirection.BOX_TO_PROXY,
+) -> EvidenceContext:
+    return EvidenceContext(
+        direction,
+        session_id or active.session_id,
+        device_id or active.device_id,
+        active.ack_deadline_ms if received_at_ms is None else received_at_ms,
+        raw,
+    )
+
+
+async def _deliver(
+    coordinator: TwinCoordinator,
+    writer: ScriptedLocalSettingWriter,
+    *,
+    session: str = "session-a",
+    now_ms: int = 200,
+) -> ActiveLocalAttempt:
+    decision = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id=session,
+        received_at_ms=now_ms,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
+    )
+    assert decision.disposition is DeliveryDisposition.SENT
+    assert decision.active_attempt is not None
+    return decision.active_attempt
+
+
+def _event(
+    *,
+    device_id: str = "123",
+    event_id_set: int = 55,
+    device_dt: str = "06.08.2026 10:12:01",
+    item_name: str = "MODE",
+    new_value: str = "2",
+) -> SettingEvent:
+    content = f"Remotely : tbl_box_prms / {item_name}: [1]->[{new_value}]"
+    return SettingEvent(
+        evidence_id=derive_event_evidence_id(
+            device_id, event_id_set, device_dt, content
+        ),
+        device_id=device_id,
+        event_id_set=event_id_set,
+        device_dt=device_dt,
+        content_text=content,
+        table_name="tbl_box_prms",
+        item_name=item_name,
+        old_value_text="1",
+        new_value_text=new_value,
+    )
 
 
 @pytest.mark.asyncio
-async def test_acknowledge_removes_setting_from_queue() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    delivery = TwinDelivery(queue, _MQTTStub())
+async def test_claim_requires_correlated_cloud_terminal_end(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
 
-    _ = await delivery.deliver_pending("12345")
-    delivery.acknowledge("tbl_set", "T_Room")
+    rejected = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=None,  # type: ignore[arg-type]
+        writer=writer,
+    )
 
-    assert queue.size() == 0
-
-
-def test_next_id_set_starts_at_epoch_range() -> None:
-    queue = TwinQueue()
-    delivery = TwinDelivery(queue, _MQTTStub())
-
-    next_id = delivery.next_id_set()
-
-    assert next_id >= 1_700_000_000
-
-
-def test_next_id_set_clamps_when_observed_is_older() -> None:
-    queue = TwinQueue()
-    delivery = TwinDelivery(queue, _MQTTStub())
-    delivery.observe_id_set(845_125_850)
-
-    next_id = delivery.next_id_set()
-
-    assert next_id >= 1_700_000_000
-
-
-def test_observed_msg_id_increments_monotonic() -> None:
-    queue = TwinQueue()
-    delivery = TwinDelivery(queue, _MQTTStub())
-
-    delivery.observe_msg_id(13_800_000)
-    first = delivery.next_msg_id()
-    second = delivery.next_msg_id()
-
-    assert first == 13_800_001
-    assert second == 13_800_002
+    assert rejected.disposition is DeliveryDisposition.UNAUTHORIZED
+    assert writer.frames == []
+    assert (await coordinator.status_snapshot("123")).awaiting_ack == 0
 
 
 @pytest.mark.asyncio
-async def test_deliver_pending_records_selected_step() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
+@pytest.mark.parametrize("trigger", list(DeliveryTrigger))
+async def test_only_declared_delivery_triggers_can_claim(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: Callable,
+    trigger: DeliveryTrigger,
+) -> None:
+    store = store_factory(8)
+    _enqueue(store)
+    coordinator = TwinCoordinator(
+        store, renderer=deterministic_renderer, clock_ms=_Clock()
+    )
+    writer = ScriptedLocalSettingWriter(store)
 
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=trigger,
+        writer=writer,
+    )
 
-    assert len(pending) == 1
-    assert len(collector.settings_audit) == 1
-    record = collector.settings_audit[0]
-    assert record["step"] == SettingStep.DELIVER_SELECTED.value
-    assert record["result"] == SettingResult.PENDING.value
-    assert record["audit_id"] == pending[0].audit_id
-    assert record["session_id"] == "sess_1"
-    assert record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
+    assert result.disposition is DeliveryDisposition.SENT
+    assert len(writer.frames) == 1
 
 
 @pytest.mark.asyncio
-async def test_timeout_records_timeout_step() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, _MQTTStub(), inflight_timeout_s=0.0, telemetry_collector=collector)
+async def test_deliver_next_writes_only_durably_prepared_frame(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
 
-    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    decision = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.CORRELATED_CLOUD_END,
+        writer=writer,
+    )
 
-    assert len(collector.settings_audit) == 2
-    timeout_record = collector.settings_audit[1]
-    assert timeout_record["step"] == SettingStep.TIMEOUT.value
-    assert timeout_record["result"] == SettingResult.FAILED.value
-    assert timeout_record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
+    assert decision.disposition is DeliveryDisposition.SENT
+    assert decision.active_attempt is not None
+    assert writer.frames == [decision.active_attempt.wire_frame]
+    assert writer.states_at_invocation == [CommandState.AWAITING_ACK]
+    assert decision.active_attempt.write_outcome is AttemptWriteOutcome.DRAINED
+    persisted = store.read_attempt(
+        decision.active_attempt.command_id,
+        decision.active_attempt.attempt_number,
+    )
+    assert persisted.wire_frame == decision.active_attempt.wire_frame
+    assert persisted.write_outcome is AttemptWriteOutcome.DRAINED
 
 
 @pytest.mark.asyncio
-async def test_clear_session_records_session_cleared() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
+async def test_disabled_coordinator_never_claims_or_writes(
+    disabled_coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    before = await disabled_coordinator.status_snapshot("123")
 
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    delivery.clear_session("sess_1")
+    result = await disabled_coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
+    )
 
-    assert len(collector.settings_audit) == 2
-    session_record = collector.settings_audit[1]
-    assert session_record["step"] == SettingStep.SESSION_CLEARED.value
-    assert session_record["result"] == SettingResult.INCOMPLETE.value
-    assert session_record["audit_id"] == pending[0].audit_id
-    assert session_record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
+    assert result.disposition is DeliveryDisposition.CONTROL_DISABLED
+    assert await disabled_coordinator.status_snapshot("123") == before
+    assert writer.frames == []
 
 
 @pytest.mark.asyncio
-async def test_shutdown_records_session_cleared_for_global_inflight() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    queue.get("tbl_set", "T_Room").raw_text = "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
-
-    pending = await delivery.deliver_pending("dev_1")
-    delivery.shutdown()
-
-    assert len(collector.settings_audit) == 2
-    session_record = collector.settings_audit[1]
-    assert session_record["step"] == SettingStep.SESSION_CLEARED.value
-    assert session_record["result"] == SettingResult.INCOMPLETE.value
-    assert session_record["audit_id"] == pending[0].audit_id
-    assert session_record["raw_text"] == "<Frame><TblItem>T_Room</TblItem><NewValue>22</NewValue></Frame>"
-
-
-def test_terminal_deduplication_prevents_duplicate_success() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, _MQTTStub(), telemetry_collector=collector)
-
-    setting = queue.get("tbl_set", "T_Room")
-    assert setting is not None
-
-    delivery.record_ack_box_observed(setting, "dev_1")
-    delivery.record_ack_box_observed(setting, "dev_1")
-
-    assert len(collector.settings_audit) == 2
-    assert collector.settings_audit[0]["step"] == SettingStep.ACK_BOX_OBSERVED.value
-    assert collector.settings_audit[1]["step"] == SettingStep.ACK_BOX_OBSERVED.value
-
-    delivery.record_ack_tbl_events(setting, "dev_1", confirmed_value="23")
-    delivery.record_ack_tbl_events(setting, "dev_1", confirmed_value="23")
-
-    assert len(collector.settings_audit) == 3
-    assert collector.settings_audit[2]["step"] == SettingStep.ACK_TBL_EVENTS.value
-    assert collector.settings_audit[2]["result"] == SettingResult.CONFIRMED.value
-
-
-def test_begin_cloud_setting_records_incoming_and_exposes_inflight() -> None:
-    collector = _make_collector()
-    delivery = TwinDelivery(TwinQueue(), _MQTTStub(), telemetry_collector=collector)
-    raw_text = (
-        "<Frame><TblName>tbl_box_prms</TblName><ID_Device>dev_1</ID_Device>"
-        "<ID>12345678</ID><ID_Set>844979473</ID_Set><TblItem>MODE</TblItem>"
-        "<NewValue>1</NewValue><Confirm>New</Confirm><Reason>Setting</Reason></Frame>"
+async def test_write_before_invocation_failure_is_known_and_retryable(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(
+        store, outcome=AttemptWriteOutcome.FAILED
     )
 
-    delivery.begin_cloud_setting(
-        device_id="dev_1",
-        table="tbl_box_prms",
-        key="MODE",
-        value=1,
-        raw_text=raw_text,
-        msg_id=12345678,
-        id_set=844979473,
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
     )
 
-    assert delivery.is_cloud_inflight() is True
-    inflight = delivery.inflight_setting()
-    assert inflight is not None
-    setting, device_id = inflight
-    assert device_id == "dev_1"
-    assert setting.table == "tbl_box_prms"
-    assert setting.key == "MODE"
-    assert setting.value == 1
-    assert setting.msg_id == 12345678
-    assert setting.id_set == 844979473
-    assert setting.raw_text == raw_text
-    assert setting.audit_id
-
-    assert len(collector.settings_audit) == 1
-    record = collector.settings_audit[0]
-    assert record["step"] == SettingStep.INCOMING.value
-    assert record["result"] == SettingResult.PENDING.value
-    assert record["audit_id"] == setting.audit_id
-    assert record["msg_id"] == 12345678
-    assert record["id_set"] == 844979473
-    assert record["raw_text"] == raw_text
+    assert result.disposition is DeliveryDisposition.WRITE_FAILED
+    assert result.active_attempt is None
+    assert writer.frames == []
+    assert store.single_nonterminal("123").state is CommandState.RETRY_PENDING
+    assert store.read_attempt(
+        store.single_nonterminal("123").command_id, 1
+    ).write_outcome is AttemptWriteOutcome.FAILED
 
 
-def test_cloud_reason_setting_stays_provisional_until_tbl_events() -> None:
-    collector = _make_collector()
-    delivery = TwinDelivery(TwinQueue(), _MQTTStub(), telemetry_collector=collector)
-
-    delivery.begin_cloud_setting(
-        device_id="dev_1",
-        table="tbl_box_prms",
-        key="MODE",
-        value=1,
-        raw_text="<Frame><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>",
-        msg_id=12345678,
-        id_set=844979473,
+@pytest.mark.asyncio
+async def test_drain_uncertainty_is_persisted_and_connection_closes(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(
+        store, outcome=AttemptWriteOutcome.UNKNOWN
     )
 
-    pending = delivery.mark_cloud_reason_setting("dev_1", session_id="sess_1")
-    assert pending is not None
-    assert delivery.is_cloud_inflight() is True
-
-    delivery.match_cloud_tbl_events(
-        "dev_1",
-        "tbl_box_prms",
-        "MODE",
-        confirmed_value="1",
-        session_id="sess_1",
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
     )
 
-    assert [record["step"] for record in collector.settings_audit] == [
-        SettingStep.INCOMING.value,
-        SettingStep.ACK_REASON_SETTING.value,
-        SettingStep.ACK_TBL_EVENTS.value,
+    assert result.disposition is DeliveryDisposition.WRITE_UNKNOWN
+    assert result.active_attempt is None
+    assert result.close_connection is True
+    command = store.single_nonterminal("123")
+    assert command.state is CommandState.RETRY_PENDING
+    assert store.read_attempt(command.command_id, 1).write_outcome is (
+        AttemptWriteOutcome.UNKNOWN
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_owner_elsewhere_never_invokes_writer(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    first_writer = ScriptedLocalSettingWriter(store)
+    await _deliver(coordinator, first_writer, session="session-a")
+    second_writer = ScriptedLocalSettingWriter(store)
+
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-b",
+        received_at_ms=210,
+        trigger=DeliveryTrigger.CORRELATED_CLOUD_END,
+        writer=second_writer,
+    )
+
+    assert result.disposition is DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE
+    assert second_writer.frames == []
+
+
+@pytest.mark.asyncio
+async def test_same_device_lock_spans_writer_drain(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    writer = ScriptedLocalSettingWriter(store, entered=entered, release=release)
+    first = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="session-a",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer,
+        )
+    )
+    await entered.wait()
+    second = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="session-b",
+            received_at_ms=201,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer,
+        )
+    )
+    await asyncio.sleep(0)
+    assert second.done() is False
+
+    release.set()
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert first_result.disposition is DeliveryDisposition.SENT
+    assert second_result.disposition is DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE
+    assert len(writer.frames) == 1
+
+
+@pytest.mark.asyncio
+async def test_distinct_device_writes_can_progress_in_parallel(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store, device_id="123")
+    _enqueue(store, device_id="456")
+    coordinator = TwinCoordinator(
+        store, renderer=deterministic_renderer, clock_ms=_Clock()
+    )
+    entered_a = asyncio.Event()
+    entered_b = asyncio.Event()
+    release = asyncio.Event()
+    writer_a = ScriptedLocalSettingWriter(
+        store, entered=entered_a, release=release
+    )
+    writer_b = ScriptedLocalSettingWriter(
+        store, entered=entered_b, release=release
+    )
+    task_a = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="a",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer_a,
+        )
+    )
+    task_b = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="456",
+            session_id="b",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer_b,
+        )
+    )
+
+    await asyncio.wait_for(
+        asyncio.gather(entered_a.wait(), entered_b.wait()), timeout=1
+    )
+    release.set()
+    first, second = await asyncio.gather(task_a, task_b)
+
+    assert first.disposition is DeliveryDisposition.SENT
+    assert second.disposition is DeliveryDisposition.SENT
+
+
+@pytest.mark.asyncio
+async def test_rapid_same_key_updates_preserve_attempted_predecessor(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    first = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
+    )
+    assert first.active_attempt is not None
+
+    second = _enqueue(store, value_text="3", received_at_ms=210)
+
+    assert (await coordinator.read_command(first.active_attempt.command_id)).value_text == "2"
+    assert second.predecessor_command_id == first.active_attempt.command_id
+
+
+@pytest.mark.asyncio
+async def test_disconnect_requeues_same_wire_identity_for_next_dialogue(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    first = await _deliver(coordinator, writer, session="a", now_ms=200)
+    await coordinator.abort_dialogue(
+        active=first,
+        occurred_at_ms=210,
+        reason=RetryReason.DISCONNECT,
+    )
+    second = await _deliver(coordinator, writer, session="b", now_ms=300)
+
+    first_command = await coordinator.read_command(first.command_id)
+    second_command = await coordinator.read_command(second.command_id)
+    assert (second_command.wire_id, second_command.wire_id_set, second_command.wire_dt) == (
+        first_command.wire_id,
+        first_command.wire_id_set,
+        first_command.wire_dt,
+    )
+    assert second.wire_frame != first.wire_frame
+
+
+@pytest.mark.asyncio
+async def test_timeout_stops_at_limit_and_nack_never_retries(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: Callable,
+) -> None:
+    store = store_factory(1)
+    _enqueue(store)
+    coordinator = TwinCoordinator(
+        store, renderer=deterministic_renderer, clock_ms=_Clock()
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+
+    timed_out = await coordinator.abort_dialogue(
+        active=active,
+        occurred_at_ms=active.ack_deadline_ms + 1,
+        reason=RetryReason.ACK_TIMEOUT,
+    )
+
+    assert timed_out.command.state is CommandState.FAILED
+    _enqueue(store, value_text="3", received_at_ms=40_500)
+    nack_active = await _deliver(
+        coordinator, writer, session="next", now_ms=40_600
+    )
+    raw = b"nack"
+    nack = await coordinator.handle_local_response(
+        active=nack_active,
+        response=_response(raw, result="NACK"),
+        context=_context(nack_active, raw, received_at_ms=40_601),
+        writer=writer,
+    )
+
+    assert nack.disposition is LocalResponseDisposition.NACK_ACCEPTED
+    assert nack.next_attempt is None
+    assert (await coordinator.read_command(nack_active.command_id)).state is (
+        CommandState.FAILED
+    )
+
+
+@pytest.mark.asyncio
+async def test_ack_moves_to_awaiting_event_without_confirmation(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    raw = b"ack"
+
+    decision = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw),
+        writer=writer,
+    )
+
+    assert decision.disposition is LocalResponseDisposition.ACK_ACCEPTED
+    assert (await coordinator.read_command(active.command_id)).state is (
+        CommandState.AWAITING_EVENT
+    )
+    assert decision.confirmation is None
+    assert decision.send_final_end is True
+
+
+@pytest.mark.asyncio
+async def test_ack_atomically_writes_already_prepared_successor(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    successor = _enqueue(
+        store,
+        value_text="50",
+        received_at_ms=210,
+        item_name="BAT_AC",
+    )
+    raw = b"ack"
+
+    decision = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+
+    assert decision.disposition is LocalResponseDisposition.NEXT_SENT
+    assert decision.next_attempt is not None
+    assert decision.next_attempt.command_id == successor.command_id
+    assert writer.frames[-1] == decision.next_attempt.wire_frame
+    reasons = tuple(
+        transition.reason for transition in store.read_transitions(successor.command_id)
+    )
+    assert reasons == ("accepted_ingress", "selected", "attempt_prepared", "write_started", "attempt_drained")
+
+
+@pytest.mark.asyncio
+async def test_ack_requires_active_session_and_dialog_owner(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    raw = b"foreign"
+
+    result = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, session_id="foreign-session", received_at_ms=201),
+        writer=writer,
+    )
+
+    assert result.disposition is LocalResponseDisposition.REJECTED
+    assert result.close_connection is True
+    assert (await coordinator.read_command(active.command_id)).state in {
+        CommandState.RETRY_PENDING,
+        CommandState.FAILED,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "device_id"),
+    [
+        (FrameDirection.CLOUD_TO_PROXY, "123"),
+        (FrameDirection.BOX_TO_PROXY, "456"),
+    ],
+)
+async def test_wrong_direction_or_device_response_fails_closed(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    direction: FrameDirection,
+    device_id: str,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    raw = b"wrong-context"
+
+    result = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(
+            active,
+            raw,
+            direction=direction,
+            device_id=device_id,
+            received_at_ms=202,
+        ),
+        writer=writer,
+    )
+
+    assert result.disposition is LocalResponseDisposition.REJECTED
+    assert result.close_connection is True
+    assert (await coordinator.read_command(active.command_id)).state is (
+        CommandState.RETRY_PENDING
+    )
+
+
+@pytest.mark.asyncio
+async def test_late_ack_fails_closed_without_advancing_successor(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    successor = _enqueue(
+        store,
+        value_text="50",
+        received_at_ms=210,
+        item_name="BAT_AC",
+    )
+    raw = b"late"
+
+    result = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(
+            active, raw, received_at_ms=active.ack_deadline_ms + 1
+        ),
+        writer=writer,
+    )
+
+    assert result.disposition is LocalResponseDisposition.TIMED_OUT
+    assert result.close_connection is True
+    assert store.read_command(successor.command_id).attempt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_exact_duplicate_ack_is_idempotent(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    raw = b"same-ack"
+    response = _response(raw)
+    context = _context(active, raw)
+    first = await coordinator.handle_local_response(
+        active=active, response=response, context=context, writer=writer
+    )
+
+    duplicate = await coordinator.handle_local_response(
+        active=active, response=response, context=context, writer=writer
+    )
+
+    assert first.disposition is LocalResponseDisposition.ACK_ACCEPTED
+    assert duplicate.disposition is LocalResponseDisposition.DUPLICATE
+    assert duplicate.close_connection is False
+
+
+@pytest.mark.asyncio
+async def test_decreasing_rdt_rejects_second_batch_response(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    first = await _deliver(coordinator, writer)
+    successor = _enqueue(
+        store,
+        value_text="50",
+        received_at_ms=210,
+        item_name="BAT_AC",
+    )
+    first_raw = b"first"
+    first_decision = await coordinator.handle_local_response(
+        active=first,
+        response=_response(first_raw, rdt_text="06.08.2026 10:12:02"),
+        context=_context(first, first_raw, received_at_ms=220),
+        writer=writer,
+    )
+    assert first_decision.next_attempt is not None
+    assert first_decision.next_attempt.command_id == successor.command_id
+    second = first_decision.next_attempt
+    second_raw = b"second"
+
+    result = await coordinator.handle_local_response(
+        active=second,
+        response=_response(second_raw, rdt_text="06.08.2026 10:12:01"),
+        context=_context(second, second_raw, received_at_ms=230),
+        writer=writer,
+    )
+
+    assert result.disposition is LocalResponseDisposition.REJECTED
+    assert result.close_connection is True
+    assert (await coordinator.read_command(second.command_id)).state is (
+        CommandState.RETRY_PENDING
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_match_prefers_awaiting_event_before_direct_active_attempt(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    first = await _deliver(coordinator, writer)
+    raw = b"ack"
+    await coordinator.handle_local_response(
+        active=first,
+        response=_response(raw),
+        context=_context(first, raw, received_at_ms=220),
+        writer=writer,
+    )
+    _enqueue(store, value_text="3", received_at_ms=230)
+    second = await _deliver(coordinator, writer, session="session-b", now_ms=240)
+    event = _event()
+    token = coordinator.register_setting_event(
+        event=event,
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "session-b", "123", 250, b"event"
+        ),
+    )
+
+    decision = await coordinator.handle_registered_event(token)
+
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert decision.confirmation is not None
+    assert decision.confirmation.command_id == first.command_id
+    assert decision.active_session_id is None
+    assert store.read_command(second.command_id).state is CommandState.AWAITING_ACK
+
+
+@pytest.mark.asyncio
+async def test_direct_event_confirms_and_reports_owning_dialogue(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            220,
+            b"direct-event",
+        ),
+    )
+
+    decision = await coordinator.handle_registered_event(token)
+
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert decision.prior_state is CommandState.AWAITING_ACK
+    assert decision.active_session_id == active.session_id
+    assert decision.confirmation is not None
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+
+
+def test_event_registration_rejects_wrong_direction_or_device_without_store_mutation(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    before = store.status_snapshot()
+    event = _event()
+
+    with pytest.raises(ValueError, match="BOX-to-proxy"):
+        coordinator.register_setting_event(
+            event=event,
+            context=EvidenceContext(
+                FrameDirection.CLOUD_TO_PROXY, "s", "123", 200, b"event"
+            ),
+        )
+    with pytest.raises(ValueError, match="device"):
+        coordinator.register_setting_event(
+            event=event,
+            context=EvidenceContext(
+                FrameDirection.BOX_TO_PROXY, "s", "456", 200, b"event"
+            ),
+        )
+
+    assert store.status_snapshot() == before
+
+
+@pytest.mark.asyncio
+async def test_unmatched_and_duplicate_event_never_confirm_twice(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    unmatched = _event(new_value="3")
+    first_token = coordinator.register_setting_event(
+        event=unmatched,
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "session-a", "123", 220, b"unmatched"
+        ),
+    )
+    first = await coordinator.handle_registered_event(first_token)
+    duplicate_token = coordinator.register_setting_event(
+        event=unmatched,
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "session-a", "123", 221, b"unmatched"
+        ),
+    )
+    duplicate = await coordinator.handle_registered_event(duplicate_token)
+
+    assert first.disposition is EventDisposition.UNMATCHED
+    assert first.confirmation is None
+    assert duplicate.disposition is EventDisposition.DUPLICATE
+    assert duplicate.confirmation is None
+    assert store.read_event_receipt(unmatched.evidence_id).duplicate_count == 1
+
+
+@pytest.mark.asyncio
+async def test_session_flush_is_lossless_and_receipt_ordered(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    first_event = _event(event_id_set=55, new_value="3")
+    second_event = _event(event_id_set=56, new_value="4")
+    for event, raw, received_at in (
+        (first_event, b"first", 220),
+        (second_event, b"second", 221),
+    ):
+        coordinator.register_setting_event(
+            event=event,
+            context=EvidenceContext(
+                FrameDirection.BOX_TO_PROXY,
+                "flush-session",
+                "123",
+                received_at,
+                raw,
+            ),
+        )
+
+    decisions = await coordinator.flush_registered_events(
+        session_id="flush-session"
+    )
+
+    assert [decision.evidence.evidence_id for decision in decisions] == [
+        first_event.evidence_id,
+        second_event.evidence_id,
     ]
-    assert collector.settings_audit[1]["result"] == SettingResult.PENDING.value
-    assert collector.settings_audit[2]["result"] == SettingResult.CONFIRMED.value
-    assert delivery.is_cloud_inflight() is False
+    assert store.read_event_receipt(first_event.evidence_id).evidence_frame == b"first"
+    assert store.read_event_receipt(second_event.evidence_id).evidence_frame == b"second"
+    assert await coordinator.flush_registered_events(session_id="flush-session") == ()
 
 
-def test_cloud_tbl_events_matches_correct_pending_value() -> None:
-    collector = _make_collector()
-    delivery = TwinDelivery(TwinQueue(), _MQTTStub(), telemetry_collector=collector)
-
-    delivery.begin_cloud_setting(
-        device_id="dev_1",
-        table="tbl_box_prms",
-        key="MODE",
-        value=1,
-        raw_text="frame-1",
-        msg_id=111,
-        id_set=1001,
+@pytest.mark.asyncio
+async def test_in_deadline_registered_event_wins_over_second_timeout_pass(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
     )
-    delivery.mark_cloud_reason_setting("dev_1")
-
-    delivery.begin_cloud_setting(
-        device_id="dev_1",
-        table="tbl_box_prms",
-        key="MODE",
-        value=0,
-        raw_text="frame-2",
-        msg_id=222,
-        id_set=1002,
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
     )
-    delivery.mark_cloud_reason_setting("dev_1")
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
 
-    matched = delivery.match_cloud_tbl_events(
-        "dev_1",
-        "tbl_box_prms",
-        "MODE",
-        confirmed_value="0",
+    first_sweep = await coordinator.sweep_deadlines(
+        now_ms=command.event_deadline_ms + 1
     )
-    assert matched is not None
-    setting, _ = matched
-    assert setting.value == 0
+    assert first_sweep.incomplete_event_timeout == 0
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"boundary-event",
+        ),
+    )
+    monotonic["value"] = 1.1
+    second_sweep = await coordinator.sweep_deadlines(
+        now_ms=command.event_deadline_ms + 2
+    )
+    decision = await coordinator.handle_registered_event(token)
 
-    confirmed = [
-        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_TBL_EVENTS.value
-    ]
-    assert len(confirmed) == 1
-    assert confirmed[0]["id_set"] == 1002
+    assert second_sweep.incomplete_event_timeout == 0
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
 
 
-def test_cloud_reason_setting_expires_to_terminal_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
-    collector = _make_collector()
-    delivery = TwinDelivery(
-        TwinQueue(),
-        _MQTTStub(),
-        inflight_timeout_s=1.0,
-        telemetry_collector=collector,
+@pytest.mark.asyncio
+async def test_two_pass_sweeper_marks_exact_unchanged_candidate_incomplete(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+    deadline = store.read_command(active.command_id).event_deadline_ms
+    assert deadline is not None
+
+    first = await coordinator.sweep_deadlines(now_ms=deadline + 1)
+    monotonic["value"] = 0.9
+    grace = await coordinator.sweep_deadlines(now_ms=deadline + 2)
+    monotonic["value"] = 1.0
+    second = await coordinator.sweep_deadlines(now_ms=deadline + 3)
+
+    assert first.incomplete_event_timeout == 0
+    assert grace.incomplete_event_timeout == 0
+    assert second.incomplete_event_timeout == 1
+    assert store.read_command(active.command_id).state is CommandState.INCOMPLETE
+
+
+@pytest.mark.asyncio
+async def test_cached_status_is_observability_only(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    coordinator._cached_status = replace(  # pylint: disable=protected-access
+        coordinator.cached_status_snapshot,
+        control_available=False,
+        degradation_reason="stale telemetry",
     )
 
-    delivery.begin_cloud_setting(
-        device_id="dev_1",
-        table="tbl_box_prms",
-        key="MODE",
-        value=1,
-        raw_text="frame-1",
-        msg_id=111,
-        id_set=1001,
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
     )
-    delivery.mark_cloud_reason_setting("dev_1")
 
-    original_monotonic = time.monotonic
-    monkeypatch.setattr("twin.delivery.time.monotonic", lambda: original_monotonic() + 2.0)
+    assert result.disposition is DeliveryDisposition.SENT
+    assert writer.frames
 
-    assert delivery.has_pending_or_inflight() is False
 
-    reason_steps = [
-        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_REASON_SETTING.value
-    ]
-    assert [record["result"] for record in reason_steps] == [
-        SettingResult.PENDING.value,
-        SettingResult.CONFIRMED.value,
+@pytest.mark.asyncio
+async def test_status_refresh_failure_does_not_change_delivery_decision(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    before = coordinator.cached_status_snapshot
+
+    def fail_status(_device_id: str | None = None) -> object:
+        raise RuntimeError("status telemetry unavailable")
+
+    monkeypatch.setattr(store, "status_snapshot", fail_status)
+
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="session-a",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
+    )
+
+    assert result.disposition is DeliveryDisposition.SENT
+    assert writer.frames
+    assert coordinator.cached_status_snapshot == before
+
+
+def test_legacy_delivery_remains_importable() -> None:
+    from twin.delivery import TwinDelivery  # pylint: disable=import-outside-toplevel
+
+    assert TwinDelivery.__name__ == "TwinDelivery"
+
+
+@pytest.mark.asyncio
+async def test_production_renderer_bounds_random_collisions_and_uses_serializer(
+    store_factory: Callable[[int], TwinCommandStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = store_factory(2)
+    _enqueue(store)
+    samples = {"count": 0}
+
+    def collide(_upper: int) -> int:
+        samples["count"] += 1
+        return 1
+
+    monkeypatch.setattr("twin.delivery.secrets.randbelow", collide)
+    coordinator = TwinCoordinator(store, clock_ms=_Clock())
+    writer = ScriptedLocalSettingWriter(store)
+    first = await _deliver(coordinator, writer, session="first", now_ms=200)
+    await coordinator.abort_dialogue(
+        active=first, occurred_at_ms=210, reason=RetryReason.DISCONNECT
+    )
+
+    second = await _deliver(coordinator, writer, session="second", now_ms=300)
+
+    first_wire = first.wire_frame.decode("utf-8")
+    second_wire = second.wire_frame.decode("utf-8")
+    assert "<ver>00001</ver>" in first_wire
+    assert "<ver>00000</ver>" in second_wire
+    assert "<TSec>1970-01-01 00:00:00</TSec>" in second_wire
+    assert second_wire.endswith("</Frame>\r\n")
+    assert samples["count"] == 17
+
+
+@pytest.mark.asyncio
+async def test_coordinator_publishes_only_committed_delivery_snapshots(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(records.append),
+        clock_ms=_Clock(),
+    )
+    writer = ScriptedLocalSettingWriter(store)
+
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="s",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
+    )
+
+    assert coordinator.store is store
+    assert result.disposition is DeliveryDisposition.SENT
+    assert [record.step.value for record in records] == [
+        "selected",
+        "attempt_prepared",
+        "write_started",
+        "attempt_drained",
     ]
 
 
 @pytest.mark.asyncio
-async def test_session_timeout_records_timeout_step() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, _MQTTStub(), inflight_timeout_s=0.0, telemetry_collector=collector)
+@pytest.mark.parametrize(
+    ("outcome", "expected_outcome"),
+    [
+        (AttemptWriteOutcome.FAILED, AttemptWriteOutcome.FAILED),
+        (AttemptWriteOutcome.UNKNOWN, AttemptWriteOutcome.UNKNOWN),
+    ],
+)
+async def test_accepted_ack_closes_when_prepared_successor_write_is_not_drained(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    outcome: AttemptWriteOutcome,
+    expected_outcome: AttemptWriteOutcome,
+) -> None:
+    initial_writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, initial_writer)
+    successor = _enqueue(
+        store,
+        value_text="50",
+        received_at_ms=210,
+        item_name="BAT_AC",
+    )
+    raw = b"ack-with-successor"
+    failing_writer = ScriptedLocalSettingWriter(store, outcome=outcome)
 
-    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    _ = await delivery.deliver_pending("dev_1", session_id="sess_1")
+    result = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=failing_writer,
+    )
 
-    assert len(collector.settings_audit) == 2
-    timeout_record = collector.settings_audit[1]
-    assert timeout_record["step"] == SettingStep.TIMEOUT.value
-    assert timeout_record["result"] == SettingResult.FAILED.value
+    assert result.disposition is LocalResponseDisposition.ACK_ACCEPTED
+    assert result.next_attempt is None
+    assert result.close_connection is True
+    assert store.read_command(successor.command_id).state is CommandState.RETRY_PENDING
+    assert store.read_attempt(successor.command_id, 1).write_outcome is expected_outcome
+
+
+@pytest.mark.asyncio
+async def test_exact_duplicate_nack_is_idempotent(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    raw = b"same-nack"
+    response = _response(raw, result="NACK")
+    context = _context(active, raw, received_at_ms=220)
+    first = await coordinator.handle_local_response(
+        active=active, response=response, context=context, writer=writer
+    )
+
+    duplicate = await coordinator.handle_local_response(
+        active=active, response=response, context=context, writer=writer
+    )
+
+    assert first.disposition is LocalResponseDisposition.NACK_ACCEPTED
+    assert duplicate.disposition is LocalResponseDisposition.DUPLICATE
+    assert duplicate.close_connection is False
+
+
+@pytest.mark.asyncio
+async def test_stale_unexpected_response_closes_without_second_retry(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    await coordinator.abort_dialogue(
+        active=active, occurred_at_ms=210, reason=RetryReason.DISCONNECT
+    )
+    raw = b"late-after-abort"
+
+    result = await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, session_id="wrong", received_at_ms=220),
+        writer=writer,
+    )
+
+    assert result.disposition is LocalResponseDisposition.REJECTED
+    assert result.close_connection is True
+    assert result.command is not None
+    assert result.command.state is CommandState.RETRY_PENDING
+    assert store.read_command(active.command_id).attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_registered_event_token_is_single_use(
+    coordinator: TwinCoordinator,
+) -> None:
+    token = coordinator.register_setting_event(
+        event=_event(new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "s", "123", 220, b"event"
+        ),
+    )
+    await coordinator.handle_registered_event(token)
+
+    with pytest.raises(ValueError, match="not registered"):
+        await coordinator.handle_registered_event(token)
+
+
+@pytest.mark.asyncio
+async def test_render_failure_is_terminal_without_writer_invocation(
+    store: TwinCommandStore,
+) -> None:
+    _enqueue(store)
+
+    def fail_render(_context: object) -> object:
+        raise ValueError("cannot render")
+
+    coordinator = TwinCoordinator(
+        store, renderer=fail_render, clock_ms=_Clock()  # type: ignore[arg-type]
+    )
+    writer = ScriptedLocalSettingWriter(store)
+
+    result = await coordinator.claim_and_write_next(
+        device_id="123",
+        session_id="s",
+        received_at_ms=200,
+        trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+        writer=writer,
+    )
+
+    assert result.disposition is DeliveryDisposition.RENDER_FAILED
+    assert writer.frames == []
+    command_id = result.snapshots[0].command.command_id
+    assert store.read_command(command_id).state is CommandState.FAILED

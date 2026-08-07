@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from .client import TelemetryClient
-from .settings_audit import SettingStep, SettingsAuditRecord, record_to_dict
+from .settings_audit import (
+    CloudSettingAuditRecord,
+    SettingStep,
+    SettingsAuditRecord,
+    cloud_record_to_dict,
+    record_to_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +385,12 @@ class TelemetryCollector:
             self.setting_burst_current_active = True
             self.setting_burst_next_windows_remaining = 1
             self.force_logs_this_window = True
+
+    def record_cloud_setting_audit_step(
+        self, record: CloudSettingAuditRecord
+    ) -> None:
+        """Batch one passive cloud observation beside local audit records."""
+        self.settings_audit.append(cloud_record_to_dict(record))
 
     def record_box_session_end(self, *, connected_since_epoch: float | None, reason: str, peer: str | None) -> None:
         if connected_since_epoch is None:

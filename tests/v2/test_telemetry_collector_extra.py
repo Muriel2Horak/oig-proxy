@@ -15,7 +15,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import telemetry.collector as telemetry_collector
-from telemetry.settings_audit import SettingResult, SettingStep, SettingsAuditRecord
+from telemetry.settings_audit import (
+    CloudSettingAuditRecord,
+    SettingResult,
+    SettingStep,
+    SettingsAuditRecord,
+)
 
 
 def _make_collector(**overrides):
@@ -103,13 +108,30 @@ def test_record_context_sessions_tbl_events_and_window_flush(monkeypatch: pytest
 
     _record_log(collector, created=199.0, level=logging.INFO, message="inside context")
     collector.record_error_context(event_type="error_event", details={"bad": {1, 2, 3}})
-    collector.record_tbl_event(parsed={"_dt": "2026-03-12 12:00:00", "Type": "Setting", "Confirm": "Yes", "Content": "Changed"}, device_id="dev-1")
-    collector.record_tbl_event(parsed={"Type": "Other", "Confirm": "No", "Content": "Fallback"}, device_id=None)
+    collector.record_tbl_event(
+        parsed={
+            "_dt": "2026-03-12 12:00:00",
+            "Type": "Setting",
+            "Confirm": "Yes",
+            "Content": "Changed",
+        },
+        device_id="dev-1",
+    )
+    collector.record_tbl_event(
+        parsed={"Type": "Other", "Confirm": "No", "Content": "Fallback"},
+        device_id=None,
+    )
     collector.record_box_session_end(connected_since_epoch=None, reason="noop", peer=None)
     collector.record_box_session_end(connected_since_epoch=180.0, reason="eof", peer="1.2.3.4:5710")
     collector.record_cloud_session_end(connected_since_epoch=199.5, reason="eof")
     collector.record_hybrid_state_end(state=None, state_since_epoch=100.0, ended_at=200.0, mode="hybrid")
-    collector.record_hybrid_state_end(state="online", state_since_epoch=150.0, ended_at=200.0, mode="hybrid", reason="done")
+    collector.record_hybrid_state_end(
+        state="online",
+        state_since_epoch=150.0,
+        ended_at=200.0,
+        mode="hybrid",
+        reason="done",
+    )
     collector.record_offline_event(reason=None, local_ack=None, mode="offline")
 
     window = collector._collect_and_clear_window_metrics(logs=[])
@@ -258,6 +280,45 @@ def test_setting_burst_helpers_and_overflow_marker(monkeypatch: pytest.MonkeyPat
     current_time["value"] = 1_120.0
     metrics_3 = collector.collect_metrics()
     assert metrics_3["window_metrics"]["logs"] == []
+
+
+def test_committed_and_cloud_audit_records_remain_json_serializable() -> None:
+    collector = _make_collector()
+    collector.record_setting_audit_step(
+        SettingsAuditRecord(
+            audit_id="audit-1",
+            device_id="123",
+            table="tbl_box_prms",
+            key="MODE",
+            step=SettingStep.ATTEMPT_PREPARED,
+            result=SettingResult.PENDING,
+            command_id="command-1",
+            transition_id=2,
+            wire_frame=b"\x00exact-wire\xff",
+            evidence_frame=b"\x01exact-evidence\xfe",
+        )
+    )
+    collector.record_cloud_setting_audit_step(
+        CloudSettingAuditRecord(
+            cloud_observation_id="cloud-1",
+            session_id="uuid-session",
+            device_id="123",
+            table_name="tbl_box_prms",
+            item_name="MODE",
+            value_text="2",
+            wire_id=7,
+            wire_id_set=8,
+            raw_frame=b"\x00cloud-wire\xff",
+            step="setting_forwarded",
+            observed_at_ms=100,
+        )
+    )
+
+    metrics = collector.collect_metrics()
+    encoded = json.dumps(metrics, sort_keys=True)
+
+    assert "AGV4YWN0LXdpcmX/" in encoded
+    assert "AGNsb3VkLXdpcmX/" in encoded
 
 
 @pytest.mark.asyncio

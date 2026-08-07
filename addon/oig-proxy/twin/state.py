@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol, TYPE_CHECKING
+
+from protocol.frame import FrameDirection
+
+if TYPE_CHECKING:
+    from .ack_parser import SettingEvent
 
 
 class CommandState(str, Enum):
@@ -104,6 +109,27 @@ class LocalResponseDisposition(str, Enum):
     DUPLICATE = "duplicate"
     REJECTED = "rejected"
     TIMED_OUT = "timed_out"
+
+
+class DeliveryTrigger(str, Enum):
+    """Only protocol events authorized to begin or continue local delivery."""
+
+    CORRELATED_CLOUD_END = "correlated_cloud_end"
+    OFFLINE_ISNEWSET = "offline_isnewset"
+    LOCAL_ACK_CONTINUATION = "local_ack_continuation"
+
+
+class DeliveryDisposition(str, Enum):
+    """Runtime result of one authorized durable delivery attempt."""
+
+    SENT = "sent"
+    NO_ELIGIBLE = "no_eligible"
+    ACTIVE_DELIVERY_ELSEWHERE = "active_delivery_elsewhere"
+    CONTROL_DISABLED = "control_disabled"
+    UNAUTHORIZED = "unauthorized"
+    RENDER_FAILED = "render_failed"
+    WRITE_FAILED = "write_failed"
+    WRITE_UNKNOWN = "write_unknown"
 
 
 def _require_int(name: str, value: int) -> None:
@@ -309,6 +335,26 @@ class StoreStatus:
                 return count
         raise ValueError(f"unknown command state: {state!r}")
 
+    @property
+    def pending(self) -> int:
+        """Return pending command count for passive telemetry."""
+        return self.count(CommandState.PENDING)
+
+    @property
+    def retry_pending(self) -> int:
+        """Return retry-pending command count for passive telemetry."""
+        return self.count(CommandState.RETRY_PENDING)
+
+    @property
+    def awaiting_ack(self) -> int:
+        """Return active delivery count for passive telemetry."""
+        return self.count(CommandState.AWAITING_ACK)
+
+    @property
+    def awaiting_event(self) -> int:
+        """Return delivery-only ACK count for passive telemetry."""
+        return self.count(CommandState.AWAITING_EVENT)
+
 
 @dataclass(frozen=True, slots=True)
 class AttemptRenderContext:
@@ -429,6 +475,85 @@ class SweepReport:
     failed_attempt_limit: int
     incomplete_event_timeout: int
     snapshots: tuple[TransitionAuditSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveLocalAttempt:
+    """Socket-facing immutable identity of one prepared local attempt."""
+
+    command_id: str
+    audit_id: str
+    device_id: str
+    attempt_number: int
+    session_id: str
+    ack_deadline_ms: int
+    wire_frame: bytes
+    write_outcome: AttemptWriteOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceContext:
+    """Exact transport ownership and bytes captured with protocol evidence."""
+
+    direction: FrameDirection
+    session_id: str
+    device_id: str
+    received_at_ms: int
+    raw_frame: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptWriteResult:
+    """Writer-reported boundary outcome for one immutable attempt frame."""
+
+    outcome: AttemptWriteOutcome
+    started_at_ms: int
+    drain_completed_at_ms: int | None
+    error_text: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryDecision:
+    """Coordinator result for a delivery trigger."""
+
+    disposition: DeliveryDisposition
+    active_attempt: ActiveLocalAttempt | None
+    close_connection: bool
+    snapshots: tuple[TransitionAuditSnapshot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LocalResponseDecision:
+    """Coordinator result for exact local ACK or NACK evidence."""
+
+    disposition: LocalResponseDisposition
+    command: TwinCommand | None
+    next_attempt: ActiveLocalAttempt | None
+    send_final_end: bool
+    close_connection: bool
+    confirmation: ConfirmedSetting | None = None
+    snapshots: tuple[TransitionAuditSnapshot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredEventToken:
+    """Synchronous reservation of already-received event evidence."""
+
+    token_id: str
+    event: SettingEvent
+    context: EvidenceContext
+
+
+class LocalSettingWriter(Protocol):
+    """Serialized BOX writer boundary used by the coordinator."""
+
+    async def write_attempt(
+        self,
+        attempt: ActiveLocalAttempt,
+        *,
+        before_write: Callable[[], Awaitable[None]],
+    ) -> AttemptWriteResult:
+        """Commit write-start immediately before invoking the socket writer."""
 
 
 @dataclass

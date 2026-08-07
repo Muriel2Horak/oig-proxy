@@ -19,12 +19,26 @@ Influx Constraints:
 
 from __future__ import annotations
 
+import base64
+from collections import deque
+from dataclasses import dataclass, replace
+import hashlib
+import logging
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from protocol.frame import ValidatedFrame
+    from protocol.parser import FrameMetadata
+    from twin.ack_parser import SettingEvent, SettingResponse
+    from twin.state import TransitionAuditSnapshot
+
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
@@ -54,6 +68,21 @@ class SettingStep(str, Enum):
     TIMEOUT = "timeout"  # No response within timeout window
     SESSION_CLEARED = "session_cleared"  # Session ended without ACK
 
+    # Durable Task 8 projection steps. Legacy values above remain importable
+    # until the runtime cutover removes TwinDelivery and TwinQueue.
+    SELECTED = "selected"
+    ATTEMPT_PREPARED = "attempt_prepared"
+    WRITE_STARTED = "write_started"
+    ATTEMPT_DRAINED = "attempt_drained"
+    WRITE_UNKNOWN = "write_unknown"
+    WRITE_FAILED = "write_failed"
+    ACK_OBSERVED = "ack_observed"
+    RETRY = "retry"
+    EVENT_CONFIRMED = "event_confirmed"
+    EXPIRED = "expired"
+    INCOMPLETE = "incomplete"
+    FAILED = "failed"
+
 
 class SettingResult(str, Enum):
     """Outcome result for a settings audit record."""
@@ -64,6 +93,7 @@ class SettingResult(str, Enum):
     CONFIRMED = "confirmed"  # Successfully confirmed
     FAILED = "failed"  # Failed (nack, timeout)
     INCOMPLETE = "incomplete"  # Session cleared without confirmation
+    EXPIRED = "expired"
 
 
 # ----------------------------------------------------------------------
@@ -221,8 +251,8 @@ class SettingsAuditRecord:
 
     # --- Correlation ---
     session_id: str = ""
-    msg_id: int = 0
-    id_set: int = 0
+    msg_id: int | None = 0
+    id_set: int | None = 0
 
     # --- Values ---
     value_text: str = ""
@@ -242,6 +272,23 @@ class SettingsAuditRecord:
 
     # --- Timestamps (set by caller or now) ---
     timestamp: str = ""
+
+    # --- Durable committed-transition identity and evidence ---
+    transition_id: int | None = None
+    command_id: str | None = None
+    attempt_number: int | None = None
+    from_state: Any | None = None
+    to_state: Any | None = None
+    wire_dt: str | None = None
+    tsec_text: str | None = None
+    ver_text: str | None = None
+    crc_text: str | None = None
+    write_outcome: str | None = None
+    wire_length: int | None = None
+    wire_frame: bytes | None = None
+    evidence_id: str | None = None
+    evidence_frame: bytes | None = None
+    error: str | None = None
 
     def __post_init__(self) -> None:
         if not self.timestamp:
@@ -446,7 +493,7 @@ def is_stronger_ack(this_step: SettingStep, other_step: SettingStep) -> bool:
 
 def record_to_dict(record: SettingsAuditRecord) -> dict[str, Any]:
     """Serialize a SettingsAuditRecord to a dict ready for JSON serialization."""
-    return {
+    projected = {
         "timestamp": record.timestamp,
         "device_id": record.device_id,
         "table": record.table,
@@ -467,4 +514,352 @@ def record_to_dict(record: SettingsAuditRecord) -> dict[str, Any]:
         "raw_text_truncated": record.raw_text_truncated,
         "raw_text_bytes_original": record.raw_text_bytes_original,
         "audit_payload_capped": record.audit_payload_capped,
+        "transition_id": record.transition_id,
+        "command_id": record.command_id,
+        "attempt_number": record.attempt_number,
+        "from_state": (
+            record.from_state.value
+            if isinstance(record.from_state, Enum)
+            else record.from_state
+        ),
+        "to_state": (
+            record.to_state.value
+            if isinstance(record.to_state, Enum)
+            else record.to_state
+        ),
+        "wire_dt": record.wire_dt,
+        "tsec_text": record.tsec_text,
+        "ver_text": record.ver_text,
+        "crc_text": record.crc_text,
+        "write_outcome": record.write_outcome,
+        "wire_length": record.wire_length,
+        "wire_frame_b64": _bytes_to_base64(record.wire_frame),
+        "evidence_id": record.evidence_id,
+        "evidence_frame_b64": _bytes_to_base64(record.evidence_frame),
+        "error": record.error,
     }
+    return projected
+
+
+def _bytes_to_base64(value: bytes | None) -> str | None:
+    if value is None:
+        return None
+    return base64.b64encode(value).decode("ascii")
+
+
+_COMMITTED_STEP_BY_REASON = {
+    "accepted_ingress": SettingStep.ENQUEUED,
+    "superseded_by_newer": SettingStep.SUPERSEDED,
+    "replaced_unsent": SettingStep.SUPERSEDED,
+    "selected": SettingStep.SELECTED,
+    "attempt_prepared": SettingStep.ATTEMPT_PREPARED,
+    "write_started": SettingStep.WRITE_STARTED,
+    "attempt_drained": SettingStep.ATTEMPT_DRAINED,
+    "write_unknown": SettingStep.WRITE_UNKNOWN,
+    "write_failed": SettingStep.WRITE_FAILED,
+    "ack_received": SettingStep.ACK_OBSERVED,
+    "nack_received": SettingStep.NACK,
+    "event_confirmed": SettingStep.EVENT_CONFIRMED,
+    "pending_ttl_expired": SettingStep.EXPIRED,
+    "event_timeout": SettingStep.INCOMPLETE,
+}
+
+
+def _step_from_snapshot(snapshot: TransitionAuditSnapshot) -> SettingStep:
+    reason = snapshot.transition.reason
+    mapped = _COMMITTED_STEP_BY_REASON.get(reason)
+    if mapped is not None:
+        return mapped
+    if reason in {
+        "disconnect",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+        "ack_timeout",
+    }:
+        if snapshot.command.state.value == "retry_pending":
+            return SettingStep.RETRY
+        return SettingStep.FAILED
+    if reason == "render_failed":
+        return SettingStep.FAILED
+    if snapshot.command.state.value == "failed":
+        return SettingStep.FAILED
+    raise ValueError(f"unknown committed setting transition reason: {reason}")
+
+
+def _result_from_snapshot(snapshot: TransitionAuditSnapshot) -> SettingResult:
+    state = snapshot.command.state.value
+    if state == "confirmed":
+        return SettingResult.CONFIRMED
+    if state == "superseded":
+        return SettingResult.SUPERSEDED
+    if state == "expired":
+        return SettingResult.EXPIRED
+    if state == "incomplete":
+        return SettingResult.INCOMPLETE
+    if state == "failed":
+        return SettingResult.FAILED
+    return SettingResult.PENDING
+
+
+def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord:
+    command = snapshot.command
+    transition = snapshot.transition
+    attempt = snapshot.attempt
+    evidence = snapshot.evidence
+    sensitive = _is_sensitive_key(command.item_name)
+    raw_text = "[REDACTED]" if sensitive else command.raw_ingress_text
+    raw_text, truncation, audit_payload_capped = _apply_raw_text_limits(
+        command.audit_id, raw_text
+    )
+    wire_frame = attempt.wire_frame if attempt is not None else transition.wire_frame
+    evidence_frame = (
+        evidence.evidence_frame
+        if evidence is not None
+        else transition.evidence_frame
+    )
+    if sensitive:
+        wire_frame = b"[REDACTED]" if wire_frame is not None else None
+        evidence_frame = (
+            b"[REDACTED]" if evidence_frame is not None else None
+        )
+    record = SettingsAuditRecord(
+        audit_id=command.audit_id,
+        device_id=command.device_id,
+        table=command.table_name,
+        key=command.item_name,
+        step=_step_from_snapshot(snapshot),
+        result=_result_from_snapshot(snapshot),
+        session_id=transition.session_id or "",
+        msg_id=command.wire_id,
+        id_set=command.wire_id_set,
+        value_text=(
+            "[REDACTED]" if sensitive else command.value_text
+        ),
+        value_kind="string",
+        confirmed_value_text=(
+            "[REDACTED]"
+            if sensitive and command.state.value == "confirmed"
+            else command.value_text
+            if command.state.value == "confirmed"
+            else ""
+        ),
+        confirmed_value_kind=(
+            "string" if command.state.value == "confirmed" else ""
+        ),
+        raw_text=raw_text,
+        raw_text_truncated=truncation.was_truncated,
+        raw_text_bytes_original=truncation.original_bytes,
+        audit_payload_capped=audit_payload_capped,
+        timestamp=_utc_iso(transition.occurred_at_ms / 1000),
+        transition_id=transition.transition_id,
+        command_id=command.command_id,
+        attempt_number=transition.attempt_number,
+        from_state=transition.from_state,
+        to_state=transition.to_state,
+        wire_dt=command.wire_dt,
+        tsec_text=attempt.tsec_text if attempt is not None else None,
+        ver_text=attempt.ver_text if attempt is not None else None,
+        crc_text=attempt.crc_text if attempt is not None else None,
+        write_outcome=(
+            attempt.write_outcome.value if attempt is not None else None
+        ),
+        wire_length=attempt.wire_length if attempt is not None else None,
+        wire_frame=wire_frame,
+        evidence_id=evidence.evidence_id if evidence is not None else None,
+        evidence_frame=evidence_frame,
+        error=transition.error_text or command.last_error,
+    )
+    return record
+
+
+class SettingsAuditPublisher:
+    """Task 8 committed-transition publisher boundary."""
+
+    def __init__(
+        self, sink: Callable[[SettingsAuditRecord], None] | None = None
+    ) -> None:
+        self._sink = sink
+
+    def publish_committed(self, snapshot: TransitionAuditSnapshot) -> None:
+        """Project one committed snapshot without owning lifecycle truth."""
+        if self._sink is None:
+            return
+        try:
+            self._sink(_project_committed(snapshot))
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("settings audit sink rejected committed transition")
+
+
+@dataclass(frozen=True, slots=True)
+class CloudSettingAuditRecord:
+    """Passive connection-local observation of one cloud Setting."""
+
+    cloud_observation_id: str
+    session_id: str
+    device_id: str
+    table_name: str
+    item_name: str
+    value_text: str
+    wire_id: int | None
+    wire_id_set: int | None
+    raw_frame: bytes
+    step: str
+    observed_at_ms: int
+
+
+def cloud_record_to_dict(record: CloudSettingAuditRecord) -> dict[str, Any]:
+    """Serialize passive cloud evidence without losing exact frame bytes."""
+    return {
+        "cloud_observation_id": record.cloud_observation_id,
+        "session_id": record.session_id,
+        "device_id": record.device_id,
+        "table_name": record.table_name,
+        "item_name": record.item_name,
+        "value_text": record.value_text,
+        "wire_id": record.wire_id,
+        "wire_id_set": record.wire_id_set,
+        "raw_frame_b64": _bytes_to_base64(record.raw_frame),
+        "step": record.step,
+        "observed_at_ms": record.observed_at_ms,
+    }
+
+
+class CloudSettingAuditObserver:
+    """Observe cloud-owned Setting traffic without influencing local truth."""
+
+    def __init__(
+        self, sink: Callable[[CloudSettingAuditRecord], None] | None
+    ) -> None:
+        self._sink = sink
+        self._sessions: dict[str, deque[CloudSettingAuditRecord]] = {}
+
+    def _publish(self, record: CloudSettingAuditRecord) -> None:
+        if self._sink is None:
+            return
+        try:
+            self._sink(record)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("cloud setting audit sink rejected observation")
+
+    def setting_forwarded(
+        self,
+        *,
+        session_id: str,
+        frame: ValidatedFrame,
+        metadata: FrameMetadata,
+        observed_at_ms: int,
+    ) -> CloudSettingAuditRecord:
+        """Record exact cloud Setting bytes after forwarding to BOX."""
+        required = (
+            metadata.device_id,
+            metadata.table_name,
+            metadata.item_name,
+            metadata.new_value,
+        )
+        if not session_id or any(value is None for value in required):
+            raise ValueError("cloud Setting observation lacks identity fields")
+        observation_id = hashlib.sha256(
+            session_id.encode("utf-8") + b"\0" + frame.raw
+        ).hexdigest()
+        record = CloudSettingAuditRecord(
+            observation_id,
+            session_id,
+            metadata.device_id or "",
+            metadata.table_name or "",
+            metadata.item_name or "",
+            metadata.new_value or "",
+            metadata.message_id,
+            metadata.id_set,
+            frame.raw,
+            "setting_forwarded",
+            observed_at_ms,
+        )
+        self._sessions.setdefault(session_id, deque()).append(record)
+        self._publish(record)
+        return record
+
+    def box_response_forwarded(
+        self,
+        *,
+        session_id: str,
+        response: SettingResponse,
+        observed_at_ms: int,
+    ) -> CloudSettingAuditRecord | None:
+        """Correlate one forwarded BOX response to the session FIFO head."""
+        queue = self._sessions.get(session_id)
+        if not queue:
+            return None
+        pending = queue.popleft()
+        if not queue:
+            self._sessions.pop(session_id, None)
+        record = replace(
+            pending,
+            step=(
+                "box_ack_forwarded"
+                if response.result == "ACK"
+                else "box_nack_forwarded"
+            ),
+            observed_at_ms=observed_at_ms,
+        )
+        self._publish(record)
+        return record
+
+    def setting_event_observed(
+        self,
+        *,
+        session_id: str,
+        event: SettingEvent,
+        raw_frame: bytes,
+        observed_at_ms: int,
+    ) -> CloudSettingAuditRecord | None:
+        """Passively correlate an exact event only to the current FIFO head."""
+        queue = self._sessions.get(session_id)
+        if not queue:
+            return None
+        pending = queue[0]
+        if (
+            pending.device_id,
+            pending.table_name,
+            pending.item_name,
+            pending.value_text,
+        ) != (
+            event.device_id,
+            event.table_name,
+            event.item_name,
+            event.new_value_text,
+        ):
+            return None
+        queue.popleft()
+        if not queue:
+            self._sessions.pop(session_id, None)
+        record = replace(
+            pending,
+            raw_frame=raw_frame,
+            step="event_observed",
+            observed_at_ms=observed_at_ms,
+        )
+        self._publish(record)
+        return record
+
+    def close_session(
+        self,
+        *,
+        session_id: str,
+        reason: str = "session_closed",
+        observed_at_ms: int | None = None,
+    ) -> tuple[CloudSettingAuditRecord, ...]:
+        """Publish and discard every still-pending session observation."""
+        queue = self._sessions.pop(session_id, deque())
+        timestamp = (
+            time.time_ns() // 1_000_000
+            if observed_at_ms is None
+            else observed_at_ms
+        )
+        closed = tuple(
+            replace(record, step=reason, observed_at_ms=timestamp)
+            for record in queue
+        )
+        for record in closed:
+            self._publish(record)
+        return closed

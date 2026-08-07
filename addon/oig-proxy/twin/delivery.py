@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict, deque
 from dataclasses import dataclass
+import hashlib
 import logging
 import secrets
 import time
+import uuid
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from protocol.frames import czech_local_datetime_from_epoch
+from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch
+from protocol.frame import FrameDirection
 from telemetry.settings_audit import (
     TERMINAL_STEPS,
     SettingResult,
@@ -18,6 +23,30 @@ from telemetry.settings_audit import (
     make_incoming_record,
     make_step_record,
 )
+from .state import (
+    ActiveLocalAttempt,
+    AttemptRenderContext,
+    AttemptRenderer,
+    AttemptWriteOutcome,
+    ClaimDisposition,
+    CommandState,
+    DeliveryDecision,
+    DeliveryDisposition,
+    DeliveryTrigger,
+    EvidenceContext,
+    EventMatchResult,
+    LocalResponseDecision,
+    LocalResponseDisposition,
+    LocalSettingWriter,
+    RetryReason,
+    RegisteredEventToken,
+    RenderedAttempt,
+    StoreStatus,
+    SweepReport,
+    TransitionAuditSnapshot,
+)
+from .ack_parser import SettingEvent, SettingResponse
+from .store import StaleAttemptError, TwinCommandStore
 
 if TYPE_CHECKING:
     from ..mqtt.client import MQTTClient
@@ -26,6 +55,624 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+class TwinCoordinator:
+    """Serialize durable local-setting delivery per exact device."""
+
+    def __init__(
+        self,
+        store: TwinCommandStore,
+        *,
+        control_enabled: bool = True,
+        renderer: AttemptRenderer | None = None,
+        audit_publisher: Any | None = None,
+        clock_ms: Callable[[], int] | None = None,
+        monotonic: Callable[[], float] | None = None,
+    ) -> None:
+        self._store = store
+        self._control_enabled = control_enabled
+        self._renderer = renderer or self._render_attempt
+        self._audit = audit_publisher
+        self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
+        self._monotonic = monotonic or time.monotonic
+        self._device_locks: dict[str, asyncio.Lock] = {}
+        self._registered_events: dict[str, RegisteredEventToken] = {}
+        self._event_timeout_candidates: dict[
+            str, tuple[str, int, float]
+        ] = {}
+        self._cached_status = StoreStatus(
+            tuple((state, 0) for state in CommandState),
+            0,
+            bool(control_enabled),
+            None,
+        )
+
+    @staticmethod
+    def _render_attempt(context: AttemptRenderContext) -> RenderedAttempt:
+        """Render one attempt with bounded random version selection."""
+        used = frozenset(context.used_ver_texts)
+        selected: int | None = None
+        for _ in range(16):
+            candidate = secrets.randbelow(65_536)
+            if f"{candidate:05d}" not in used:
+                selected = candidate
+                break
+        if selected is None:
+            selected = next(
+                (
+                    candidate
+                    for candidate in range(65_536)
+                    if f"{candidate:05d}" not in used
+                ),
+                None,
+            )
+        if selected is None:
+            raise ValueError("all attempt version values are exhausted")
+        tsec_text = datetime.fromtimestamp(
+            context.prepared_at_ms / 1000, timezone.utc
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        rendered = build_setting_frame(
+            device_id=context.command.device_id,
+            table_name=context.command.table_name,
+            item_name=context.command.item_name,
+            value_text=context.command.value_text,
+            wire_id=context.wire_id,
+            wire_id_set=context.wire_id_set,
+            wire_dt=context.wire_dt,
+            tsec_text=tsec_text,
+            ver_text=f"{selected:05d}",
+        )
+        return RenderedAttempt(
+            tsec_text=tsec_text,
+            ver_text=f"{selected:05d}",
+            crc_text=rendered.crc_text,
+            wire_frame=rendered.wire_frame,
+        )
+
+    @property
+    def store(self) -> TwinCommandStore:
+        """Expose the durable repository for composition and diagnostics."""
+        return self._store
+
+    @property
+    def cached_status_snapshot(self) -> StoreStatus:
+        """Return passive, potentially stale status without blocking."""
+        return self._cached_status
+
+    def _device_lock(self, device_id: str) -> asyncio.Lock:
+        lock = self._device_locks.get(device_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._device_locks[device_id] = lock
+        return lock
+
+    def _publish(self, snapshots: tuple[TransitionAuditSnapshot, ...]) -> None:
+        if self._audit is None:
+            return
+        for snapshot in snapshots:
+            self._audit.publish_committed(snapshot)
+
+    async def _refresh_status(self) -> None:
+        try:
+            self._cached_status = await asyncio.to_thread(self._store.status_snapshot)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning("TwinCoordinator: passive status refresh failed", exc_info=True)
+
+    @staticmethod
+    def _active_from_claim(claim: Any) -> ActiveLocalAttempt:
+        if claim.command is None or claim.attempt is None:
+            raise RuntimeError("prepared claim omitted durable attempt")
+        return ActiveLocalAttempt(
+            command_id=claim.command.command_id,
+            audit_id=claim.command.audit_id,
+            device_id=claim.command.device_id,
+            attempt_number=claim.attempt.attempt_number,
+            session_id=claim.attempt.session_id,
+            ack_deadline_ms=claim.attempt.ack_deadline_ms,
+            wire_frame=claim.attempt.wire_frame,
+            write_outcome=claim.attempt.write_outcome,
+        )
+
+    async def claim_and_write_next(
+        self,
+        *,
+        device_id: str,
+        session_id: str,
+        received_at_ms: int,
+        trigger: DeliveryTrigger | None,
+        writer: LocalSettingWriter,
+    ) -> DeliveryDecision:
+        """Prepare, start, write, and drain one authorized attempt in order."""
+        if not self._control_enabled:
+            return DeliveryDecision(
+                DeliveryDisposition.CONTROL_DISABLED, None, False
+            )
+        if not isinstance(trigger, DeliveryTrigger):
+            return DeliveryDecision(DeliveryDisposition.UNAUTHORIZED, None, False)
+        async with self._device_lock(device_id):
+            claim = await asyncio.to_thread(
+                self._store.prepare_next_attempt,
+                device_id=device_id,
+                session_id=session_id,
+                prepared_at_ms=received_at_ms,
+                render=self._renderer,
+            )
+            self._publish(claim.snapshots)
+            if claim.disposition is not ClaimDisposition.PREPARED:
+                await self._refresh_status()
+                mapping = {
+                    ClaimDisposition.NO_ELIGIBLE: DeliveryDisposition.NO_ELIGIBLE,
+                    ClaimDisposition.ACTIVE_DELIVERY_ELSEWHERE: (
+                        DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE
+                    ),
+                    ClaimDisposition.CONTROL_DISABLED: (
+                        DeliveryDisposition.CONTROL_DISABLED
+                    ),
+                    ClaimDisposition.RENDER_FAILED: DeliveryDisposition.RENDER_FAILED,
+                }
+                return DeliveryDecision(
+                    mapping[claim.disposition], None, False, claim.snapshots
+                )
+            active = self._active_from_claim(claim)
+            committed = list(claim.snapshots)
+
+            async def before_write() -> None:
+                prepared_at_ms = (
+                    active.ack_deadline_ms - self._store.policy.ack_timeout_ms
+                )
+                snapshot = await asyncio.to_thread(
+                    self._store.mark_write_started,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    started_at_ms=max(self._clock_ms(), prepared_at_ms),
+                )
+                self._publish((snapshot,))
+                committed.append(snapshot)
+
+            result = await writer.write_attempt(active, before_write=before_write)
+            if result.outcome is AttemptWriteOutcome.FAILED:
+                if not result.error_text:
+                    raise ValueError("failed writer result requires an error")
+                failed = await asyncio.to_thread(
+                    self._store.mark_write_failed,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    occurred_at_ms=result.started_at_ms,
+                    error=result.error_text,
+                )
+                self._publish((failed,))
+                committed.append(failed)
+                await self._refresh_status()
+                return DeliveryDecision(
+                    DeliveryDisposition.WRITE_FAILED,
+                    None,
+                    True,
+                    tuple(committed),
+                )
+            if result.outcome is AttemptWriteOutcome.UNKNOWN:
+                if not result.error_text:
+                    raise ValueError("unknown writer result requires an error")
+                unknown = await asyncio.to_thread(
+                    self._store.mark_write_unknown,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    occurred_at_ms=result.started_at_ms,
+                    error=result.error_text,
+                )
+                self._publish((unknown,))
+                committed.append(unknown)
+                await self._refresh_status()
+                return DeliveryDecision(
+                    DeliveryDisposition.WRITE_UNKNOWN,
+                    None,
+                    True,
+                    tuple(committed),
+                )
+            if result.outcome is not AttemptWriteOutcome.DRAINED:
+                raise ValueError("writer result must be failed, unknown, or drained")
+            if result.drain_completed_at_ms is None:
+                raise ValueError("drained writer result requires completion time")
+            drained = await asyncio.to_thread(
+                self._store.mark_attempt_drained,
+                command_id=active.command_id,
+                attempt_number=active.attempt_number,
+                session_id=active.session_id,
+                drained_at_ms=result.drain_completed_at_ms,
+            )
+            self._publish((drained,))
+            committed.append(drained)
+            await self._refresh_status()
+            written = ActiveLocalAttempt(
+                active.command_id,
+                active.audit_id,
+                active.device_id,
+                active.attempt_number,
+                active.session_id,
+                active.ack_deadline_ms,
+                active.wire_frame,
+                AttemptWriteOutcome.DRAINED,
+            )
+            return DeliveryDecision(
+                DeliveryDisposition.SENT,
+                written,
+                False,
+                tuple(committed),
+            )
+
+    async def abort_dialogue(
+        self,
+        *,
+        active: ActiveLocalAttempt,
+        occurred_at_ms: int,
+        reason: RetryReason,
+    ) -> TransitionAuditSnapshot:
+        """Durably release one exact active dialogue for retry or failure."""
+        async with self._device_lock(active.device_id):
+            snapshot = await asyncio.to_thread(
+                self._store.release_for_retry,
+                command_id=active.command_id,
+                attempt_number=active.attempt_number,
+                session_id=active.session_id,
+                occurred_at_ms=occurred_at_ms,
+                reason=reason,
+            )
+            self._publish((snapshot,))
+            await self._refresh_status()
+            return snapshot
+
+    async def _reject_response_locked(
+        self,
+        *,
+        active: ActiveLocalAttempt,
+        occurred_at_ms: int,
+        reason: RetryReason,
+        disposition: LocalResponseDisposition,
+    ) -> LocalResponseDecision:
+        snapshots: tuple[TransitionAuditSnapshot, ...] = ()
+        command = None
+        try:
+            snapshot = await asyncio.to_thread(
+                self._store.release_for_retry,
+                command_id=active.command_id,
+                attempt_number=active.attempt_number,
+                session_id=active.session_id,
+                occurred_at_ms=occurred_at_ms,
+                reason=reason,
+            )
+        except StaleAttemptError:
+            try:
+                command = await asyncio.to_thread(
+                    self._store.read_command, active.command_id
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                command = None
+        else:
+            command = snapshot.command
+            snapshots = (snapshot,)
+            self._publish(snapshots)
+        await self._refresh_status()
+        return LocalResponseDecision(
+            disposition,
+            command,
+            None,
+            False,
+            True,
+            snapshots=snapshots,
+        )
+
+    async def _write_prepared_successor_locked(
+        self,
+        *,
+        active: ActiveLocalAttempt,
+        writer: LocalSettingWriter,
+        committed: list[TransitionAuditSnapshot],
+    ) -> ActiveLocalAttempt | None:
+        async def before_write() -> None:
+            prepared_at_ms = (
+                active.ack_deadline_ms - self._store.policy.ack_timeout_ms
+            )
+            snapshot = await asyncio.to_thread(
+                self._store.mark_write_started,
+                command_id=active.command_id,
+                attempt_number=active.attempt_number,
+                session_id=active.session_id,
+                started_at_ms=max(self._clock_ms(), prepared_at_ms),
+            )
+            committed.append(snapshot)
+            self._publish((snapshot,))
+
+        result = await writer.write_attempt(active, before_write=before_write)
+        if result.outcome is AttemptWriteOutcome.DRAINED:
+            if result.drain_completed_at_ms is None:
+                raise ValueError("drained writer result requires completion time")
+            snapshot = await asyncio.to_thread(
+                self._store.mark_attempt_drained,
+                command_id=active.command_id,
+                attempt_number=active.attempt_number,
+                session_id=active.session_id,
+                drained_at_ms=result.drain_completed_at_ms,
+            )
+            committed.append(snapshot)
+            self._publish((snapshot,))
+            return ActiveLocalAttempt(
+                active.command_id,
+                active.audit_id,
+                active.device_id,
+                active.attempt_number,
+                active.session_id,
+                active.ack_deadline_ms,
+                active.wire_frame,
+                AttemptWriteOutcome.DRAINED,
+            )
+        if not result.error_text:
+            raise ValueError("non-drained writer result requires an error")
+        method = (
+            self._store.mark_write_failed
+            if result.outcome is AttemptWriteOutcome.FAILED
+            else self._store.mark_write_unknown
+        )
+        keyword = "error"
+        snapshot = await asyncio.to_thread(
+            method,
+            command_id=active.command_id,
+            attempt_number=active.attempt_number,
+            session_id=active.session_id,
+            occurred_at_ms=result.started_at_ms,
+            **{keyword: result.error_text},
+        )
+        committed.append(snapshot)
+        self._publish((snapshot,))
+        return None
+
+    async def handle_local_response(
+        self,
+        *,
+        active: ActiveLocalAttempt,
+        response: SettingResponse,
+        context: EvidenceContext,
+        writer: LocalSettingWriter,
+    ) -> LocalResponseDecision:
+        """Correlate one exact local response and continue only atomic ACK work."""
+        async with self._device_lock(active.device_id):
+            correlated = (
+                context.direction is FrameDirection.BOX_TO_PROXY
+                and context.session_id == active.session_id
+                and context.device_id == active.device_id
+                and response.fingerprint
+                == hashlib.sha256(context.raw_frame).hexdigest()
+            )
+            if not correlated:
+                return await self._reject_response_locked(
+                    active=active,
+                    occurred_at_ms=context.received_at_ms,
+                    reason=RetryReason.UNEXPECTED_RESPONSE,
+                    disposition=LocalResponseDisposition.REJECTED,
+                )
+            if context.received_at_ms > active.ack_deadline_ms:
+                return await self._reject_response_locked(
+                    active=active,
+                    occurred_at_ms=context.received_at_ms,
+                    reason=RetryReason.ACK_TIMEOUT,
+                    disposition=LocalResponseDisposition.TIMED_OUT,
+                )
+            try:
+                if response.result == "NACK":
+                    nack = await asyncio.to_thread(
+                        self._store.mark_nack,
+                        command_id=active.command_id,
+                        attempt_number=active.attempt_number,
+                        session_id=active.session_id,
+                        response=response,
+                        received_at_ms=context.received_at_ms,
+                        evidence_frame=context.raw_frame,
+                    )
+                    if nack.duplicate:
+                        return LocalResponseDecision(
+                            LocalResponseDisposition.DUPLICATE,
+                            None,
+                            None,
+                            False,
+                            False,
+                        )
+                    self._publish(nack.snapshots)
+                    await self._refresh_status()
+                    return LocalResponseDecision(
+                        LocalResponseDisposition.NACK_ACCEPTED,
+                        nack.accepted_command,
+                        None,
+                        True,
+                        False,
+                        snapshots=nack.snapshots,
+                    )
+                ack = await asyncio.to_thread(
+                    self._store.acknowledge_and_prepare_next,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    response=response,
+                    received_at_ms=context.received_at_ms,
+                    evidence_frame=context.raw_frame,
+                    render=self._renderer,
+                )
+            except (StaleAttemptError, ValueError):
+                return await self._reject_response_locked(
+                    active=active,
+                    occurred_at_ms=context.received_at_ms,
+                    reason=RetryReason.UNEXPECTED_RESPONSE,
+                    disposition=LocalResponseDisposition.REJECTED,
+                )
+            if ack.duplicate:
+                return LocalResponseDecision(
+                    LocalResponseDisposition.DUPLICATE,
+                    None,
+                    None,
+                    False,
+                    False,
+                )
+            committed = list(ack.snapshots)
+            self._publish(ack.snapshots)
+            next_attempt = None
+            close_connection = False
+            if ack.next_claim.disposition is ClaimDisposition.PREPARED:
+                prepared = self._active_from_claim(ack.next_claim)
+                next_attempt = await self._write_prepared_successor_locked(
+                    active=prepared,
+                    writer=writer,
+                    committed=committed,
+                )
+                close_connection = next_attempt is None
+            await self._refresh_status()
+            return LocalResponseDecision(
+                (
+                    LocalResponseDisposition.NEXT_SENT
+                    if next_attempt is not None
+                    else LocalResponseDisposition.ACK_ACCEPTED
+                ),
+                ack.accepted_command,
+                next_attempt,
+                next_attempt is None and not close_connection,
+                close_connection,
+                snapshots=tuple(committed),
+            )
+
+    def register_setting_event(
+        self,
+        *,
+        event: SettingEvent,
+        context: EvidenceContext,
+    ) -> RegisteredEventToken:
+        """Synchronously reserve exact event evidence before a later await."""
+        if context.direction is not FrameDirection.BOX_TO_PROXY:
+            raise ValueError("setting events must be BOX-to-proxy evidence")
+        if context.device_id != event.device_id:
+            raise ValueError("setting event device does not match context device")
+        token = RegisteredEventToken(str(uuid.uuid4()), event, context)
+        self._registered_events[token.token_id] = token
+        return token
+
+    async def handle_registered_event(
+        self, token: RegisteredEventToken
+    ) -> EventMatchResult:
+        """Commit one reserved event under its exact-device lock."""
+        registered = self._registered_events.get(token.token_id)
+        if registered != token:
+            raise ValueError("setting event token is not registered")
+        async with self._device_lock(token.context.device_id):
+            result = await asyncio.to_thread(
+                self._store.record_event,
+                evidence=token.event,
+                received_at_ms=token.context.received_at_ms,
+                evidence_frame=token.context.raw_frame,
+                active_session_id=token.context.session_id,
+            )
+            self._registered_events.pop(token.token_id, None)
+            if result.snapshot is not None:
+                self._publish((result.snapshot,))
+                self._event_timeout_candidates.pop(
+                    result.snapshot.command.command_id, None
+                )
+            await self._refresh_status()
+            return result
+
+    async def flush_registered_events(
+        self, *, session_id: str
+    ) -> tuple[EventMatchResult, ...]:
+        """Commit every reserved session event in synchronous receipt order."""
+        tokens = tuple(
+            token
+            for token in self._registered_events.values()
+            if token.context.session_id == session_id
+        )
+        results: list[EventMatchResult] = []
+        for token in tokens:
+            if token.token_id in self._registered_events:
+                results.append(await self.handle_registered_event(token))
+        return tuple(results)
+
+    def _has_in_deadline_registered_event(
+        self, *, device_id: str, event_deadline_ms: int
+    ) -> bool:
+        return any(
+            token.context.device_id == device_id
+            and token.context.received_at_ms <= event_deadline_ms
+            for token in self._registered_events.values()
+        )
+
+    async def sweep_deadlines(self, *, now_ms: int | None = None) -> SweepReport:
+        """Run pending/ACK sweep plus two-pass exact event-timeout grace."""
+        effective_now = self._clock_ms() if now_ms is None else now_ms
+        base = await asyncio.to_thread(
+            self._store.sweep_deadlines,
+            now_ms=effective_now,
+            include_event_timeouts=False,
+        )
+        self._publish(base.snapshots)
+        candidates = await asyncio.to_thread(
+            self._store.read_event_timeout_candidates, now_ms=effective_now
+        )
+        current_ids = {candidate.command_id for candidate in candidates}
+        for command_id in tuple(self._event_timeout_candidates):
+            if command_id not in current_ids:
+                self._event_timeout_candidates.pop(command_id, None)
+
+        now_monotonic = self._monotonic()
+        incomplete: list[TransitionAuditSnapshot] = []
+        for candidate in candidates:
+            prior = self._event_timeout_candidates.get(candidate.command_id)
+            identity = (candidate.device_id, candidate.event_deadline_ms)
+            if prior is None or prior[:2] != identity:
+                self._event_timeout_candidates[candidate.command_id] = (
+                    candidate.device_id,
+                    candidate.event_deadline_ms,
+                    now_monotonic,
+                )
+                continue
+            if now_monotonic - prior[2] < 1.0:
+                continue
+            async with self._device_lock(candidate.device_id):
+                if self._has_in_deadline_registered_event(
+                    device_id=candidate.device_id,
+                    event_deadline_ms=candidate.event_deadline_ms,
+                ):
+                    continue
+                snapshot = await asyncio.to_thread(
+                    self._store.mark_event_incomplete,
+                    command_id=candidate.command_id,
+                    expected_event_deadline_ms=candidate.event_deadline_ms,
+                    now_ms=effective_now,
+                )
+                self._event_timeout_candidates.pop(candidate.command_id, None)
+                if snapshot is not None:
+                    incomplete.append(snapshot)
+                    self._publish((snapshot,))
+        await self._refresh_status()
+        snapshots = tuple(
+            sorted(
+                (*base.snapshots, *incomplete),
+                key=lambda snapshot: snapshot.transition.transition_id,
+            )
+        )
+        return SweepReport(
+            base.expired_pending,
+            base.retry_pending,
+            base.failed_attempt_limit,
+            len(incomplete),
+            snapshots,
+        )
+
+    async def status_snapshot(self, device_id: str | None = None) -> StoreStatus:
+        """Read authoritative status off the event loop."""
+        status = await asyncio.to_thread(self._store.status_snapshot, device_id)
+        self._cached_status = status
+        return status
+
+    async def read_command(self, command_id: str) -> Any:
+        """Read one immutable command off the event loop."""
+        return await asyncio.to_thread(self._store.read_command, command_id)
 
 
 @dataclass
@@ -39,11 +686,11 @@ class _CloudPendingSetting:
 
 class TwinDelivery:
     """Manages delivery of pending settings to BOX via proxy.
-    
+
     Session-level tracking ensures only one setting is in-flight per TCP session.
     Cloud-initiated settings take priority over local queue.
     """
-    
+
     def __init__(
         self,
         twin_queue: TwinQueue,
@@ -199,16 +846,16 @@ class TwinDelivery:
                 self._remove_cloud_pending(pending)
 
     async def deliver_pending(
-        self, 
+        self,
         device_id: str,
         session_id: str | None = None,
     ) -> list[TwinSetting]:
         """Deliver pending settings for device.
-        
+
         Args:
             device_id: Device ID
             session_id: Unique session identifier for tracking (defaults to conn_id)
-            
+
         Returns:
             List of settings to deliver (max 1 per session)
         """
@@ -311,12 +958,12 @@ class TwinDelivery:
 
     def acknowledge(self, table: str, key: str, session_id: str | None = None) -> bool:
         """Acknowledge setting delivery.
-        
+
         Args:
             table: Table name
             key: Setting key
             session_id: Session ID (optional)
-            
+
         Returns:
             True if setting was inflight and acknowledged
         """
@@ -333,7 +980,7 @@ class TwinDelivery:
                         table,
                         key,
                     )
-        
+
         # Check global inflight
         if self._inflight_key == (table, key):
             self._clear_global_inflight()
@@ -341,7 +988,7 @@ class TwinDelivery:
             if removed:
                 logger.info("TwinDelivery: acknowledged %s:%s", table, key)
             return True
-        
+
         # Try queue acknowledge anyway
         removed = self._twin_queue.acknowledge(table, key)
         if removed:
@@ -488,7 +1135,12 @@ class TwinDelivery:
         if session_id is not None:
             if session_id in self._session_inflight:
                 return True
-        return self._cloud_legacy_inflight or bool(self._iter_cloud_pending()) or self._inflight_key is not None or self._twin_queue.size() > 0
+        return (
+            self._cloud_legacy_inflight
+            or bool(self._iter_cloud_pending())
+            or self._inflight_key is not None
+            or self._twin_queue.size() > 0
+        )
 
     def begin_cloud_setting(
         self,

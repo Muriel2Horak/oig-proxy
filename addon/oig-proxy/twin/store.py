@@ -1481,11 +1481,17 @@ class TwinCommandStore:
         evidence: SettingEvent,
         received_at_ms: int,
         evidence_frame: bytes,
+        active_session_id: str | None = None,
     ) -> EventMatchResult:
         """Persist immutable evidence and confirm at most one exact command."""
         normalized_evidence, content_is_consistent = _validate_setting_event(evidence)
         _validate_sqlite_integer("received_at_ms", received_at_ms)
         normalized_frame = _validate_evidence_frame(evidence_frame)
+        normalized_active_session_id = (
+            _validate_identifier("active_session_id", active_session_id)
+            if active_session_id is not None
+            else None
+        )
 
         def operation(connection: sqlite3.Connection) -> EventMatchResult:
             duplicate_row = connection.execute(
@@ -1575,6 +1581,7 @@ class TwinCommandStore:
                 evidence=normalized_evidence,
                 canonical_value=value_result.value_text,
                 received_at_ms=received_at_ms,
+                active_session_id=normalized_active_session_id,
             )
             if candidate is None:
                 receipt = self._read_event_receipt_locked(
@@ -1675,6 +1682,7 @@ class TwinCommandStore:
         evidence: SettingEvent,
         canonical_value: str,
         received_at_ms: int,
+        active_session_id: str | None,
     ) -> tuple[TwinCommand, CommandState, str | None] | None:
         awaiting_rows = connection.execute(
             """
@@ -1715,6 +1723,7 @@ class TwinCommandStore:
             WHERE c.device_id = ? AND c.table_name = ? AND c.item_name = ?
               AND c.value_text = ? AND c.state = 'awaiting_ack'
               AND a.prepared_at_ms <= ? AND a.ack_deadline_ms >= ?
+              AND (? IS NULL OR c.active_session_id = ?)
             ORDER BY c.created_at_ms, c.command_id
             """,
             (
@@ -1724,6 +1733,8 @@ class TwinCommandStore:
                 canonical_value,
                 received_at_ms,
                 received_at_ms,
+                active_session_id,
+                active_session_id,
             ),
         ).fetchall()
         if not active_rows:
