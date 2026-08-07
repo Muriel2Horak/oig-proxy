@@ -25,6 +25,7 @@ class ProxyStatusPublisher:
         proxy_device_id: str,
         sensor_loader: SensorMapLoader | None = None,
         get_configured_mode: Callable[[], str] | None = None,
+        get_control_status: Callable[[], tuple[bool, str | None]] | None = None,
         initial_device_id: str | None = None,
     ) -> None:
         self._mqtt = mqtt
@@ -32,6 +33,7 @@ class ProxyStatusPublisher:
         self._proxy_device_id = proxy_device_id
         self._sensor_loader = sensor_loader
         self._get_configured_mode = get_configured_mode
+        self._get_control_status = get_control_status
 
         self._frame_count = 0
         self._last_frame_table = ""
@@ -66,6 +68,12 @@ class ProxyStatusPublisher:
             ).isoformat().replace("+00:00", "Z")
             last_data_age_s = int(max(0, now - self._last_frame_timestamp))
 
+        control_available, control_degradation_reason = (
+            self._get_control_status()
+            if self._get_control_status is not None
+            else (False, "control_status_unavailable")
+        )
+
         payload: dict[str, Any] = {
             "status": "online" if box_connected else "offline",
             "mode": "online" if box_connected else "offline",
@@ -79,6 +87,8 @@ class ProxyStatusPublisher:
             "cloud_online": int(self._mqtt.connected),
             "cloud_session_connected": int(self._mqtt.connected),
             "mqtt_connected": int(self._mqtt.connected),
+            "control_available": int(control_available),
+            "control_degradation_reason": control_degradation_reason or "",
             "frame_count": self._frame_count,
             "last_frame_table": self._last_frame_table,
             "box_device_id": self._last_frame_device_id,

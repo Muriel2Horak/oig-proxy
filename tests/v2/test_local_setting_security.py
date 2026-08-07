@@ -94,6 +94,7 @@ def test_store_uses_parameterized_sql_for_dynamic_values() -> None:
 def test_production_has_no_raw_setting_replay_or_wildcard_device_subscription() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in PRODUCTION_PYTHON)
     assert "replay_setting_frame.xml" not in source
+    assert "_read_replay_frame_once" not in source
     assert "oig/+/control/set" not in source
     assert "}/+/set/#" not in source
 

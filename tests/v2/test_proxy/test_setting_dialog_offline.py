@@ -72,6 +72,19 @@ def _frame(
     return build_frame("".join(tags)).encode()
 
 
+def _event(*, value: str, device_id: str = "123") -> bytes:
+    return _frame(
+        device_id=device_id,
+        id_set=1_786_000_010,
+        extra=(
+            "<TblName>tbl_events</TblName>"
+            "<DT>06.08.2026 10:12:01</DT><Type>Setting</Type>"
+            "<Content>Remotely : tbl_box_prms / MODE: "
+            f"[1]-&gt;[{value}]</Content>"
+        ),
+    )
+
+
 def _enqueue(
     store: TwinCommandStore,
     *,
@@ -256,6 +269,40 @@ async def test_offline_final_ack_writes_exactly_one_end(
     assert len(offline_harness.writer.invocations) == 1
     assert b"<Result>END</Result>" in offline_harness.writer.invocations[0]
     assert offline_harness.store.read_command(active.command_id).state is CommandState.AWAITING_EVENT
+
+
+@pytest.mark.asyncio
+async def test_offline_direct_event_confirms_and_closes_without_second_write(
+    offline_harness: OfflineHarness,
+) -> None:
+    active = await offline_harness.begin()
+    offline_harness.writer.clear()
+
+    await offline_harness.box(_event(value="2"))
+
+    assert offline_harness.store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert offline_harness.writer.invocations == []
+    assert [item.command_id for item in offline_harness.confirmations] == [
+        active.command_id
+    ]
+    assert offline_harness.context.close_requested.is_set()
+
+
+@pytest.mark.asyncio
+async def test_offline_cross_device_ack_cannot_advance_active_command(
+    offline_harness: OfflineHarness,
+) -> None:
+    active = await offline_harness.begin()
+    offline_harness.writer.clear()
+
+    await offline_harness.box(
+        _frame(result="ACK", reason="Setting", device_id="999")
+    )
+
+    command = offline_harness.store.read_command(active.command_id)
+    assert command.state in {CommandState.RETRY_PENDING, CommandState.FAILED}
+    assert offline_harness.writer.invocations == []
+    assert offline_harness.context.close_requested.is_set()
 
 
 @pytest.mark.asyncio

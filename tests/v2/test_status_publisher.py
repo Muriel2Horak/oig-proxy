@@ -238,6 +238,28 @@ def test_multiple_frames_accumulate():
     assert payload["last_frame_table"] == "tbl_test"
 
 
+def test_publish_exposes_bounded_control_degradation_status():
+    """Publish fail-closed local-control availability without raw error details."""
+    mqtt = make_mqtt_client(connected=True)
+    pub = ProxyStatusPublisher(
+        mqtt,
+        60,
+        "oig_proxy",
+        get_control_status=lambda: (
+            False,
+            "durable_control_store_unavailable",
+        ),
+    )
+
+    pub._publish()
+
+    payload = mqtt.publish_state.call_args.args[2]
+    assert payload["control_available"] == 0
+    assert payload["control_degradation_reason"] == (
+        "durable_control_store_unavailable"
+    )
+
+
 def test_publish_sends_discovery_for_proxy_status_when_loader_present():
     """Test discovery sent when loader present."""
     mqtt = make_mqtt_client(connected=True)

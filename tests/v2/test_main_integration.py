@@ -119,29 +119,49 @@ async def test_store_startup_retries_at_offsets_zero_one_two(runtime_config):
     assert sleep.await_args_list == [call(1.0), call(1.0)]
     assert app.twin_store is store
     assert app.control_recovery_report == RecoveryReport(0, 0, 0, 0, 0)
+    assert app.control_degradation_reason is None
 
 
 @pytest.mark.asyncio
-async def test_store_failure_aborts_before_network_components(runtime_config):
+async def test_store_failure_disables_control_but_starts_network_proxy(runtime_config):
     app = ProxyApp(runtime_config)
     store = MagicMock()
     store.open.side_effect = RuntimeError("corrupt")
     manager = MagicMock()
     manager.load.return_value = None
+    loader = MagicMock()
+    mqtt = MagicMock()
+    mqtt.connect.return_value = False
+    mqtt.is_ready.return_value = False
+    mqtt.health_check_loop.return_value = "health-loop"
+    proxy = MagicMock()
+    proxy.start = AsyncMock()
+    app._start_telemetry = MagicMock()  # type: ignore[method-assign]
+    app._compose_durable_control = MagicMock()  # type: ignore[method-assign]
+    app._start_status_publisher = MagicMock()  # type: ignore[method-assign]
+    app._start_capture = AsyncMock()  # type: ignore[method-assign]
+    app._track_task = MagicMock()  # type: ignore[method-assign]
+    app._deadline_sweep_loop = MagicMock(return_value="deadline-loop")  # type: ignore[method-assign]
 
-    with patch.object(main_module, "DeviceIdManager", return_value=manager), patch.object(
-        main_module,
-        "TwinCommandStore",
-        return_value=store,
-    ), patch.object(main_module.asyncio, "sleep", new=AsyncMock()), patch.object(
-        main_module,
-        "MQTTClient",
-    ) as mqtt_class, patch.object(main_module, "ProxyServer") as proxy_class:
-        assert await app.startup() is False
+    with (
+        patch.object(main_module, "DeviceIdManager", return_value=manager),
+        patch.object(main_module, "TwinCommandStore", return_value=store),
+        patch.object(main_module.asyncio, "sleep", new=AsyncMock()),
+        patch.object(main_module, "SensorMapLoader", return_value=loader),
+        patch.object(main_module, "MQTTClient", return_value=mqtt),
+        patch.object(main_module, "FrameProcessor", return_value=MagicMock()),
+        patch.object(main_module, "ProxyServer", return_value=proxy) as proxy_class,
+    ):
+        assert await app.startup() is True
 
-    mqtt_class.assert_not_called()
-    proxy_class.assert_not_called()
     assert store.open.call_count == 3
+    app._compose_durable_control.assert_not_called()
+    proxy.start.assert_awaited_once_with()
+    assert proxy_class.call_args.kwargs["twin_coordinator"] is None
+    assert app.twin_store is None
+    assert app.twin_coordinator is None
+    assert app._store_ready is False
+    assert app.control_degradation_reason == "durable_control_store_unavailable"
 
 
 @pytest.mark.asyncio

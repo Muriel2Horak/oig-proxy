@@ -287,6 +287,70 @@ async def test_cloud_setting_and_box_ack_round_trip_before_local_batch(
 
 
 @pytest.mark.asyncio
+async def test_cloud_frame_held_before_setting_ack_is_rerouted_after_ack(
+    online_harness: OnlineHarness,
+) -> None:
+    await online_harness.open_cycle()
+    first_setting = _frame(
+        result="Setting",
+        device_id="123",
+        table="tbl_box_prms",
+        item="MODE",
+        value="1",
+    )
+    second_setting = _frame(
+        result="Setting",
+        device_id="123",
+        table="tbl_box_prms",
+        item="BAT_AC",
+        value="0",
+    )
+
+    await online_harness.cloud(first_setting)
+    await online_harness.cloud(second_setting)
+
+    assert online_harness.raw_box.writes == [first_setting]
+
+    ack = _frame(result="ACK", reason="Setting")
+    await online_harness.box(ack)
+
+    assert online_harness.raw_cloud.writes[-1] == ack
+    assert online_harness.raw_box.writes == [first_setting, second_setting]
+
+
+@pytest.mark.asyncio
+async def test_box_request_after_cloud_setting_ack_waits_for_cycle_completion(
+    online_harness: OnlineHarness,
+) -> None:
+    poll = await online_harness.open_cycle()
+    cloud_setting = _frame(
+        result="Setting",
+        device_id="123",
+        table="tbl_box_prms",
+        item="MODE",
+        value="1",
+        message_id=14_000_001,
+        id_set=1_786_000_001,
+    )
+    cloud_ack = _frame(result="ACK", reason="Setting")
+    later_box = _frame(result="IsNewWeather", device_id="123")
+    raw_end = _frame(result="END", extra="<Marker>cloud-batch</Marker>")
+
+    await online_harness.cloud(cloud_setting)
+    await online_harness.box(cloud_ack)
+    await online_harness.box(later_box)
+
+    assert online_harness.raw_cloud.writes == [poll, cloud_ack]
+
+    await online_harness.cloud(raw_end)
+    local_setting = online_harness.raw_box.writes[-1]
+    await online_harness.box(_frame(result="ACK", reason="Setting"))
+
+    assert online_harness.raw_box.writes[-2:] == [local_setting, raw_end]
+    assert online_harness.raw_cloud.writes == [poll, cloud_ack, later_box]
+
+
+@pytest.mark.asyncio
 async def test_correlated_end_is_replaced_and_local_ack_returns_exact_end(
     online_harness: OnlineHarness,
 ) -> None:
@@ -329,6 +393,35 @@ async def test_no_eligible_command_forwards_exact_end(
     assert online_harness.raw_box.writes == [raw_end]
     assert online_harness.context.dialog.active_attempt is None
     assert online_harness.context.dialog.current_expectation() is None
+
+
+@pytest.mark.asyncio
+async def test_no_eligible_command_releases_held_box_request_after_end(
+    online_harness: OnlineHarness,
+) -> None:
+    pending = online_harness.store.single_nonterminal("123")
+    online_harness.store.sweep_device_deadlines(
+        device_id="123", now_ms=pending.pending_expires_at_ms + 1
+    )
+    poll = await online_harness.open_cycle()
+    cloud_setting = _frame(
+        result="Setting",
+        device_id="123",
+        table="tbl_box_prms",
+        item="MODE",
+        value="1",
+    )
+    ack = _frame(result="ACK", reason="Setting")
+    later_box = _frame(result="IsNewWeather", device_id="123")
+    raw_end = _frame(result="END", extra="<Marker>no-work-held</Marker>")
+
+    await online_harness.cloud(cloud_setting)
+    await online_harness.box(ack)
+    await online_harness.box(later_box)
+    await online_harness.cloud(raw_end)
+
+    assert online_harness.raw_box.writes == [cloud_setting, raw_end]
+    assert online_harness.raw_cloud.writes == [poll, ack, later_box]
 
 
 @pytest.mark.asyncio
@@ -528,6 +621,7 @@ async def test_exact_direct_event_confirms_without_forwarding_local_evidence(
     await online_harness.open_cycle()
     raw_end = _frame(result="END", extra="<Marker>event</Marker>")
     await online_harness.cloud(raw_end)
+    local_setting = online_harness.raw_box.writes[-1]
     active = online_harness.context.dialog.active_attempt
     assert active is not None
     exact_event = _event(value="2")
@@ -537,10 +631,35 @@ async def test_exact_direct_event_confirms_without_forwarding_local_evidence(
     command = online_harness.store.read_command(active.command_id)
     assert command.state is CommandState.CONFIRMED
     assert exact_event not in online_harness.raw_cloud.writes
-    assert online_harness.raw_box.writes[-1] == raw_end
+    assert online_harness.raw_box.writes == [local_setting]
     assert [item.command_id for item in online_harness.confirmations] == [
         active.command_id
     ]
+    assert online_harness.context.close_requested.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cross_device_ack_cannot_advance_active_local_command(
+    online_harness: OnlineHarness,
+) -> None:
+    await online_harness.open_cycle()
+    raw_end = _frame(result="END", extra="<Marker>cross-device</Marker>")
+    await online_harness.cloud(raw_end)
+    active = online_harness.context.dialog.active_attempt
+    assert active is not None
+    local_setting = online_harness.raw_box.writes[-1]
+    foreign_ack = _frame(
+        result="ACK",
+        reason="Setting",
+        device_id="999",
+    )
+
+    await online_harness.box(foreign_ack)
+
+    command = online_harness.store.read_command(active.command_id)
+    assert command.state in {CommandState.RETRY_PENDING, CommandState.FAILED}
+    assert online_harness.raw_box.writes == [local_setting]
+    assert foreign_ack not in online_harness.raw_cloud.writes
     assert online_harness.context.close_requested.is_set()
 
 

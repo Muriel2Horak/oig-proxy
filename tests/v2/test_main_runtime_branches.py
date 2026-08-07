@@ -79,12 +79,41 @@ async def test_startup_composes_every_runtime_boundary(
 
 
 @pytest.mark.asyncio
-async def test_startup_fails_closed_before_or_during_network_composition(
+async def test_startup_without_store_keeps_proxy_transparent(
     runtime_config,
 ) -> None:
     app = ProxyApp(runtime_config)
     app._open_control_store = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    assert await app.startup() is False
+    app._start_telemetry = MagicMock()  # type: ignore[method-assign]
+    app._compose_durable_control = MagicMock()  # type: ignore[method-assign]
+    app._start_status_publisher = MagicMock()  # type: ignore[method-assign]
+    app._start_capture = AsyncMock()  # type: ignore[method-assign]
+    app._track_task = MagicMock()  # type: ignore[method-assign]
+    app._deadline_sweep_loop = MagicMock(return_value="deadline-loop")  # type: ignore[method-assign]
+    manager = MagicMock(load=MagicMock(return_value=None))
+    loader = MagicMock()
+    mqtt = MagicMock()
+    mqtt.connect.return_value = False
+    mqtt.is_ready.return_value = False
+    mqtt.health_check_loop.return_value = "health-loop"
+    proxy = MagicMock(start=AsyncMock())
+    with (
+        patch.object(main_module, "DeviceIdManager", return_value=manager),
+        patch.object(main_module, "SensorMapLoader", return_value=loader),
+        patch.object(main_module, "MQTTClient", return_value=mqtt),
+        patch.object(main_module, "FrameProcessor", return_value=MagicMock()),
+        patch.object(main_module, "ProxyServer", return_value=proxy),
+    ):
+        assert await app.startup() is True
+    app._compose_durable_control.assert_not_called()
+    proxy.start.assert_awaited_once_with()
+    assert app.twin_coordinator is None
+
+
+@pytest.mark.asyncio
+async def test_startup_failure_during_network_composition_shuts_down(
+    runtime_config,
+) -> None:
 
     failing = ProxyApp(runtime_config)
     failing._open_control_store = AsyncMock(return_value=True)  # type: ignore[method-assign]
@@ -210,6 +239,11 @@ def test_status_publisher_getter_tracks_proxy(runtime_config) -> None:
     assert getter() == "online"
     app.proxy = MagicMock(mode_manager=SimpleNamespace(configured_mode="hybrid"))
     assert getter() == "hybrid"
+    control_getter = factory.call_args.kwargs["get_control_status"]
+    assert control_getter() == (False, "control_not_ready")
+    app._store_ready = True
+    app.twin_coordinator = MagicMock()
+    assert control_getter() == (True, None)
 
 
 @pytest.mark.asyncio
@@ -339,8 +373,14 @@ async def test_deadline_loop_recovers_marks_failures_and_propagates_cancel(
 ) -> None:
     missing = ProxyApp(runtime_config)
     missing._recover_control_runtime = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    await missing._deadline_sweep_loop()
-    assert missing._stop_event.is_set()
+    with patch.object(
+        main_module.asyncio,
+        "sleep",
+        AsyncMock(side_effect=asyncio.CancelledError),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await missing._deadline_sweep_loop()
+    assert not missing._stop_event.is_set()
 
     healthy = ProxyApp(runtime_config)
     healthy._store_ready = True
@@ -351,6 +391,7 @@ async def test_deadline_loop_recovers_marks_failures_and_propagates_cancel(
         with pytest.raises(asyncio.CancelledError):
             await healthy._deadline_sweep_loop()
     assert healthy._store_ready is False
+    assert healthy.control_degradation_reason == "durable_control_runtime_failure"
 
     broken = ProxyApp(runtime_config)
     broken._store_ready = True
@@ -360,12 +401,14 @@ async def test_deadline_loop_recovers_marks_failures_and_propagates_cancel(
         with pytest.raises(asyncio.CancelledError):
             await broken._deadline_sweep_loop()
     assert broken._store_ready is False
+    assert broken.control_degradation_reason == "durable_control_runtime_failure"
 
 
 @pytest.mark.asyncio
 async def test_runtime_recovery_covers_ready_failure_and_success(runtime_config) -> None:
     ready = ProxyApp(runtime_config)
     ready._store_ready = True
+    ready.twin_coordinator = MagicMock()
     assert await ready._recover_control_runtime() is True
 
     failed = ProxyApp(runtime_config)

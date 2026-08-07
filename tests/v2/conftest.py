@@ -179,12 +179,9 @@ def pytest_runtest_protocol(
 ) -> Iterator[None]:
     """Keep the guard installed through setup, call, finalizers, and teardown."""
     del nextitem
-    if item.get_closest_marker("local_control") or item.get_closest_marker("e2e"):
-        guard = item.config.stash[EGRESS_GUARD_KEY]
-        with guard.installed(probe=False):
-            yield
-        return
-    yield
+    guard = item.config.stash[EGRESS_GUARD_KEY]
+    with guard.installed(probe=False):
+        yield
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

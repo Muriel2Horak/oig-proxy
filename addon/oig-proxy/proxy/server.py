@@ -16,7 +16,6 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from typing import TYPE_CHECKING
@@ -153,27 +152,6 @@ def _extract_msg_id(frame_text: str) -> int | None:
         return int(frame_text[start:end])
     except ValueError:
         return None
-
-
-def _read_replay_frame_once(path: str) -> bytes | None:
-    replay_path = Path(path)
-    if not replay_path.exists():
-        return None
-    try:
-        payload = replay_path.read_bytes()
-    except OSError:
-        return None
-    if not payload:
-        try:
-            replay_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return None
-    try:
-        replay_path.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return payload
 
 
 TRACE_LEVEL = 5
@@ -518,6 +496,7 @@ class ProxyServer:
                 context,
                 frame,
                 response,
+                metadata.device_id,
             )
             await self._process_frame(frame.raw)
             return decision
@@ -606,6 +585,7 @@ class ProxyServer:
         context: ProxyConnectionContext,
         frame: AssembledFrame,
         response: Any,
+        response_device_id: str | None,
     ) -> OfflineResponseDecision:
         active = context.dialog.active_attempt
         coordinator = self.twin_coordinator
@@ -617,7 +597,9 @@ class ProxyServer:
             context=EvidenceContext(
                 FrameDirection.BOX_TO_PROXY,
                 context.session_id,
-                context.dialog.bound_device_id or active.device_id,
+                response_device_id
+                or context.dialog.bound_device_id
+                or active.device_id,
                 frame.received_at_ms,
                 frame.raw,
             ),
@@ -677,11 +659,13 @@ class ProxyServer:
                 None,
                 None,
             )
-        context.dialog.close_offline_attempt()
-        return await self._write_offline_end(
-            context,
-            owner_session_id=context.session_id,
-            release_owner=True,
+        context.dialog.clear_socket_state()
+        await context.box_writer.release_dialogue(context.session_id)
+        context.close_requested.set()
+        return OfflineResponseDecision(
+            OfflineDecisionKind.CLOSE_WITHOUT_SECOND_WRITE,
+            None,
+            None,
         )
 
     async def _write_offline_end(
@@ -892,7 +876,12 @@ class ProxyServer:
             if response is None:
                 context.dialog.hold_box_frame(frame)
                 return
-            await self._route_local_response(context, frame, response)
+            await self._route_local_response(
+                context,
+                frame,
+                response,
+                metadata.device_id,
+            )
             return
 
         expectation = context.dialog.current_expectation()
@@ -916,6 +905,21 @@ class ProxyServer:
                 observed_at_ms=frame.received_at_ms,
             )
             await self._process_frame(frame.raw)
+            for held in context.dialog.drain_held_cloud():
+                await self._route_cloud_frame(
+                    context,
+                    StreamFrameEvent(FrameDirection.CLOUD_TO_PROXY, held),
+                )
+                if context.close_requested.is_set():
+                    break
+            return
+
+        if (
+            expectation is not None
+            and expectation.kind is RequestKind.IS_NEW_SET
+            and expectation.cloud_setting_count > 0
+        ):
+            context.dialog.hold_box_frame(frame)
             return
 
         if metadata.result == "IsNewSet":
@@ -1079,6 +1083,9 @@ class ProxyServer:
                     raw_end, purpose=BoxWritePurpose.CLOUD_FORWARD
                 )
                 self._sync_cloud_timer(context)
+                for held in context.dialog.drain_held_box():
+                    if not await self._write_cloud(context, held.raw):
+                        break
                 return
             context.dialog.clear_socket_state()
             await context.box_writer.release_dialogue(context.session_id)
@@ -1099,6 +1106,7 @@ class ProxyServer:
         context: ProxyConnectionContext,
         frame: AssembledFrame,
         response: Any,
+        response_device_id: str | None = None,
     ) -> None:
         active = context.dialog.active_attempt
         coordinator = self.twin_coordinator
@@ -1110,7 +1118,9 @@ class ProxyServer:
             context=EvidenceContext(
                 FrameDirection.BOX_TO_PROXY,
                 context.session_id,
-                context.dialog.bound_device_id or active.device_id,
+                response_device_id
+                or context.dialog.bound_device_id
+                or active.device_id,
                 frame.received_at_ms,
                 frame.raw,
             ),
@@ -1182,13 +1192,6 @@ class ProxyServer:
         active = context.dialog.active_attempt
         if result.command is not None and result.command.command_id == active.command_id:
             self._cancel_ack_timer(context)
-            raw_end = context.dialog.deferred_end
-            if raw_end is not None:
-                await context.box_writer.write_frame(
-                    raw_end,
-                    purpose=BoxWritePurpose.DEFERRED_END,
-                    owner_session_id=context.session_id,
-                )
             context.dialog.clear_socket_state()
             await context.box_writer.release_dialogue(context.session_id)
             context.close_requested.set()

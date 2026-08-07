@@ -363,6 +363,37 @@ def test_plugin_guards_fixture_finalizers_and_restores_sentinel(
     assert report["status"] == "fail"
 
 
+def test_plugin_guards_unmarked_tests_session_wide(tmp_path: Path) -> None:
+    """Guard unmarked implementation tests before the original resolver runs."""
+    result, report = _run_isolated_pytest(
+        tmp_path,
+        """
+        import socket
+        import pytest
+        from tests.v2.egress_guard import EgressViolation
+
+        def test_unmarked_implementation_boundary():
+            with pytest.raises(EgressViolation):
+                socket.getaddrinfo("bridge.oigpower.cz", 5710)
+        """,
+        plugin_source="""
+        import socket
+        import pytest
+
+        def resolver_sentinel(*args, **kwargs):
+            raise AssertionError("unguarded resolver called")
+
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_sessionstart(session):
+            socket.getaddrinfo = resolver_sentinel
+        """,
+    )
+    assert result.returncode == 1
+    assert "unguarded resolver called" not in result.stdout + result.stderr
+    assert report["blocked_violation_count"] == 1
+    assert report["status"] == "fail"
+
+
 def test_plugin_writes_failure_report_before_startup_exit(tmp_path: Path) -> None:
     """Persist deterministic evidence when a startup self-probe raises unexpectedly."""
     result, report = _run_isolated_pytest(

@@ -70,6 +70,7 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
         self.frame_processor: FrameProcessor | None = None
         self.twin_store: TwinCommandStore | None = None
         self.control_recovery_report: RecoveryReport | None = None
+        self.control_degradation_reason: str | None = None
         self.audit_publisher: SettingsAuditPublisher | None = None
         self.twin_coordinator: TwinCoordinator | None = None
         self.twin_handler: TwinControlHandler | None = None
@@ -128,10 +129,12 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                 continue
             self.twin_store = store
             self.control_recovery_report = report
+            self.control_degradation_reason = None
             self._store_ready = True
             logger.info("Durable control store recovered: %s", report)
             return True
         self.twin_store = None
+        self.control_degradation_reason = "durable_control_store_unavailable"
         self._store_ready = False
         return False
 
@@ -142,16 +145,19 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
         return task
 
     async def startup(self) -> bool:  # pylint: disable=too-many-statements
-        """Start only after the durable repository is healthy and reconciled."""
+        """Start forwarding with local control attached only after recovery."""
         logger.info("OIG Proxy v2 starting up")
         self._loop = asyncio.get_running_loop()
         identity_path = getattr(self.config, "device_id_path", "/data/device_id.json")
         self.device_id_manager = DeviceIdManager(identity_path)
         persisted_device_id = self.device_id_manager.load()
 
-        if not await self._open_control_store():
-            logger.critical("Durable control store unavailable; network startup aborted")
-            return False
+        store_ready = await self._open_control_store()
+        if not store_ready:
+            logger.error(
+                "Durable control store unavailable; local control disabled while "
+                "transparent proxy startup continues"
+            )
 
         try:
             self.sensor_loader = SensorMapLoader(self.config.sensor_map_path)
@@ -177,9 +183,10 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                 proxy_device_id=self.config.proxy_device_id,
             )
             self._start_telemetry(mqtt_identity)
-            self._compose_durable_control()
-            if self.audit_publisher is not None:
-                await self.audit_publisher.replay_pending_async()
+            if store_ready:
+                self._compose_durable_control()
+                if self.audit_publisher is not None:
+                    await self.audit_publisher.replay_pending_async()
             self._start_status_publisher(persisted_device_id)
             await self._start_capture()
 
@@ -301,9 +308,17 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                 if self.proxy is not None
                 else "online"
             ),
+            get_control_status=self._control_status,
             initial_device_id=device_id,
         )
         self._track_task(self.status_publisher.run(), name="status_publisher")
+
+    def _control_status(self) -> tuple[bool, str | None]:
+        """Return bounded local-control health for passive status publication."""
+        available = bool(self._store_ready and self.twin_coordinator is not None)
+        if available:
+            return True, None
+        return False, self.control_degradation_reason or "control_not_ready"
 
     async def _start_capture(self) -> None:
         if self.config.capture_payloads:
@@ -418,6 +433,7 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                 )
             except Exception as error:  # pylint: disable=broad-exception-caught
                 logger.error("Durable device observation failed: %s", error)
+                self.control_degradation_reason = "durable_control_runtime_failure"
                 self._store_ready = False
                 return False
             if self.telemetry_collector is not None:
@@ -485,8 +501,10 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
             try:
                 if not self._store_ready or self.twin_coordinator is None:
                     if not await self._recover_control_runtime():
-                        self._stop_event.set()
-                        return
+                        logger.error(
+                            "Durable control runtime remains unavailable; local "
+                            "control stays disabled while proxy forwarding continues"
+                        )
                 else:
                     await self.twin_coordinator.sweep_deadlines()
                     handler = self.twin_handler
@@ -495,22 +513,32 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                     )
                     if failures > self._last_handler_store_failure_count:
                         self._last_handler_store_failure_count = failures
+                        self.control_degradation_reason = (
+                            "durable_control_runtime_failure"
+                        )
                         self._store_ready = False
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # pylint: disable=broad-exception-caught
                 logger.error("Deadline sweep failed: %s", error)
+                self.control_degradation_reason = "durable_control_runtime_failure"
                 self._store_ready = False
             await asyncio.sleep(1.0)
 
     async def _recover_control_runtime(self) -> bool:
         """Perform one serialized bounded recovery burst after runtime failure."""
         async with self._recovery_lock:
-            if self._store_ready:
+            if self._store_ready and self.twin_coordinator is not None:
                 return True
+            self.control_degradation_reason = "durable_control_runtime_recovering"
+            self._store_ready = False
             if self.twin_handler is not None:
                 await self.twin_handler.stop()
                 self.twin_handler = None
+            if self.proxy is not None:
+                self.proxy.twin_coordinator = None
+            self.twin_coordinator = None
+            self.audit_publisher = None
             old_store = self.twin_store
             if old_store is not None:
                 try:
