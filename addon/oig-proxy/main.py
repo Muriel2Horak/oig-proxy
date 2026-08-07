@@ -320,6 +320,21 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
             return True, None
         return False, self.control_degradation_reason or "control_not_ready"
 
+    async def _degrade_control_runtime(self, reason: str) -> None:
+        """Detach failed local control immediately while forwarding stays active."""
+        self.control_degradation_reason = reason
+        self._store_ready = False
+        if self.proxy is not None:
+            self.proxy.twin_coordinator = None
+        self.twin_coordinator = None
+        handler = self.twin_handler
+        self.twin_handler = None
+        if handler is not None:
+            try:
+                await handler.stop()
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception("Failed control handler stop during degradation")
+
     async def _start_capture(self) -> None:
         if self.config.capture_payloads:
             self.frame_capture = FrameCapture(
@@ -371,8 +386,11 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                 except (StoreRecordNotFound, ValueError):
                     desired = False
                 except Exception as error:  # pylint: disable=broad-exception-caught
-                    desired = False
                     logger.error("Control device row check failed: %s", error)
+                    await self._degrade_control_runtime(
+                        "durable_control_runtime_failure"
+                    )
+                    return
 
             current = self.twin_handler
             current_device = current.device_id if current is not None else None
@@ -433,8 +451,9 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                 )
             except Exception as error:  # pylint: disable=broad-exception-caught
                 logger.error("Durable device observation failed: %s", error)
-                self.control_degradation_reason = "durable_control_runtime_failure"
-                self._store_ready = False
+                await self._degrade_control_runtime(
+                    "durable_control_runtime_failure"
+                )
                 return False
             if self.telemetry_collector is not None:
                 self.telemetry_collector.update_device_id(device_id)
@@ -513,16 +532,16 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
                     )
                     if failures > self._last_handler_store_failure_count:
                         self._last_handler_store_failure_count = failures
-                        self.control_degradation_reason = (
+                        await self._degrade_control_runtime(
                             "durable_control_runtime_failure"
                         )
-                        self._store_ready = False
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # pylint: disable=broad-exception-caught
                 logger.error("Deadline sweep failed: %s", error)
-                self.control_degradation_reason = "durable_control_runtime_failure"
-                self._store_ready = False
+                await self._degrade_control_runtime(
+                    "durable_control_runtime_failure"
+                )
             await asyncio.sleep(1.0)
 
     async def _recover_control_runtime(self) -> bool:
@@ -530,14 +549,9 @@ class ProxyApp:  # pylint: disable=too-many-instance-attributes
         async with self._recovery_lock:
             if self._store_ready and self.twin_coordinator is not None:
                 return True
-            self.control_degradation_reason = "durable_control_runtime_recovering"
-            self._store_ready = False
-            if self.twin_handler is not None:
-                await self.twin_handler.stop()
-                self.twin_handler = None
-            if self.proxy is not None:
-                self.proxy.twin_coordinator = None
-            self.twin_coordinator = None
+            await self._degrade_control_runtime(
+                "durable_control_runtime_recovering"
+            )
             self.audit_publisher = None
             old_store = self.twin_store
             if old_store is not None:

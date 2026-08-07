@@ -290,6 +290,8 @@ async def test_cloud_setting_and_box_ack_round_trip_before_local_batch(
 async def test_cloud_frame_held_before_setting_ack_is_rerouted_after_ack(
     online_harness: OnlineHarness,
 ) -> None:
+    capture = MagicMock()
+    online_harness.server.frame_capture = capture
     await online_harness.open_cycle()
     first_setting = _frame(
         result="Setting",
@@ -316,6 +318,12 @@ async def test_cloud_frame_held_before_setting_ack_is_rerouted_after_ack(
 
     assert online_harness.raw_cloud.writes[-1] == ack
     assert online_harness.raw_box.writes == [first_setting, second_setting]
+    captured_second = [
+        call
+        for call in capture.capture.call_args_list
+        if call.kwargs["raw_bytes"] == second_setting
+    ]
+    assert len(captured_second) == 1
 
 
 @pytest.mark.asyncio

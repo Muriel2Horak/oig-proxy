@@ -295,6 +295,8 @@ async def test_mqtt_ready_and_reconciliation_cover_handler_lifecycle(runtime_con
     app.twin_store.read_device.side_effect = RuntimeError("health")
     await app._reconcile_control_handler()
     assert app.twin_handler is None
+    assert app.twin_coordinator is None
+    assert app._store_ready is False
 
     app.device_id_manager = None
     app.frame_processor.reset_mock()
@@ -317,8 +319,18 @@ async def test_identity_observation_covers_failures_and_side_effects(runtime_con
 
     app.device_id_manager.save.return_value = True
     app.twin_store.observe_device.side_effect = RuntimeError("disk")
+    coordinator = MagicMock()
+    app.twin_coordinator = coordinator
+    app.proxy = MagicMock(twin_coordinator=coordinator)
+    handler = MagicMock()
+    handler.stop = AsyncMock()
+    app.twin_handler = handler
     assert await app._on_valid_device_identity("DEV01", 1, 2) is False
     assert app._store_ready is False
+    assert app.twin_coordinator is None
+    assert app.proxy.twin_coordinator is None
+    assert app.twin_handler is None
+    handler.stop.assert_awaited_once_with()
 
     app._store_ready = True
     app.twin_store.observe_device.side_effect = None
@@ -385,23 +397,33 @@ async def test_deadline_loop_recovers_marks_failures_and_propagates_cancel(
     healthy = ProxyApp(runtime_config)
     healthy._store_ready = True
     healthy.twin_coordinator = MagicMock()
+    healthy.proxy = MagicMock(twin_coordinator=healthy.twin_coordinator)
     healthy.twin_coordinator.sweep_deadlines = AsyncMock()
     healthy.twin_handler = MagicMock(store_failure_count=2)
+    healthy.twin_handler.stop = AsyncMock()
+    healthy_handler = healthy.twin_handler
     with patch.object(main_module.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError)):
         with pytest.raises(asyncio.CancelledError):
             await healthy._deadline_sweep_loop()
     assert healthy._store_ready is False
     assert healthy.control_degradation_reason == "durable_control_runtime_failure"
+    assert healthy.twin_coordinator is None
+    assert healthy.proxy.twin_coordinator is None
+    assert healthy.twin_handler is None
+    healthy_handler.stop.assert_awaited_once_with()
 
     broken = ProxyApp(runtime_config)
     broken._store_ready = True
     broken.twin_coordinator = MagicMock()
+    broken.proxy = MagicMock(twin_coordinator=broken.twin_coordinator)
     broken.twin_coordinator.sweep_deadlines = AsyncMock(side_effect=RuntimeError("db"))
     with patch.object(main_module.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError)):
         with pytest.raises(asyncio.CancelledError):
             await broken._deadline_sweep_loop()
     assert broken._store_ready is False
     assert broken.control_degradation_reason == "durable_control_runtime_failure"
+    assert broken.twin_coordinator is None
+    assert broken.proxy.twin_coordinator is None
 
 
 @pytest.mark.asyncio

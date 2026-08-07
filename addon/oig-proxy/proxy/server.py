@@ -909,6 +909,7 @@ class ProxyServer:
                 await self._route_cloud_frame(
                     context,
                     StreamFrameEvent(FrameDirection.CLOUD_TO_PROXY, held),
+                    capture=False,
                 )
                 if context.close_requested.is_set():
                     break
@@ -954,14 +955,17 @@ class ProxyServer:
         self,
         context: ProxyConnectionContext,
         event: StreamFrameEvent,
+        *,
+        capture: bool = True,
     ) -> None:
         frame = event.frame
-        self._capture_frame(
-            frame.raw,
-            "cloud_to_box",
-            conn_id=context.conn_id,
-            peer=context.peer,
-        )
+        if capture:
+            self._capture_frame(
+                frame.raw,
+                "cloud_to_box",
+                conn_id=context.conn_id,
+                peer=context.peer,
+            )
         expectation = context.dialog.current_expectation()
         validation = validate_frame(frame)
         validated = validation.validated
