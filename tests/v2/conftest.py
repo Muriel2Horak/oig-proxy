@@ -1,11 +1,11 @@
 """Konfigurace testů pro OIG Proxy v2."""
-# pylint: disable=import-error,wrong-import-order,wrong-import-position
+# pylint: disable=import-error,redefined-outer-name,wrong-import-order,wrong-import-position
 import asyncio
 import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
-from typing import Any, Iterator, cast
+from typing import Any, Callable, Iterator, cast
 
 import pytest
 
@@ -26,7 +26,14 @@ if V2_ADDON_DIR not in sys.path:
 if V1_ADDON_DIR not in sys.path:
     sys.path.append(V1_ADDON_DIR)
 
-from twin.state import CommandState, ControlPolicy, TwinCommand  # noqa: E402
+from twin.state import (  # noqa: E402
+    AttemptRenderContext,
+    CommandState,
+    ControlPolicy,
+    RenderedAttempt,
+    TwinCommand,
+)
+from twin.store import TwinCommandStore  # noqa: E402
 
 EGRESS_GUARD_KEY: pytest.StashKey[EgressGuard] = pytest.StashKey()
 
@@ -71,6 +78,66 @@ def command() -> TwinCommand:
         last_wire_frame=None,
         last_error=None,
     )
+
+
+@pytest.fixture
+def store_factory(
+    tmp_path: Path,
+) -> Iterator[Callable[[int], TwinCommandStore]]:
+    """Open isolated durable stores with a caller-selected attempt limit."""
+    stores: list[TwinCommandStore] = []
+
+    def _factory(max_attempts: int = 8) -> TwinCommandStore:
+        store = TwinCommandStore(
+            tmp_path / f"twin-{len(stores)}.db",
+            policy=ControlPolicy(
+                ack_timeout_ms=30_000,
+                event_timeout_ms=300_000,
+                pending_ttl_ms=900_000,
+                max_attempts=max_attempts,
+            ),
+        )
+        store.open(now_ms=1)
+        stores.append(store)
+        return store
+
+    yield _factory
+
+    for store in reversed(stores):
+        store.close()
+
+
+@pytest.fixture
+def store(
+    store_factory: Callable[[int], TwinCommandStore],
+) -> TwinCommandStore:
+    """Return one opened lifecycle store using the standard policy."""
+    return store_factory(8)
+
+
+@pytest.fixture
+def deterministic_renderer():
+    """Render deterministic, attempt-distinct bytes and protocol fields."""
+    call_count = 0
+
+    def _render(context: AttemptRenderContext) -> RenderedAttempt:
+        nonlocal call_count
+        call_count += 1
+        ver_text = f"{call_count:05d}"
+        crc_text = f"{(call_count * 17) % 65536:05d}"
+        frame = (
+            f"{context.command.command_id}|{context.attempt_number}|"
+            f"{context.wire_id}|{context.wire_id_set}|{context.wire_dt}|"
+            f"{context.prepared_at_ms}|{ver_text}|{crc_text}"
+        ).encode("ascii")
+        return RenderedAttempt(
+            tsec_text=str(context.prepared_at_ms),
+            ver_text=ver_text,
+            crc_text=crc_text,
+            wire_frame=frame,
+        )
+
+    return _render
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:

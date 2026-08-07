@@ -10,14 +10,31 @@ import os
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
-from typing import Any, cast, Iterator
+from collections.abc import Callable
+from typing import Any, cast, Iterator, Literal
 
 import pytest
 
-from twin.state import CommandState, ControlPolicy, DeviceState, PragmaSnapshot
+from twin.state import (
+    AttemptRenderContext,
+    AttemptRenderer,
+    AttemptWriteOutcome,
+    ClaimDisposition,
+    CommandState,
+    ControlIngress,
+    ControlPolicy,
+    DeviceState,
+    IngressDisposition,
+    PragmaSnapshot,
+    RenderedAttempt,
+    RetryReason,
+)
+from twin.ack_parser import SettingResponse
 from twin.store import (
     CorruptStoreError,
     MigrationError,
+    StoreRecordNotFound,
+    StaleAttemptError,
     StoreLockError,
     TwinCommandStore,
     TwinStoreError,
@@ -437,6 +454,88 @@ class _ObservationBaseExceptionConnection:
             self.rollback_attempts += 1
             if self.rollback_error is not None:
                 raise self.rollback_error
+        return self._connection.execute(statement, parameters)
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+class _TransitionInsertFaultConnection:
+    """Connection proxy that fails one transition insert after BEGIN."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self.fail_next_transition = True
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def execute(self, statement: str, parameters: Any = ()) -> Any:
+        normalized = " ".join(statement.split()).upper()
+        if (
+            self.fail_next_transition
+            and normalized.startswith("INSERT INTO COMMAND_TRANSITIONS")
+        ):
+            self.fail_next_transition = False
+            raise sqlite3.OperationalError("forced transition insert failure")
+        return self._connection.execute(statement, parameters)
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+class _LifecycleFaultConnection:
+    """Inject one lifecycle fault and optionally fail the required rollback."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        operation_error: BaseException,
+        rollback_error: BaseException | None = None,
+    ) -> None:
+        self._connection = connection
+        self.operation_error: BaseException | None = operation_error
+        self.rollback_error = rollback_error
+        self.rollback_attempts = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def execute(self, statement: str, parameters: Any = ()) -> Any:
+        normalized = " ".join(statement.split()).upper()
+        if (
+            self.operation_error is not None
+            and normalized.startswith("INSERT INTO COMMAND_TRANSITIONS")
+        ):
+            error = self.operation_error
+            self.operation_error = None
+            raise error
+        if normalized == "ROLLBACK":
+            self.rollback_attempts += 1
+            if self.rollback_error is not None:
+                raise self.rollback_error
+        return self._connection.execute(statement, parameters)
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+class _CommitOutcomeFaultConnection:  # pylint: disable=too-few-public-methods
+    """Commit successfully, then report an ambiguous caller-visible failure."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self.commit_attempts = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def execute(self, statement: str, parameters: Any = ()) -> Any:
+        if statement.strip().upper() == "COMMIT":
+            self.commit_attempts += 1
+            self._connection.execute(statement, parameters)
+            raise sqlite3.OperationalError("forced post-commit reporting failure")
         return self._connection.execute(statement, parameters)
 
     def close(self) -> None:
@@ -2038,3 +2137,1419 @@ def test_state_count_order_matches_every_command_state() -> None:
         CommandState.EXPIRED,
         CommandState.SUPERSEDED,
     )
+
+
+def _observe_for_lifecycle(
+    store: TwinCommandStore,
+    *,
+    device_id: str = "123",
+    observed_at_ms: int = 90,
+) -> None:
+    store.observe_device(
+        device_id=device_id,
+        observed_at_ms=observed_at_ms,
+        observed_wire_id=14_000_000,
+        observed_wire_id_set=1_786_000_000,
+    )
+
+
+# pylint: disable-next=too-many-arguments
+def _enqueue_lifecycle(
+    store: TwinCommandStore,
+    *,
+    value_text: str,
+    received_at_ms: int,
+    device_id: str = "123",
+    table_name: str = "tbl_box_prms",
+    item_name: str = "MODE",
+    ingress_id: str | None = None,
+):
+    try:
+        store.read_device(device_id)
+    except StoreRecordNotFound:
+        _observe_for_lifecycle(store, device_id=device_id)
+    ingress = ControlIngress(
+        ingress_id or f"ing-{device_id}-{received_at_ms}-{value_text}",
+        received_at_ms,
+        f"oig/{device_id}/control/set",
+        device_id,
+        False,
+        f'{{"value":{value_text}}}',
+    )
+    return store.enqueue_command(
+        ingress,
+        device_id=device_id,
+        table_name=table_name,
+        item_name=item_name,
+        value_text=value_text,
+    ).command
+
+
+def test_enqueue_commits_ingress_command_and_transition_atomically(
+    store: TwinCommandStore,
+) -> None:
+    _observe_for_lifecycle(store, observed_at_ms=100)
+    ingress = ControlIngress(
+        "ing-1",
+        110,
+        "oig/123/control/set",
+        "123",
+        False,
+        '{"value":2}',
+    )
+
+    result = store.enqueue_command(
+        ingress,
+        device_id="123",
+        table_name="tbl_box_prms",
+        item_name="MODE",
+        value_text="2",
+    )
+
+    assert result.command.state is CommandState.PENDING
+    assert result.command.pending_expires_at_ms == 110 + store.policy.pending_ttl_ms
+    assert store.read_ingress("ing-1").command_id == result.command.command_id
+    transition = store.read_transitions(result.command.command_id)[0]
+    assert (
+        transition.from_state,
+        transition.to_state,
+        transition.reason,
+    ) == (None, CommandState.PENDING, "accepted_ingress")
+    assert result.snapshots == (
+        result.snapshots[0],
+    )
+    assert result.snapshots[0].command == store.read_command(result.command.command_id)
+    assert result.snapshots[0].transition == transition
+
+
+def test_enqueue_after_attempt_creates_successor_without_mutating_predecessor(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first = _enqueue_lifecycle(store, value_text="1", received_at_ms=100)
+    claimed = store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+
+    second = _enqueue_lifecycle(store, value_text="2", received_at_ms=300)
+
+    assert claimed.disposition is ClaimDisposition.PREPARED
+    assert store.read_command(first.command_id) == claimed.command
+    assert second.predecessor_command_id == first.command_id
+    assert second.state is CommandState.PENDING
+
+
+def test_enqueue_replaces_only_unsent_successor(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first = _enqueue_lifecycle(store, value_text="1", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    second = _enqueue_lifecycle(store, value_text="2", received_at_ms=300)
+
+    third_result = store.enqueue_command(
+        ControlIngress(
+            "ing-third",
+            400,
+            "oig/123/control/set",
+            "123",
+            False,
+            '{"value":3}',
+        ),
+        device_id="123",
+        table_name="tbl_box_prms",
+        item_name="MODE",
+        value_text="3",
+    )
+
+    assert store.read_command(first.command_id).state is CommandState.AWAITING_ACK
+    assert store.read_command(second.command_id).state is CommandState.SUPERSEDED
+    assert third_result.command.predecessor_command_id == first.command_id
+    assert tuple(
+        snapshot.transition.reason for snapshot in third_result.snapshots
+    ) == ("replaced_unsent", "accepted_ingress")
+
+
+def test_every_transition_and_attempt_reuses_original_command_and_audit_ids(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    original = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    prepared = store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    store.mark_write_started(
+        command_id=original.command_id,
+        attempt_number=1,
+        session_id="session-a",
+        started_at_ms=201,
+    )
+    store.mark_attempt_drained(
+        command_id=original.command_id,
+        attempt_number=1,
+        session_id="session-a",
+        drained_at_ms=202,
+    )
+
+    assert prepared.attempt is not None
+    assert prepared.attempt.command_id == original.command_id
+    assert {
+        (row.command_id, row.audit_id)
+        for row in store.read_transitions(original.command_id)
+    } == {(original.command_id, original.audit_id)}
+
+
+def test_prepare_uses_fifo_tie_breaking_and_keeps_devices_independent(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=100,
+        item_name="MODE",
+        ingress_id="ing-mode",
+    )
+    second = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=100,
+        item_name="SA",
+        ingress_id="ing-sa",
+    )
+    other = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=100,
+        device_id="456",
+        ingress_id="ing-other",
+    )
+
+    first_claim = store.prepare_next_attempt(
+        device_id="123",
+        session_id="device-123",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    other_claim = store.prepare_next_attempt(
+        device_id="456",
+        session_id="device-456",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+
+    assert first_claim.command is not None
+    assert first_claim.command.command_id == min(first.command_id, second.command_id)
+    assert other_claim.command is not None
+    assert other_claim.command.command_id == other.command_id
+
+
+def test_predecessor_and_identical_awaiting_event_commands_block_successor(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    claimed = store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    same_target = _enqueue_lifecycle(store, value_text="2", received_at_ms=300)
+
+    blocked = store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-b",
+        prepared_at_ms=301,
+        render=deterministic_renderer,
+    )
+
+    assert claimed.command is not None
+    assert claimed.command.command_id == first.command_id
+    assert same_target.predecessor_command_id == first.command_id
+    assert blocked.disposition is ClaimDisposition.ACTIVE_DELIVERY_ELSEWHERE
+
+    store.mark_write_started(
+        command_id=first.command_id,
+        attempt_number=1,
+        session_id="session-a",
+        started_at_ms=302,
+    )
+    store.mark_attempt_drained(
+        command_id=first.command_id,
+        attempt_number=1,
+        session_id="session-a",
+        drained_at_ms=303,
+    )
+    acknowledged = store.acknowledge_and_prepare_next(
+        command_id=first.command_id,
+        attempt_number=1,
+        session_id="session-a",
+        response=SettingResponse("ACK", "Setting", None, "a" * 64),
+        received_at_ms=304,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+
+    assert acknowledged.next_claim.disposition is ClaimDisposition.NO_ELIGIBLE
+    assert store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-b",
+        prepared_at_ms=305,
+        render=deterministic_renderer,
+    ).disposition is ClaimDisposition.NO_ELIGIBLE
+
+
+class _RecordingRenderer:  # pylint: disable=too-few-public-methods
+    """Attempt renderer that exposes literal context fields to tests."""
+
+    def __init__(self) -> None:
+        self.contexts: list[AttemptRenderContext] = []
+
+    def __call__(self, context: AttemptRenderContext) -> RenderedAttempt:
+        self.contexts.append(context)
+        call_number = len(self.contexts)
+        return RenderedAttempt(
+            tsec_text=f"tsec-{call_number}",
+            ver_text=f"{call_number:05d}",
+            crc_text=f"{call_number + 100:05d}",
+            wire_frame=f"wire-attempt-{call_number}".encode("ascii"),
+        )
+
+
+def test_prepare_commits_frame_attempt_and_deadline_atomically(
+    store: TwinCommandStore,
+) -> None:
+    pending = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    renderer = _RecordingRenderer()
+
+    result = store.prepare_next_attempt(
+        device_id="123",
+        session_id="session-a",
+        prepared_at_ms=1_786_003_920_000,
+        render=renderer,
+    )
+
+    assert result.disposition is ClaimDisposition.PREPARED
+    assert result.command is not None
+    assert result.command.command_id == pending.command_id
+    assert result.command.state is CommandState.AWAITING_ACK
+    assert result.command.attempt_count == 1
+    assert result.command.ack_deadline_ms == 1_786_003_950_000
+    assert result.command.wire_dt == "2026-08-06 10:12:00"
+    assert result.attempt is not None
+    assert result.command.last_wire_frame == result.attempt.wire_frame
+    assert result.attempt.wire_length == len(b"wire-attempt-1")
+    assert result.attempt.write_outcome is AttemptWriteOutcome.PREPARED
+    assert tuple(snapshot.transition.reason for snapshot in result.snapshots) == (
+        "selected",
+        "attempt_prepared",
+    )
+
+
+def test_retry_preserves_stable_fields_and_refreshes_attempt_fields_only(
+    store: TwinCommandStore,
+) -> None:
+    _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    renderer = _RecordingRenderer()
+    first = store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=renderer,
+    )
+    assert first.command is not None and first.attempt is not None
+    store.mark_write_started(
+        command_id=first.command.command_id,
+        attempt_number=1,
+        session_id="a",
+        started_at_ms=201,
+    )
+    store.mark_write_unknown(
+        command_id=first.command.command_id,
+        attempt_number=1,
+        session_id="a",
+        occurred_at_ms=202,
+        error="drain reset",
+    )
+
+    second = store.prepare_next_attempt(
+        device_id="123",
+        session_id="b",
+        prepared_at_ms=300,
+        render=renderer,
+    )
+
+    assert second.command is not None and second.attempt is not None
+    assert (
+        first.command.wire_id,
+        first.command.wire_id_set,
+        first.command.wire_dt,
+        first.command.device_id,
+        first.command.table_name,
+        first.command.item_name,
+        first.command.value_text,
+    ) == (
+        second.command.wire_id,
+        second.command.wire_id_set,
+        second.command.wire_dt,
+        second.command.device_id,
+        second.command.table_name,
+        second.command.item_name,
+        second.command.value_text,
+    )
+    assert first.attempt.tsec_text != second.attempt.tsec_text
+    assert first.attempt.ver_text != second.attempt.ver_text
+    assert first.attempt.crc_text != second.attempt.crc_text
+    assert renderer.contexts[1].used_ver_texts == ("00001",)
+
+
+def test_prepare_render_failure_is_terminal_without_consuming_counters_or_attempt(
+    store: TwinCommandStore,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    before = store.read_device("123")
+
+    result = store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=lambda _context: RenderedAttempt(
+            tsec_text="200",
+            ver_text="00001",
+            crc_text="00001",
+            wire_frame=b"",
+        ),
+    )
+
+    assert result.disposition is ClaimDisposition.RENDER_FAILED
+    assert result.command is not None
+    assert result.command.state is CommandState.FAILED
+    assert store.read_device("123") == before
+    with pytest.raises(StoreRecordNotFound):
+        store.read_attempt(command.command_id, 1)
+
+
+def test_repeated_claim_same_session_is_noop_and_other_session_is_rejected(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    prepared = store.prepare_next_attempt(
+        device_id="123",
+        session_id="same",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    transitions_before = store.read_transitions()
+
+    same = store.prepare_next_attempt(
+        device_id="123",
+        session_id="same",
+        prepared_at_ms=201,
+        render=deterministic_renderer,
+    )
+    other = store.prepare_next_attempt(
+        device_id="123",
+        session_id="other",
+        prepared_at_ms=201,
+        render=deterministic_renderer,
+    )
+
+    assert same == type(prepared)(ClaimDisposition.NO_ELIGIBLE, None, None)
+    assert other == type(prepared)(
+        ClaimDisposition.ACTIVE_DELIVERY_ELSEWHERE, None, None
+    )
+    assert store.read_transitions() == transitions_before
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "changed_value"),
+    [
+        ("command_id", "wrong-command"),
+        ("attempt_number", 2),
+        ("session_id", "wrong-session"),
+    ],
+)
+def test_write_mutations_reject_nonexact_command_attempt_session_cas(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    changed_field: str,
+    changed_value: object,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    values: dict[str, object] = {
+        "command_id": command.command_id,
+        "attempt_number": 1,
+        "session_id": "a",
+        "started_at_ms": 201,
+    }
+    values[changed_field] = changed_value
+
+    with pytest.raises(StaleAttemptError):
+        store.mark_write_started(**values)  # type: ignore[arg-type]
+
+    assert store.read_attempt(command.command_id, 1).write_outcome is (
+        AttemptWriteOutcome.PREPARED
+    )
+
+
+def test_write_outcomes_distinguish_failed_unknown_and_drained(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    failed_store = store_factory(8)
+    failed_command = _enqueue_lifecycle(
+        failed_store, value_text="1", received_at_ms=100
+    )
+    failed_store.prepare_next_attempt(
+        device_id="123",
+        session_id="failed",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    failed = failed_store.mark_write_failed(
+        command_id=failed_command.command_id,
+        attempt_number=1,
+        session_id="failed",
+        occurred_at_ms=201,
+        error="write refused",
+    )
+
+    unknown_store = store_factory(8)
+    unknown_command = _enqueue_lifecycle(
+        unknown_store, value_text="1", received_at_ms=100
+    )
+    unknown_store.prepare_next_attempt(
+        device_id="123",
+        session_id="unknown",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    unknown_store.mark_write_started(
+        command_id=unknown_command.command_id,
+        attempt_number=1,
+        session_id="unknown",
+        started_at_ms=201,
+    )
+    unknown = unknown_store.mark_write_unknown(
+        command_id=unknown_command.command_id,
+        attempt_number=1,
+        session_id="unknown",
+        occurred_at_ms=202,
+        error="drain reset",
+    )
+
+    drained_store = store_factory(8)
+    drained_command = _enqueue_lifecycle(
+        drained_store, value_text="1", received_at_ms=100
+    )
+    drained_store.prepare_next_attempt(
+        device_id="123",
+        session_id="drained",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    drained_store.mark_write_started(
+        command_id=drained_command.command_id,
+        attempt_number=1,
+        session_id="drained",
+        started_at_ms=201,
+    )
+    drained = drained_store.mark_attempt_drained(
+        command_id=drained_command.command_id,
+        attempt_number=1,
+        session_id="drained",
+        drained_at_ms=202,
+    )
+
+    assert failed.command.state is CommandState.RETRY_PENDING
+    assert failed.attempt is not None
+    assert failed.attempt.write_outcome is AttemptWriteOutcome.FAILED
+    assert unknown.command.state is CommandState.RETRY_PENDING
+    assert unknown.attempt is not None
+    assert unknown.attempt.write_outcome is AttemptWriteOutcome.UNKNOWN
+    assert drained.command.state is CommandState.AWAITING_ACK
+    assert drained.attempt is not None
+    assert drained.attempt.write_outcome is AttemptWriteOutcome.DRAINED
+    assert drained.command.completed_at_ms is None
+
+
+def test_attempt_limits_one_and_eight_are_terminal(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    one = store_factory(1)
+    one_command = _enqueue_lifecycle(one, value_text="1", received_at_ms=1)
+    one.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=10,
+        render=deterministic_renderer,
+    )
+    failed = one.release_for_retry(
+        command_id=one_command.command_id,
+        attempt_number=1,
+        session_id="a",
+        occurred_at_ms=11,
+        reason=RetryReason.ACK_TIMEOUT,
+    )
+    assert failed.command.state is CommandState.FAILED
+
+    eight = store_factory(8)
+    eight_command = _enqueue_lifecycle(eight, value_text="1", received_at_ms=1)
+    for attempt_number in range(1, 9):
+        session = f"session-{attempt_number}"
+        prepared = eight.prepare_next_attempt(
+            device_id="123",
+            session_id=session,
+            prepared_at_ms=attempt_number * 10,
+            render=deterministic_renderer,
+        )
+        assert prepared.command is not None
+        assert prepared.command.attempt_count == attempt_number
+        released = eight.release_for_retry(
+            command_id=eight_command.command_id,
+            attempt_number=attempt_number,
+            session_id=session,
+            occurred_at_ms=attempt_number * 10 + 1,
+            reason=RetryReason.DISCONNECT,
+        )
+    assert released.command.state is CommandState.FAILED
+    assert eight.prepare_next_attempt(
+        device_id="123",
+        session_id="session-9",
+        prepared_at_ms=90,
+        render=deterministic_renderer,
+    ).disposition is ClaimDisposition.NO_ELIGIBLE
+
+
+def test_attempt_transition_failure_rolls_back_write_outcome(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    path = tmp_path / "atomic-attempt.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    assert store._connection is not None  # pylint: disable=protected-access
+    fault = _TransitionInsertFaultConnection(
+        store._connection  # pylint: disable=protected-access
+    )
+    store._connection = cast(  # pylint: disable=protected-access
+        sqlite3.Connection, fault
+    )
+
+    with pytest.raises(TwinStoreError, match="transition insert"):
+        store.mark_write_started(
+            command_id=command.command_id,
+            attempt_number=1,
+            session_id="a",
+            started_at_ms=201,
+        )
+
+    store.close()
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=300)
+    try:
+        assert reopened.read_attempt(command.command_id, 1).write_outcome is (
+            AttemptWriteOutcome.PREPARED
+        )
+        assert tuple(
+            transition.reason
+            for transition in reopened.read_transitions(command.command_id)
+        ) == ("accepted_ingress", "selected", "attempt_prepared")
+    finally:
+        reopened.close()
+
+
+def _prepared_and_drained(
+    store: TwinCommandStore,
+    renderer: AttemptRenderer,
+    *,
+    session: str = "a",
+    now_ms: int = 200,
+    value_text: str = "2",
+):
+    command = _enqueue_lifecycle(
+        store,
+        value_text=value_text,
+        received_at_ms=max(1, now_ms - 100),
+    )
+    prepared = store.prepare_next_attempt(
+        device_id="123",
+        session_id=session,
+        prepared_at_ms=now_ms,
+        render=renderer,
+    )
+    assert prepared.attempt is not None
+    store.mark_write_started(
+        command_id=command.command_id,
+        attempt_number=prepared.attempt.attempt_number,
+        session_id=session,
+        started_at_ms=now_ms + 1,
+    )
+    return store.mark_attempt_drained(
+        command_id=command.command_id,
+        attempt_number=prepared.attempt.attempt_number,
+        session_id=session,
+        drained_at_ms=now_ms + 2,
+    ).attempt
+
+
+def _response(
+    result: Literal["ACK", "NACK"] = "ACK",
+    *,
+    fingerprint: str = "a" * 64,
+    rdt_text: str | None = "06.08.2026 10:12:00",
+    reason: str | None = "Setting",
+) -> SettingResponse:
+    return SettingResponse(
+        result=result,
+        reason=reason,
+        rdt_text=rdt_text,
+        fingerprint=fingerprint,
+    )
+
+
+def test_acknowledge_moves_to_awaiting_event_with_inclusive_deadline(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+
+    result = store.acknowledge_and_prepare_next(
+        command_id=attempt.command_id,
+        attempt_number=attempt.attempt_number,
+        session_id="a",
+        received_at_ms=attempt.ack_deadline_ms,
+        response=_response(),
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+
+    assert result.accepted_command is not None
+    assert result.accepted_command.state is CommandState.AWAITING_EVENT
+    assert result.accepted_command.event_deadline_ms == (
+        attempt.ack_deadline_ms + store.policy.event_timeout_ms
+    )
+    assert result.accepted_command.completed_at_ms is None
+    assert result.next_claim.disposition is ClaimDisposition.NO_ELIGIBLE
+    assert not result.duplicate
+
+
+def test_ack_rejects_wrong_session_and_late_response_without_mutation(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    command_before = store.read_command(attempt.command_id)
+
+    with pytest.raises(StaleAttemptError):
+        store.acknowledge_and_prepare_next(
+            command_id=attempt.command_id,
+            attempt_number=1,
+            session_id="wrong",
+            received_at_ms=attempt.ack_deadline_ms,
+            response=_response(),
+            evidence_frame=b"ack",
+            render=deterministic_renderer,
+        )
+    with pytest.raises(StaleAttemptError):
+        store.acknowledge_and_prepare_next(
+            command_id=attempt.command_id,
+            attempt_number=1,
+            session_id="a",
+            received_at_ms=attempt.ack_deadline_ms + 1,
+            response=_response(),
+            evidence_frame=b"ack",
+            render=deterministic_renderer,
+        )
+
+    assert store.read_command(attempt.command_id) == command_before
+
+
+def test_ack_deduplicates_session_batch_and_rejects_decreasing_parseable_rdt(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first_attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert first_attempt is not None
+    store.acknowledge_and_prepare_next(
+        command_id=first_attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        received_at_ms=210,
+        response=_response(fingerprint="b" * 64),
+        evidence_frame=b"ack-1",
+        render=deterministic_renderer,
+    )
+    duplicate = store.acknowledge_and_prepare_next(
+        command_id=first_attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        received_at_ms=211,
+        response=_response(fingerprint="b" * 64),
+        evidence_frame=b"ack-1",
+        render=deterministic_renderer,
+    )
+    assert duplicate.duplicate
+    assert duplicate.accepted_command is None
+    assert duplicate.snapshots == ()
+
+    # A distinct target can be active in the same UUID session batch while the
+    # first command awaits event evidence.
+    next_command = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=220,
+        item_name="SA",
+    )
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=230,
+        render=deterministic_renderer,
+    )
+    with pytest.raises(StaleAttemptError, match="Rdt"):
+        store.acknowledge_and_prepare_next(
+            command_id=next_command.command_id,
+            attempt_number=1,
+            session_id="a",
+            received_at_ms=231,
+            response=_response(
+                fingerprint="c" * 64,
+                rdt_text="06.08.2026 10:11:59",
+            ),
+            evidence_frame=b"ack-2",
+            render=deterministic_renderer,
+        )
+
+
+def test_ack_atomically_prepares_next_eligible_distinct_target(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first_attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert first_attempt is not None
+    second = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=250,
+        item_name="SA",
+    )
+
+    result = store.acknowledge_and_prepare_next(
+        command_id=first_attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        received_at_ms=300,
+        response=_response(),
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+
+    assert result.next_claim.disposition is ClaimDisposition.PREPARED
+    assert result.next_claim.command is not None
+    assert result.next_claim.command.command_id == second.command_id
+    assert tuple(snapshot.transition.reason for snapshot in result.snapshots) == (
+        "ack_received",
+        "selected",
+        "attempt_prepared",
+    )
+
+
+def test_nack_is_terminal_with_diagnostic_and_exact_duplicate_is_noop(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    nack = _response(
+        "NACK",
+        fingerprint="d" * 64,
+        reason="WC",
+    )
+
+    result = store.mark_nack(
+        command_id=attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=nack,
+        received_at_ms=attempt.ack_deadline_ms,
+        evidence_frame=b"nack",
+    )
+    duplicate = store.mark_nack(
+        command_id=attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=nack,
+        received_at_ms=attempt.ack_deadline_ms,
+        evidence_frame=b"nack",
+    )
+
+    assert result.accepted_command is not None
+    assert result.accepted_command.state is CommandState.FAILED
+    assert result.accepted_command.last_error == "WC"
+    assert result.accepted_command.completed_at_ms == attempt.ack_deadline_ms
+    assert duplicate.duplicate
+    assert duplicate.accepted_command is None
+    assert duplicate.snapshots == ()
+    with pytest.raises(StaleAttemptError):
+        store.release_for_retry(
+            command_id=attempt.command_id,
+            attempt_number=1,
+            session_id="a",
+            occurred_at_ms=attempt.ack_deadline_ms + 1,
+            reason=RetryReason.DISCONNECT,
+        )
+
+
+def test_deadline_sweep_is_strict_and_respects_event_timeout_switch(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    pending_store = store_factory(8)
+    pending = _enqueue_lifecycle(pending_store, value_text="2", received_at_ms=100)
+    at_pending = pending_store.sweep_deadlines(
+        now_ms=pending.pending_expires_at_ms
+    )
+    assert at_pending.expired_pending == 0
+    after_pending = pending_store.sweep_deadlines(
+        now_ms=pending.pending_expires_at_ms + 1
+    )
+    assert after_pending.expired_pending == 1
+    assert pending_store.read_command(pending.command_id).state is CommandState.EXPIRED
+
+    ack_store = store_factory(8)
+    attempt = _prepared_and_drained(ack_store, deterministic_renderer)
+    assert attempt is not None
+    assert ack_store.sweep_deadlines(
+        now_ms=attempt.ack_deadline_ms
+    ).retry_pending == 0
+    assert ack_store.sweep_deadlines(
+        now_ms=attempt.ack_deadline_ms + 1
+    ).retry_pending == 1
+
+    event_store = store_factory(8)
+    event_attempt = _prepared_and_drained(event_store, deterministic_renderer)
+    assert event_attempt is not None
+    ack = event_store.acknowledge_and_prepare_next(
+        command_id=event_attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=_response(),
+        received_at_ms=300,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+    assert ack.accepted_command is not None
+    event_deadline = ack.accepted_command.event_deadline_ms
+    assert event_deadline is not None
+    assert event_store.sweep_deadlines(
+        now_ms=event_deadline,
+        include_event_timeouts=True,
+    ).incomplete_event_timeout == 0
+    assert event_store.sweep_deadlines(
+        now_ms=event_deadline + 1,
+        include_event_timeouts=False,
+    ).incomplete_event_timeout == 0
+    assert event_store.read_command(event_attempt.command_id).state is (
+        CommandState.AWAITING_EVENT
+    )
+    assert event_store.sweep_deadlines(
+        now_ms=event_deadline + 1,
+        include_event_timeouts=True,
+    ).incomplete_event_timeout == 1
+
+
+def test_ack_timeout_at_attempt_limit_is_terminal(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    store = store_factory(1)
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+
+    report = store.sweep_deadlines(now_ms=attempt.ack_deadline_ms + 1)
+
+    assert report.failed_attempt_limit == 1
+    assert report.retry_pending == 0
+    assert store.read_command(attempt.command_id).state is CommandState.FAILED
+
+
+def test_different_value_successor_can_run_while_predecessor_awaits_event(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    acknowledged = store.acknowledge_and_prepare_next(
+        command_id=attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=_response(),
+        received_at_ms=300,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+    assert acknowledged.accepted_command is not None
+    successor = _enqueue_lifecycle(store, value_text="3", received_at_ms=400)
+
+    claimed = store.prepare_next_attempt(
+        device_id="123",
+        session_id="b",
+        prepared_at_ms=500,
+        render=deterministic_renderer,
+    )
+
+    assert claimed.disposition is ClaimDisposition.PREPARED
+    assert claimed.command is not None
+    assert claimed.command.command_id == successor.command_id
+
+
+def test_event_timeout_candidates_and_exact_cas_are_strict(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    ack = store.acknowledge_and_prepare_next(
+        command_id=attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=_response(),
+        received_at_ms=300,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+    assert ack.accepted_command is not None
+    deadline = ack.accepted_command.event_deadline_ms
+    assert deadline is not None
+
+    assert store.read_event_timeout_candidates(now_ms=deadline) == ()
+    candidates = store.read_event_timeout_candidates(now_ms=deadline + 1)
+    assert tuple(candidate.command_id for candidate in candidates) == (
+        attempt.command_id,
+    )
+    assert store.mark_event_incomplete(
+        command_id=attempt.command_id,
+        expected_event_deadline_ms=deadline + 1,
+        now_ms=deadline + 2,
+    ) is None
+    assert store.mark_event_incomplete(
+        command_id=attempt.command_id,
+        expected_event_deadline_ms=deadline,
+        now_ms=deadline,
+    ) is None
+    completed = store.mark_event_incomplete(
+        command_id=attempt.command_id,
+        expected_event_deadline_ms=deadline,
+        now_ms=deadline + 1,
+    )
+    assert completed is not None
+    assert completed.command.state is CommandState.INCOMPLETE
+
+
+def test_recover_maps_active_states_and_preserves_terminals(
+    tmp_path: Path,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    policy = ControlPolicy(
+        ack_timeout_ms=10,
+        event_timeout_ms=20,
+        pending_ttl_ms=30,
+        max_attempts=1,
+    )
+    path = tmp_path / "recovery.db"
+    store = TwinCommandStore(path, policy=policy)
+    store.open(now_ms=1)
+    pending = _enqueue_lifecycle(store, value_text="1", received_at_ms=10)
+    awaiting = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=11,
+        item_name="SA",
+    )
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="active",
+        prepared_at_ms=20,
+        render=deterministic_renderer,
+    )
+    assert store.read_command(awaiting.command_id).state in {
+        CommandState.PENDING,
+        CommandState.AWAITING_ACK,
+    }
+    store.close()
+
+    reopened = TwinCommandStore(path, policy=policy)
+    reopened.open(now_ms=100)
+    report = reopened.recover(now_ms=100)
+
+    assert report.expired_pending == 1
+    assert report.failed_attempt_limit == 1
+    assert reopened.read_command(pending.command_id).state in {
+        CommandState.EXPIRED,
+        CommandState.FAILED,
+    }
+    assert reopened.read_command(awaiting.command_id).state in {
+        CommandState.EXPIRED,
+        CommandState.FAILED,
+    }
+    transitions_before = reopened.read_transitions()
+    second = reopened.recover(now_ms=200)
+    assert second == type(report)(0, 0, 0, 0, 0)
+    assert reopened.read_transitions() == transitions_before
+    reopened.close()
+
+
+def test_ingress_dispositions_status_and_single_nonterminal_use_public_reads(
+    store: TwinCommandStore,
+) -> None:
+    rejected = store.record_ingress_disposition(
+        ControlIngress("reject-1", 10, "bad", None, False, "{}"),
+        disposition=IngressDisposition.REJECTED_TOPIC,
+        reason="wrong topic",
+    )
+    proxy = store.record_proxy_control_ingress(
+        ControlIngress("proxy-1", 11, "oig/proxy/control", None, False, "{}"),
+        reason="proxy mode",
+    )
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+
+    assert rejected == store.read_ingress("reject-1")
+    assert proxy.disposition is IngressDisposition.ACCEPTED_PROXY_CONTROL
+    assert store.read_latest_ingress().command_id == command.command_id
+    assert store.single_nonterminal("123") == command
+    status = store.status_snapshot("123")
+    assert status.count(CommandState.PENDING) == 1
+    assert status.nonterminal_commands == 1
+    assert status.control_available
+
+
+def test_read_methods_raise_record_not_found_for_absent_records(
+    store: TwinCommandStore,
+) -> None:
+    with pytest.raises(StoreRecordNotFound):
+        store.read_device("missing")
+    with pytest.raises(StoreRecordNotFound):
+        store.read_command("missing")
+    with pytest.raises(StoreRecordNotFound):
+        store.read_attempt("missing", 1)
+    with pytest.raises(StoreRecordNotFound):
+        store.read_ingress("missing")
+    with pytest.raises(StoreRecordNotFound):
+        store.read_latest_ingress()
+    with pytest.raises(StoreRecordNotFound):
+        store.read_event_receipt("a" * 64)
+    with pytest.raises(StoreRecordNotFound):
+        store.read_transitions("missing")
+    with pytest.raises(StoreRecordNotFound):
+        store.single_nonterminal("missing")
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        RenderedAttempt("1", "00001", "00001", bytearray(b"frame")),
+        RenderedAttempt("1", "1", "00001", b"frame"),
+        RenderedAttempt("1", "00001", "1", b"frame"),
+        RenderedAttempt("1", "65536", "00001", b"frame"),
+    ],
+)
+def test_invalid_render_contract_fails_terminal_without_attempt(
+    store: TwinCommandStore,
+    rendered: RenderedAttempt,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    result = store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=lambda _context: rendered,
+    )
+
+    assert result.disposition is ClaimDisposition.RENDER_FAILED
+    assert result.command is not None
+    assert result.command.state is CommandState.FAILED
+    with pytest.raises(StoreRecordNotFound):
+        store.read_attempt(command.command_id, 1)
+
+
+def test_duplicate_attempt_version_is_rejected_without_consuming_retry(
+    store: TwinCommandStore,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+
+    def repeated_version(_context: AttemptRenderContext) -> RenderedAttempt:
+        return RenderedAttempt("1", "00001", "00001", b"frame")
+
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=repeated_version,
+    )
+    store.release_for_retry(
+        command_id=command.command_id,
+        attempt_number=1,
+        session_id="a",
+        occurred_at_ms=201,
+        reason=RetryReason.DISCONNECT,
+    )
+
+    failed = store.prepare_next_attempt(
+        device_id="123",
+        session_id="b",
+        prepared_at_ms=300,
+        render=repeated_version,
+    )
+
+    assert failed.disposition is ClaimDisposition.RENDER_FAILED
+    assert failed.command is not None
+    assert failed.command.attempt_count == 1
+    with pytest.raises(StoreRecordNotFound):
+        store.read_attempt(command.command_id, 2)
+
+
+def test_enqueue_keyboard_interrupt_rolls_back_and_preserves_control_flow(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "enqueue-cancel.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe_for_lifecycle(store)
+    assert store._connection is not None  # pylint: disable=protected-access
+    cancellation = KeyboardInterrupt("cancelled enqueue")
+    fault = _LifecycleFaultConnection(
+        store._connection,  # pylint: disable=protected-access
+        operation_error=cancellation,
+    )
+    store._connection = cast(  # pylint: disable=protected-access
+        sqlite3.Connection, fault
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        store.enqueue_command(
+            ControlIngress("cancelled", 100, "topic", "123", False, "{}"),
+            device_id="123",
+            table_name="tbl_box_prms",
+            item_name="MODE",
+            value_text="2",
+        )
+
+    assert caught.value is cancellation
+    assert fault.rollback_attempts == 1
+    assert store.verify_health() == PragmaSnapshot("wal", 2, 1, 5000)
+    with pytest.raises(StoreRecordNotFound):
+        store.read_ingress("cancelled")
+    assert store.status_snapshot().nonterminal_commands == 0
+    store.close()
+
+
+def test_lifecycle_rollback_failure_degrades_fail_closed(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    store = TwinCommandStore(tmp_path / "rollback-failure.db", policy=control_policy)
+    store.open(now_ms=1)
+    _observe_for_lifecycle(store)
+    assert store._connection is not None  # pylint: disable=protected-access
+    fault = _LifecycleFaultConnection(
+        store._connection,  # pylint: disable=protected-access
+        operation_error=BaseException("cancelled enqueue"),
+        rollback_error=BaseException("rollback halted"),
+    )
+    store._connection = cast(  # pylint: disable=protected-access
+        sqlite3.Connection, fault
+    )
+
+    with pytest.raises(TwinStoreError, match="rollback failed"):
+        store.enqueue_command(
+            ControlIngress("cancelled", 100, "topic", "123", False, "{}"),
+            device_id="123",
+            table_name="tbl_box_prms",
+            item_name="MODE",
+            value_text="2",
+        )
+
+    assert fault.rollback_attempts == 1
+    with pytest.raises(TwinStoreError, match="rollback failed"):
+        store.verify_health()
+    store.close()
+
+
+def test_post_commit_reporting_failure_degrades_with_durable_commit_preserved(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "ambiguous-commit.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe_for_lifecycle(store)
+    assert store._connection is not None  # pylint: disable=protected-access
+    fault = _CommitOutcomeFaultConnection(
+        store._connection  # pylint: disable=protected-access
+    )
+    store._connection = cast(  # pylint: disable=protected-access
+        sqlite3.Connection, fault
+    )
+
+    with pytest.raises(TwinStoreError, match="ambiguous"):
+        store.enqueue_command(
+            ControlIngress("committed", 100, "topic", "123", False, "{}"),
+            device_id="123",
+            table_name="tbl_box_prms",
+            item_name="MODE",
+            value_text="2",
+        )
+    with pytest.raises(TwinStoreError, match="ambiguous"):
+        store.verify_health()
+    store.close()
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=200)
+    try:
+        assert reopened.read_ingress("committed").command_id is not None
+        assert reopened.status_snapshot().count(CommandState.PENDING) == 1
+    finally:
+        reopened.close()
+
+
+def test_read_command_rejects_noninteger_persisted_timestamp_and_degrades(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "poisoned-command.db"
+    creator = TwinCommandStore(path, policy=control_policy)
+    creator.open(now_ms=1)
+    command = _enqueue_lifecycle(creator, value_text="2", received_at_ms=100)
+    creator.close()
+    with _connect(path) as connection:
+        connection.execute(
+            "UPDATE commands SET updated_at_ms = 100.5 WHERE command_id = ?",
+            (command.command_id,),
+        )
+        assert connection.execute(
+            "SELECT typeof(updated_at_ms) FROM commands WHERE command_id = ?",
+            (command.command_id,),
+        ).fetchone() == ("real",)
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=200)
+    with pytest.raises(TwinStoreError, match="persisted command"):
+        reopened.read_command(command.command_id)
+    with pytest.raises(TwinStoreError, match="persisted command"):
+        reopened.verify_health()
+    reopened.close()
+
+
+# pylint: disable-next=too-many-locals
+def test_recover_handles_retry_kept_and_overdue_event_states(
+    tmp_path: Path,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    policy = ControlPolicy(
+        ack_timeout_ms=10,
+        event_timeout_ms=20,
+        pending_ttl_ms=1_000,
+        max_attempts=2,
+    )
+
+    retry_path = tmp_path / "recover-retry.db"
+    retry_store = TwinCommandStore(retry_path, policy=policy)
+    retry_store.open(now_ms=1)
+    retry_command = _enqueue_lifecycle(
+        retry_store, value_text="2", received_at_ms=10
+    )
+    retry_store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=20,
+        render=deterministic_renderer,
+    )
+    retry_store.close()
+    retry_store = TwinCommandStore(retry_path, policy=policy)
+    retry_store.open(now_ms=30)
+    retry_report = retry_store.recover(now_ms=30)
+    assert retry_report.retry_pending == 1
+    assert retry_store.read_command(retry_command.command_id).state is (
+        CommandState.RETRY_PENDING
+    )
+    retry_store.close()
+
+    event_path = tmp_path / "recover-event.db"
+    event_store = TwinCommandStore(event_path, policy=policy)
+    event_store.open(now_ms=1)
+    event_attempt = _prepared_and_drained(
+        event_store,
+        deterministic_renderer,
+        now_ms=20,
+    )
+    assert event_attempt is not None
+    ack = event_store.acknowledge_and_prepare_next(
+        command_id=event_attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=_response(),
+        received_at_ms=25,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+    assert ack.accepted_command is not None
+    deadline = ack.accepted_command.event_deadline_ms
+    assert deadline == 45
+    event_store.close()
+
+    event_store = TwinCommandStore(event_path, policy=policy)
+    event_store.open(now_ms=45)
+    kept = event_store.recover(now_ms=45)
+    assert kept.kept_awaiting_event == 1
+    assert event_store.read_command(event_attempt.command_id).state is (
+        CommandState.AWAITING_EVENT
+    )
+    event_store.close()
+
+    event_store = TwinCommandStore(event_path, policy=policy)
+    event_store.open(now_ms=46)
+    incomplete = event_store.recover(now_ms=46)
+    assert incomplete.incomplete_event_timeout == 1
+    assert event_store.read_command(event_attempt.command_id).state is (
+        CommandState.INCOMPLETE
+    )
+    transitions = event_store.read_transitions(event_attempt.command_id)
+    event_store.close()
+
+    terminal_store = TwinCommandStore(event_path, policy=policy)
+    terminal_store.open(now_ms=100)
+    assert terminal_store.recover(now_ms=100) == type(incomplete)(0, 0, 0, 0, 0)
+    assert terminal_store.read_transitions(event_attempt.command_id) == transitions
+    terminal_store.close()

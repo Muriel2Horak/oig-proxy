@@ -9,24 +9,36 @@ from typing import Any
 import pytest
 
 from twin.state import (
+    AckResult,
     AttemptRenderContext,
     AttemptWriteOutcome,
     ClaimDisposition,
+    ClaimResult,
     CommandAttempt,
     CommandState,
     CommandTransition,
     ControlIngress,
     ControlPolicy,
+    ConfirmedSetting,
     DeviceState,
+    EnqueueResult,
+    EventDisposition,
+    EventMatchResult,
+    EventTimeoutCandidate,
     IngressDisposition,
+    LocalResponseDisposition,
+    NackResult,
     PragmaSnapshot,
     RecoveryReport,
     RenderedAttempt,
+    RetryReason,
     SettingEventReceipt,
     StoreStatus,
+    SweepReport,
     TERMINAL_STATES,
     TwinCommand,
     TwinQueue,
+    TransitionAuditSnapshot,
 )
 import twin.state as state_module
 
@@ -91,6 +103,31 @@ def test_ingress_disposition_values_are_exact() -> None:
         "rejected_value",
         "rejected_xml",
         "rejected_store",
+    ]
+
+
+def test_lifecycle_disposition_and_retry_values_are_exact() -> None:
+    assert [reason.value for reason in RetryReason] == [
+        "write_failed",
+        "write_unknown",
+        "disconnect",
+        "ack_timeout",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+    ]
+    assert [disposition.value for disposition in EventDisposition] == [
+        "confirmed",
+        "unmatched",
+        "duplicate",
+    ]
+    assert [disposition.value for disposition in LocalResponseDisposition] == [
+        "ack_accepted",
+        "next_sent",
+        "nack_accepted",
+        "duplicate",
+        "rejected",
+        "timed_out",
     ]
 
 
@@ -234,6 +271,65 @@ def test_twin_command_snapshot_is_frozen(command: TwinCommand) -> None:
                 "nonterminal_commands",
                 "control_available",
                 "degradation_reason",
+            ),
+        ),
+        (
+            ConfirmedSetting,
+            (
+                "command_id",
+                "audit_id",
+                "evidence_id",
+                "device_id",
+                "table_name",
+                "item_name",
+                "value_text",
+                "confirmed_at_ms",
+            ),
+        ),
+        (
+            TransitionAuditSnapshot,
+            ("command", "transition", "attempt", "evidence"),
+        ),
+        (
+            EnqueueResult,
+            ("command", "superseded_command", "snapshots"),
+        ),
+        (
+            ClaimResult,
+            ("disposition", "command", "attempt", "snapshots"),
+        ),
+        (
+            AckResult,
+            ("accepted_command", "duplicate", "next_claim", "snapshots"),
+        ),
+        (
+            NackResult,
+            ("accepted_command", "duplicate", "snapshots"),
+        ),
+        (
+            EventMatchResult,
+            (
+                "disposition",
+                "command",
+                "prior_state",
+                "active_session_id",
+                "evidence",
+                "confirmation",
+                "snapshot",
+            ),
+        ),
+        (
+            EventTimeoutCandidate,
+            ("command_id", "device_id", "event_deadline_ms"),
+        ),
+        (
+            SweepReport,
+            (
+                "expired_pending",
+                "retry_pending",
+                "failed_attempt_limit",
+                "incomplete_event_timeout",
+                "snapshots",
             ),
         ),
     ],

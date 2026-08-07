@@ -75,6 +75,37 @@ class IngressDisposition(str, Enum):
     REJECTED_STORE = "rejected_store"
 
 
+class RetryReason(str, Enum):
+    """Durable reasons for releasing one exact attempt for retry."""
+
+    WRITE_FAILED = "write_failed"
+    WRITE_UNKNOWN = "write_unknown"
+    DISCONNECT = "disconnect"
+    ACK_TIMEOUT = "ack_timeout"
+    UNEXPECTED_RESPONSE = "unexpected_response"
+    STREAM_ERROR = "stream_error"
+    SHUTDOWN = "shutdown"
+
+
+class EventDisposition(str, Enum):
+    """Result of durably recording one immutable setting event."""
+
+    CONFIRMED = "confirmed"
+    UNMATCHED = "unmatched"
+    DUPLICATE = "duplicate"
+
+
+class LocalResponseDisposition(str, Enum):
+    """Runtime-facing classification for local-setting response handling."""
+
+    ACK_ACCEPTED = "ack_accepted"
+    NEXT_SENT = "next_sent"
+    NACK_ACCEPTED = "nack_accepted"
+    DUPLICATE = "duplicate"
+    REJECTED = "rejected"
+    TIMED_OUT = "timed_out"
+
+
 def _require_int(name: str, value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer")
@@ -303,6 +334,101 @@ class RenderedAttempt:
 
 
 AttemptRenderer = Callable[[AttemptRenderContext], RenderedAttempt]
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedSetting:  # pylint: disable=too-many-instance-attributes
+    """Canonical execution confirmation linked to immutable event evidence."""
+
+    command_id: str
+    audit_id: str
+    evidence_id: str
+    device_id: str
+    table_name: str
+    item_name: str
+    value_text: str
+    confirmed_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class TransitionAuditSnapshot:
+    """Committed command, transition, and optional related durable rows."""
+
+    command: TwinCommand
+    transition: CommandTransition
+    attempt: CommandAttempt | None = None
+    evidence: SettingEventReceipt | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnqueueResult:
+    """Atomic accepted-ingress result with optional replaced successor."""
+
+    command: TwinCommand
+    superseded_command: TwinCommand | None
+    snapshots: tuple[TransitionAuditSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimResult:
+    """Result of selecting and durably preparing one exact attempt."""
+
+    disposition: ClaimDisposition
+    command: TwinCommand | None
+    attempt: CommandAttempt | None
+    snapshots: tuple[TransitionAuditSnapshot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AckResult:
+    """Atomic ACK acceptance and optional next-attempt preparation."""
+
+    accepted_command: TwinCommand | None
+    duplicate: bool
+    next_claim: ClaimResult
+    snapshots: tuple[TransitionAuditSnapshot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class NackResult:
+    """Atomic terminal NACK result."""
+
+    accepted_command: TwinCommand | None
+    duplicate: bool
+    snapshots: tuple[TransitionAuditSnapshot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EventMatchResult:
+    """Durable event receipt and at-most-once execution match result."""
+
+    disposition: EventDisposition
+    command: TwinCommand | None
+    prior_state: CommandState | None
+    active_session_id: str | None
+    evidence: SettingEventReceipt
+    confirmation: ConfirmedSetting | None
+    snapshot: TransitionAuditSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
+class EventTimeoutCandidate:
+    """Read-only overdue event candidate for runtime socket reconciliation."""
+
+    command_id: str
+    device_id: str
+    event_deadline_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class SweepReport:
+    """Committed deadline transition counts and ordered audit snapshots."""
+
+    expired_pending: int
+    retry_pending: int
+    failed_attempt_limit: int
+    incomplete_event_timeout: int
+    snapshots: tuple[TransitionAuditSnapshot, ...]
 
 
 @dataclass
