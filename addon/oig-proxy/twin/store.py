@@ -203,19 +203,19 @@ _SCHEMA_STATEMENTS = (
 )
 
 _EXPECTED_SCHEMA_SQL = {
-    "schema_meta": _CREATE_SCHEMA_META,
-    "devices": _CREATE_DEVICES,
-    "commands": _CREATE_COMMANDS,
-    "control_ingress_audit": _CREATE_CONTROL_INGRESS_AUDIT,
-    "command_attempts": _CREATE_COMMAND_ATTEMPTS,
-    "command_transitions": _CREATE_COMMAND_TRANSITIONS,
-    "event_receipts": _CREATE_EVENT_RECEIPTS,
-    "idx_commands_fifo": _CREATE_INDEX_COMMANDS_FIFO,
-    "idx_commands_event_match": _CREATE_INDEX_COMMANDS_EVENT_MATCH,
-    "idx_commands_predecessor": _CREATE_INDEX_COMMANDS_PREDECESSOR,
-    "ux_commands_one_awaiting_ack_per_device": _CREATE_INDEX_ONE_AWAITING_ACK,
-    "ux_commands_one_unsent_successor_per_target": _CREATE_INDEX_ONE_UNSENT_SUCCESSOR,
-    "ux_event_receipts_one_confirmation_per_command": _CREATE_INDEX_ONE_CONFIRMATION,
+    ("table", "schema_meta"): _CREATE_SCHEMA_META,
+    ("table", "devices"): _CREATE_DEVICES,
+    ("table", "commands"): _CREATE_COMMANDS,
+    ("table", "control_ingress_audit"): _CREATE_CONTROL_INGRESS_AUDIT,
+    ("table", "command_attempts"): _CREATE_COMMAND_ATTEMPTS,
+    ("table", "command_transitions"): _CREATE_COMMAND_TRANSITIONS,
+    ("table", "event_receipts"): _CREATE_EVENT_RECEIPTS,
+    ("index", "idx_commands_fifo"): _CREATE_INDEX_COMMANDS_FIFO,
+    ("index", "idx_commands_event_match"): _CREATE_INDEX_COMMANDS_EVENT_MATCH,
+    ("index", "idx_commands_predecessor"): _CREATE_INDEX_COMMANDS_PREDECESSOR,
+    ("index", "ux_commands_one_awaiting_ack_per_device"): _CREATE_INDEX_ONE_AWAITING_ACK,
+    ("index", "ux_commands_one_unsent_successor_per_target"): _CREATE_INDEX_ONE_UNSENT_SUCCESSOR,
+    ("index", "ux_event_receipts_one_confirmation_per_command"): _CREATE_INDEX_ONE_CONFIRMATION,
 }
 
 
@@ -259,7 +259,9 @@ class TwinCommandStore:
         self._mutex = threading.RLock()
         self._connection: sqlite3.Connection | None = None
         self._process_lock: tuple[int, tuple[int, int]] | None = None
-        self._store_state: tuple[int, int, str | None] = (0, 0, None)
+        self._store_state: tuple[
+            int, int, str | None, tuple[int, int] | None
+        ] = (0, 0, None, None)
 
     @property
     def schema_version(self) -> int:
@@ -290,27 +292,55 @@ class TwinCommandStore:
         with self._mutex:
             if self._connection is not None or self._process_lock is not None:
                 raise TwinStoreError("store is already open")
-            self._store_state = (0, 0, None)
+            self._store_state = (0, 0, None, None)
             self._acquire_process_lock()
             try:
-                bootstrap = not self._db_path.exists() or self._db_path.stat().st_size == 0
-                if not bootstrap:
-                    self._preflight_existing_database()
-                connection = sqlite3.connect(
-                    self._db_path,
-                    isolation_level=None,
-                    check_same_thread=False,
-                )
-                self._connection = connection
+                file_state = self._database_file_state()
+                bootstrap = file_state is None or file_state[1] == 0
+                if file_state is not None:
+                    database_identity = file_state[0]
+                    if not bootstrap:
+                        self._preflight_existing_database(database_identity)
+                    connection = self._connect_database(mode="rw")
+                    self._connection = connection
+                    self._verify_database_identity(database_identity)
+                    if not bootstrap:
+                        self._validate_open_database(connection)
+                else:
+                    connection = sqlite3.connect(
+                        self._db_path,
+                        isolation_level=None,
+                        check_same_thread=False,
+                    )
+                    self._connection = connection
+                    created_state = self._database_file_state()
+                    if created_state is None:
+                        raise CorruptStoreError(
+                            "SQLite did not create the requested database file"
+                        )
+                    database_identity = created_state[0]
+                self._verify_database_identity(database_identity)
                 self._configure_pragmas(connection)
                 if bootstrap:
                     self._create_schema(connection, now_ms=now_ms)
                 version, created_at_ms = self._read_schema_meta(connection)
                 self._validate_schema_sql(connection)
-                self._store_state = (version, created_at_ms, None)
+                self._store_state = (
+                    version,
+                    created_at_ms,
+                    None,
+                    database_identity,
+                )
                 self.verify_health()
             except (TwinStoreError, OSError, sqlite3.Error) as error:
-                self._release_resources()
+                try:
+                    self._release_resources()
+                except TwinStoreError as cleanup_error:
+                    combined_reason = _bounded_message(
+                        f"store open failed: {error}; cleanup failed: {cleanup_error}"
+                    )
+                    self._set_degradation(combined_reason)
+                    raise TwinStoreError(combined_reason) from cleanup_error
                 if isinstance(error, TwinStoreError):
                     raise
                 if isinstance(error, sqlite3.DatabaseError):
@@ -338,6 +368,10 @@ class TwinCommandStore:
                 raise TwinStoreError(degradation_reason)
             connection = self._require_connection()
             self._verify_process_lock()
+            database_identity = self._store_state[3]
+            if database_identity is None:
+                raise CorruptStoreError("database file identity is unavailable")
+            self._verify_database_identity(database_identity)
             self._run_quick_check(connection)
             snapshot = self._read_pragmas(connection)
             if snapshot != _EXPECTED_PRAGMAS:
@@ -369,76 +403,100 @@ class TwinCommandStore:
                 degradation_reason = (
                     "observed device counter cannot advance within SQLite integer range"
                 )
-                self._store_state = (
-                    self._store_state[0],
-                    self._store_state[1],
-                    degradation_reason,
-                )
+                self._set_degradation(degradation_reason)
                 raise OverflowError(degradation_reason)
 
-            connection = self._require_connection()
-            next_wire_id = observed_wire_id + 1
-            next_wire_id_set = observed_wire_id_set + 1
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                row = connection.execute(
+            return self._observe_device_locked(
+                normalized_device_id=normalized_device_id,
+                observed_at_ms=observed_at_ms,
+                observed_wire_id=observed_wire_id,
+                observed_wire_id_set=observed_wire_id_set,
+            )
+
+    def _observe_device_locked(
+        self,
+        *,
+        normalized_device_id: str,
+        observed_at_ms: int,
+        observed_wire_id: int,
+        observed_wire_id_set: int,
+    ) -> DeviceState:
+        """Persist one validated observation while the store mutex is held."""
+        connection = self._require_connection()
+        next_wire_id = observed_wire_id + 1
+        next_wire_id_set = observed_wire_id_set + 1
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT first_seen_at_ms, last_seen_at_ms,
+                       next_wire_id, next_wire_id_set
+                FROM devices WHERE device_id = ?
+                """,
+                (normalized_device_id,),
+            ).fetchone()
+            if row is None:
+                state = DeviceState(
+                    device_id=normalized_device_id,
+                    first_seen_at_ms=observed_at_ms,
+                    last_seen_at_ms=observed_at_ms,
+                    next_wire_id=next_wire_id,
+                    next_wire_id_set=next_wire_id_set,
+                )
+                connection.execute(
                     """
-                    SELECT first_seen_at_ms, last_seen_at_ms,
-                           next_wire_id, next_wire_id_set
-                    FROM devices WHERE device_id = ?
+                    INSERT INTO devices(
+                        device_id, first_seen_at_ms, last_seen_at_ms,
+                        next_wire_id, next_wire_id_set
+                    ) VALUES (?, ?, ?, ?, ?)
                     """,
-                    (normalized_device_id,),
-                ).fetchone()
-                if row is None:
-                    state = DeviceState(
-                        device_id=normalized_device_id,
-                        first_seen_at_ms=observed_at_ms,
-                        last_seen_at_ms=observed_at_ms,
-                        next_wire_id=next_wire_id,
-                        next_wire_id_set=next_wire_id_set,
-                    )
-                    connection.execute(
-                        """
-                        INSERT INTO devices(
-                            device_id, first_seen_at_ms, last_seen_at_ms,
-                            next_wire_id, next_wire_id_set
-                        ) VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            state.device_id,
-                            state.first_seen_at_ms,
-                            state.last_seen_at_ms,
-                            state.next_wire_id,
-                            state.next_wire_id_set,
-                        ),
-                    )
-                else:
-                    state = DeviceState(
-                        device_id=normalized_device_id,
-                        first_seen_at_ms=int(row[0]),
-                        last_seen_at_ms=max(int(row[1]), observed_at_ms),
-                        next_wire_id=max(int(row[2]), next_wire_id),
-                        next_wire_id_set=max(int(row[3]), next_wire_id_set),
-                    )
-                    connection.execute(
-                        """
-                        UPDATE devices
-                        SET last_seen_at_ms = ?, next_wire_id = ?, next_wire_id_set = ?
-                        WHERE device_id = ?
-                        """,
-                        (
-                            state.last_seen_at_ms,
-                            state.next_wire_id,
-                            state.next_wire_id_set,
-                            state.device_id,
-                        ),
-                    )
-                connection.execute("COMMIT")
-                return state
-            except sqlite3.Error as error:
+                    (
+                        state.device_id,
+                        state.first_seen_at_ms,
+                        state.last_seen_at_ms,
+                        state.next_wire_id,
+                        state.next_wire_id_set,
+                    ),
+                )
+            else:
+                state = _merge_persisted_device_state(
+                    normalized_device_id=normalized_device_id,
+                    row=row,
+                    observed_at_ms=observed_at_ms,
+                    next_wire_id=next_wire_id,
+                    next_wire_id_set=next_wire_id_set,
+                )
+                connection.execute(
+                    """
+                    UPDATE devices
+                    SET last_seen_at_ms = ?, next_wire_id = ?, next_wire_id_set = ?
+                    WHERE device_id = ?
+                    """,
+                    (
+                        state.last_seen_at_ms,
+                        state.next_wire_id,
+                        state.next_wire_id_set,
+                        state.device_id,
+                    ),
+                )
+            connection.execute("COMMIT")
+            return state
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            rollback_error: Exception | None = None
+            try:
                 if connection.in_transaction:
                     connection.execute("ROLLBACK")
-                raise TwinStoreError(f"failed to observe device: {error}") from error
+            except Exception as caught:  # pylint: disable=broad-exception-caught
+                rollback_error = caught
+            if isinstance(error, TwinStoreError):
+                reason = str(error)
+            else:
+                reason = f"failed to observe device: {error}"
+            if rollback_error is not None:
+                reason = f"{reason}; rollback failed: {rollback_error}"
+            bounded_reason = _bounded_message(reason)
+            self._set_degradation(bounded_reason)
+            raise TwinStoreError(bounded_reason) from (rollback_error or error)
 
     def _acquire_process_lock(self) -> None:
         try:
@@ -482,26 +540,23 @@ class TwinCommandStore:
         if path_identity != expected_identity:
             raise StoreLockError("process lock path inode was replaced")
 
-    def _preflight_existing_database(self) -> None:
+    def _preflight_existing_database(
+        self, expected_identity: tuple[int, int]
+    ) -> None:
+        self._verify_database_identity(expected_identity)
         try:
-            path_stat = self._db_path.stat()
-            if not stat.S_ISREG(path_stat.st_mode):
-                raise CorruptStoreError("database path is not a regular file")
-            uri = f"{self._db_path.resolve().as_uri()}?mode=ro"
-            connection = sqlite3.connect(
-                uri,
-                uri=True,
-                isolation_level=None,
-                check_same_thread=False,
-            )
+            connection = self._connect_database(mode="ro")
         except (OSError, sqlite3.Error) as error:
             raise CorruptStoreError(
                 f"cannot read existing SQLite store: {error}"
             ) from error
+        self._connection = connection
         try:
+            self._verify_database_identity(expected_identity)
             self._run_quick_check(connection)
             self._read_schema_meta(connection)
             self._validate_schema_sql(connection)
+            self._verify_database_identity(expected_identity)
         except TwinStoreError:
             raise
         except sqlite3.Error as error:
@@ -509,7 +564,51 @@ class TwinCommandStore:
                 f"cannot validate existing SQLite store: {error}"
             ) from error
         finally:
-            connection.close()
+            self._close_connection()
+
+    def _connect_database(self, *, mode: str) -> sqlite3.Connection:
+        uri = f"{self._db_path.absolute().as_uri()}?mode={mode}"
+        return sqlite3.connect(
+            uri,
+            uri=True,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+
+    def _database_file_state(self) -> tuple[tuple[int, int], int] | None:
+        try:
+            path_stat = self._db_path.stat()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise CorruptStoreError(
+                f"cannot inspect database path: {error}"
+            ) from error
+        if not stat.S_ISREG(path_stat.st_mode):
+            raise CorruptStoreError("database path is not a regular file")
+        return (path_stat.st_dev, path_stat.st_ino), path_stat.st_size
+
+    def _verify_database_identity(
+        self, expected_identity: tuple[int, int]
+    ) -> None:
+        file_state = self._database_file_state()
+        if file_state is None:
+            raise CorruptStoreError("database path disappeared")
+        if file_state[0] != expected_identity:
+            raise CorruptStoreError("database path inode was replaced")
+
+    def _validate_open_database(self, connection: sqlite3.Connection) -> None:
+        self._run_quick_check(connection)
+        self._read_schema_meta(connection)
+        self._validate_schema_sql(connection)
+
+    def _set_degradation(self, reason: str) -> None:
+        self._store_state = (
+            self._store_state[0],
+            self._store_state[1],
+            _bounded_message(reason),
+            self._store_state[3],
+        )
 
     @staticmethod
     def _configure_pragmas(connection: sqlite3.Connection) -> None:
@@ -566,16 +665,22 @@ class TwinCommandStore:
     def _validate_schema_sql(connection: sqlite3.Connection) -> None:
         rows = connection.execute(
             """
-            SELECT name, sql FROM sqlite_master
-            WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')
+            SELECT type, name, sql FROM sqlite_schema
+            WHERE name NOT LIKE 'sqlite_%'
             """
         ).fetchall()
-        actual = {str(name): str(sql) for name, sql in rows if sql is not None}
+        actual = {
+            (str(object_type), str(name)): str(sql)
+            for object_type, name, sql in rows
+            if sql is not None
+        }
         if set(actual) != set(_EXPECTED_SCHEMA_SQL):
             raise MigrationError("schema v1 objects do not match the required artifact set")
-        for name, expected_sql in _EXPECTED_SCHEMA_SQL.items():
-            if _normalize_sql(actual[name]) != _normalize_sql(expected_sql):
-                raise MigrationError(f"schema v1 object differs from contract: {name}")
+        for identity, expected_sql in _EXPECTED_SCHEMA_SQL.items():
+            if _normalize_sql(actual[identity]) != _normalize_sql(expected_sql):
+                raise MigrationError(
+                    f"schema v1 object differs from contract: {identity[1]}"
+                )
 
     @staticmethod
     def _run_quick_check(connection: sqlite3.Connection) -> None:
@@ -606,10 +711,7 @@ class TwinCommandStore:
         return self._connection
 
     def _release_resources(self) -> None:
-        connection = self._connection
-        self._connection = None
-        if connection is not None:
-            connection.close()
+        self._close_connection()
         process_lock = self._process_lock
         self._process_lock = None
         if process_lock is not None:
@@ -618,11 +720,26 @@ class TwinCommandStore:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
-        self._store_state = (0, 0, None)
+        self._store_state = (0, 0, None, None)
+
+    def _close_connection(self) -> None:
+        connection = self._connection
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                reason = _bounded_message(f"SQLite close failed: {error}")
+                self._set_degradation(reason)
+                raise TwinStoreError(reason) from error
+            self._connection = None
 
 
 def _normalize_sql(statement: str) -> str:
     return " ".join(statement.rstrip().rstrip(";").split())
+
+
+def _bounded_message(message: str) -> str:
+    return message[:1024]
 
 
 def _validate_sqlite_integer(name: str, value: int) -> None:
@@ -639,6 +756,41 @@ def _validate_observed_counter(name: str, value: int) -> None:
         raise ValueError(f"{name} must be an integer")
     if value < 0:
         raise ValueError(f"{name} must be non-negative")
+
+
+def _persisted_device_integer(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TwinStoreError(
+            f"persisted device {name} must be an exact SQLite integer"
+        )
+    if not 0 <= value <= _MAX_SQLITE_INTEGER:
+        raise TwinStoreError(
+            f"persisted device {name} is outside SQLite integer range"
+        )
+    return value
+
+
+def _merge_persisted_device_state(
+    *,
+    normalized_device_id: str,
+    row: tuple[object, ...],
+    observed_at_ms: int,
+    next_wire_id: int,
+    next_wire_id_set: int,
+) -> DeviceState:
+    first_seen_at_ms = _persisted_device_integer("first_seen_at_ms", row[0])
+    last_seen_at_ms = _persisted_device_integer("last_seen_at_ms", row[1])
+    current_next_wire_id = _persisted_device_integer("next_wire_id", row[2])
+    current_next_wire_id_set = _persisted_device_integer("next_wire_id_set", row[3])
+    if last_seen_at_ms < first_seen_at_ms:
+        raise TwinStoreError("persisted device timestamps violate monotonic order")
+    return DeviceState(
+        device_id=normalized_device_id,
+        first_seen_at_ms=first_seen_at_ms,
+        last_seen_at_ms=max(last_seen_at_ms, observed_at_ms),
+        next_wire_id=max(current_next_wire_id, next_wire_id),
+        next_wire_id_set=max(current_next_wire_id_set, next_wire_id_set),
+    )
 
 
 def _validate_device_id(device_id: str) -> str:
