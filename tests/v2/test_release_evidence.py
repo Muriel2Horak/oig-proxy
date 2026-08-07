@@ -11,6 +11,11 @@ TRACE = (
     / "docs/superpowers/reports/"
     "2026-08-06-local-setting-transaction-hardening-traceability.md"
 )
+OWASP = (
+    ROOT
+    / "docs/superpowers/reports/"
+    "2026-08-06-local-setting-transaction-hardening-owasp.md"
+)
 ROW = re.compile(r"^\| SI-(\d+) \| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|$")
 
 
@@ -174,3 +179,23 @@ def test_legacy_docs_do_not_restore_removed_local_control_contracts() -> None:
         "eliminating the residual ambiguity requires one local Setting"
         in corpus.replace("\n", " ")
     )
+
+
+def test_owasp_review_covers_required_risk_classes() -> None:
+    text = OWASP.read_text(encoding="utf-8")
+    for risk in (
+        "Input injection",
+        "Authorization and device binding",
+        "Replay",
+        "Resource exhaustion",
+        "Sensitive logging",
+        "Insecure defaults",
+        "Fail-open paths",
+    ):
+        assert f"| {risk} |" in text
+
+
+def test_owasp_review_has_no_unresolved_result() -> None:
+    text = OWASP.read_text(encoding="utf-8")
+    result_cells = re.findall(r"\| (PASS|RISK_ACCEPTED) \|$", text, re.MULTILINE)
+    assert len(result_cells) == 7
