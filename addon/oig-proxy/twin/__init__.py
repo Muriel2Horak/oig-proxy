@@ -1,9 +1,67 @@
-"""Twin module for OIG Proxy v2.
-
-Provides in-memory state management for device twin settings.
-"""
+"""Device twin compatibility and durable local-setting interfaces."""
 
 from .handler import TwinControlHandler
-from .state import TwinQueue, TwinSetting
+from .state import (
+    AttemptRenderContext,
+    AttemptRenderer,
+    AttemptWriteOutcome,
+    ClaimDisposition,
+    CommandAttempt,
+    CommandState,
+    CommandTransition,
+    ControlIngress,
+    ControlPolicy,
+    DeviceState,
+    IngressDisposition,
+    PragmaSnapshot,
+    RecoveryReport,
+    RenderedAttempt,
+    SettingEventReceipt,
+    StoreStatus,
+    TERMINAL_STATES,
+    TwinCommand,
+    TwinQueue,
+    TwinSetting,
+)
+from .store import (
+    CorruptStoreError,
+    MigrationError,
+    StaleAttemptError,
+    StoreLockError,
+    StoreRecordNotFound,
+    TwinCommandStore,
+    TwinStoreError,
+    UnsupportedSchemaError,
+)
 
-__all__ = ["TwinControlHandler", "TwinQueue", "TwinSetting"]
+__all__ = [
+    "AttemptRenderContext",
+    "AttemptRenderer",
+    "AttemptWriteOutcome",
+    "ClaimDisposition",
+    "CommandAttempt",
+    "CommandState",
+    "CommandTransition",
+    "ControlIngress",
+    "ControlPolicy",
+    "CorruptStoreError",
+    "DeviceState",
+    "IngressDisposition",
+    "MigrationError",
+    "PragmaSnapshot",
+    "RecoveryReport",
+    "RenderedAttempt",
+    "SettingEventReceipt",
+    "StaleAttemptError",
+    "StoreLockError",
+    "StoreRecordNotFound",
+    "StoreStatus",
+    "TERMINAL_STATES",
+    "TwinCommand",
+    "TwinCommandStore",
+    "TwinControlHandler",
+    "TwinQueue",
+    "TwinSetting",
+    "TwinStoreError",
+    "UnsupportedSchemaError",
+]

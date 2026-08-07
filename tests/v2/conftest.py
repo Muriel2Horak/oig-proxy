@@ -1,4 +1,5 @@
 """Konfigurace testů pro OIG Proxy v2."""
+# pylint: disable=import-error,wrong-import-order,wrong-import-position
 import asyncio
 import os
 from pathlib import Path
@@ -25,7 +26,51 @@ if V2_ADDON_DIR not in sys.path:
 if V1_ADDON_DIR not in sys.path:
     sys.path.append(V1_ADDON_DIR)
 
+from twin.state import CommandState, ControlPolicy, TwinCommand  # noqa: E402
+
 EGRESS_GUARD_KEY: pytest.StashKey[EgressGuard] = pytest.StashKey()
+
+
+@pytest.fixture
+def control_policy() -> ControlPolicy:
+    """Return deterministic lifecycle limits in milliseconds."""
+    return ControlPolicy(
+        ack_timeout_ms=30_000,
+        event_timeout_ms=300_000,
+        pending_ttl_ms=900_000,
+        max_attempts=8,
+    )
+
+
+@pytest.fixture
+def command() -> TwinCommand:
+    """Return a complete immutable command snapshot."""
+    return TwinCommand(
+        command_id="cmd-1",
+        audit_id="audit-1",
+        device_id="device-1",
+        table_name="tbl_set",
+        item_name="T_Room",
+        value_text="22",
+        raw_ingress_text='{"tbl_set":{"T_Room":22}}',
+        state=CommandState.PENDING,
+        created_at_ms=1,
+        updated_at_ms=1,
+        pending_expires_at_ms=901,
+        wire_id=None,
+        wire_id_set=None,
+        wire_dt=None,
+        attempt_count=0,
+        active_session_id=None,
+        ack_deadline_ms=None,
+        event_deadline_ms=None,
+        acked_at_ms=None,
+        ack_device_rdt=None,
+        completed_at_ms=None,
+        predecessor_command_id=None,
+        last_wire_frame=None,
+        last_error=None,
+    )
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:

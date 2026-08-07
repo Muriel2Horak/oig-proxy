@@ -1,251 +1,393 @@
-"""Tests for Twin state model and queue.
-
-Tests verify:
-- TwinSetting dataclass creation
-- TwinQueue enqueue/acknowledge/size operations
-- Overwrite behavior for same (table, key)
-- get_pending returns sorted results
-
-Run: PYTHONPATH=addon/oig-proxy pytest tests/v2/test_twin_state.py -v
-"""
+"""Exact immutable contracts for durable twin transaction state."""
 
 # pyright: reportMissingImports=false
+# pylint: disable=import-error,missing-function-docstring
 
-# pylint: disable=missing-function-docstring,missing-class-docstring,protected-access
-
-import time
+from dataclasses import FrozenInstanceError, fields
+from typing import Any
 
 import pytest
 
-from twin.state import TwinQueue, TwinSetting
+from twin.state import (
+    AttemptRenderContext,
+    AttemptWriteOutcome,
+    ClaimDisposition,
+    CommandAttempt,
+    CommandState,
+    CommandTransition,
+    ControlIngress,
+    ControlPolicy,
+    DeviceState,
+    IngressDisposition,
+    PragmaSnapshot,
+    RecoveryReport,
+    RenderedAttempt,
+    SettingEventReceipt,
+    StoreStatus,
+    TERMINAL_STATES,
+    TwinCommand,
+    TwinQueue,
+)
+import twin.state as state_module
 
 
-class TestTwinSetting:
-    """Tests for TwinSetting dataclass."""
+def test_command_state_values_and_terminal_set_are_exact() -> None:
+    assert [state.value for state in CommandState] == [
+        "pending",
+        "retry_pending",
+        "awaiting_ack",
+        "awaiting_event",
+        "confirmed",
+        "incomplete",
+        "failed",
+        "expired",
+        "superseded",
+    ]
+    assert TERMINAL_STATES == frozenset(
+        {
+            CommandState.CONFIRMED,
+            CommandState.INCOMPLETE,
+            CommandState.FAILED,
+            CommandState.EXPIRED,
+            CommandState.SUPERSEDED,
+        }
+    )
 
-    def test_twin_setting_creation(self):
-        """Test creating a TwinSetting instance."""
-        setting = TwinSetting(
-            table="tbl_set",
-            key="T_Room",
-            value=22,
-            enqueued_at=time.time(),
+
+def test_write_outcome_values_are_exact() -> None:
+    assert [outcome.value for outcome in AttemptWriteOutcome] == [
+        "prepared",
+        "started",
+        "drained",
+        "unknown",
+        "failed",
+    ]
+
+
+def test_claim_disposition_values_are_exact() -> None:
+    assert [disposition.value for disposition in ClaimDisposition] == [
+        "prepared",
+        "no_eligible",
+        "active_delivery_elsewhere",
+        "control_disabled",
+        "render_failed",
+    ]
+
+
+def test_ingress_disposition_values_are_exact() -> None:
+    assert [disposition.value for disposition in IngressDisposition] == [
+        "accepted_command",
+        "accepted_proxy_control",
+        "rejected_disabled",
+        "rejected_retained",
+        "rejected_topic",
+        "rejected_unknown_device",
+        "rejected_device_mismatch",
+        "rejected_oversize",
+        "rejected_utf8",
+        "rejected_json",
+        "rejected_schema",
+        "rejected_not_allowed",
+        "rejected_value",
+        "rejected_xml",
+        "rejected_store",
+    ]
+
+
+def test_twin_command_snapshot_is_frozen(command: TwinCommand) -> None:
+    with pytest.raises(FrozenInstanceError):
+        command.state = CommandState.CONFIRMED  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("record_type", "expected_fields"),
+    [
+        (
+            TwinCommand,
+            (
+                "command_id",
+                "audit_id",
+                "device_id",
+                "table_name",
+                "item_name",
+                "value_text",
+                "raw_ingress_text",
+                "state",
+                "created_at_ms",
+                "updated_at_ms",
+                "pending_expires_at_ms",
+                "wire_id",
+                "wire_id_set",
+                "wire_dt",
+                "attempt_count",
+                "active_session_id",
+                "ack_deadline_ms",
+                "event_deadline_ms",
+                "acked_at_ms",
+                "ack_device_rdt",
+                "completed_at_ms",
+                "predecessor_command_id",
+                "last_wire_frame",
+                "last_error",
+            ),
+        ),
+        (
+            CommandAttempt,
+            (
+                "command_id",
+                "attempt_number",
+                "session_id",
+                "prepared_at_ms",
+                "write_started_at_ms",
+                "drain_completed_at_ms",
+                "ack_deadline_ms",
+                "tsec_text",
+                "ver_text",
+                "crc_text",
+                "wire_frame",
+                "wire_length",
+                "write_outcome",
+                "write_error",
+                "response_fingerprint",
+                "response_rdt",
+            ),
+        ),
+        (
+            CommandTransition,
+            (
+                "transition_id",
+                "command_id",
+                "audit_id",
+                "from_state",
+                "to_state",
+                "occurred_at_ms",
+                "attempt_number",
+                "session_id",
+                "reason",
+                "error_text",
+                "wire_frame",
+                "evidence_frame",
+            ),
+        ),
+        (
+            SettingEventReceipt,
+            (
+                "evidence_id",
+                "received_at_ms",
+                "device_id",
+                "event_id_set",
+                "device_dt",
+                "table_name",
+                "item_name",
+                "old_value_text",
+                "new_value_text",
+                "evidence_frame",
+                "disposition",
+                "command_id",
+                "duplicate_count",
+                "last_seen_at_ms",
+            ),
+        ),
+        (
+            ControlIngress,
+            (
+                "ingress_id",
+                "received_at_ms",
+                "topic",
+                "topic_device_id",
+                "retain",
+                "raw_text",
+                "disposition",
+                "reason",
+                "command_id",
+                "audit_id",
+            ),
+        ),
+        (
+            DeviceState,
+            (
+                "device_id",
+                "first_seen_at_ms",
+                "last_seen_at_ms",
+                "next_wire_id",
+                "next_wire_id_set",
+            ),
+        ),
+        (
+            PragmaSnapshot,
+            ("journal_mode", "synchronous", "foreign_keys", "busy_timeout_ms"),
+        ),
+        (
+            RecoveryReport,
+            (
+                "expired_pending",
+                "retry_pending",
+                "failed_attempt_limit",
+                "kept_awaiting_event",
+                "incomplete_event_timeout",
+            ),
+        ),
+        (
+            StoreStatus,
+            (
+                "state_counts",
+                "nonterminal_commands",
+                "control_available",
+                "degradation_reason",
+            ),
+        ),
+    ],
+)
+def test_shared_records_are_frozen_slotted_and_have_exact_fields(
+    record_type: type[Any], expected_fields: tuple[str, ...]
+) -> None:
+    assert tuple(field.name for field in fields(record_type)) == expected_fields
+    assert record_type.__dataclass_params__.frozen  # type: ignore[attr-defined]
+    assert "__dict__" not in record_type.__dict__
+
+
+def test_render_contracts_are_frozen_and_exact(command: TwinCommand) -> None:
+    context = AttemptRenderContext(
+        command=command,
+        attempt_number=1,
+        prepared_at_ms=10,
+        wire_id=101,
+        wire_id_set=202,
+        wire_dt="2026-08-07 12:00:00",
+        used_ver_texts=("00001",),
+    )
+    rendered = RenderedAttempt(
+        tsec_text="1234567890",
+        ver_text="00002",
+        crc_text="12345",
+        wire_frame=b"frame",
+    )
+
+    assert context.command is command
+    assert context.used_ver_texts == ("00001",)
+    assert rendered.wire_frame == b"frame"
+    with pytest.raises(FrozenInstanceError):
+        context.attempt_number = 2  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        rendered.crc_text = "54321"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ack_timeout_ms": -1},
+        {"event_timeout_ms": -1},
+        {"pending_ttl_ms": -1},
+        {"max_attempts": 0},
+        {"max_attempts": 9},
+    ],
+)
+def test_control_policy_rejects_out_of_range_values(overrides: dict[str, int]) -> None:
+    values = {
+        "ack_timeout_ms": 1,
+        "event_timeout_ms": 2,
+        "pending_ttl_ms": 3,
+        "max_attempts": 4,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError):
+        ControlPolicy(**values)
+
+
+def test_control_policy_accepts_zero_time_limits_and_attempt_boundaries() -> None:
+    assert ControlPolicy(0, 0, 0, 1).max_attempts == 1
+    assert ControlPolicy(0, 0, 0, 8).max_attempts == 8
+
+
+def test_control_ingress_supports_unpersisted_six_field_envelope() -> None:
+    ingress = ControlIngress(
+        "ing-1",
+        110,
+        "oig/123/control/set",
+        "123",
+        False,
+        '{"value":2}',
+    )
+
+    assert ingress.disposition is None
+    assert ingress.reason is None
+    assert ingress.command_id is None
+    assert ingress.audit_id is None
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "1"])
+def test_control_policy_rejects_non_integer_values(value: object) -> None:
+    with pytest.raises(TypeError):
+        ControlPolicy(
+            ack_timeout_ms=value,  # type: ignore[arg-type]
+            event_timeout_ms=0,
+            pending_ttl_ms=0,
+            max_attempts=1,
         )
-        assert setting.table == "tbl_set"
-        assert setting.key == "T_Room"
-        assert setting.value == 22
-        assert isinstance(setting.enqueued_at, float)
-
-    def test_twin_setting_with_different_types(self):
-        """Test TwinSetting accepts various value types."""
-        # Integer value
-        s1 = TwinSetting("tbl_set", "T_Room", 22, time.time())
-        assert s1.value == 22
-
-        # String value
-        s2 = TwinSetting("tbl_set", "T_Mode", "AUTO", time.time())
-        assert s2.value == "AUTO"
-
-        # Float value
-        s3 = TwinSetting("tbl_set", "T_Target", 21.5, time.time())
-        assert s3.value == 21.5
-
-        # Boolean value
-        s4 = TwinSetting("tbl_set", "T_Enable", True, time.time())
-        assert s4.value is True
 
 
-class TestTwinQueue:
-    """Tests for TwinQueue class."""
+def test_store_status_requires_exact_immutable_state_counts() -> None:
+    counts = tuple((state, index) for index, state in enumerate(CommandState))
+    status = StoreStatus(
+        state_counts=counts,
+        nonterminal_commands=6,
+        control_available=True,
+        degradation_reason=None,
+    )
 
-    def test_empty_queue(self):
-        """Test empty queue has size 0."""
-        queue = TwinQueue()
-        assert queue.size() == 0
-        assert queue.get_pending() == []
-
-    def test_enqueue_increases_size(self):
-        """Test enqueue adds setting to queue."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-        assert queue.size() == 1
-
-    def test_acknowledge_decreases_size(self):
-        """Test acknowledge removes setting from queue."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-        assert queue.size() == 1
-
-        result = queue.acknowledge("tbl_set", "T_Room")
-        assert result is True
-        assert queue.size() == 0
-
-    def test_acknowledge_nonexistent_returns_false(self):
-        """Test acknowledging non-existent setting returns False."""
-        queue = TwinQueue()
-        result = queue.acknowledge("tbl_set", "T_Room")
-        assert result is False
-
-    def test_enqueue_overwrites_same_key(self):
-        """Test second enqueue of same (table, key) overwrites value."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-        assert queue.size() == 1
-
-        queue.enqueue("tbl_set", "T_Room", 25)
-        assert queue.size() == 1  # Still 1, not 2
-
-        setting = queue.get("tbl_set", "T_Room")
-        assert setting is not None
-        assert setting.value == 25  # New value
-
-    def test_get_pending_returns_sorted_list(self):
-        """Test get_pending returns settings sorted by enqueued_at."""
-        queue = TwinQueue()
-
-        # Enqueue in reverse order
-        queue.enqueue("tbl_set", "T_Room", 22)
-        time.sleep(0.01)  # Small delay to ensure different timestamps
-        queue.enqueue("tbl_set", "T_Target", 21)
-        time.sleep(0.01)
-        queue.enqueue("tbl_set", "T_Mode", "AUTO")
-
-        pending = queue.get_pending()
-        assert len(pending) == 3
-
-        # Should be sorted by enqueued_at (oldest first)
-        assert pending[0].key == "T_Room"
-        assert pending[1].key == "T_Target"
-        assert pending[2].key == "T_Mode"
-
-    def test_get_pending_returns_twin_setting_objects(self):
-        """Test get_pending returns list of TwinSetting objects."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-
-        pending = queue.get_pending()
-        assert len(pending) == 1
-        assert isinstance(pending[0], TwinSetting)
-        assert pending[0].table == "tbl_set"
-        assert pending[0].key == "T_Room"
-        assert pending[0].value == 22
-
-    def test_clear_removes_all_settings(self):
-        """Test clear removes all settings from queue."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-        queue.enqueue("tbl_set", "T_Target", 21)
-        assert queue.size() == 2
-
-        queue.clear()
-        assert queue.size() == 0
-        assert queue.get_pending() == []
-
-    def test_get_returns_none_for_missing(self):
-        """Test get returns None for non-existent setting."""
-        queue = TwinQueue()
-        result = queue.get("tbl_set", "T_Room")
-        assert result is None
-
-    def test_get_returns_setting_for_existing(self):
-        """Test get returns TwinSetting for existing key."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-
-        result = queue.get("tbl_set", "T_Room")
-        assert result is not None
-        assert isinstance(result, TwinSetting)
-        assert result.value == 22
-
-    def test_different_tables_same_key(self):
-        """Test same key in different tables are separate entries."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-        queue.enqueue("tbl_box_prms", "T_Room", 25)
-
-        assert queue.size() == 2
-
-        set_setting = queue.get("tbl_set", "T_Room")
-        box_setting = queue.get("tbl_box_prms", "T_Room")
-
-        assert set_setting.value == 22
-        assert box_setting.value == 25
-
-    def test_multiple_acknowledges(self):
-        """Test acknowledging multiple settings."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
-        queue.enqueue("tbl_set", "T_Target", 21)
-        queue.enqueue("tbl_set", "T_Mode", "AUTO")
-        assert queue.size() == 3
-
-        queue.acknowledge("tbl_set", "T_Room")
-        assert queue.size() == 2
-
-        queue.acknowledge("tbl_set", "T_Target")
-        assert queue.size() == 1
-
-        queue.acknowledge("tbl_set", "T_Mode")
-        assert queue.size() == 0
-
-    def test_overwrite_updates_timestamp(self):
-        """Test overwrite updates the enqueued_at timestamp."""
-        queue = TwinQueue()
-
-        queue.enqueue("tbl_set", "T_Room", 22)
-        first = queue.get("tbl_set", "T_Room")
-        first_time = first.enqueued_at
-
-        time.sleep(0.01)
-        queue.enqueue("tbl_set", "T_Room", 25)
-        second = queue.get("tbl_set", "T_Room")
-        second_time = second.enqueued_at
-
-        assert second_time > first_time
+    assert status.state_counts == counts
+    assert status.count(CommandState.AWAITING_ACK) == 2
+    with pytest.raises(ValueError):
+        StoreStatus(
+            state_counts=counts[:-1],
+            nonterminal_commands=6,
+            control_available=True,
+            degradation_reason=None,
+        )
+    with pytest.raises(ValueError):
+        StoreStatus(
+            state_counts=counts,
+            nonterminal_commands=6,
+            control_available=False,
+            degradation_reason="x" * 1025,
+        )
 
 
-class TestTwinQueueEdgeCases:
-    """Edge case tests for TwinQueue."""
+def test_store_status_rejects_negative_or_inconsistent_counts() -> None:
+    counts = tuple((state, 0) for state in CommandState)
+    negative_counts = (
+        (CommandState.PENDING, -1),
+        *counts[1:],
+    )
 
-    def test_empty_string_keys(self):
-        """Test queue handles empty string keys."""
-        queue = TwinQueue()
-        queue.enqueue("", "", "value")
-        assert queue.size() == 1
-        assert queue.get("", "").value == "value"
+    with pytest.raises(ValueError):
+        StoreStatus(negative_counts, 0, True, None)
+    with pytest.raises(ValueError):
+        StoreStatus(counts, -1, True, None)
+    with pytest.raises(ValueError):
+        StoreStatus(counts, 1, True, None)
 
-    def test_none_value(self):
-        """Test queue handles None value."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", None)
-        assert queue.get("tbl_set", "T_Room").value is None
+    status = StoreStatus(counts, 0, True, None)
+    with pytest.raises(ValueError):
+        status.count("pending")  # type: ignore[arg-type]
 
-    def test_complex_value_types(self):
-        """Test queue handles complex value types."""
-        queue = TwinQueue()
 
-        # List value
-        queue.enqueue("tbl_set", "T_List", [1, 2, 3])
-        assert queue.get("tbl_set", "T_List").value == [1, 2, 3]
+def test_legacy_id_set_rollover_remains_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = TwinQueue()
+    queue._next_id_set = 9_999_999_999  # pylint: disable=protected-access
+    monkeypatch.setattr(state_module.time, "time", lambda: 1234.0)
 
-        # Dict value
-        queue.enqueue("tbl_set", "T_Dict", {"a": 1, "b": 2})
-        assert queue.get("tbl_set", "T_Dict").value == {"a": 1, "b": 2}
+    assert queue._generate_id_set() == 9_999_999_999  # pylint: disable=protected-access
+    assert queue._next_id_set == 1234  # pylint: disable=protected-access
 
-    def test_acknowledge_wrong_table(self):
-        """Test acknowledging with wrong table returns False."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
 
-        result = queue.acknowledge("tbl_box_prms", "T_Room")
-        assert result is False
-        assert queue.size() == 1
+def test_legacy_queue_clear_remains_compatible() -> None:
+    queue = TwinQueue()
+    queue.enqueue("tbl_set", "T_Room", 22)
 
-    def test_acknowledge_wrong_key(self):
-        """Test acknowledging with wrong key returns False."""
-        queue = TwinQueue()
-        queue.enqueue("tbl_set", "T_Room", 22)
+    queue.clear()
 
-        result = queue.acknowledge("tbl_set", "T_Target")
-        assert result is False
-        assert queue.size() == 1
+    assert queue.size() == 0
