@@ -6,25 +6,32 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  pylint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
+          cache: pip
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-      - name: Analysing the code with pylint
+          python -m pip install -r requirements-dev.txt
+      - name: Run blocking Pylint
         env:
           PYTHONPATH: addon/oig-proxy
         run: |
-          pylint tests/v2/*.py \
-            --disable=import-outside-toplevel,unused-import,reimported,redefined-outer-name \
-            --disable=line-too-long,f-string-without-interpolation,comparison-of-constants,comparison-with-itself,unused-argument,wrong-import-order
+          mkdir -p reports
+          python -m pylint addon/oig-proxy tests/v2 \
+            --output-format=json > reports/pylint.json
+      - name: Require Pylint evidence
+        if: always()
+        run: test -f reports/pylint.json
+      - name: Upload Pylint evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pylint-evidence
+          if-no-files-found: error
+          path: reports/pylint.json

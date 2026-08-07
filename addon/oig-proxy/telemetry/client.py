@@ -383,7 +383,10 @@ class TelemetryClient:
         return await self.send_event("error_mqtt_local", {"broker": broker, "error": error})
 
     async def event_warning_mode_fallback(self, from_mode: str, to_mode: str, reason: str = "") -> bool:
-        return await self.send_event("warning_mode_fallback", {"from_mode": from_mode, "to_mode": to_mode, "reason": reason})
+        return await self.send_event(
+            "warning_mode_fallback",
+            {"from_mode": from_mode, "to_mode": to_mode, "reason": reason},
+        )
 
     async def event_box_reconnect(self, box_peer: str) -> bool:
         return await self.send_event("box_reconnect", {"box_peer": box_peer})

@@ -8,52 +8,69 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  test-and-type:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
+          cache: pip
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-      - name: Run unit tests with coverage
+          python -m pip install -r requirements-dev.txt
+      - name: Unit, integration, E2E, and exclusive coverage gates
+        env:
+          PYTHON_BIN: python
+          REPORT_DIR: ${{ github.workspace }}/reports
+        run: .github/scripts/run_tests.sh
+      - name: Type checking
         env:
           PYTHONPATH: addon/oig-proxy
         run: |
-          mkdir -p reports
-          pytest --junitxml=reports/junit.xml --cov=addon/oig-proxy --cov-report=xml:reports/coverage.xml --cov-fail-under=69
-      - name: Type checking (mypy)
-        env:
-          PYTHONPATH: addon/oig-proxy
+          set -euo pipefail
+          init_path=addon/oig-proxy/__init__.py
+          backup_path="${init_path}.mypy-backup"
+          restore_init() {
+            if [[ -f "${backup_path}" ]]; then
+              mv "${backup_path}" "${init_path}"
+            fi
+          }
+          trap restore_init EXIT
+          mv "${init_path}" "${backup_path}"
+          MYPYPATH=addon/oig-proxy python -m mypy addon/oig-proxy --ignore-missing-imports
+          restore_init
+          trap - EXIT
+      - name: Flake8
+        run: python -m flake8 addon/oig-proxy tests/v2
+      - name: Require test evidence
+        if: always()
         run: |
-          # mypy requires workaround for hyphenated addon path with __init__.py
-          # Due to PEP 420 namespace package handling of hyphenated names in mypy 1.x
-          mv addon/oig-proxy/__init__.py addon/oig-proxy/__init__.py.bak
-          mypy addon/oig-proxy --ignore-missing-imports
-          MYPY_EXIT=$?
-          mv addon/oig-proxy/__init__.py.bak addon/oig-proxy/__init__.py
-          exit $MYPY_EXIT
-      - name: Lint Dockerfile (hadolint)
+          test -s reports/junit.xml
+          test -s reports/coverage.xml
+          test -s reports/coverage-gate.json
+          test -s reports/egress-guard.json
+          test -s docs/superpowers/reports/2026-08-06-local-setting-transaction-hardening-traceability.md
+          test -s docs/superpowers/reports/2026-08-06-local-setting-transaction-hardening-owasp.md
+      - name: Upload test and coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-coverage-evidence
+          if-no-files-found: error
+          path: |
+            reports/junit.xml
+            reports/coverage.xml
+            reports/coverage-gate.json
+            reports/egress-guard.json
+            docs/superpowers/reports/2026-08-06-local-setting-transaction-hardening-traceability.md
+            docs/superpowers/reports/2026-08-06-local-setting-transaction-hardening-owasp.md
+
+      - name: Dockerfile lint
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: addon/oig-proxy/Dockerfile
           ignore: DL3006,DL3018
-      - name: Security scan (bandit)
-        run: |
-          mkdir -p reports
-          bandit -r addon/oig-proxy -x addon/oig-proxy/tests -f json -o reports/bandit.json
-
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@e44258b109568baa0df60ed515909fc6c72cba92
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}

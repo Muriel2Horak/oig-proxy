@@ -7,10 +7,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false
 
 import asyncio
-import json
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from mqtt.status import ProxyStatusPublisher
 
@@ -268,7 +265,8 @@ def test_publish_sends_discovery_for_proxy_controls_when_loader_present():
         "entity_category": "diagnostic",
     }
     loader.iter_sensors.return_value = [
-        ("proxy_control", "PROXY_MODE", {"name_cs": "Proxy - Režim", "device_mapping": "proxy", "entity_category": "config"})
+        ("proxy_control", "PROXY_MODE", {"name_cs": "Proxy - Režim",
+         "device_mapping": "proxy", "entity_category": "config"})
     ]
     pub = ProxyStatusPublisher(mqtt, 60, "oig_proxy", sensor_loader=loader)
 

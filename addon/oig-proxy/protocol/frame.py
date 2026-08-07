@@ -12,6 +12,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
 
+from defusedxml import ElementTree as DefusedET
+
 from .crc import CrcError, crc16_modbus, strip_crc_tag, validate_crc_tag
 
 _TABLE_NAME_RE = re.compile(r"<TblName>([^<]+)</TblName>")
@@ -30,10 +32,14 @@ def _require_exact_type(value: object, expected: type[object], field: str) -> No
 
 
 def _parse_xml_preserving_structure(raw: bytes) -> ET.Element:
-    parser = ET.XMLParser(
-        target=ET.TreeBuilder(insert_comments=True, insert_pis=True)
+    parser = DefusedET.DefusedXMLParser(
+        target=ET.TreeBuilder(insert_comments=True, insert_pis=True),
+        forbid_dtd=True,
+        forbid_entities=True,
+        forbid_external=True,
     )
-    return ET.fromstring(raw[:-2], parser=parser)
+    parser.feed(raw[:-2])
+    return parser.close()
 
 
 class FrameDirection(str, Enum):

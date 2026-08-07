@@ -1,8 +1,14 @@
 [run]
 source = addon/oig-proxy
 relative_files = True
-omit = 
+branch = True
+omit =
     */tests/*
     */__pycache__/*
     */site-packages/*
     */.venv/*
+
+[report]
+precision = 2
+show_missing = True
+fail_under = 80.01

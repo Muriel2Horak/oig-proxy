@@ -5,8 +5,6 @@ import socket
 import struct
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from proxy.dns_resolve import resolve_a_record, _skip_dns_name
 
 

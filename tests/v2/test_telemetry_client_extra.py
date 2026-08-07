@@ -172,6 +172,8 @@ def test_create_client_success_and_timeout_paths(monkeypatch: pytest.MonkeyPatch
     assert timeout_client._create_client() is False
     assert timeout_client._client is None
     assert timeout_client._connect_backoff_s == 10.0
+    client.disconnect()
+    timeout_client.disconnect()
 
 
 def test_ensure_connected_publish_and_flush_buffer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -217,6 +219,7 @@ def test_ensure_connected_publish_and_flush_buffer(monkeypatch: pytest.MonkeyPat
 
     working_client.raise_on_publish = True
     assert client._publish_sync("oig/topic/live", {"value": 4}) is False
+    client.disconnect()
 
 
 @pytest.mark.asyncio

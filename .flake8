@@ -1,2 +1,4 @@
 [flake8]
 max-line-length = 120
+per-file-ignores =
+    tests/v2/test_frame_processor.py:E501

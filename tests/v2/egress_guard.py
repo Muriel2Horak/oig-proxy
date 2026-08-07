@@ -32,7 +32,6 @@ class EgressViolation(AssertionError):
     """Raised when a local-control test attempts non-loopback egress."""
 
 
-
 class LocalControlConfig(Protocol):  # pylint: disable=too-few-public-methods
     """Configuration fields that can select an external transport."""
 

@@ -153,8 +153,8 @@ class Config:
             _addon_config = {}
         self.version: str = str(_addon_config.get("version", "unknown"))
 
-        # nosec: intentional default bind for the Home Assistant proxy service.
-        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
+        # Home Assistant must expose this proxy service to the appliance LAN.
+        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")  # nosec B104
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
         self.cloud_host = os.environ.get("TARGET_SERVER", "bridge.oigpower.cz")

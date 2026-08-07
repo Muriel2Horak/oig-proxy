@@ -1,8 +1,6 @@
 """Tests for MQTTClient._build_object_id() V1-compatible behavior."""
 # pylint: disable=protected-access
 
-import pytest
-
 from mqtt.client import MQTTClient
 
 

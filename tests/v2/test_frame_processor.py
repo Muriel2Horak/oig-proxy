@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -246,7 +246,7 @@ async def test_process_sends_discovery_with_metadata(processor: FrameProcessor, 
 @pytest.mark.asyncio
 async def test_process_publishes_state(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
     """Should publish state data to MQTT."""
-    mock_loader.lookup.return_value = None # No metadata
+    mock_loader.lookup.return_value = None  # No metadata
 
     await processor.process("DEV01", "tbl_actual", {"Temp": 25.5, "Humid": 60})
 

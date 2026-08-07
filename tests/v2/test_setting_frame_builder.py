@@ -73,7 +73,7 @@ def test_build_setting_frame_matches_exact_golden_bytes() -> None:
     )
 
     assert rendered.wire_frame == expected
-    inner = expected[len(b"<Frame>") : expected.index(b"<CRC>")]
+    inner = expected[len(b"<Frame>"): expected.index(b"<CRC>")]
     assert independent_modbus_crc(inner) == 63234
     assert rendered.crc_text == "63234"
     assert rendered.wire_length == len(expected)

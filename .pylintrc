@@ -1,2 +1,39 @@
 [MESSAGES CONTROL]
-disable=duplicate-code
+# Flake8 owns formatting/import hygiene; mypy owns callable/signature analysis.
+# Keep Pylint's remaining correctness checks blocking while suppressing legacy
+# design/complexity advice and inference false positives for dynamic test fakes.
+disable=
+    duplicate-code,
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    redefined-outer-name,
+    protected-access,
+    line-too-long,
+    broad-exception-caught,
+    unidiomatic-typecheck,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-instance-attributes,
+    too-many-branches,
+    too-many-locals,
+    too-many-statements,
+    too-many-return-statements,
+    too-many-boolean-expressions,
+    too-many-public-methods,
+    too-many-lines,
+    too-few-public-methods,
+    import-outside-toplevel,
+    use-implicit-booleaness-not-comparison,
+    try-except-raise,
+    unused-argument,
+    invalid-name,
+    wrong-import-position,
+    consider-using-with,
+    ungrouped-imports,
+    unnecessary-comprehension,
+    use-dict-literal,
+    import-error,
+    no-name-in-module,
+    not-callable,
+    unexpected-keyword-arg

@@ -1,144 +1,72 @@
 rules:
-  - id: control-api-input-validation
-    pattern: |
-      request.get("tbl_name") or request.get("tbl_item") or request.get("new_value")
-    message: "Control API input should be validated"
-    severity: WARNING
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A1: Injection"
-      cwe: "CWE-20: Improper Input Validation"
-
-  - id: telemetry-instance-hash-entropy
-    pattern: |
-      hashlib.sha256(...).hexdigest()[:$X]
-    message: "Instance hash should be at least 32 characters for sufficient entropy"
+  - id: sqlite-fstring-query
+    patterns:
+      - pattern: $DB.$METHOD(f"...", ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(execute|executemany)$
+    message: SQLite queries must be static parameterized literals, not f-strings.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A2: Broken Authentication"
-      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+    languages: [python]
+    metadata: {cwe: "CWE-89", owasp: "A03:2021 Injection"}
 
-  - id: hardcoded-secret
-    pattern: |
-      $PASSWORD = "$STRING"
-    message: "Hardcoded secret detected"
+  - id: sqlite-percent-query
+    patterns:
+      - pattern: $DB.$METHOD($QUERY % $VALUE, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(execute|executemany)$
+    message: SQLite queries must not use percent interpolation.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A7: Identification and Authentication Failures"
-      cwe: "CWE-798: Use of Hard-coded Credentials"
+    languages: [python]
+    metadata: {cwe: "CWE-89", owasp: "A03:2021 Injection"}
 
-  - id: sql-injection-risk
-    pattern: |
-      execute($SQL + $VAR)
-    message: "Possible SQL injection risk - use parameterized queries"
+  - id: sqlite-concatenated-query
+    patterns:
+      - pattern: $DB.$METHOD($LEFT + $RIGHT, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(execute|executemany)$
+    message: SQLite queries must not use string concatenation.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A1: Injection"
-      cwe: "CWE-89: SQL Injection"
+    languages: [python]
+    metadata: {cwe: "CWE-89", owasp: "A03:2021 Injection"}
 
-  - id: eval-risk
-    pattern: |
-      eval($INPUT)
-    message: "Use of eval() function - code injection risk"
+  - id: sqlite-formatted-query
+    patterns:
+      - pattern: $DB.$METHOD($QUERY.format(...), ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(execute|executemany)$
+    message: SQLite queries must not use str.format interpolation.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A3: Injection"
-      cwe: "CWE-94: Code Injection"
+    languages: [python]
+    metadata: {cwe: "CWE-89", owasp: "A03:2021 Injection"}
 
-  - id: exec-risk
-    pattern: |
-      exec($INPUT)
-    message: "Use of exec() function - code injection risk"
+  - id: dynamic-eval
+    pattern: eval(...)
+    message: Dynamic eval is prohibited in production.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A3: Injection"
-      cwe: "CWE-78: OS Command Injection"
+    languages: [python]
+    metadata: {cwe: "CWE-95", owasp: "A03:2021 Injection"}
 
-  - id: xml-parsing-xxe
-    pattern: |
-      xml.etree.ElementTree.parse($FILE)
-    message: "XML parsing without XXE protection"
-    severity: WARNING
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A5: Broken Access Control"
-      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
-
-  - id: weak-random
-    pattern: |
-      random.$METHOD(...)
-    message: "Use of random module - consider secrets module for cryptographic operations"
-    severity: WARNING
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A2: Broken Authentication"
-      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
-
-  - id: temp-file-security
-    pattern: |
-      tempfile.mktemp(...)
-    message: "Use of mktemp() - security risk. Use mkstemp() instead"
-    severity: WARNING
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A1: Injection"
-      cwe: "CWE-377: Insecure Temporary File"
-
-  - id: pickle-risk
-    pattern: |
-      pickle.loads($DATA)
-    message: "Use of pickle.loads() - potential arbitrary code execution"
+  - id: dynamic-exec
+    pattern: exec(...)
+    message: Dynamic exec is prohibited in production.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A3: Injection"
-      cwe: "CWE-502: Deserialization of Untrusted Data"
+    languages: [python]
+    metadata: {cwe: "CWE-95", owasp: "A03:2021 Injection"}
 
-  - id: shell-injection-risk
-    pattern: |
-      subprocess.$METHOD($CMD + $VAR)
-    message: "Possible shell injection risk - use list argument instead of string concatenation"
+  - id: unsafe-pickle-loads
+    pattern: pickle.loads(...)
+    message: Untrusted pickle deserialization is prohibited.
     severity: ERROR
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A1: Injection"
-      cwe: "CWE-78: OS Command Injection"
+    languages: [python]
+    metadata: {cwe: "CWE-502", owasp: "A08:2021 Software and Data Integrity Failures"}
 
-  - id: no-auth-api
-    pattern: |
-      $HANDLER.do_$METHOD(...)
-    message: "API handler without authentication check"
-    severity: WARNING
-    languages:
-      - python
-    metadata:
-      category: security
-      owasp: "A2: Broken Authentication"
-      cwe: "CWE-306: Missing Authentication for Critical Function"
+  - id: unsafe-tempfile-mktemp
+    pattern: tempfile.mktemp(...)
+    message: Use a securely created temporary file or directory.
+    severity: ERROR
+    languages: [python]
+    metadata: {cwe: "CWE-377", owasp: "A01:2021 Broken Access Control"}

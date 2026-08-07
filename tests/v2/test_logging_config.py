@@ -3,8 +3,6 @@
 
 import logging
 
-import pytest
-
 from logging_config import TRACE, configure_logging
 
 

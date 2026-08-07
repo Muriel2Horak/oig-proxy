@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -594,7 +595,7 @@ class LocalControlHarness:
         return build_frame("".join(tags)).encode("utf-8")
 
     def command_ids(self) -> list[str]:
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             return [
                 str(row[0])
                 for row in connection.execute(
@@ -603,7 +604,7 @@ class LocalControlHarness:
             ]
 
     def command_states(self) -> list[tuple[str, CommandState]]:
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             return [
                 (str(row[0]), CommandState(str(row[1])))
                 for row in connection.execute(

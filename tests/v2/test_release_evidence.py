@@ -1,5 +1,6 @@
 """Validate the committed local-setting traceability evidence."""
 
+import ast
 from pathlib import Path
 import re
 
@@ -37,3 +38,20 @@ def test_traceability_uses_unit_integration_and_e2e_nodes() -> None:
         assert "::test_" in unit
         assert "::test_" in integration
         assert "::test_e2e_" in e2e
+
+
+def test_every_traceability_node_exists_as_a_python_test_function() -> None:
+    """Reject stale evidence paths and renamed or deleted test nodes."""
+    for row in _trace_rows().values():
+        for reference in row:
+            relative_path, node = reference.split("::", maxsplit=1)
+            path = ROOT / relative_path
+            assert path.is_file(), reference
+            functions = {
+                item.name
+                for item in ast.walk(
+                    ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                )
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            assert node.split("[", maxsplit=1)[0] in functions, reference

@@ -198,6 +198,7 @@ def test_sqlite_buffer_path_and_payload_structure(tmp_path: Path) -> None:
     _, topic, stored_payload = pending[0]
     assert topic == "oig/telemetry/test_id"
     assert set(stored_payload.keys()) == set(payload.keys())
+    buffer.close()
 
 
 def test_setting_window_capture(monkeypatch) -> None:

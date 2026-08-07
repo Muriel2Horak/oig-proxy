@@ -166,19 +166,22 @@ class FrameCapture:
             """)
             # Backward compat: přidat chybějící sloupce
             existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(frames)")}
-            for col_name, col_type in [
-                ("raw_b64", "TEXT"),
-                ("direction", "TEXT"),
-                ("conn_id", "INTEGER"),
-                ("peer", "TEXT"),
-                ("length", "INTEGER"),
-                ("command_id", "TEXT"),
-                ("audit_id", "TEXT"),
-                ("attempt_number", "INTEGER"),
+            for col_name, migration in [
+                ("raw_b64", "ALTER TABLE frames ADD COLUMN raw_b64 TEXT"),
+                ("direction", "ALTER TABLE frames ADD COLUMN direction TEXT"),
+                ("conn_id", "ALTER TABLE frames ADD COLUMN conn_id INTEGER"),
+                ("peer", "ALTER TABLE frames ADD COLUMN peer TEXT"),
+                ("length", "ALTER TABLE frames ADD COLUMN length INTEGER"),
+                ("command_id", "ALTER TABLE frames ADD COLUMN command_id TEXT"),
+                ("audit_id", "ALTER TABLE frames ADD COLUMN audit_id TEXT"),
+                (
+                    "attempt_number",
+                    "ALTER TABLE frames ADD COLUMN attempt_number INTEGER",
+                ),
             ]:
                 if col_name not in existing_cols:
                     with suppress(sqlite3.Error):
-                        conn.execute(f"ALTER TABLE frames ADD COLUMN {col_name} {col_type}")
+                        conn.execute(migration)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_frames_command_attempt "
                 "ON frames(command_id, attempt_number)"

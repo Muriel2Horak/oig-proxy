@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import closing
 import json
 import sqlite3
 from typing import Callable
@@ -163,7 +164,7 @@ async def test_e2e_matching_event_confirms_and_nonmatching_event_does_not(
 
 async def _captured_cloud_frames(harness: LocalControlHarness) -> tuple[bytes, ...]:
     """Read captured BOX-to-cloud frames without touching the live stream."""
-    with sqlite3.connect(harness.capture_path) as connection:
+    with closing(sqlite3.connect(harness.capture_path)) as connection:
         columns = [row[1] for row in connection.execute("PRAGMA table_info(frames)")]
         if "direction" not in columns or "raw_b64" not in columns:
             return ()
@@ -436,7 +437,7 @@ async def test_e2e_retained_control_never_enters_local_batch(
     harness.fake_mqtt.emit(compatibility, b"2", retain=True)
     await harness.wait_until(lambda: _ingress_count(harness) == 2)
 
-    with sqlite3.connect(harness.db_path) as connection:
+    with closing(sqlite3.connect(harness.db_path)) as connection:
         rows = connection.execute(
             "SELECT retain, disposition, command_id FROM control_ingress_audit "
             "ORDER BY received_at_ms, ingress_id"
@@ -452,7 +453,7 @@ async def test_e2e_retained_control_never_enters_local_batch(
 
 
 def _ingress_count(harness: LocalControlHarness) -> int:
-    with sqlite3.connect(harness.db_path) as connection:
+    with closing(sqlite3.connect(harness.db_path)) as connection:
         return int(connection.execute("SELECT COUNT(*) FROM control_ingress_audit").fetchone()[0])
 
 
@@ -538,7 +539,7 @@ async def test_e2e_audit_identity_survives_all_write_outcomes(
 def _capture_attempt_rows(
     harness: LocalControlHarness, command_id: str
 ) -> list[tuple[str, str, int]]:
-    with sqlite3.connect(harness.capture_path) as connection:
+    with closing(sqlite3.connect(harness.capture_path)) as connection:
         return [
             (str(row[0]), str(row[1]), int(row[2]))
             for row in connection.execute(

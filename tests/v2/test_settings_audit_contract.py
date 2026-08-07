@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -2849,7 +2850,7 @@ def test_reopened_accounting_drift_fails_before_sync_replay_sink(
         acceptance_ledger=store,
     ).publish_committed(snapshot)
     store.close()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         if drift == "raw_bytes":
             connection.execute(
                 "UPDATE settings_audit_deliveries SET raw_bytes = 1"
@@ -2896,7 +2897,7 @@ async def test_reopened_accounting_drift_fails_before_async_replay_sink(
         acceptance_ledger=store,
     ).publish_committed_async(snapshot)
     store.close()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "UPDATE settings_audit_deliveries SET raw_bytes = 0"
         )
@@ -2937,7 +2938,7 @@ def test_direct_audit_decision_read_rejects_accounting_integrity_drift(
         acceptance_ledger=store,
     ).publish_committed(snapshot)
     store.close()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "UPDATE settings_audit_deliveries SET raw_bytes = 2"
         )
@@ -2976,7 +2977,7 @@ def test_pending_enumerator_rejects_decision_integrity_digest_corruption(
         acceptance_ledger=store,
     ).publish_committed(snapshot)
     store.close()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         columns = {
             str(row[1])
             for row in connection.execute(
@@ -3019,7 +3020,7 @@ def test_accepted_delivery_integrity_drift_blocks_later_proposal_and_sink(
             acceptance_ledger=store,
         )
         publisher.publish_committed(snapshots[0])
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute(
                 "UPDATE settings_audit_deliveries SET raw_bytes = 1"
             )
@@ -3029,7 +3030,7 @@ def test_accepted_delivery_integrity_drift_blocks_later_proposal_and_sink(
         assert [record.transition_id for record in delivered] == [
             snapshots[0].transition.transition_id
         ]
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             assert connection.execute(
                 "SELECT COUNT(*) FROM settings_audit_deliveries"
             ).fetchone() == (1,)
@@ -3164,7 +3165,7 @@ def test_corrupt_canonical_digest_never_reaches_sink(
         acceptance_ledger=store,
     )
     publisher.publish_committed(snapshot)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("PRAGMA ignore_check_constraints=ON")
         connection.execute(
             """

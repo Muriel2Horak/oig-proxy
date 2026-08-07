@@ -59,6 +59,49 @@ def test_control_policy_projects_seconds_to_exact_milliseconds(runtime_config):
 
 
 @pytest.mark.asyncio
+async def test_startup_disabled_recovers_store_without_handler_or_local_write(
+    runtime_config,
+):
+    runtime_config.control_mqtt_enabled = False
+    app = ProxyApp(runtime_config)
+    app._loop = asyncio.get_running_loop()
+    app._store_ready = True
+    app.device_id_manager = MagicMock(device_id="DEV01")
+    app.mqtt = MagicMock()
+    app.mqtt.is_ready.return_value = True
+    app.twin_store = MagicMock()
+    app.twin_coordinator = MagicMock()
+
+    with patch.object(main_module, "TwinControlHandler") as factory:
+        await app._reconcile_control_handler()
+
+    factory.assert_not_called()
+    app.twin_store.read_device.assert_not_called()
+    assert app.twin_handler is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_device_poll_and_control_cannot_claim(runtime_config):
+    runtime_config.control_mqtt_enabled = True
+    app = ProxyApp(runtime_config)
+    app._loop = asyncio.get_running_loop()
+    app._store_ready = True
+    app.device_id_manager = MagicMock(device_id=None)
+    app.mqtt = MagicMock()
+    app.mqtt.is_ready.return_value = True
+    app.twin_store = MagicMock()
+    app.twin_coordinator = MagicMock()
+
+    assert await app._on_valid_device_identity("DEV01", None, 1) is False
+    with patch.object(main_module, "TwinControlHandler") as factory:
+        await app._reconcile_control_handler()
+
+    factory.assert_not_called()
+    app.twin_store.observe_device.assert_not_called()
+    assert app.twin_handler is None
+
+
+@pytest.mark.asyncio
 async def test_store_startup_retries_at_offsets_zero_one_two(runtime_config):
     app = ProxyApp(runtime_config)
     store = MagicMock()

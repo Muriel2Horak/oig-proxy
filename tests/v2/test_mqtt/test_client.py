@@ -595,7 +595,8 @@ def test_disabled_reconnect_cleans_every_allowlisted_control_for_known_safe_devi
     expected_per_device = sum(len(keys) for keys in mqtt_client.CONTROL_WRITE_WHITELIST.values()) * 3
     assert len(tombstone_topics) == expected_per_device * 2
     assert tombstone_topics == sorted(tombstone_topics)
-    assert all(item.args[1] == b"" for item in mock_paho.publish.call_args_list if item.args[0].startswith("homeassistant/"))
+    assert all(item.args[1] ==
+               b"" for item in mock_paho.publish.call_args_list if item.args[0].startswith("homeassistant/"))
 
 
 def test_control_discovery_continues_after_component_failures_and_aggregates_false():

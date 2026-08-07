@@ -309,6 +309,7 @@ async def test_correlated_end_is_replaced_and_local_ack_returns_exact_end(
     assert ack not in online_harness.raw_cloud.writes
     command = online_harness.store.read_command(active.command_id)
     assert command.state is CommandState.AWAITING_EVENT
+    assert online_harness.confirmations == []
     assert online_harness.context.dialog.current_expectation() is None
 
 

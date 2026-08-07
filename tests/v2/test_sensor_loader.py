@@ -7,8 +7,6 @@ import json
 import os
 import tempfile
 
-import pytest
-
 from sensor.loader import SensorMapLoader
 
 

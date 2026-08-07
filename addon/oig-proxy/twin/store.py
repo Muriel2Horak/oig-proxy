@@ -2728,22 +2728,21 @@ class TwinCommandStore:
             _validate_device_id(device_id) if device_id is not None else None
         )
         terminal_values = tuple(state.value for state in TERMINAL_STATES)
-        placeholders = ",".join("?" for _ in terminal_values)
         with self._mutex:
             self.verify_health()
             connection = self._require_connection()
             parameters: tuple[object, ...]
             if normalized_device_id is None:
-                sql = f"""
+                sql = """
                     SELECT command_id FROM commands
-                    WHERE state NOT IN ({placeholders})
+                    WHERE state NOT IN (?, ?, ?, ?, ?)
                     ORDER BY created_at_ms, command_id LIMIT 2
                 """
                 parameters = terminal_values
             else:
-                sql = f"""
+                sql = """
                     SELECT command_id FROM commands
-                    WHERE device_id = ? AND state NOT IN ({placeholders})
+                    WHERE device_id = ? AND state NOT IN (?, ?, ?, ?, ?)
                     ORDER BY created_at_ms, command_id LIMIT 2
                 """
                 parameters = (normalized_device_id, *terminal_values)
@@ -2923,23 +2922,36 @@ class TwinCommandStore:
             )
             if attempt.write_outcome not in expected_outcomes:
                 raise StaleAttemptError("attempt write outcome no longer matches")
-            placeholders = ",".join("?" for _ in expected_outcomes)
-            cursor = connection.execute(
-                f"""
-                UPDATE command_attempts
-                SET write_outcome = ?, write_error = ?
-                WHERE command_id = ? AND attempt_number = ? AND session_id = ?
-                  AND write_outcome IN ({placeholders})
-                """,
-                (
-                    new_outcome.value,
-                    bounded_error,
-                    normalized_command_id,
-                    attempt_number,
-                    normalized_session_id,
-                    *(outcome.value for outcome in expected_outcomes),
-                ),
+            parameters = (
+                new_outcome.value,
+                bounded_error,
+                normalized_command_id,
+                attempt_number,
+                normalized_session_id,
+                *(outcome.value for outcome in expected_outcomes),
             )
+            if len(expected_outcomes) == 1:
+                cursor = connection.execute(
+                    """
+                    UPDATE command_attempts
+                    SET write_outcome = ?, write_error = ?
+                    WHERE command_id = ? AND attempt_number = ?
+                      AND session_id = ? AND write_outcome = ?
+                    """,
+                    parameters,
+                )
+            elif len(expected_outcomes) == 2:
+                cursor = connection.execute(
+                    """
+                    UPDATE command_attempts
+                    SET write_outcome = ?, write_error = ?
+                    WHERE command_id = ? AND attempt_number = ?
+                      AND session_id = ? AND write_outcome IN (?, ?)
+                    """,
+                    parameters,
+                )
+            else:
+                raise ValueError("expected_outcomes must contain one or two values")
             if cursor.rowcount != 1:
                 raise StaleAttemptError("attempt write outcome no longer matches")
             return self._release_active_attempt_locked(
@@ -3086,22 +3098,36 @@ class TwinCommandStore:
                 attempt_number=attempt_number,
                 session_id=normalized_session_id,
             )
-            cursor = connection.execute(
-                f"""
-                UPDATE command_attempts
-                SET {timestamp_column} = ?, write_outcome = ?
-                WHERE command_id = ? AND attempt_number = ? AND session_id = ?
-                  AND write_outcome = ?
-                """,
-                (
-                    occurred_at_ms,
-                    new_outcome.value,
-                    normalized_command_id,
-                    attempt_number,
-                    normalized_session_id,
-                    expected_outcome.value,
-                ),
+            parameters = (
+                occurred_at_ms,
+                new_outcome.value,
+                normalized_command_id,
+                attempt_number,
+                normalized_session_id,
+                expected_outcome.value,
             )
+            if timestamp_column == "write_started_at_ms":
+                cursor = connection.execute(
+                    """
+                    UPDATE command_attempts
+                    SET write_started_at_ms = ?, write_outcome = ?
+                    WHERE command_id = ? AND attempt_number = ?
+                      AND session_id = ? AND write_outcome = ?
+                    """,
+                    parameters,
+                )
+            elif timestamp_column == "drain_completed_at_ms":
+                cursor = connection.execute(
+                    """
+                    UPDATE command_attempts
+                    SET drain_completed_at_ms = ?, write_outcome = ?
+                    WHERE command_id = ? AND attempt_number = ?
+                      AND session_id = ? AND write_outcome = ?
+                    """,
+                    parameters,
+                )
+            else:
+                raise ValueError("timestamp_column is not an allowed milestone")
             if cursor.rowcount != 1:
                 raise StaleAttemptError("attempt write milestone no longer matches")
             connection.execute(
@@ -3440,7 +3466,9 @@ class TwinCommandStore:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        # SQLite does not bind parameters in PRAGMA assignment syntax. Keep the
+        # configured invariant as a literal so no SQL text is ever composed.
+        connection.execute("PRAGMA busy_timeout=5000")
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection, *, now_ms: int) -> None:
