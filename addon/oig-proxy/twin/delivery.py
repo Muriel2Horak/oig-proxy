@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 import hashlib
 import logging
 import secrets
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch
@@ -44,6 +47,7 @@ from .state import (
     StoreStatus,
     SweepReport,
     TransitionAuditSnapshot,
+    TwinCommand,
 )
 from .ack_parser import SettingEvent, SettingResponse
 from .store import StaleAttemptError, TwinCommandStore
@@ -55,6 +59,10 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+class _RegisteredEventConsumed(ValueError):
+    """Signal that another handler already claimed an exact receipt token."""
 
 
 class TwinCoordinator:
@@ -78,6 +86,7 @@ class TwinCoordinator:
         self._monotonic = monotonic or time.monotonic
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._registered_events: dict[str, RegisteredEventToken] = {}
+        self._event_registration_guard = threading.RLock()
         self._event_timeout_candidates: dict[
             str, tuple[str, int, float]
         ] = {}
@@ -459,6 +468,13 @@ class TwinCoordinator:
                     reason=RetryReason.ACK_TIMEOUT,
                     disposition=LocalResponseDisposition.TIMED_OUT,
                 )
+            if response.result == "ACK" and response.reason != "Setting":
+                return await self._reject_response_locked(
+                    active=active,
+                    occurred_at_ms=context.received_at_ms,
+                    reason=RetryReason.UNEXPECTED_RESPONSE,
+                    disposition=LocalResponseDisposition.REJECTED,
+                )
             try:
                 if response.result == "NACK":
                     nack = await asyncio.to_thread(
@@ -551,25 +567,45 @@ class TwinCoordinator:
         if context.device_id != event.device_id:
             raise ValueError("setting event device does not match context device")
         token = RegisteredEventToken(str(uuid.uuid4()), event, context)
-        self._registered_events[token.token_id] = token
+        with self._event_registration_guard:
+            self._registered_events[token.token_id] = token
         return token
 
     async def handle_registered_event(
         self, token: RegisteredEventToken
     ) -> EventMatchResult:
         """Commit one reserved event under its exact-device lock."""
-        registered = self._registered_events.get(token.token_id)
-        if registered != token:
-            raise ValueError("setting event token is not registered")
         async with self._device_lock(token.context.device_id):
-            result = await asyncio.to_thread(
-                self._store.record_event,
-                evidence=token.event,
-                received_at_ms=token.context.received_at_ms,
-                evidence_frame=token.context.raw_frame,
-                active_session_id=token.context.session_id,
-            )
-            self._registered_events.pop(token.token_id, None)
+            with self._event_registration_guard:
+                registered = self._registered_events.get(token.token_id)
+                if registered != token:
+                    raise _RegisteredEventConsumed(
+                        "setting event token is not registered"
+                    )
+                receipt_index = tuple(self._registered_events).index(
+                    token.token_id
+                )
+                self._registered_events.pop(token.token_id)
+            try:
+                result = await asyncio.to_thread(
+                    self._store.record_event,
+                    evidence=token.event,
+                    received_at_ms=token.context.received_at_ms,
+                    evidence_frame=token.context.raw_frame,
+                    active_session_id=token.context.session_id,
+                )
+            except Exception:
+                with self._event_registration_guard:
+                    if token.token_id not in self._registered_events:
+                        registered_items = list(
+                            self._registered_events.items()
+                        )
+                        registered_items.insert(
+                            min(receipt_index, len(registered_items)),
+                            (token.token_id, token),
+                        )
+                        self._registered_events = dict(registered_items)
+                raise
             if result.snapshot is not None:
                 self._publish((result.snapshot,))
                 self._event_timeout_candidates.pop(
@@ -582,35 +618,70 @@ class TwinCoordinator:
         self, *, session_id: str
     ) -> tuple[EventMatchResult, ...]:
         """Commit every reserved session event in synchronous receipt order."""
-        tokens = tuple(
-            token
-            for token in self._registered_events.values()
-            if token.context.session_id == session_id
-        )
+        with self._event_registration_guard:
+            tokens = tuple(
+                token
+                for token in self._registered_events.values()
+                if token.context.session_id == session_id
+            )
         results: list[EventMatchResult] = []
         for token in tokens:
-            if token.token_id in self._registered_events:
+            try:
                 results.append(await self.handle_registered_event(token))
+            except _RegisteredEventConsumed:
+                continue
         return tuple(results)
 
     def _has_in_deadline_registered_event(
         self, *, device_id: str, event_deadline_ms: int
     ) -> bool:
-        return any(
-            token.context.device_id == device_id
-            and token.context.received_at_ms <= event_deadline_ms
-            for token in self._registered_events.values()
-        )
+        with self._event_registration_guard:
+            return any(
+                token.context.device_id == device_id
+                and token.context.received_at_ms <= event_deadline_ms
+                for token in self._registered_events.values()
+            )
+
+    @contextmanager
+    def _event_timeout_authorization(
+        self, *, device_id: str, event_deadline_ms: int
+    ) -> Iterator[bool]:
+        """Linearize final timeout authorization with synchronous receipt."""
+        with self._event_registration_guard:
+            yield not self._has_in_deadline_registered_event(
+                device_id=device_id,
+                event_deadline_ms=event_deadline_ms,
+            )
 
     async def sweep_deadlines(self, *, now_ms: int | None = None) -> SweepReport:
         """Run pending/ACK sweep plus two-pass exact event-timeout grace."""
         effective_now = self._clock_ms() if now_ms is None else now_ms
-        base = await asyncio.to_thread(
-            self._store.sweep_deadlines,
-            now_ms=effective_now,
-            include_event_timeouts=False,
+        deadline_devices = await asyncio.to_thread(
+            self._store.read_deadline_devices, now_ms=effective_now
         )
-        self._publish(base.snapshots)
+
+        async def sweep_device(device_id: str) -> SweepReport:
+            async with self._device_lock(device_id):
+                return await asyncio.to_thread(
+                    self._store.sweep_device_deadlines,
+                    device_id=device_id,
+                    now_ms=effective_now,
+                )
+
+        device_reports = await asyncio.gather(
+            *(sweep_device(device_id) for device_id in deadline_devices)
+        )
+        base_snapshots = tuple(
+            sorted(
+                (
+                    snapshot
+                    for report in device_reports
+                    for snapshot in report.snapshots
+                ),
+                key=lambda snapshot: snapshot.transition.transition_id,
+            )
+        )
+        self._publish(base_snapshots)
         candidates = await asyncio.to_thread(
             self._store.read_event_timeout_candidates, now_ms=effective_now
         )
@@ -644,6 +715,11 @@ class TwinCoordinator:
                     command_id=candidate.command_id,
                     expected_event_deadline_ms=candidate.event_deadline_ms,
                     now_ms=effective_now,
+                    final_guard=partial(
+                        self._event_timeout_authorization,
+                        device_id=candidate.device_id,
+                        event_deadline_ms=candidate.event_deadline_ms,
+                    ),
                 )
                 self._event_timeout_candidates.pop(candidate.command_id, None)
                 if snapshot is not None:
@@ -652,14 +728,14 @@ class TwinCoordinator:
         await self._refresh_status()
         snapshots = tuple(
             sorted(
-                (*base.snapshots, *incomplete),
+                (*base_snapshots, *incomplete),
                 key=lambda snapshot: snapshot.transition.transition_id,
             )
         )
         return SweepReport(
-            base.expired_pending,
-            base.retry_pending,
-            base.failed_attempt_limit,
+            sum(report.expired_pending for report in device_reports),
+            sum(report.retry_pending for report in device_reports),
+            sum(report.failed_attempt_limit for report in device_reports),
             len(incomplete),
             snapshots,
         )
@@ -667,10 +743,11 @@ class TwinCoordinator:
     async def status_snapshot(self, device_id: str | None = None) -> StoreStatus:
         """Read authoritative status off the event loop."""
         status = await asyncio.to_thread(self._store.status_snapshot, device_id)
-        self._cached_status = status
+        if device_id is None:
+            self._cached_status = status
         return status
 
-    async def read_command(self, command_id: str) -> Any:
+    async def read_command(self, command_id: str) -> TwinCommand:
         """Read one immutable command off the event loop."""
         return await asyncio.to_thread(self._store.read_command, command_id)
 

@@ -4,11 +4,13 @@
 # pylint: disable=import-error,missing-function-docstring,too-many-lines
 # pylint: disable=too-few-public-methods,too-many-instance-attributes
 # pylint: disable=too-many-arguments,use-implicit-booleaness-not-comparison
+# pylint: disable=too-many-locals
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Literal
@@ -609,6 +611,38 @@ async def test_ack_moves_to_awaiting_event_without_confirmation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason", [None, "", "NotSetting"])
+async def test_ack_requires_exact_setting_reason_before_successor_claim(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    reason: str | None,
+) -> None:
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    successor = _enqueue(
+        store,
+        value_text="50",
+        received_at_ms=210,
+        item_name="BAT_AC",
+    )
+    raw = b"ack-with-wrong-reason"
+
+    decision = await coordinator.handle_local_response(
+        active=active,
+        response=replace(_response(raw), reason=reason),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+
+    assert decision.disposition is LocalResponseDisposition.REJECTED
+    assert decision.close_connection is True
+    assert decision.next_attempt is None
+    assert store.read_command(active.command_id).state is CommandState.RETRY_PENDING
+    assert store.read_command(successor.command_id).attempt_count == 0
+    assert len(writer.frames) == 1
+
+
+@pytest.mark.asyncio
 async def test_ack_atomically_writes_already_prepared_successor(
     coordinator: TwinCoordinator,
     store: TwinCommandStore,
@@ -942,6 +976,422 @@ async def test_session_flush_is_lossless_and_receipt_ordered(
 
 
 @pytest.mark.asyncio
+async def test_registered_event_wins_final_timeout_check_to_cas_gap(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    await coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 1)
+    monotonic["value"] = 1.1
+
+    cas_entered = threading.Event()
+    cas_release = threading.Event()
+    original = store.mark_event_incomplete
+
+    def blocked_cas(**kwargs):
+        cas_entered.set()
+        assert cas_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "mark_event_incomplete", blocked_cas)
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 2)
+    )
+    assert await asyncio.to_thread(cas_entered.wait, 0.1)
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"event-in-final-gap",
+        ),
+    )
+    cas_release.set()
+
+    sweep = await sweep_task
+    decision = await coordinator.handle_registered_event(token)
+    reasons = tuple(
+        transition.reason
+        for transition in store.read_transitions(active.command_id)
+    )
+    assert sweep.incomplete_event_timeout == 0
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert "event_timeout" not in reasons
+
+
+@pytest.mark.asyncio
+async def test_registered_event_wins_after_transition_before_commit(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    await coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 1)
+    monotonic["value"] = 1.1
+
+    transition_written = threading.Event()
+    transition_release = threading.Event()
+    original = store._transition_command_state_locked  # pylint: disable=protected-access
+
+    def blocked_transition(connection, **kwargs):
+        snapshot = original(connection, **kwargs)
+        if kwargs.get("reason") == "event_timeout":
+            transition_written.set()
+            if not transition_release.wait(timeout=0.25):
+                raise RuntimeError("registration blocked behind SQLite mutation")
+        return snapshot
+
+    monkeypatch.setattr(
+        store, "_transition_command_state_locked", blocked_transition
+    )
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 2)
+    )
+    assert await asyncio.to_thread(transition_written.wait, 0.1)
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"event-before-commit",
+        ),
+    )
+    transition_release.set()
+
+    sweep = await sweep_task
+    decision = await coordinator.handle_registered_event(token)
+    reasons = tuple(
+        transition.reason
+        for transition in store.read_transitions(active.command_id)
+    )
+    assert sweep.incomplete_event_timeout == 0
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert "event_timeout" not in reasons
+
+
+@pytest.mark.asyncio
+async def test_concurrent_event_handlers_claim_one_token_once(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = coordinator.register_setting_event(
+        event=_event(new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "s", "123", 220, b"one-token"
+        ),
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    call_count = 0
+    original = store.record_event
+
+    def blocked_record(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", blocked_record)
+    first_task = asyncio.create_task(coordinator.handle_registered_event(token))
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    second_task = asyncio.create_task(coordinator.handle_registered_event(token))
+    first_release.set()
+
+    outcomes = await asyncio.gather(
+        first_task, second_task, return_exceptions=True
+    )
+    decisions = [
+        outcome for outcome in outcomes if not isinstance(outcome, BaseException)
+    ]
+    failures = [
+        outcome for outcome in outcomes if isinstance(outcome, BaseException)
+    ]
+    assert call_count == 1
+    assert len(decisions) == 1
+    assert decisions[0].disposition is EventDisposition.UNMATCHED
+    assert len(failures) == 1
+    assert isinstance(failures[0], ValueError)
+    assert store.read_event_receipt(token.event.evidence_id).duplicate_count == 0
+
+
+@pytest.mark.asyncio
+async def test_direct_event_handler_and_session_flush_share_one_claim(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = coordinator.register_setting_event(
+        event=_event(new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "cleanup-session",
+            "123",
+            220,
+            b"cleanup-token",
+        ),
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    call_count = 0
+    original = store.record_event
+
+    def blocked_record(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        first_entered.set()
+        assert first_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", blocked_record)
+    direct_task = asyncio.create_task(coordinator.handle_registered_event(token))
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    flush_task = asyncio.create_task(
+        coordinator.flush_registered_events(session_id="cleanup-session")
+    )
+    await asyncio.sleep(0)
+    first_release.set()
+
+    direct, flushed = await asyncio.gather(direct_task, flush_task)
+    assert direct.disposition is EventDisposition.UNMATCHED
+    assert flushed == ()
+    assert call_count == 1
+    assert store.read_event_receipt(token.event.evidence_id).duplicate_count == 0
+
+
+@pytest.mark.asyncio
+async def test_event_token_is_restored_in_receipt_order_after_store_failure(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = coordinator.register_setting_event(
+        event=_event(event_id_set=55, new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "s", "123", 220, b"first"
+        ),
+    )
+    second = coordinator.register_setting_event(
+        event=_event(event_id_set=56, new_value="4"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY, "s", "123", 221, b"second"
+        ),
+    )
+    call_count = 0
+    original = store.record_event
+
+    def fail_once(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("temporary store failure")
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", fail_once)
+
+    with pytest.raises(RuntimeError, match="temporary store failure"):
+        await coordinator.handle_registered_event(first)
+    flushed = await coordinator.flush_registered_events(session_id="s")
+
+    assert call_count == 3
+    assert [result.evidence.evidence_id for result in flushed] == [
+        first.event.evidence_id,
+        second.event.evidence_id,
+    ]
+    assert store.read_event_receipt(first.event.evidence_id).duplicate_count == 0
+    assert store.read_event_receipt(second.event.evidence_id).duplicate_count == 0
+
+
+@pytest.mark.asyncio
+async def test_active_writer_serializes_ack_sweep_and_in_deadline_response(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+) -> None:
+    writer_entered = asyncio.Event()
+    writer_release = asyncio.Event()
+    writer = ScriptedLocalSettingWriter(
+        store, entered=writer_entered, release=writer_release
+    )
+    delivery_task = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="session-a",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer,
+        )
+    )
+    await writer_entered.wait()
+    active = writer.attempts[0]
+    raw = b"ack-received-before-deadline"
+    response_task = asyncio.create_task(
+        coordinator.handle_local_response(
+            active=active,
+            response=_response(raw),
+            context=_context(
+                active,
+                raw,
+                received_at_ms=active.ack_deadline_ms,
+            ),
+            writer=writer,
+        )
+    )
+    await asyncio.sleep(0)
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=active.ack_deadline_ms + 1)
+    )
+
+    sweep_completed_while_writer_owned = True
+    try:
+        await asyncio.wait_for(asyncio.shield(sweep_task), timeout=0.05)
+    except TimeoutError:
+        sweep_completed_while_writer_owned = False
+    finally:
+        writer_release.set()
+
+    delivery, response, sweep = await asyncio.gather(
+        delivery_task, response_task, sweep_task
+    )
+    assert sweep_completed_while_writer_owned is False
+    assert delivery.disposition is DeliveryDisposition.SENT
+    assert response.disposition is LocalResponseDisposition.ACK_ACCEPTED
+    assert sweep.retry_pending == 0
+    assert sweep.failed_attempt_limit == 0
+    assert store.read_command(active.command_id).state is CommandState.AWAITING_EVENT
+
+
+@pytest.mark.asyncio
+async def test_sweeper_holds_device_lock_before_expiring_pending_delivery(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sweep_entered = threading.Event()
+    sweep_release = threading.Event()
+    original = getattr(store, "sweep_device_deadlines", None)
+
+    def blocked_sweep(*, device_id: str, now_ms: int):
+        sweep_entered.set()
+        assert sweep_release.wait(timeout=1)
+        assert original is not None
+        return original(device_id=device_id, now_ms=now_ms)
+
+    monkeypatch.setattr(
+        store, "sweep_device_deadlines", blocked_sweep, raising=False
+    )
+    sweep_task = asyncio.create_task(coordinator.sweep_deadlines(now_ms=900_101))
+    assert await asyncio.to_thread(sweep_entered.wait, 0.1)
+
+    writer_entered = asyncio.Event()
+    writer = ScriptedLocalSettingWriter(store, entered=writer_entered)
+    delivery_task = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="session-a",
+            received_at_ms=900_102,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer,
+        )
+    )
+    delivery_started_while_sweep_owned = True
+    try:
+        await asyncio.wait_for(writer_entered.wait(), timeout=0.05)
+    except TimeoutError:
+        delivery_started_while_sweep_owned = False
+    finally:
+        sweep_release.set()
+
+    sweep, delivery = await asyncio.gather(sweep_task, delivery_task)
+    assert delivery_started_while_sweep_owned is False
+    assert sweep.expired_pending == 1
+    assert delivery.disposition is DeliveryDisposition.NO_ELIGIBLE
+    assert writer.frames == []
+
+
+@pytest.mark.asyncio
+async def test_deadline_sweep_progresses_distinct_devices_in_parallel(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    _enqueue(store, device_id="456")
+    coordinator = TwinCoordinator(
+        store, renderer=deterministic_renderer, clock_ms=_Clock()
+    )
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    first_release = threading.Event()
+    original = getattr(store, "sweep_device_deadlines", None)
+
+    def blocked_first(*, device_id: str, now_ms: int):
+        if device_id == "123":
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        else:
+            second_entered.set()
+        assert original is not None
+        return original(device_id=device_id, now_ms=now_ms)
+
+    monkeypatch.setattr(
+        store, "sweep_device_deadlines", blocked_first, raising=False
+    )
+    sweep_task = asyncio.create_task(coordinator.sweep_deadlines(now_ms=900_101))
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    second_progressed = await asyncio.to_thread(second_entered.wait, 0.1)
+    first_release.set()
+
+    sweep = await sweep_task
+    assert second_progressed is True
+    assert sweep.expired_pending == 2
+
+
+@pytest.mark.asyncio
 async def test_in_deadline_registered_event_wins_over_second_timeout_pass(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -1050,6 +1500,25 @@ async def test_cached_status_is_observability_only(
 
     assert result.disposition is DeliveryDisposition.SENT
     assert writer.frames
+
+
+@pytest.mark.asyncio
+async def test_device_scoped_status_read_does_not_replace_global_cache(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store)
+    _enqueue(store, device_id="456")
+    coordinator = TwinCoordinator(
+        store, renderer=deterministic_renderer, clock_ms=_Clock()
+    )
+    global_status = await coordinator.status_snapshot()
+
+    scoped_status = await coordinator.status_snapshot("123")
+
+    assert scoped_status.nonterminal_commands == 1
+    assert global_status.nonterminal_commands == 2
+    assert coordinator.cached_status_snapshot == global_status
 
 
 @pytest.mark.asyncio

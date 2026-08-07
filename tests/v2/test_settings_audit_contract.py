@@ -17,6 +17,7 @@ import pytest
 from protocol.crc import crc16_modbus
 from protocol.frame import ValidatedFrame
 from protocol.parser import FrameMetadata
+import telemetry.settings_audit as settings_audit_module
 from telemetry.settings_audit import (
     CloudSettingAuditObserver,
     CloudSettingAuditRecord,
@@ -108,8 +109,12 @@ def _response(raw: bytes, result: str = "ACK") -> SettingResponse:
     )
 
 
-def _event(new_value: str = "2") -> SettingEvent:
-    content = f"Remotely : tbl_box_prms / MODE: [1]->[{new_value}]"
+def _event(
+    new_value: str = "2", *, item_name: str = "MODE"
+) -> SettingEvent:
+    content = (
+        f"Remotely : tbl_box_prms / {item_name}: [1]->[{new_value}]"
+    )
     evidence_id = derive_event_evidence_id(
         "123", 55, "06.08.2026 10:12:01", content
     )
@@ -120,7 +125,7 @@ def _event(new_value: str = "2") -> SettingEvent:
         "06.08.2026 10:12:01",
         content,
         "tbl_box_prms",
-        "MODE",
+        item_name,
         "1",
         new_value,
     )
@@ -228,9 +233,20 @@ def test_projection_preserves_exact_persisted_wire_and_evidence_bytes(
     )
     assert prepared_snapshot.attempt is not None
     assert committed_snapshots[-1].attempt is not None
+    acknowledged_snapshot = next(
+        snapshot
+        for snapshot in committed_snapshots
+        if snapshot.transition.reason == "ack_received"
+    )
+    assert acknowledged_snapshot.attempt is not None
     assert prepared.wire_frame == prepared_snapshot.attempt.wire_frame
     assert acknowledged.evidence_frame == b"exact-ack-bytes"
+    assert acknowledged.evidence_id == (
+        acknowledged_snapshot.attempt.response_fingerprint
+    )
     assert confirmed.evidence_frame == b"exact-event-bytes"
+    assert committed_snapshots[-1].evidence is not None
+    assert confirmed.evidence_id == committed_snapshots[-1].evidence.evidence_id
     assert confirmed.wire_frame == committed_snapshots[-1].attempt.wire_frame
 
 
@@ -341,6 +357,8 @@ def test_projection_maps_retry_nack_and_write_failures(
     assert records[0].step is expected_step
     assert records[0].to_state is expected_state
     assert records[0].error
+    if operation == "nack":
+        assert records[0].evidence_id == hashlib.sha256(b"nack").hexdigest()
 
 
 def test_projection_maps_superseded_expired_incomplete_and_failed(
@@ -448,23 +466,115 @@ def test_committed_projection_preserves_per_audit_raw_payload_cap(
     committed_snapshots: tuple[TransitionAuditSnapshot, ...],
 ) -> None:
     snapshot = committed_snapshots[0]
-    capped = replace(
+    audit_id = f"aggregate-cap-{snapshot.command.command_id}"
+    records: list[SettingsAuditRecord] = []
+    publisher = SettingsAuditPublisher(records.append)
+
+    for offset in range(5):
+        publisher.publish_committed(
+            _large_audit_snapshot(snapshot, audit_id, offset)
+        )
+
+    assert sum(len(record.raw_text.encode("utf-8")) for record in records) <= (
+        64 * 1024
+    )
+    assert records[-1].audit_payload_capped is True
+
+
+def _large_audit_snapshot(
+    snapshot: TransitionAuditSnapshot,
+    audit_id: str,
+    transition_offset: int,
+) -> TransitionAuditSnapshot:
+    return replace(
         snapshot,
         command=replace(
             snapshot.command,
-            audit_id=f"aggregate-cap-{snapshot.command.command_id}",
+            audit_id=audit_id,
             raw_ingress_text="x" * (16 * 1024),
         ),
+        transition=replace(
+            snapshot.transition,
+            transition_id=snapshot.transition.transition_id + transition_offset,
+        ),
+    )
+
+
+def test_repeated_committed_snapshot_projects_identically_without_recharging(
+    committed_snapshots: tuple[TransitionAuditSnapshot, ...],
+) -> None:
+    snapshot = _large_audit_snapshot(
+        committed_snapshots[0],
+        f"repeat-{committed_snapshots[0].command.command_id}",
+        0,
     )
     records: list[SettingsAuditRecord] = []
     publisher = SettingsAuditPublisher(records.append)
 
     for _ in range(5):
-        publisher.publish_committed(capped)
+        publisher.publish_committed(snapshot)
 
-    assert sum(len(record.raw_text.encode("utf-8")) for record in records) <= (
+    assert records == [records[0]] * 5
+    assert len(records[0].raw_text.encode("utf-8")) == 16 * 1024
+    assert records[0].audit_payload_capped is False
+
+
+def test_failed_sink_does_not_consume_later_accepted_audit_budget(
+    committed_snapshots: tuple[TransitionAuditSnapshot, ...],
+) -> None:
+    snapshot = committed_snapshots[0]
+    audit_id = f"sink-retry-{snapshot.command.command_id}"
+    accepted: list[SettingsAuditRecord] = []
+    call_count = 0
+
+    def fail_first(record: SettingsAuditRecord) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("sink unavailable")
+        accepted.append(record)
+
+    publisher = SettingsAuditPublisher(fail_first)
+    publisher.publish_committed(_large_audit_snapshot(snapshot, audit_id, 0))
+    publisher.publish_committed(_large_audit_snapshot(snapshot, audit_id, 0))
+    for offset in range(1, 5):
+        publisher.publish_committed(
+            _large_audit_snapshot(snapshot, audit_id, offset)
+        )
+
+    assert [len(record.raw_text.encode("utf-8")) for record in accepted[:4]] == [
+        16 * 1024,
+    ] * 4
+    assert accepted[4].raw_text == ""
+    assert accepted[4].audit_payload_capped is True
+
+
+def test_active_audit_budget_does_not_expire_after_300_seconds(
+    committed_snapshots: tuple[TransitionAuditSnapshot, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = committed_snapshots[0]
+    audit_id = f"long-lived-{snapshot.command.command_id}"
+    now = {"value": 100.0}
+    monkeypatch.setattr(
+        settings_audit_module.time, "time", lambda: now["value"]
+    )
+    records: list[SettingsAuditRecord] = []
+    publisher = SettingsAuditPublisher(records.append)
+    for offset in range(4):
+        publisher.publish_committed(
+            _large_audit_snapshot(snapshot, audit_id, offset)
+        )
+
+    now["value"] += 301.0
+    publisher.publish_committed(
+        _large_audit_snapshot(snapshot, audit_id, 4)
+    )
+
+    assert sum(len(record.raw_text.encode("utf-8")) for record in records) == (
         64 * 1024
     )
+    assert records[-1].raw_text == ""
     assert records[-1].audit_payload_capped is True
 
 
@@ -585,13 +695,17 @@ def test_cloud_ack_sequence_is_fifo_with_multiple_settings() -> None:
     ]
 
 
-def test_cloud_event_observation_preserves_exact_event_bytes() -> None:
+def test_cloud_ack_then_event_preserves_identity_and_exact_event_bytes() -> None:
     records: list[CloudSettingAuditRecord] = []
     observer = CloudSettingAuditObserver(records.append)
     frame, metadata = _validated_setting()
     observation = observer.setting_forwarded(
         session_id="s", frame=frame, metadata=metadata, observed_at_ms=100
     )
+    acknowledged = observer.box_response_forwarded(
+        session_id="s", response=_response(b"ack"), observed_at_ms=110
+    )
+    assert acknowledged is not None
 
     event_record = observer.setting_event_observed(
         session_id="s",
@@ -604,6 +718,72 @@ def test_cloud_event_observation_preserves_exact_event_bytes() -> None:
     assert event_record.cloud_observation_id == observation.cloud_observation_id
     assert event_record.raw_frame == b"exact-cloud-event"
     assert event_record.step == "event_observed"
+
+
+def test_cloud_nack_is_terminal_and_cannot_match_later_event() -> None:
+    records: list[CloudSettingAuditRecord] = []
+    observer = CloudSettingAuditObserver(records.append)
+    frame, metadata = _validated_setting()
+    observer.setting_forwarded(
+        session_id="s", frame=frame, metadata=metadata, observed_at_ms=100
+    )
+    rejected = observer.box_response_forwarded(
+        session_id="s",
+        response=_response(b"nack", "NACK"),
+        observed_at_ms=110,
+    )
+
+    event_record = observer.setting_event_observed(
+        session_id="s",
+        event=_event(),
+        raw_frame=b"event-after-nack",
+        observed_at_ms=120,
+    )
+
+    assert rejected is not None
+    assert rejected.step == "box_nack_forwarded"
+    assert event_record is None
+    assert observer.close_session(session_id="s", observed_at_ms=130) == ()
+
+
+def test_cloud_events_match_acked_targets_out_of_response_order() -> None:
+    records: list[CloudSettingAuditRecord] = []
+    observer = CloudSettingAuditObserver(records.append)
+    first_frame, first_metadata = _validated_setting(message_id=1, id_set=11)
+    second_frame, second_metadata = _validated_setting(
+        message_id=2, id_set=12, item_name="BAT_AC", value="50"
+    )
+    first = observer.setting_forwarded(
+        session_id="s", frame=first_frame, metadata=first_metadata, observed_at_ms=100
+    )
+    second = observer.setting_forwarded(
+        session_id="s", frame=second_frame, metadata=second_metadata, observed_at_ms=101
+    )
+    observer.box_response_forwarded(
+        session_id="s", response=_response(b"first-ack"), observed_at_ms=110
+    )
+    observer.box_response_forwarded(
+        session_id="s", response=_response(b"second-ack"), observed_at_ms=111
+    )
+
+    second_event = observer.setting_event_observed(
+        session_id="s",
+        event=_event(item_name="BAT_AC", new_value="50"),
+        raw_frame=b"second-event",
+        observed_at_ms=120,
+    )
+    first_event = observer.setting_event_observed(
+        session_id="s",
+        event=_event(),
+        raw_frame=b"first-event",
+        observed_at_ms=121,
+    )
+
+    assert second_event is not None
+    assert first_event is not None
+    assert second_event.cloud_observation_id == second.cloud_observation_id
+    assert first_event.cloud_observation_id == first.cloud_observation_id
+    assert observer.close_session(session_id="s", observed_at_ms=130) == ()
 
 
 @pytest.mark.parametrize("reason", ["session_closed", "session_timeout"])
@@ -620,6 +800,10 @@ def test_cloud_session_close_clears_pending_in_order(reason: str) -> None:
             metadata=metadata,
             observed_at_ms=100 + message_id,
         )
+    acknowledged = observer.box_response_forwarded(
+        session_id="s", response=_response(b"ack"), observed_at_ms=110
+    )
+    assert acknowledged is not None
 
     closed = observer.close_session(
         session_id="s", reason=reason, observed_at_ms=200

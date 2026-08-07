@@ -295,6 +295,7 @@ def test_committed_and_cloud_audit_records_remain_json_serializable() -> None:
             command_id="command-1",
             transition_id=2,
             wire_frame=b"\x00exact-wire\xff",
+            evidence_id="persisted-response-fingerprint",
             evidence_frame=b"\x01exact-evidence\xfe",
         )
     )
@@ -319,6 +320,7 @@ def test_committed_and_cloud_audit_records_remain_json_serializable() -> None:
 
     assert "AGV4YWN0LXdpcmX/" in encoded
     assert "AGNsb3VkLXdpcmX/" in encoded
+    assert "persisted-response-fingerprint" in encoded
 
 
 @pytest.mark.asyncio

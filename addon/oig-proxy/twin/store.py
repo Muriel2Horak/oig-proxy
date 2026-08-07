@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 import os
 from pathlib import Path
@@ -1777,94 +1779,154 @@ class TwinCommandStore:
             raise ValueError("include_event_timeouts must be a boolean")
 
         def operation(connection: sqlite3.Connection) -> SweepReport:
-            snapshots: list[TransitionAuditSnapshot] = []
-            expired_pending = 0
-            retry_pending = 0
-            failed_attempt_limit = 0
-            incomplete_event_timeout = 0
-            pending_ids = connection.execute(
-                """
-                SELECT command_id FROM commands
-                WHERE state = 'pending' AND attempt_count = 0
-                  AND pending_expires_at_ms < ?
-                ORDER BY pending_expires_at_ms, command_id
-                """,
-                (now_ms,),
-            ).fetchall()
-            for row in pending_ids:
-                command = self._read_command_locked(connection, str(row[0]))
-                snapshot = self._transition_command_state_locked(
-                    connection,
-                    command=command,
-                    to_state=CommandState.EXPIRED,
-                    occurred_at_ms=now_ms,
-                    reason="pending_ttl_expired",
-                    completed=True,
-                )
-                snapshots.append(snapshot)
-                expired_pending += 1
-
-            ack_ids = connection.execute(
-                """
-                SELECT command_id FROM commands
-                WHERE state = 'awaiting_ack' AND ack_deadline_ms < ?
-                ORDER BY ack_deadline_ms, command_id
-                """,
-                (now_ms,),
-            ).fetchall()
-            for row in ack_ids:
-                command = self._read_command_locked(connection, str(row[0]))
-                if command.active_session_id is None:
-                    raise TwinStoreError("awaiting ACK command lost session ownership")
-                snapshot = self._release_active_attempt_locked(
-                    connection,
-                    command=command,
-                    attempt_number=command.attempt_count,
-                    session_id=command.active_session_id,
-                    occurred_at_ms=now_ms,
-                    reason=RetryReason.ACK_TIMEOUT,
-                    error=None,
-                )
-                snapshots.append(snapshot)
-                if snapshot.command.state is CommandState.FAILED:
-                    failed_attempt_limit += 1
-                else:
-                    retry_pending += 1
-
-            if include_event_timeouts:
-                event_ids = connection.execute(
-                    """
-                    SELECT command_id FROM commands
-                    WHERE state = 'awaiting_event' AND event_deadline_ms < ?
-                    ORDER BY event_deadline_ms, command_id
-                    """,
-                    (now_ms,),
-                ).fetchall()
-                for row in event_ids:
-                    command = self._read_command_locked(
-                        connection, str(row[0])
-                    )
-                    snapshots.append(
-                        self._transition_command_state_locked(
-                            connection,
-                            command=command,
-                            to_state=CommandState.INCOMPLETE,
-                            occurred_at_ms=now_ms,
-                            reason="event_timeout",
-                            completed=True,
-                        )
-                    )
-                    incomplete_event_timeout += 1
-            snapshots.sort(key=lambda snapshot: snapshot.transition.transition_id)
-            return SweepReport(
-                expired_pending,
-                retry_pending,
-                failed_attempt_limit,
-                incomplete_event_timeout,
-                tuple(snapshots),
+            return self._sweep_deadlines_locked(
+                connection,
+                now_ms=now_ms,
+                device_id=None,
+                include_event_timeouts=include_event_timeouts,
             )
 
         return self._run_mutation("sweep deadlines", operation)
+
+    def read_deadline_devices(self, *, now_ms: int) -> tuple[str, ...]:
+        """Return devices with strict-overdue pending or ACK work."""
+        _validate_sqlite_integer("now_ms", now_ms)
+        with self._mutex:
+            self.verify_health()
+            rows = self._require_connection().execute(
+                """
+                SELECT DISTINCT device_id FROM commands
+                WHERE (
+                    state = 'pending' AND attempt_count = 0
+                    AND pending_expires_at_ms < ?
+                ) OR (
+                    state = 'awaiting_ack' AND ack_deadline_ms < ?
+                )
+                ORDER BY device_id
+                """,
+                (now_ms, now_ms),
+            ).fetchall()
+            try:
+                return tuple(
+                    _persisted_identifier("deadline device_id", row[0], 128)
+                    for row in rows
+                )
+            except TwinStoreError as error:
+                self._set_degradation(str(error))
+                raise
+
+    def sweep_device_deadlines(
+        self, *, device_id: str, now_ms: int
+    ) -> SweepReport:
+        """Reconcile strict-overdue pending and ACK work for one device."""
+        normalized_device_id = _validate_device_id(device_id)
+        _validate_sqlite_integer("now_ms", now_ms)
+
+        def operation(connection: sqlite3.Connection) -> SweepReport:
+            return self._sweep_deadlines_locked(
+                connection,
+                now_ms=now_ms,
+                device_id=normalized_device_id,
+                include_event_timeouts=False,
+            )
+
+        return self._run_mutation("sweep device deadlines", operation)
+
+    def _sweep_deadlines_locked(  # pylint: disable=too-many-locals
+        self,
+        connection: sqlite3.Connection,
+        *,
+        now_ms: int,
+        device_id: str | None,
+        include_event_timeouts: bool,
+    ) -> SweepReport:
+        snapshots: list[TransitionAuditSnapshot] = []
+        expired_pending = 0
+        retry_pending = 0
+        failed_attempt_limit = 0
+        incomplete_event_timeout = 0
+        pending_ids = connection.execute(
+            """
+            SELECT command_id FROM commands
+            WHERE state = 'pending' AND attempt_count = 0
+              AND pending_expires_at_ms < ?
+              AND (? IS NULL OR device_id = ?)
+            ORDER BY pending_expires_at_ms, command_id
+            """,
+            (now_ms, device_id, device_id),
+        ).fetchall()
+        for row in pending_ids:
+            command = self._read_command_locked(connection, str(row[0]))
+            snapshot = self._transition_command_state_locked(
+                connection,
+                command=command,
+                to_state=CommandState.EXPIRED,
+                occurred_at_ms=now_ms,
+                reason="pending_ttl_expired",
+                completed=True,
+            )
+            snapshots.append(snapshot)
+            expired_pending += 1
+
+        ack_ids = connection.execute(
+            """
+            SELECT command_id FROM commands
+            WHERE state = 'awaiting_ack' AND ack_deadline_ms < ?
+              AND (? IS NULL OR device_id = ?)
+            ORDER BY ack_deadline_ms, command_id
+            """,
+            (now_ms, device_id, device_id),
+        ).fetchall()
+        for row in ack_ids:
+            command = self._read_command_locked(connection, str(row[0]))
+            if command.active_session_id is None:
+                raise TwinStoreError("awaiting ACK command lost session ownership")
+            snapshot = self._release_active_attempt_locked(
+                connection,
+                command=command,
+                attempt_number=command.attempt_count,
+                session_id=command.active_session_id,
+                occurred_at_ms=now_ms,
+                reason=RetryReason.ACK_TIMEOUT,
+                error=None,
+            )
+            snapshots.append(snapshot)
+            if snapshot.command.state is CommandState.FAILED:
+                failed_attempt_limit += 1
+            else:
+                retry_pending += 1
+
+        if include_event_timeouts:
+            event_ids = connection.execute(
+                """
+                SELECT command_id FROM commands
+                WHERE state = 'awaiting_event' AND event_deadline_ms < ?
+                  AND (? IS NULL OR device_id = ?)
+                ORDER BY event_deadline_ms, command_id
+                """,
+                (now_ms, device_id, device_id),
+            ).fetchall()
+            for row in event_ids:
+                command = self._read_command_locked(connection, str(row[0]))
+                snapshots.append(
+                    self._transition_command_state_locked(
+                        connection,
+                        command=command,
+                        to_state=CommandState.INCOMPLETE,
+                        occurred_at_ms=now_ms,
+                        reason="event_timeout",
+                        completed=True,
+                    )
+                )
+                incomplete_event_timeout += 1
+        snapshots.sort(key=lambda snapshot: snapshot.transition.transition_id)
+        return SweepReport(
+            expired_pending,
+            retry_pending,
+            failed_attempt_limit,
+            incomplete_event_timeout,
+            tuple(snapshots),
+        )
 
     def read_event_timeout_candidates(
         self, *, now_ms: int
@@ -1904,6 +1966,7 @@ class TwinCommandStore:
         command_id: str,
         expected_event_deadline_ms: int,
         now_ms: int,
+        final_guard: Callable[[], AbstractContextManager[bool]] | None = None,
     ) -> TransitionAuditSnapshot | None:
         """Apply the runtime event-timeout mutation through an exact CAS."""
         normalized_command_id = _validate_identifier("command_id", command_id)
@@ -1927,7 +1990,9 @@ class TwinCommandStore:
             ).fetchone()
             if row is None:
                 return None
-            command = self._read_command_locked(connection, normalized_command_id)
+            command = self._read_command_locked(
+                connection, normalized_command_id
+            )
             return self._transition_command_state_locked(
                 connection,
                 command=command,
@@ -1937,7 +2002,9 @@ class TwinCommandStore:
                 completed=True,
             )
 
-        return self._run_mutation("mark event incomplete", operation)
+        return self._run_mutation(
+            "mark event incomplete", operation, commit_guard=final_guard
+        )
 
     def recover(self, *, now_ms: int) -> RecoveryReport:
         """Reconcile durable startup states after socket ownership was lost."""
@@ -2618,7 +2685,7 @@ class TwinCommandStore:
             raise TwinStoreError("inserted transition disappeared")
         return _transition_from_row(row)
 
-    def _run_mutation(self, label: str, operation):
+    def _run_mutation(self, label: str, operation, *, commit_guard=None):
         """Run one fail-closed immediate transaction with BaseException rollback."""
         with self._mutex:
             self.verify_health()
@@ -2635,8 +2702,24 @@ class TwinCommandStore:
             committing = False
             try:
                 result = operation(connection)
-                committing = True
-                connection.execute("COMMIT")
+                guard = (
+                    commit_guard()
+                    if commit_guard is not None and result is not None
+                    else nullcontext(True)
+                )
+                commit_authorized = False
+                with guard as authorized:
+                    commit_authorized = authorized
+                    if authorized:
+                        committing = True
+                        connection.execute("COMMIT")
+                if not commit_authorized:
+                    connection.execute("ROLLBACK")
+                    if connection.in_transaction:
+                        raise TwinStoreError(
+                            f"{label} rollback left a live transaction"
+                        )
+                    return None
                 if connection.in_transaction:
                     raise TwinStoreError(f"{label} commit left a live transaction")
                 return result

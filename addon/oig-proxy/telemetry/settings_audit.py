@@ -168,8 +168,7 @@ def truncate_raw_text(text: str) -> tuple[str, TruncationInfo]:
     info = TruncationInfo(original_bytes=len(encoded))
     if len(encoded) <= _MAX_RAW_TEXT_BYTES:
         return text, info
-    truncated_bytes = encoded[:_MAX_RAW_TEXT_BYTES]
-    truncated_text = truncated_bytes.decode("utf-8", errors="replace")
+    truncated_text = _truncate_utf8_text(text, _MAX_RAW_TEXT_BYTES)
     info.was_truncated = True
     return truncated_text, info
 
@@ -179,7 +178,7 @@ def _truncate_utf8_text(text: str, byte_limit: int) -> str:
     if byte_limit <= 0:
         return ""
     truncated_bytes = text.encode("utf-8", errors="replace")[:byte_limit]
-    return truncated_bytes.decode("utf-8", errors="replace")
+    return truncated_bytes.decode("utf-8", errors="ignore")
 
 
 def _cleanup_audit_tracking(now: float | None = None) -> None:
@@ -609,15 +608,20 @@ def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord
     evidence = snapshot.evidence
     sensitive = _is_sensitive_key(command.item_name)
     raw_text = "[REDACTED]" if sensitive else command.raw_ingress_text
-    raw_text, truncation, audit_payload_capped = _apply_raw_text_limits(
-        command.audit_id, raw_text
-    )
+    raw_text, truncation = truncate_raw_text(raw_text)
     wire_frame = attempt.wire_frame if attempt is not None else transition.wire_frame
     evidence_frame = (
         evidence.evidence_frame
         if evidence is not None
         else transition.evidence_frame
     )
+    evidence_id = evidence.evidence_id if evidence is not None else None
+    if (
+        evidence_id is None
+        and transition.reason in {"ack_received", "nack_received"}
+        and attempt is not None
+    ):
+        evidence_id = attempt.response_fingerprint
     if sensitive:
         wire_frame = b"[REDACTED]" if wire_frame is not None else None
         evidence_frame = (
@@ -650,7 +654,7 @@ def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord
         raw_text=raw_text,
         raw_text_truncated=truncation.was_truncated,
         raw_text_bytes_original=truncation.original_bytes,
-        audit_payload_capped=audit_payload_capped,
+        audit_payload_capped=False,
         timestamp=_utc_iso(transition.occurred_at_ms / 1000),
         transition_id=transition.transition_id,
         command_id=command.command_id,
@@ -666,7 +670,7 @@ def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord
         ),
         wire_length=attempt.wire_length if attempt is not None else None,
         wire_frame=wire_frame,
-        evidence_id=evidence.evidence_id if evidence is not None else None,
+        evidence_id=evidence_id,
         evidence_frame=evidence_frame,
         error=transition.error_text or command.last_error,
     )
@@ -680,13 +684,53 @@ class SettingsAuditPublisher:
         self, sink: Callable[[SettingsAuditRecord], None] | None = None
     ) -> None:
         self._sink = sink
+        self._accepted_raw_bytes: dict[str, int] = {}
+        self._accepted_records: dict[
+            tuple[str, int | None], SettingsAuditRecord
+        ] = {}
+
+    def _bounded_record(
+        self, record: SettingsAuditRecord
+    ) -> tuple[SettingsAuditRecord, int, tuple[str, int | None]]:
+        key = (record.audit_id, record.transition_id)
+        accepted = self._accepted_records.get(key)
+        if accepted is not None:
+            return replace(accepted), 0, key
+        used_bytes = self._accepted_raw_bytes.get(record.audit_id, 0)
+        remaining_bytes = max(0, _MAX_TOTAL_RAW_BYTES - used_bytes)
+        raw_bytes = len(record.raw_text.encode("utf-8", errors="replace"))
+        aggregate_capped = raw_bytes > remaining_bytes
+        raw_text = _truncate_utf8_text(record.raw_text, remaining_bytes)
+        accepted_bytes = len(raw_text.encode("utf-8", errors="replace"))
+        return (
+            replace(
+                record,
+                raw_text=raw_text,
+                raw_text_truncated=(
+                    record.raw_text_truncated or aggregate_capped
+                ),
+                audit_payload_capped=aggregate_capped,
+            ),
+            accepted_bytes,
+            key,
+        )
 
     def publish_committed(self, snapshot: TransitionAuditSnapshot) -> None:
         """Project one committed snapshot without owning lifecycle truth."""
         if self._sink is None:
             return
         try:
-            self._sink(_project_committed(snapshot))
+            bounded, accepted_bytes, key = self._bounded_record(
+                _project_committed(snapshot)
+            )
+            already_accepted = key in self._accepted_records
+            self._sink(replace(bounded))
+            if not already_accepted:
+                self._accepted_raw_bytes[bounded.audit_id] = (
+                    self._accepted_raw_bytes.get(bounded.audit_id, 0)
+                    + accepted_bytes
+                )
+                self._accepted_records[key] = replace(bounded)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("settings audit sink rejected committed transition")
 
@@ -733,6 +777,9 @@ class CloudSettingAuditObserver:
     ) -> None:
         self._sink = sink
         self._sessions: dict[str, deque[CloudSettingAuditRecord]] = {}
+        self._acked_sessions: dict[
+            str, deque[CloudSettingAuditRecord]
+        ] = {}
 
     def _publish(self, record: CloudSettingAuditRecord) -> None:
         if self._sink is None:
@@ -802,6 +849,8 @@ class CloudSettingAuditObserver:
             ),
             observed_at_ms=observed_at_ms,
         )
+        if response.result == "ACK":
+            self._acked_sessions.setdefault(session_id, deque()).append(record)
         self._publish(record)
         return record
 
@@ -813,26 +862,34 @@ class CloudSettingAuditObserver:
         raw_frame: bytes,
         observed_at_ms: int,
     ) -> CloudSettingAuditRecord | None:
-        """Passively correlate an exact event only to the current FIFO head."""
-        queue = self._sessions.get(session_id)
+        """Match exact execution evidence to one ACKed session observation."""
+        queue = self._acked_sessions.get(session_id)
         if not queue:
             return None
-        pending = queue[0]
-        if (
-            pending.device_id,
-            pending.table_name,
-            pending.item_name,
-            pending.value_text,
-        ) != (
-            event.device_id,
-            event.table_name,
-            event.item_name,
-            event.new_value_text,
-        ):
+        pending = next(
+            (
+                record
+                for record in queue
+                if (
+                    record.device_id,
+                    record.table_name,
+                    record.item_name,
+                    record.value_text,
+                )
+                == (
+                    event.device_id,
+                    event.table_name,
+                    event.item_name,
+                    event.new_value_text,
+                )
+            ),
+            None,
+        )
+        if pending is None:
             return None
-        queue.popleft()
+        queue.remove(pending)
         if not queue:
-            self._sessions.pop(session_id, None)
+            self._acked_sessions.pop(session_id, None)
         record = replace(
             pending,
             raw_frame=raw_frame,
@@ -850,15 +907,17 @@ class CloudSettingAuditObserver:
         observed_at_ms: int | None = None,
     ) -> tuple[CloudSettingAuditRecord, ...]:
         """Publish and discard every still-pending session observation."""
-        queue = self._sessions.pop(session_id, deque())
+        acknowledged = self._acked_sessions.pop(session_id, deque())
+        pending = self._sessions.pop(session_id, deque())
         timestamp = (
             time.time_ns() // 1_000_000
             if observed_at_ms is None
             else observed_at_ms
         )
+        retained = (*acknowledged, *pending)
         closed = tuple(
             replace(record, step=reason, observed_at_ms=timestamp)
-            for record in queue
+            for record in retained
         )
         for record in closed:
             self._publish(record)
