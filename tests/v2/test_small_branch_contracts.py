@@ -68,7 +68,10 @@ async def test_mode_transition_callbacks_reasonless_retry_and_invalid_mode(
     transitions: list[tuple[str, float, str | None]] = []
     manager.on_hybrid_transition = lambda *args: transitions.append(args)
     moments = iter((10.0, 11.0, 12.0))
-    monkeypatch.setattr("proxy.mode.time.time", lambda: next(moments))
+    monkeypatch.setattr(
+        "proxy.mode.time",
+        SimpleNamespace(time=lambda: next(moments)),
+    )
 
     manager.record_failure("first")
     manager.record_failure()
