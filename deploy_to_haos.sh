@@ -9,7 +9,7 @@ echo ""
 # ── Konfigurace ──────────────────────────────────────────
 HA_HOST="ha"  # SSH alias z ~/.ssh/config
 ADDON_SLUG="d7b5d5b1_oig_proxy"
-CONTAINER_NAME="addon_${ADDON_SLUG}"
+CONTAINER_NAME="app_${ADDON_SLUG}"
 LOCAL_SOURCE="./addon/oig-proxy"
 
 HOST_ADDON_BASE_APPS="/mnt/data/supervisor/apps/git/d7b5d5b1/addon"
@@ -41,10 +41,12 @@ DEPLOY_FILES=(
     mqtt/client.py
     mqtt/status.py
     proxy/__init__.py
+    proxy/dialog.py
     proxy/server.py
     proxy/mode.py
     proxy/local_ack.py
     proxy/dns_resolve.py
+    proxy/writer.py
     protocol/__init__.py
     protocol/parser.py
     protocol/frame.py
@@ -59,6 +61,7 @@ DEPLOY_FILES=(
     twin/handler.py
     twin/delivery.py
     twin/ack_parser.py
+    twin/store.py
     telemetry/__init__.py
     telemetry/collector.py
     telemetry/client.py

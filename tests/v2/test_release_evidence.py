@@ -16,6 +16,7 @@ OWASP = (
     / "docs/superpowers/reports/"
     "2026-08-06-local-setting-transaction-hardening-owasp.md"
 )
+DEPLOY_SCRIPT = ROOT / "deploy_to_haos.sh"
 ROW = re.compile(r"^\| SI-(\d+) \| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|$")
 
 
@@ -71,6 +72,25 @@ def test_release_version_and_changelog_are_2_2_0() -> None:
     assert addon["version"] == "2.2.0"
     assert "## [2.2.0] - 2026-08-06" in changelog
     assert "## [2.1.1] - 2026-06-27" in changelog
+
+
+def test_haos_deploy_manifest_contains_every_production_python_module() -> None:
+    """Prevent a successful rebuild whose image omits a new runtime module."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    manifest_match = re.search(r"DEPLOY_FILES=\(\n(.*?)\n\)", script, re.DOTALL)
+    assert manifest_match is not None
+    deployed = {
+        line.strip()
+        for line in manifest_match.group(1).splitlines()
+        if line.strip()
+    }
+    production = {
+        str(path.relative_to(ROOT / "addon/oig-proxy"))
+        for path in (ROOT / "addon/oig-proxy").rglob("*.py")
+        if "tests" not in path.parts
+    }
+    assert deployed.issuperset(production)
+    assert 'CONTAINER_NAME="app_${ADDON_SLUG}"' in script
 
 
 def test_twin_docs_state_ack_event_and_residual_limit_are_explicit() -> None:
