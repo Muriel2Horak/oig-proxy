@@ -351,6 +351,43 @@ async def test_box_request_after_cloud_setting_ack_waits_for_cycle_completion(
 
 
 @pytest.mark.asyncio
+async def test_held_isnewset_is_rerouted_with_a_new_expectation(
+    online_harness: OnlineHarness,
+) -> None:
+    await online_harness.open_cycle()
+    cloud_setting = _frame(
+        result="Setting",
+        device_id="123",
+        table="tbl_box_prms",
+        item="MODE",
+        value="1",
+    )
+    await online_harness.cloud(cloud_setting)
+    await online_harness.box(_frame(result="ACK", reason="Setting"))
+    later_poll = _frame(
+        result="IsNewSet",
+        device_id="123",
+        message_id=14_000_010,
+        id_set=1_786_000_010,
+    )
+    await online_harness.box(later_poll)
+
+    first_end = _frame(result="END", extra="<Marker>first-cycle</Marker>")
+    await online_harness.cloud(first_end)
+    await online_harness.box(_frame(result="ACK", reason="Setting"))
+
+    assert online_harness.raw_cloud.writes[-1] == later_poll
+    assert online_harness.context.dialog.expectation_count == 1
+
+    _enqueue_second(online_harness.store)
+    later_end = _frame(result="END", extra="<Marker>second-cycle</Marker>")
+    await online_harness.cloud(later_end)
+
+    assert b"<TblItem>BAT_AC</TblItem>" in online_harness.raw_box.writes[-1]
+    assert online_harness.raw_box.writes[-1] != later_end
+
+
+@pytest.mark.asyncio
 async def test_correlated_end_is_replaced_and_local_ack_returns_exact_end(
     online_harness: OnlineHarness,
 ) -> None:

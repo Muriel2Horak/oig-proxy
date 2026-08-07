@@ -1084,7 +1084,11 @@ class ProxyServer:
                 )
                 self._sync_cloud_timer(context)
                 for held in context.dialog.drain_held_box():
-                    if not await self._write_cloud(context, held.raw):
+                    await self._route_box_frame(
+                        context,
+                        StreamFrameEvent(FrameDirection.BOX_TO_PROXY, held),
+                    )
+                    if context.close_requested.is_set():
                         break
                 return
             context.dialog.clear_socket_state()
@@ -1156,7 +1160,11 @@ class ProxyServer:
                     held.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
                 )
             for held in context.dialog.drain_held_box():
-                if not await self._write_cloud(context, held.raw):
+                await self._route_box_frame(
+                    context,
+                    StreamFrameEvent(FrameDirection.BOX_TO_PROXY, held),
+                )
+                if context.close_requested.is_set():
                     break
             return
         if decision.close_connection:
