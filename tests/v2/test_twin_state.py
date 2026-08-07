@@ -320,7 +320,15 @@ def test_twin_command_snapshot_is_frozen(command: TwinCommand) -> None:
         ),
         (
             EventTimeoutCandidate,
-            ("command_id", "device_id", "event_deadline_ms"),
+            (
+                "command_id",
+                "device_id",
+                "table_name",
+                "item_name",
+                "value_text",
+                "ack_device_rdt",
+                "event_deadline_ms",
+            ),
         ),
         (
             SweepReport,

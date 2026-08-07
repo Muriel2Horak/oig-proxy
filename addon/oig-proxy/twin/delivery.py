@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -12,7 +12,7 @@ import logging
 import secrets
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch
 from protocol.frame import FrameDirection
@@ -37,6 +37,7 @@ from .state import (
     DeliveryTrigger,
     EvidenceContext,
     EventMatchResult,
+    EventTimeoutCandidate,
     LocalResponseDecision,
     LocalResponseDisposition,
     LocalSettingWriter,
@@ -49,7 +50,11 @@ from .state import (
     TwinCommand,
 )
 from .ack_parser import SettingEvent, SettingResponse
-from .store import StaleAttemptError, TwinCommandStore
+from .store import (
+    StaleAttemptError,
+    TwinCommandStore,
+    event_is_eligible_for_timeout_candidate,
+)
 
 if TYPE_CHECKING:
     from ..mqtt.client import MQTTClient
@@ -58,6 +63,11 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+_COORDINATOR_MUTATION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=32,
+    thread_name_prefix="twin-coordinator-mutation",
+)
 
 
 class _RegisteredEventConsumed(ValueError):
@@ -87,6 +97,8 @@ class _RegisteredEventEntry:
     owner: asyncio.Task[Any] | None = None
     worker: asyncio.Task[EventMatchResult] | None = None
     result: EventMatchResult | None = None
+    batch_owner: asyncio.Task[Any] | None = None
+    batch_adopts_result: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +107,11 @@ class _EventTimeoutReservation:
 
     command_id: str
     device_id: str
+    table_name: str
+    item_name: str
+    value_text: str
+    ack_device_rdt: str | None
     event_deadline_ms: int
-    registration_generation: int
 
 
 class TwinCoordinator:
@@ -121,13 +136,12 @@ class TwinCoordinator:
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._registered_events: dict[str, _RegisteredEventEntry] = {}
         self._next_event_receipt_sequence = 1
-        self._event_registration_generation: dict[str, int] = defaultdict(int)
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._event_timeout_reservations: dict[
             str, _EventTimeoutReservation
         ] = {}
         self._event_timeout_candidates: dict[
-            str, tuple[str, int, float]
+            str, tuple[EventTimeoutCandidate, float]
         ] = {}
         self._cached_status = StoreStatus(
             tuple((state, 0) for state in CommandState),
@@ -209,14 +223,45 @@ class TwinCoordinator:
     ) -> None:
         if self._audit is None:
             return
+        cancellation_latched = False
         for snapshot in snapshots:
-            await self._audit.publish_committed_async(snapshot)
+            try:
+                await self._audit.publish_committed_async(snapshot)
+            except asyncio.CancelledError:
+                cancellation_latched = True
+        if cancellation_latched:
+            raise asyncio.CancelledError()
 
     async def _refresh_status(self) -> None:
-        try:
-            self._cached_status = await asyncio.to_thread(self._store.status_snapshot)
-        except Exception:  # pylint: disable=broad-exception-caught
+        worker = _COORDINATOR_MUTATION_EXECUTOR.submit(
+            self._store.status_snapshot
+        )
+        status, error, cancellation_latched = await self._drain_future(worker)
+        if error is None:
+            self._cached_status = cast(StoreStatus, status)
+        elif isinstance(error, Exception):
             logger.warning("TwinCoordinator: passive status refresh failed", exc_info=True)
+        else:
+            raise error
+        if cancellation_latched:
+            raise asyncio.CancelledError() from error
+
+    @staticmethod
+    async def _drain_future(
+        future: Future[Any],
+    ) -> tuple[Any | None, BaseException | None, bool]:
+        """Drain an executor future whose completion survives task cancellation."""
+        cancellation_latched = False
+        wrapped = asyncio.wrap_future(future)
+        while True:
+            try:
+                return await asyncio.shield(wrapped), None, cancellation_latched
+            except asyncio.CancelledError as error:
+                if wrapped.cancelled():
+                    return None, error, cancellation_latched
+                cancellation_latched = True
+            except BaseException as error:  # pylint: disable=broad-exception-caught
+                return None, error, cancellation_latched
 
     @staticmethod
     async def _drain_task(
@@ -243,25 +288,31 @@ class TwinCoordinator:
         on_failure: Callable[[BaseException], None] | None = None,
     ) -> Any:
         """Drain one device-owned store mutation before cancellation escapes."""
-        worker = asyncio.create_task(asyncio.to_thread(operation))
-        result, error, cancellation_latched = await self._drain_task(worker)
-
-        async def reconcile() -> None:
+        worker = _COORDINATOR_MUTATION_EXECUTOR.submit(operation)
+        result, error, cancellation_latched = await self._drain_future(worker)
+        reconciliation_error: BaseException | None = None
+        try:
             if error is None:
                 if on_success is not None:
                     on_success(result)
-                await self._publish(snapshots(result))
+                try:
+                    await self._publish(snapshots(result))
+                except asyncio.CancelledError:
+                    cancellation_latched = True
             elif on_failure is not None:
                 on_failure(error)
-            await self._refresh_status()
-
-        reconciliation = asyncio.create_task(reconcile())
-        _, reconciliation_error, reconciliation_cancelled = (
-            await self._drain_task(reconciliation)
-        )
-        cancellation_latched = (
-            cancellation_latched or reconciliation_cancelled
-        )
+        except BaseException as caught:  # pylint: disable=broad-exception-caught
+            reconciliation_error = caught
+        while True:
+            try:
+                await self._refresh_status()
+                break
+            except asyncio.CancelledError:
+                cancellation_latched = True
+            except BaseException as caught:  # pylint: disable=broad-exception-caught
+                if reconciliation_error is None:
+                    reconciliation_error = caught
+                break
         if reconciliation_error is not None:
             if cancellation_latched:
                 raise asyncio.CancelledError() from reconciliation_error
@@ -691,7 +742,6 @@ class TwinCoordinator:
         token = RegisteredEventToken(str(uuid.uuid4()), event, context)
         sequence = self._next_event_receipt_sequence
         self._next_event_receipt_sequence += 1
-        self._event_registration_generation[context.device_id] += 1
         self._registered_events[token.token_id] = _RegisteredEventEntry(
             token,
             sequence,
@@ -703,7 +753,10 @@ class TwinCoordinator:
     ) -> EventMatchResult:
         token = entry.token
 
-        def clear_timeout_candidate(settled: EventMatchResult) -> None:
+        def retain_settled_result(settled: EventMatchResult) -> None:
+            current = self._registered_events.get(token.token_id)
+            if current is entry:
+                entry.result = settled
             if settled.snapshot is not None:
                 self._event_timeout_candidates.pop(
                     settled.snapshot.command.command_id,
@@ -725,14 +778,13 @@ class TwinCoordinator:
                         if settled.snapshot is not None
                         else ()
                     ),
-                    on_success=clear_timeout_candidate,
+                    on_success=retain_settled_result,
                 )
         except BaseException:  # pylint: disable=broad-exception-caught
             current = self._registered_events.get(token.token_id)
             if current is entry:
                 entry.owner = None
                 entry.worker = None
-                entry.result = None
             raise
         current = self._registered_events.get(token.token_id)
         if current is entry:
@@ -759,6 +811,8 @@ class TwinCoordinator:
                 if current is entry and entry.owner is owner:
                     entry.owner = None
                 if worker.cancelled():
+                    if current is entry:
+                        entry.worker = None
                     raise
             except BaseException as error:  # pylint: disable=broad-exception-caught
                 if cancellation_latched:
@@ -769,7 +823,9 @@ class TwinCoordinator:
             if current is entry and entry.owner is owner:
                 entry.owner = None
         elif current is entry and entry.owner is owner:
-            self._registered_events.pop(entry.token.token_id)
+            entry.owner = None
+            if entry.batch_owner is None or not entry.batch_adopts_result:
+                self._registered_events.pop(entry.token.token_id)
         if cancellation_latched:
             raise asyncio.CancelledError()
         return result
@@ -791,6 +847,7 @@ class TwinCoordinator:
             entry.owner is not None
             or entry.worker is not None
             or entry.result is not None
+            or entry.batch_owner is not None
         ):
             raise _RegisteredEventConsumed(
                 "setting event token is already claimed"
@@ -804,19 +861,37 @@ class TwinCoordinator:
     async def _flush_registered_entry(
         self,
         entry: _RegisteredEventEntry,
+        batch_owner: asyncio.Task[Any],
     ) -> EventMatchResult | None:
         owner = asyncio.current_task()
         if owner is None:
             raise RuntimeError("registered event flush requires an asyncio task")
         current = self._registered_events.get(entry.token.token_id)
-        if current is not entry:
+        if current is not entry or entry.batch_owner is not batch_owner:
             return None
+        if entry.owner is not None and entry.owner is not owner:
+            prior_owner = entry.owner
+            _result, owner_error, cancellation_latched = await self._drain_task(
+                prior_owner
+            )
+            if cancellation_latched:
+                raise asyncio.CancelledError() from owner_error
+            current = self._registered_events.get(entry.token.token_id)
+            if owner_error is None:
+                if current is entry:
+                    raise RuntimeError(
+                        "registered event owner completed without consumption"
+                    )
+                return None
+            if not isinstance(owner_error, asyncio.CancelledError):
+                raise owner_error
+            if current is not entry:
+                return None
+            entry.batch_adopts_result = True
         if entry.result is not None:
             if entry.owner is not None:
                 return None
-            result = entry.result
-            self._registered_events.pop(entry.token.token_id)
-            return result
+            return entry.result
         if entry.worker is None:
             entry.owner = owner
             entry.worker = asyncio.create_task(
@@ -833,14 +908,15 @@ class TwinCoordinator:
                 raise asyncio.CancelledError() from error
             raise error
         current = self._registered_events.get(entry.token.token_id)
-        if current is entry and entry.owner is None:
+        if (
+            current is entry
+            and entry.batch_owner is batch_owner
+            and entry.owner is None
+        ):
             adopted = (
                 entry.result if entry.result is not None else drained_result
             )
-            if cancellation_latched:
-                entry.result = adopted
-            else:
-                self._registered_events.pop(entry.token.token_id)
+            entry.result = adopted
         else:
             adopted = None
         if cancellation_latched:
@@ -852,29 +928,83 @@ class TwinCoordinator:
     ) -> tuple[EventMatchResult, ...]:
         """Commit every reserved session event in synchronous receipt order."""
         self._bind_event_loop()
-        entries = tuple(
-            sorted(
-                (
-                    entry
-                    for entry in self._registered_events.values()
-                    if entry.token.context.session_id == session_id
-                ),
-                key=lambda entry: entry.receipt_sequence,
+        batch_owner = asyncio.current_task()
+        if batch_owner is None:
+            raise RuntimeError("registered event flush requires an asyncio task")
+        while True:
+            session_entries = tuple(
+                sorted(
+                    (
+                        entry
+                        for entry in self._registered_events.values()
+                        if entry.token.context.session_id == session_id
+                    ),
+                    key=lambda entry: entry.receipt_sequence,
+                )
             )
-        )
-        results: list[EventMatchResult] = []
+            competing_batch = next(
+                (
+                    entry.batch_owner
+                    for entry in session_entries
+                    if entry.batch_owner is not None
+                    and entry.batch_owner is not batch_owner
+                ),
+                None,
+            )
+            if competing_batch is None:
+                entries = session_entries
+                break
+            _result, _error, cancellation_latched = await self._drain_task(
+                competing_batch
+            )
+            if cancellation_latched:
+                raise asyncio.CancelledError()
         for entry in entries:
-            result = await self._flush_registered_entry(entry)
-            if result is not None:
-                results.append(result)
+            entry.batch_owner = batch_owner
+            entry.batch_adopts_result = entry.owner is None
+        results: list[EventMatchResult] = []
+        try:
+            for entry in entries:
+                result = await self._flush_registered_entry(entry, batch_owner)
+                if result is not None:
+                    results.append(result)
+        except BaseException:  # pylint: disable=broad-exception-caught
+            for entry in entries:
+                current = self._registered_events.get(entry.token.token_id)
+                if current is entry and entry.batch_owner is batch_owner:
+                    entry.batch_owner = None
+                    entry.batch_adopts_result = False
+            raise
+        for entry in entries:
+            current = self._registered_events.get(entry.token.token_id)
+            if current is not None and (
+                current is not entry or entry.batch_owner is not batch_owner
+            ):
+                raise RuntimeError("flush batch changed before atomic delivery")
+        for entry in entries:
+            current = self._registered_events.get(entry.token.token_id)
+            if current is entry:
+                self._registered_events.pop(entry.token.token_id)
         return tuple(results)
 
-    def _has_in_deadline_registered_event(
-        self, *, device_id: str, event_deadline_ms: int
+    def _has_eligible_registered_event(
+        self, reservation: _EventTimeoutReservation
     ) -> bool:
+        candidate = EventTimeoutCandidate(
+            reservation.command_id,
+            reservation.device_id,
+            reservation.table_name,
+            reservation.item_name,
+            reservation.value_text,
+            reservation.ack_device_rdt,
+            reservation.event_deadline_ms,
+        )
         return any(
-            entry.token.context.device_id == device_id
-            and entry.token.context.received_at_ms <= event_deadline_ms
+            event_is_eligible_for_timeout_candidate(
+                event=entry.token.event,
+                received_at_ms=entry.token.context.received_at_ms,
+                candidate=candidate,
+            )
             for entry in self._registered_events.values()
         )
 
@@ -886,18 +1016,10 @@ class TwinCoordinator:
         """Resolve one worker request at the loop-owned ordering point."""
         if decision.done():
             return
-        generation_unchanged = (
-            self._event_registration_generation[reservation.device_id]
-            == reservation.registration_generation
-        )
         authorized = (
-            generation_unchanged
-            and reservation.command_id
+            reservation.command_id
             not in self._event_timeout_reservations
-            and not self._has_in_deadline_registered_event(
-                device_id=reservation.device_id,
-                event_deadline_ms=reservation.event_deadline_ms,
-            )
+            and not self._has_eligible_registered_event(reservation)
         )
         if authorized:
             self._event_timeout_reservations[reservation.command_id] = reservation
@@ -932,7 +1054,8 @@ class TwinCoordinator:
         _result: Any,
     ) -> None:
         self._clear_event_timeout_reservation(reservation)
-        self._event_timeout_candidates.pop(command_id, None)
+        if _result is not None:
+            self._event_timeout_candidates.pop(command_id, None)
 
     def _fail_event_timeout_mutation(
         self,
@@ -949,27 +1072,57 @@ class TwinCoordinator:
             self._store.read_deadline_devices, now_ms=effective_now
         )
 
-        async def sweep_device(device_id: str) -> SweepReport:
-            async with self._device_lock(device_id):
-                return await self._run_mutation_locked(
-                    partial(
-                        self._store.sweep_device_deadlines,
-                        device_id=device_id,
-                        now_ms=effective_now,
-                    ),
-                    snapshots=lambda _report: (),
-                )
+        async def sweep_device(
+            device_id: str,
+        ) -> tuple[SweepReport, bool]:
+            retained: list[SweepReport] = []
+            try:
+                async with self._device_lock(device_id):
+                    report = await self._run_mutation_locked(
+                        partial(
+                            self._store.sweep_device_deadlines,
+                            device_id=device_id,
+                            now_ms=effective_now,
+                        ),
+                        snapshots=lambda _report: (),
+                        on_success=retained.append,
+                    )
+            except asyncio.CancelledError:
+                if retained:
+                    return retained[0], True
+                raise
+            return report, False
 
-        async def settle_device_sweeps() -> tuple[Any, ...]:
-            return tuple(
-                await asyncio.gather(
-                    *(
-                        sweep_device(device_id)
-                        for device_id in deadline_devices
-                    ),
-                    return_exceptions=True,
-                )
+        device_tasks = tuple(
+            (
+                device_id,
+                asyncio.create_task(sweep_device(device_id)),
             )
+            for device_id in deadline_devices
+        )
+
+        async def settle_device_sweeps(
+        ) -> tuple[tuple[Any, ...], bool]:
+            outcomes: list[Any] = []
+            cancellation_latched = False
+            for _device_id, task in device_tasks:
+                outcome, error, wait_cancelled = await self._drain_task(task)
+                cancellation_latched = (
+                    cancellation_latched or wait_cancelled
+                )
+                if error is not None:
+                    if isinstance(error, asyncio.CancelledError):
+                        cancellation_latched = True
+                    outcomes.append(error)
+                    continue
+                if not isinstance(outcome, tuple):
+                    raise RuntimeError("device sweep returned no outcome")
+                report, worker_cancelled = outcome
+                outcomes.append(report)
+                cancellation_latched = (
+                    cancellation_latched or worker_cancelled
+                )
+            return tuple(outcomes), cancellation_latched
 
         settlement = asyncio.create_task(settle_device_sweeps())
         settled, settlement_error, cancellation_latched = (
@@ -982,9 +1135,13 @@ class TwinCoordinator:
             raise settlement_error
         if not isinstance(settled, tuple):
             raise RuntimeError("deadline sweep settlement returned no outcomes")
+        outcomes, worker_cancellation_latched = settled
+        cancellation_latched = (
+            cancellation_latched or worker_cancellation_latched
+        )
         device_reports: list[SweepReport] = []
         failures: list[tuple[str, BaseException]] = []
-        for device_id, outcome in zip(deadline_devices, settled, strict=True):
+        for device_id, outcome in zip(deadline_devices, outcomes, strict=True):
             if isinstance(outcome, BaseException):
                 if isinstance(outcome, asyncio.CancelledError):
                     cancellation_latched = True
@@ -1002,8 +1159,22 @@ class TwinCoordinator:
                 key=lambda snapshot: snapshot.transition.transition_id,
             )
         )
-        await self._publish(base_snapshots)
-        await self._refresh_status()
+        reconciliation_error: BaseException | None = None
+        try:
+            await self._publish(base_snapshots)
+        except asyncio.CancelledError:
+            cancellation_latched = True
+        except BaseException as caught:  # pylint: disable=broad-exception-caught
+            reconciliation_error = caught
+        while True:
+            try:
+                await self._refresh_status()
+                break
+            except asyncio.CancelledError:
+                cancellation_latched = True
+            except BaseException as caught:  # pylint: disable=broad-exception-caught
+                reconciliation_error = caught
+                break
         base_report = SweepReport(
             sum(report.expired_pending for report in device_reports),
             sum(report.retry_pending for report in device_reports),
@@ -1011,6 +1182,10 @@ class TwinCoordinator:
             0,
             base_snapshots,
         )
+        if reconciliation_error is not None:
+            if cancellation_latched:
+                raise asyncio.CancelledError() from reconciliation_error
+            raise reconciliation_error
         if cancellation_latched:
             cause = failures[0][1] if failures else None
             raise asyncio.CancelledError() from cause
@@ -1028,28 +1203,26 @@ class TwinCoordinator:
         incomplete: list[TransitionAuditSnapshot] = []
         for candidate in candidates:
             prior = self._event_timeout_candidates.get(candidate.command_id)
-            identity = (candidate.device_id, candidate.event_deadline_ms)
-            if prior is None or prior[:2] != identity:
+            if prior is None or prior[0] != candidate:
                 self._event_timeout_candidates[candidate.command_id] = (
-                    candidate.device_id,
-                    candidate.event_deadline_ms,
+                    candidate,
                     now_monotonic,
                 )
                 continue
-            if now_monotonic - prior[2] < 1.0:
+            if now_monotonic - prior[1] < 1.0:
                 continue
             async with self._device_lock(candidate.device_id):
-                if self._has_in_deadline_registered_event(
-                    device_id=candidate.device_id,
-                    event_deadline_ms=candidate.event_deadline_ms,
-                ):
-                    continue
                 reservation = _EventTimeoutReservation(
                     candidate.command_id,
                     candidate.device_id,
+                    candidate.table_name,
+                    candidate.item_name,
+                    candidate.value_text,
+                    candidate.ack_device_rdt,
                     candidate.event_deadline_ms,
-                    self._event_registration_generation[candidate.device_id],
                 )
+                if self._has_eligible_registered_event(reservation):
+                    continue
 
                 snapshot = await self._run_mutation_locked(
                     partial(

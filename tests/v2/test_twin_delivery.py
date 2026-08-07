@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import sqlite3
 import threading
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any, cast, Literal
@@ -20,6 +21,7 @@ from typing import Any, cast, Literal
 import pytest
 
 from protocol.frame import FrameDirection
+import telemetry.settings_audit as settings_audit_module
 from telemetry.settings_audit import (
     SettingStep,
     SettingsAuditPublisher,
@@ -87,6 +89,30 @@ class _Clock:
         value = self.value
         self.value += 1
         return value
+
+
+async def _cancel_owner_and_internal_tasks(
+    owner: asyncio.Task[Any],
+    baseline: set[asyncio.Task[Any]],
+    *,
+    rounds: int = 3,
+) -> None:
+    """Model loop-wide shutdown cancelling an owner and its spawned tasks."""
+    owner.cancel()
+    loop = asyncio.get_running_loop()
+    current = asyncio.current_task()
+    for _ in range(rounds):
+        scheduling_turn = asyncio.Event()
+        loop.call_soon(scheduling_turn.set)
+        await scheduling_turn.wait()
+        internal = (
+            asyncio.all_tasks()
+            - baseline
+            - {owner}
+            - ({current} if current is not None else set())
+        )
+        for task in internal:
+            task.cancel()
 
 
 class ScriptedLocalSettingWriter:
@@ -285,6 +311,31 @@ def _event(
         item_name=item_name,
         old_value_text="1",
         new_value_text=new_value,
+    )
+
+
+def _register_batch_event(
+    coordinator: TwinCoordinator,
+    *,
+    session_id: str,
+    device_id: str,
+    event_id_set: int,
+    received_at_ms: int,
+) -> Any:
+    event = _event(
+        device_id=device_id,
+        event_id_set=event_id_set,
+        new_value=str(event_id_set),
+    )
+    return coordinator.register_setting_event(
+        event=event,
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            session_id,
+            device_id,
+            received_at_ms,
+            f"batch-{event_id_set}".encode(),
+        ),
     )
 
 
@@ -1544,6 +1595,298 @@ async def test_event_token_is_restored_in_receipt_order_after_store_failure(
 
 
 @pytest.mark.asyncio
+async def test_flush_later_failure_preserves_complete_ordered_batch(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store, device_id="456", value_text="9")
+    tokens = (
+        _register_batch_event(
+            coordinator,
+            session_id="atomic-failure",
+            device_id="123",
+            event_id_set=101,
+            received_at_ms=301,
+        ),
+        _register_batch_event(
+            coordinator,
+            session_id="atomic-failure",
+            device_id="456",
+            event_id_set=102,
+            received_at_ms=302,
+        ),
+        _register_batch_event(
+            coordinator,
+            session_id="atomic-failure",
+            device_id="123",
+            event_id_set=103,
+            received_at_ms=303,
+        ),
+    )
+    calls: dict[str, int] = defaultdict(int)
+    original = store.record_event
+
+    def fail_second_once(**kwargs):
+        evidence_id = kwargs["evidence"].evidence_id
+        calls[evidence_id] += 1
+        if evidence_id == tokens[1].event.evidence_id and calls[evidence_id] == 1:
+            raise RuntimeError("later batch mutation failed")
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", fail_second_once)
+
+    with pytest.raises(RuntimeError, match="later batch mutation failed"):
+        await coordinator.flush_registered_events(session_id="atomic-failure")
+    delivered = await coordinator.flush_registered_events(
+        session_id="atomic-failure"
+    )
+
+    assert [result.evidence.evidence_id for result in delivered] == [
+        token.event.evidence_id for token in tokens
+    ]
+    assert calls == {
+        tokens[0].event.evidence_id: 1,
+        tokens[1].event.evidence_id: 2,
+        tokens[2].event.evidence_id: 1,
+    }
+    assert await coordinator.flush_registered_events(
+        session_id="atomic-failure"
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_partial_flush_preserves_all_results_for_retry(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokens = tuple(
+        _register_batch_event(
+            coordinator,
+            session_id="atomic-cancel",
+            device_id="123",
+            event_id_set=event_id_set,
+            received_at_ms=300 + event_id_set,
+        )
+        for event_id_set in (111, 112, 113)
+    )
+    second_entered = threading.Event()
+    second_release = threading.Event()
+    calls: dict[str, int] = defaultdict(int)
+    original = store.record_event
+
+    def block_second(**kwargs):
+        evidence_id = kwargs["evidence"].evidence_id
+        calls[evidence_id] += 1
+        if evidence_id == tokens[1].event.evidence_id:
+            second_entered.set()
+            assert second_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", block_second)
+    flushing = asyncio.create_task(
+        coordinator.flush_registered_events(session_id="atomic-cancel")
+    )
+    assert await asyncio.to_thread(second_entered.wait, 0.1)
+
+    flushing.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    second_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await flushing
+    delivered = await coordinator.flush_registered_events(
+        session_id="atomic-cancel"
+    )
+
+    assert [result.evidence.evidence_id for result in delivered] == [
+        token.event.evidence_id for token in tokens
+    ]
+    assert calls == {
+        token.event.evidence_id: 1 for token in tokens
+    }
+    assert await coordinator.flush_registered_events(
+        session_id="atomic-cancel"
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_flush_batch_excludes_competing_handler_consumption(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokens = tuple(
+        _register_batch_event(
+            coordinator,
+            session_id="atomic-competition",
+            device_id="123",
+            event_id_set=event_id_set,
+            received_at_ms=400 + event_id_set,
+        )
+        for event_id_set in (121, 122, 123)
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    calls: dict[str, int] = defaultdict(int)
+    original = store.record_event
+
+    def block_first(**kwargs):
+        evidence_id = kwargs["evidence"].evidence_id
+        calls[evidence_id] += 1
+        if evidence_id == tokens[0].event.evidence_id:
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", block_first)
+    flushing = asyncio.create_task(
+        coordinator.flush_registered_events(session_id="atomic-competition")
+    )
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    competing = asyncio.create_task(
+        coordinator.handle_registered_event(tokens[1])
+    )
+    scheduling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(scheduling_turn.set)
+    await scheduling_turn.wait()
+    first_release.set()
+
+    with pytest.raises(ValueError, match="already claimed"):
+        await competing
+    delivered = await flushing
+
+    assert [result.evidence.evidence_id for result in delivered] == [
+        token.event.evidence_id for token in tokens
+    ]
+    assert calls == {
+        token.event.evidence_id: 1 for token in tokens
+    }
+
+
+@pytest.mark.asyncio
+async def test_flush_waits_for_earlier_handler_before_later_receipt(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store, device_id="456", value_text="9")
+    first = _register_batch_event(
+        coordinator,
+        session_id="handler-dependency",
+        device_id="123",
+        event_id_set=131,
+        received_at_ms=531,
+    )
+    second = _register_batch_event(
+        coordinator,
+        session_id="handler-dependency",
+        device_id="456",
+        event_id_set=132,
+        received_at_ms=532,
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    second_entered = threading.Event()
+    calls: dict[str, int] = defaultdict(int)
+    original = store.record_event
+
+    def ordered_record(**kwargs):
+        evidence_id = kwargs["evidence"].evidence_id
+        calls[evidence_id] += 1
+        if evidence_id == first.event.evidence_id:
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        elif evidence_id == second.event.evidence_id:
+            second_entered.set()
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", ordered_record)
+    handler = asyncio.create_task(coordinator.handle_registered_event(first))
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    flushing = asyncio.create_task(
+        coordinator.flush_registered_events(session_id="handler-dependency")
+    )
+    scheduling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(scheduling_turn.set)
+    await scheduling_turn.wait()
+    later_waited = not second_entered.is_set()
+    first_release.set()
+
+    handled = await handler
+    delivered = await flushing
+
+    assert later_waited is True
+    assert handled.evidence.evidence_id == first.event.evidence_id
+    assert [result.evidence.evidence_id for result in delivered] == [
+        second.event.evidence_id
+    ]
+    assert calls == {
+        first.event.evidence_id: 1,
+        second.event.evidence_id: 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_competing_flush_waits_for_active_batch_completion(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokens = tuple(
+        _register_batch_event(
+            coordinator,
+            session_id="flush-competition",
+            device_id="123",
+            event_id_set=event_id_set,
+            received_at_ms=600 + event_id_set,
+        )
+        for event_id_set in (141, 142)
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    calls: dict[str, int] = defaultdict(int)
+    original = store.record_event
+
+    def blocked_first(**kwargs):
+        evidence_id = kwargs["evidence"].evidence_id
+        calls[evidence_id] += 1
+        if evidence_id == tokens[0].event.evidence_id:
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", blocked_first)
+    first_flush = asyncio.create_task(
+        coordinator.flush_registered_events(session_id="flush-competition")
+    )
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    second_flush = asyncio.create_task(
+        coordinator.flush_registered_events(session_id="flush-competition")
+    )
+    scheduling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(scheduling_turn.set)
+    await scheduling_turn.wait()
+    contender_waited = not second_flush.done()
+    first_release.set()
+
+    first_result, second_result = await asyncio.gather(
+        first_flush, second_flush
+    )
+
+    assert contender_waited is True
+    assert [result.evidence.evidence_id for result in first_result] == [
+        token.event.evidence_id for token in tokens
+    ]
+    assert second_result == ()
+    assert calls == {
+        token.event.evidence_id: 1 for token in tokens
+    }
+
+
+@pytest.mark.asyncio
 async def test_cancelled_event_owner_drains_success_and_cleanup_adopts_once(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -2026,6 +2369,346 @@ async def test_cancelled_prepare_keeps_device_lock_until_commit_reconciles(
     assert coordinator.cached_status_snapshot.awaiting_ack == 1
 
 
+@pytest.mark.asyncio
+async def test_direct_internal_prepare_cancellation_keeps_mutation_owned(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    second_entered = threading.Event()
+    calls = 0
+    original = store.prepare_next_attempt
+
+    def blocked_prepare(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        else:
+            second_entered.set()
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "prepare_next_attempt", blocked_prepare)
+    baseline = asyncio.all_tasks()
+    first = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="first-session",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+
+    await _cancel_owner_and_internal_tasks(first, baseline)
+    second = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="second-session",
+            received_at_ms=201,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    scheduling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(scheduling_turn.set)
+    await scheduling_turn.wait()
+    public_incomplete = not first.done()
+    device_lock_held = coordinator._device_lock("123").locked()  # pylint: disable=protected-access
+    second_blocked = not second_entered.is_set()
+    first_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second_result = await second
+
+    assert public_incomplete is True
+    assert device_lock_held is True
+    assert second_blocked is True
+    assert second_result.disposition is DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE
+    assert [record.step for record in records].count(SettingStep.SELECTED) == 1
+    assert [record.step for record in records].count(
+        SettingStep.ATTEMPT_PREPARED
+    ) == 1
+    assert coordinator.cached_status_snapshot.awaiting_ack == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_publication_cancellation_finishes_before_device_unlock(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    proposal_entered = threading.Event()
+    proposal_release = threading.Event()
+    records: list[SettingsAuditRecord] = []
+    original = store.propose_audit_delivery
+
+    def blocked_proposal(**kwargs):
+        proposal_entered.set()
+        assert proposal_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "propose_audit_delivery", blocked_proposal)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    baseline = asyncio.all_tasks()
+    delivery = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="publication-session",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    assert await asyncio.to_thread(proposal_entered.wait, 0.1)
+
+    await _cancel_owner_and_internal_tasks(delivery, baseline)
+    public_incomplete = not delivery.done()
+    device_lock_held = coordinator._device_lock("123").locked()  # pylint: disable=protected-access
+    proposal_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await delivery
+
+    assert public_incomplete is True
+    assert device_lock_held is True
+    assert [record.step for record in records].count(SettingStep.SELECTED) == 1
+    assert [record.step for record in records].count(
+        SettingStep.ATTEMPT_PREPARED
+    ) == 1
+    assert coordinator.cached_status_snapshot.awaiting_ack == 1
+
+
+@pytest.mark.asyncio
+async def test_busy_audit_stripe_cancellation_finishes_before_device_unlock(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    delivered: list[SettingsAuditRecord] = []
+    accepted_while_locked: list[bool] = []
+    acquisition_entered = asyncio.Event()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            delivered.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        command.audit_id
+    )
+    lifecycle_lock.acquire()
+    original_acquire = (
+        # pylint: disable-next=protected-access
+        settings_audit_module._acquire_audit_lifecycle_lock
+    )
+    original_accept = store.accept_audit_delivery
+
+    async def observed_acquire(lock) -> bool:
+        acquisition_entered.set()
+        result = await original_acquire(lock)
+        return bool(result)
+
+    def observed_accept(**kwargs):
+        accepted_while_locked.append(
+            coordinator._device_lock("123").locked()  # pylint: disable=protected-access
+        )
+        return original_accept(**kwargs)
+
+    monkeypatch.setattr(
+        settings_audit_module,
+        "_acquire_audit_lifecycle_lock",
+        observed_acquire,
+    )
+    monkeypatch.setattr(store, "accept_audit_delivery", observed_accept)
+    delivery = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="busy-stripe-session",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    await acquisition_entered.wait()
+
+    delivery.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    cancellation_waited = not delivery.done()
+    device_lock_held = coordinator._device_lock("123").locked()  # pylint: disable=protected-access
+    lifecycle_lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await delivery
+
+    assert cancellation_waited is True
+    assert device_lock_held is True
+    assert [record.step for record in delivered] == [
+        SettingStep.SELECTED,
+        SettingStep.ATTEMPT_PREPARED,
+    ]
+    assert accepted_while_locked == [True, True]
+    assert store.audit_delivery_decision_count() == 2
+
+
+@pytest.mark.asyncio
+async def test_direct_internal_registered_event_cancellation_reconciles_once(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    active = await _deliver(
+        coordinator, ScriptedLocalSettingWriter(store), now_ms=100
+    )
+    raw_ack = b"direct-internal-cancel-ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw_ack),
+        context=_context(active, raw_ack, received_at_ms=220),
+        writer=ScriptedLocalSettingWriter(store),
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"direct-internal-cancel-event",
+        ),
+    )
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    original = store.record_event
+
+    def blocked_record(**kwargs):
+        worker_entered.set()
+        assert worker_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", blocked_record)
+    baseline = asyncio.all_tasks()
+    owner = asyncio.create_task(coordinator.handle_registered_event(token))
+    assert await asyncio.to_thread(worker_entered.wait, 0.1)
+
+    await _cancel_owner_and_internal_tasks(owner, baseline)
+    public_incomplete = not owner.done()
+    device_lock_held = coordinator._device_lock("123").locked()  # pylint: disable=protected-access
+    worker_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    adopted = await coordinator.flush_registered_events(
+        session_id=active.session_id
+    )
+
+    assert public_incomplete is True
+    assert device_lock_held is True
+    assert len(adopted) == 1
+    assert adopted[0].disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert [record.step for record in records].count(
+        SettingStep.EVENT_CONFIRMED
+    ) == 1
+    assert coordinator.cached_status_snapshot.count(CommandState.CONFIRMED) == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_start_registered_worker_cancellation_restores_receipt_order(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _register_batch_event(
+        coordinator,
+        session_id="pre-start-cancel",
+        device_id="123",
+        event_id_set=151,
+        received_at_ms=751,
+    )
+    calls: list[str] = []
+    original = store.record_event
+
+    def observed_record(**kwargs):
+        calls.append(kwargs["evidence"].evidence_id)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", observed_record)
+    owner = asyncio.create_task(coordinator.handle_registered_event(first))
+    child_cancelled = asyncio.Event()
+
+    def cancel_child_before_first_turn() -> None:
+        entry = coordinator._registered_events[first.token_id]  # pylint: disable=protected-access
+        assert entry.worker is not None
+        entry.worker.cancel()
+        child_cancelled.set()
+
+    asyncio.get_running_loop().call_soon(cancel_child_before_first_turn)
+    await child_cancelled.wait()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    second = _register_batch_event(
+        coordinator,
+        session_id="pre-start-cancel",
+        device_id="123",
+        event_id_set=152,
+        received_at_ms=752,
+    )
+
+    delivered = await coordinator.flush_registered_events(
+        session_id="pre-start-cancel"
+    )
+
+    assert [result.evidence.evidence_id for result in delivered] == [
+        first.event.evidence_id,
+        second.event.evidence_id,
+    ]
+    assert calls == [
+        first.event.evidence_id,
+        second.event.evidence_id,
+    ]
+
+
 @pytest.mark.parametrize(
     ("response_result", "store_method", "expected_state", "expected_step"),
     [
@@ -2501,6 +3184,213 @@ async def test_cancelled_deadline_sweep_reconciles_all_device_commits(
 
 
 @pytest.mark.asyncio
+async def test_direct_sweep_worker_cancellation_preserves_aggregate_reports(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    entered = {device_id: threading.Event() for device_id in ("123", "456")}
+    release = {device_id: threading.Event() for device_id in ("123", "456")}
+    original = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int):
+        entered[device_id].set()
+        assert release[device_id].wait(timeout=1)
+        return original(device_id=device_id, now_ms=now_ms)
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    assert await asyncio.to_thread(entered["123"].wait, 0.1)
+    assert await asyncio.to_thread(entered["456"].wait, 0.1)
+    internal_tasks = tuple(
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task() and task is not sweep_task
+    )
+    settlement = next(
+        task
+        for task in internal_tasks
+        if "settle_device_sweeps"
+        in getattr(task.get_coro(), "__qualname__", "")
+    )
+    device_workers = tuple(
+        task
+        for task in internal_tasks
+        if "sweep_device" in getattr(task.get_coro(), "__qualname__", "")
+        and task is not settlement
+    )
+    assert len(device_workers) == 2
+
+    device_workers[0].cancel()
+    settlement.cancel()
+    release["123"].set()
+    release["456"].set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep_task
+
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    assert [record.step for record in records] == [
+        SettingStep.EXPIRED,
+        SettingStep.EXPIRED,
+    ]
+    assert [record.transition_id for record in records] == sorted(
+        cast(int, record.transition_id) for record in records
+    )
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_aggregate_publication_still_refreshes_final_status(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    delivered: list[SettingsAuditRecord] = []
+    proposal_entered = threading.Event()
+    proposal_release = threading.Event()
+    proposal_calls = 0
+    original_proposal = store.propose_audit_delivery
+
+    def block_first_proposal(**kwargs):
+        nonlocal proposal_calls
+        proposal_calls += 1
+        if proposal_calls == 1:
+            proposal_entered.set()
+            assert proposal_release.wait(timeout=1)
+        return original_proposal(**kwargs)
+
+    monkeypatch.setattr(store, "propose_audit_delivery", block_first_proposal)
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            delivered.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    refresh_calls = 0
+    original_refresh = coordinator._refresh_status  # pylint: disable=protected-access
+
+    async def observed_refresh() -> None:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        await original_refresh()
+
+    monkeypatch.setattr(coordinator, "_refresh_status", observed_refresh)
+    effective_now = max(first.pending_expires_at_ms, second.pending_expires_at_ms) + 1
+    sweep = asyncio.create_task(coordinator.sweep_deadlines(now_ms=effective_now))
+    assert await asyncio.to_thread(proposal_entered.wait, 0.1)
+
+    sweep.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    cancellation_waited = not sweep.done()
+    proposal_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep
+
+    assert cancellation_waited is True
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    assert [record.step for record in delivered] == [
+        SettingStep.EXPIRED,
+        SettingStep.EXPIRED,
+    ]
+    assert [record.transition_id for record in delivered] == sorted(
+        cast(int, record.transition_id) for record in delivered
+    )
+    assert refresh_calls == 3
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_aggregate_status_refresh_is_drained(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    delivered: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            delivered.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    status_calls = 0
+    status_guard = threading.Lock()
+    aggregate_entered = threading.Event()
+    aggregate_release = threading.Event()
+    aggregate_finished = threading.Event()
+    original_status = store.status_snapshot
+
+    def blocked_aggregate_status(*args, **kwargs):
+        nonlocal status_calls
+        with status_guard:
+            status_calls += 1
+            call_number = status_calls
+        if call_number == 3:
+            aggregate_entered.set()
+            assert aggregate_release.wait(timeout=1)
+        try:
+            return original_status(*args, **kwargs)
+        finally:
+            if call_number == 3:
+                aggregate_finished.set()
+
+    monkeypatch.setattr(store, "status_snapshot", blocked_aggregate_status)
+    effective_now = max(first.pending_expires_at_ms, second.pending_expires_at_ms) + 1
+    sweep = asyncio.create_task(coordinator.sweep_deadlines(now_ms=effective_now))
+    assert await asyncio.to_thread(aggregate_entered.wait, 0.2)
+
+    sweep.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    cancellation_waited = not sweep.done()
+    aggregate_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep
+
+    assert cancellation_waited is True
+    assert await asyncio.to_thread(aggregate_finished.wait, 0.1)
+    assert [record.step for record in delivered] == [
+        SettingStep.EXPIRED,
+        SettingStep.EXPIRED,
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+
+
+@pytest.mark.asyncio
 async def test_in_deadline_registered_event_wins_over_second_timeout_pass(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -2585,6 +3475,188 @@ async def test_two_pass_sweeper_marks_exact_unchanged_candidate_incomplete(
     assert grace.incomplete_event_timeout == 0
     assert second.incomplete_event_timeout == 1
     assert store.read_command(active.command_id).state is CommandState.INCOMPLETE
+
+
+@pytest.mark.parametrize(
+    (
+        "event_item",
+        "event_value",
+        "receipt_offset",
+        "event_device_dt",
+        "content_value",
+        "expected_state",
+    ),
+    [
+        ("HEAT", "2", 0, "06.08.2026 10:12:01", None, CommandState.INCOMPLETE),
+        ("MODE", "3", 0, "06.08.2026 10:12:01", None, CommandState.INCOMPLETE),
+        ("MODE", "2", 1, "06.08.2026 10:12:01", None, CommandState.INCOMPLETE),
+        ("MODE", "2", 0, "06.08.2026 10:12:01", None, CommandState.CONFIRMED),
+        ("MODE", "02", 0, "06.08.2026 10:12:01", None, CommandState.CONFIRMED),
+        ("MODE", "invalid", 0, "06.08.2026 10:12:01", None, CommandState.INCOMPLETE),
+        ("MODE", "2", 0, "06.08.2026 10:12:01", "3", CommandState.INCOMPLETE),
+        ("MODE", "2", 0, "06.08.2026 10:11:59", None, CommandState.INCOMPLETE),
+        ("MODE", "2", 0, "06.08.2026 10:12:00", None, CommandState.CONFIRMED),
+    ],
+)
+@pytest.mark.asyncio
+async def test_timeout_authorization_uses_exact_eligible_event_identity(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    event_item: str,
+    event_value: str,
+    receipt_offset: int,
+    event_device_dt: str,
+    content_value: str | None,
+    expected_state: CommandState,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw_ack = b"exact-authorization-ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw_ack),
+        context=_context(active, raw_ack, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    deadline = command.event_deadline_ms
+    assert deadline is not None
+    await coordinator.sweep_deadlines(now_ms=deadline + 1)
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+    original = store.mark_event_incomplete
+
+    def blocked_timeout(**kwargs):
+        mutation_entered.set()
+        assert mutation_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "mark_event_incomplete", blocked_timeout)
+    monotonic["value"] = 1.1
+    sweep = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=deadline + 2)
+    )
+    assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+    event = _event(
+        item_name=event_item,
+        new_value=event_value,
+        device_dt=event_device_dt,
+    )
+    if content_value is not None:
+        content = (
+            f"Remotely : tbl_box_prms / {event_item}: [1]->[{content_value}]"
+        )
+        event = replace(
+            event,
+            evidence_id=derive_event_evidence_id(
+                event.device_id,
+                event.event_id_set,
+                event.device_dt,
+                content,
+            ),
+            content_text=content,
+        )
+    token = coordinator.register_setting_event(
+        event=event,
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            deadline + receipt_offset,
+            b"authorization-event",
+        ),
+    )
+    mutation_release.set()
+    report = await sweep
+
+    if expected_state is CommandState.CONFIRMED:
+        decision = await coordinator.handle_registered_event(token)
+        assert report.incomplete_event_timeout == 0
+        assert decision.disposition is EventDisposition.CONFIRMED
+    else:
+        assert report.incomplete_event_timeout == 1
+        decision = await coordinator.handle_registered_event(token)
+        assert decision.disposition is EventDisposition.UNMATCHED
+    assert store.read_command(active.command_id).state is expected_state
+
+
+@pytest.mark.asyncio
+async def test_repeated_late_events_cannot_restart_timeout_grace(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw_ack = b"late-traffic-ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw_ack),
+        context=_context(active, raw_ack, received_at_ms=220),
+        writer=writer,
+    )
+    deadline = store.read_command(active.command_id).event_deadline_ms
+    assert deadline is not None
+    await coordinator.sweep_deadlines(now_ms=deadline + 1)
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+    original = store.mark_event_incomplete
+
+    def blocked_timeout(**kwargs):
+        mutation_entered.set()
+        assert mutation_release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "mark_event_incomplete", blocked_timeout)
+    monotonic["value"] = 1.1
+    sweep = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=deadline + 2)
+    )
+    assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+    late_tokens = tuple(
+        coordinator.register_setting_event(
+            event=_event(event_id_set=event_id_set),
+            context=EvidenceContext(
+                FrameDirection.BOX_TO_PROXY,
+                active.session_id,
+                active.device_id,
+                deadline + event_id_set,
+                f"late-{event_id_set}".encode(),
+            ),
+        )
+        for event_id_set in (1, 2, 3)
+    )
+    mutation_release.set()
+    report = await sweep
+
+    assert report.incomplete_event_timeout == 1
+    assert store.read_command(active.command_id).state is CommandState.INCOMPLETE
+    delivered = await coordinator.flush_registered_events(
+        session_id=active.session_id
+    )
+    assert [result.evidence.evidence_id for result in delivered] == [
+        token.event.evidence_id for token in late_tokens
+    ]
+    assert all(
+        result.disposition is EventDisposition.UNMATCHED for result in delivered
+    )
 
 
 @pytest.mark.asyncio

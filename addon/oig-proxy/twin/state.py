@@ -240,6 +240,8 @@ class AuditDeliveryDecision:
 
     transition_id: int
     audit_id: str
+    command_id: str
+    canonical_payload_sha256: bytes
     raw_bytes: int
     payload_capped: bool
     state: AuditDeliveryState
@@ -250,6 +252,13 @@ class AuditDeliveryDecision:
             raise ValueError("transition_id must be positive")
         if not self.audit_id or len(self.audit_id) > 256:
             raise ValueError("audit_id length must be between 1 and 256")
+        if not self.command_id or len(self.command_id) > 256:
+            raise ValueError("command_id length must be between 1 and 256")
+        if (
+            not isinstance(self.canonical_payload_sha256, bytes)
+            or len(self.canonical_payload_sha256) != 32
+        ):
+            raise ValueError("canonical_payload_sha256 must be 32 bytes")
         _require_int("raw_bytes", self.raw_bytes)
         if not 0 <= self.raw_bytes <= 16 * 1024:
             raise ValueError("raw_bytes must be between 0 and 16384")
@@ -495,6 +504,10 @@ class EventTimeoutCandidate:
 
     command_id: str
     device_id: str
+    table_name: str
+    item_name: str
+    value_text: str
+    ack_device_rdt: str | None
     event_deadline_ms: int
 
 

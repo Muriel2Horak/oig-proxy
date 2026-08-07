@@ -67,6 +67,43 @@ _MAX_WIRE_FRAME_BYTES = 1_048_576
 _PRAGUE = ZoneInfo("Europe/Prague")
 _FIVE_DIGITS = re.compile(r"[0-9]{5}")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_AUDIT_NO_ATTEMPT_REASONS = frozenset({"selected", "render_failed"})
+_AUDIT_REQUIRED_ATTEMPT_REASONS = frozenset(
+    {
+        "attempt_prepared",
+        "write_started",
+        "attempt_drained",
+        "write_unknown",
+        "write_failed",
+        "ack_received",
+        "nack_received",
+        "event_confirmed",
+        "disconnect",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+        "ack_timeout",
+        "event_timeout",
+        "recovery_event_timeout",
+        "recovery_attempt_limit",
+    }
+)
+_AUDIT_ATTEMPT_SESSION_REASONS = frozenset(
+    {
+        "attempt_prepared",
+        "write_started",
+        "attempt_drained",
+        "write_unknown",
+        "write_failed",
+        "ack_received",
+        "nack_received",
+        "disconnect",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+        "ack_timeout",
+    }
+)
 _EXPECTED_PRAGMAS = PragmaSnapshot(
     journal_mode="wal",
     synchronous=2,
@@ -192,6 +229,10 @@ CREATE TABLE command_transitions (
 _CREATE_SETTINGS_AUDIT_DELIVERIES = """
 CREATE TABLE settings_audit_deliveries (
     transition_id INTEGER PRIMARY KEY REFERENCES command_transitions(transition_id),
+    canonical_payload_sha256 BLOB NOT NULL CHECK (
+        typeof(canonical_payload_sha256) = 'blob'
+        AND length(canonical_payload_sha256) = 32
+    ),
     raw_bytes INTEGER NOT NULL CHECK (raw_bytes BETWEEN 0 AND 16384),
     payload_capped INTEGER NOT NULL CHECK (payload_capped IN (0, 1)),
     delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','accepted'))
@@ -373,8 +414,8 @@ class TwinCommandStore:
             if self._connection is not None or self._process_lock is not None:
                 raise TwinStoreError("store is already open")
             self._store_state = (0, 0, None, None)
-            self._acquire_process_lock()
             try:
+                self._acquire_process_lock()
                 file_state = self._database_file_state()
                 bootstrap = file_state is None or file_state[1] == 0
                 existing_version: int | None = None
@@ -420,15 +461,17 @@ class TwinCommandStore:
                     database_identity,
                 )
                 self.verify_health()
-            except (TwinStoreError, OSError, sqlite3.Error) as error:
+            except BaseException as error:  # pylint: disable=broad-exception-caught
                 try:
                     self._release_resources()
-                except TwinStoreError as cleanup_error:
+                except BaseException as cleanup_error:  # pylint: disable=broad-exception-caught
                     combined_reason = _bounded_message(
                         f"store open failed: {error}; cleanup failed: {cleanup_error}"
                     )
                     self._set_degradation(combined_reason)
                     raise TwinStoreError(combined_reason) from cleanup_error
+                if not isinstance(error, Exception):
+                    raise
                 if isinstance(error, TwinStoreError):
                     raise
                 if isinstance(error, sqlite3.DatabaseError):
@@ -726,11 +769,20 @@ class TwinCommandStore:
         self,
         *,
         audit_id: str,
+        command_id: str,
         transition_id: int,
+        canonical_payload_sha256: bytes,
         requested_raw_bytes: int,
     ) -> AuditDeliveryDecision:
         """Reserve one replay-stable aggregate budget decision before sink I/O."""
         normalized_audit_id = _validate_identifier("audit_id", audit_id)
+        normalized_command_id = _validate_identifier("command_id", command_id)
+        if (
+            not isinstance(canonical_payload_sha256, bytes)
+            or len(canonical_payload_sha256) != 32
+        ):
+            raise ValueError("canonical_payload_sha256 must be 32 bytes")
+        normalized_digest = bytes(canonical_payload_sha256)
         _validate_sqlite_integer("transition_id", transition_id)
         if transition_id < 1:
             raise ValueError("transition_id must be positive")
@@ -742,6 +794,7 @@ class TwinCommandStore:
             self._require_audit_transition_locked(
                 connection,
                 audit_id=normalized_audit_id,
+                command_id=normalized_command_id,
                 transition_id=transition_id,
             )
             existing = self._read_audit_delivery_locked(
@@ -750,6 +803,14 @@ class TwinCommandStore:
                 transition_id=transition_id,
             )
             if existing is not None:
+                if (
+                    existing.command_id != normalized_command_id
+                    or existing.canonical_payload_sha256
+                    != normalized_digest
+                ):
+                    raise ValueError(
+                        "audit delivery canonical identity changed"
+                    )
                 return existing
             used_row = connection.execute(
                 """
@@ -772,14 +833,22 @@ class TwinCommandStore:
             connection.execute(
                 """
                 INSERT INTO settings_audit_deliveries(
-                    transition_id, raw_bytes, payload_capped, delivery_state
-                ) VALUES (?, ?, ?, 'pending')
+                    transition_id, canonical_payload_sha256, raw_bytes,
+                    payload_capped, delivery_state
+                ) VALUES (?, ?, ?, ?, 'pending')
                 """,
-                (transition_id, raw_bytes, int(payload_capped)),
+                (
+                    transition_id,
+                    normalized_digest,
+                    raw_bytes,
+                    int(payload_capped),
+                ),
             )
             return AuditDeliveryDecision(
                 transition_id,
                 normalized_audit_id,
+                normalized_command_id,
+                normalized_digest,
                 raw_bytes,
                 payload_capped,
                 AuditDeliveryState.PENDING,
@@ -823,6 +892,8 @@ class TwinCommandStore:
                 decision = AuditDeliveryDecision(
                     decision.transition_id,
                     decision.audit_id,
+                    decision.command_id,
+                    decision.canonical_payload_sha256,
                     decision.raw_bytes,
                     decision.payload_capped,
                     AuditDeliveryState.ACCEPTED,
@@ -895,15 +966,112 @@ class TwinCommandStore:
                 raise TwinStoreError("audit delivery count returned no row")
             return _persisted_integer("audit delivery count", row[0])
 
+    def read_pending_audit_transition_ids(
+        self,
+        *,
+        after_transition_id: int = 0,
+        limit: int = 128,
+    ) -> tuple[int, ...]:
+        """Return one bounded pending-delivery page in durable order."""
+        _validate_sqlite_integer(
+            "after_transition_id", after_transition_id
+        )
+        _validate_sqlite_integer("limit", limit)
+        if after_transition_id < 0:
+            raise ValueError("after_transition_id must be non-negative")
+        if not 1 <= limit <= 1024:
+            raise ValueError("limit must be between 1 and 1024")
+        with self._mutex:
+            self.verify_health()
+            rows = self._require_connection().execute(
+                """
+                SELECT transition_id
+                FROM settings_audit_deliveries
+                WHERE delivery_state = 'pending' AND transition_id > ?
+                ORDER BY transition_id
+                LIMIT ?
+                """,
+                (after_transition_id, limit),
+            ).fetchall()
+            return tuple(
+                _persisted_integer(
+                    "pending audit transition_id", row[0]
+                )
+                for row in rows
+            )
+
+    def read_transition_audit_snapshot(
+        self, transition_id: int
+    ) -> TransitionAuditSnapshot:
+        """Reconstruct one historical audit snapshot from durable rows."""
+        _validate_sqlite_integer("transition_id", transition_id)
+        if transition_id < 1:
+            raise ValueError("transition_id must be positive")
+        with self._mutex:
+            self.verify_health()
+            connection = self._require_connection()
+            row = connection.execute(
+                """
+                SELECT transition_id, command_id, audit_id, from_state,
+                       to_state, occurred_at_ms, attempt_number, session_id,
+                       reason, error_text, wire_frame, evidence_frame
+                FROM command_transitions
+                WHERE transition_id = ?
+                """,
+                (transition_id,),
+            ).fetchone()
+            if row is None:
+                raise StoreRecordNotFound(
+                    f"command transition not found: {transition_id}"
+                )
+            transition = _transition_from_row(row)
+            command = self._read_command_locked(
+                connection, transition.command_id
+            )
+            attempt = None
+            if (
+                transition.attempt_number is not None
+                and transition.reason not in _AUDIT_NO_ATTEMPT_REASONS
+            ):
+                attempt = self._read_attempt_locked(
+                    connection,
+                    transition.command_id,
+                    transition.attempt_number,
+                )
+            evidence = None
+            if transition.reason == "event_confirmed":
+                evidence_rows = connection.execute(
+                    """
+                    SELECT * FROM event_receipts
+                    WHERE command_id = ? AND disposition = 'confirmed'
+                    """,
+                    (transition.command_id,),
+                ).fetchall()
+                if len(evidence_rows) != 1:
+                    raise TwinStoreError(
+                        "event-confirmed transition requires one receipt"
+                    )
+                evidence = _event_receipt_from_row(evidence_rows[0])
+            snapshot = TransitionAuditSnapshot(
+                command,
+                transition,
+                attempt,
+                evidence,
+            )
+            _validate_transition_audit_snapshot(snapshot)
+            return snapshot
+
     @staticmethod
     def _require_audit_transition_locked(
         connection: sqlite3.Connection,
         *,
         audit_id: str,
         transition_id: int,
+        command_id: str | None = None,
     ) -> None:
         row = connection.execute(
-            "SELECT audit_id FROM command_transitions WHERE transition_id = ?",
+            "SELECT command_id, audit_id FROM command_transitions "
+            "WHERE transition_id = ?",
             (transition_id,),
         ).fetchone()
         if row is None:
@@ -911,10 +1079,15 @@ class TwinCommandStore:
                 f"command transition not found: {transition_id}"
             )
         persisted_audit_id = _persisted_identifier(
-            "transition audit_id", row[0], 256
+            "transition audit_id", row[1], 256
         )
         if persisted_audit_id != audit_id:
             raise ValueError("audit_id does not own transition_id")
+        persisted_command_id = _persisted_identifier(
+            "transition command_id", row[0], 256
+        )
+        if command_id is not None and persisted_command_id != command_id:
+            raise ValueError("command_id does not own transition_id")
 
     @staticmethod
     def _read_audit_delivery_locked(
@@ -926,6 +1099,8 @@ class TwinCommandStore:
         row = connection.execute(
             """
             SELECT delivery.transition_id, transition.audit_id,
+                   transition.command_id,
+                   delivery.canonical_payload_sha256,
                    delivery.raw_bytes, delivery.payload_capped,
                    delivery.delivery_state
             FROM settings_audit_deliveries AS delivery
@@ -2189,7 +2364,9 @@ class TwinCommandStore:
             self.verify_health()
             rows = self._require_connection().execute(
                 """
-                SELECT command_id, device_id, event_deadline_ms FROM commands
+                SELECT command_id, device_id, table_name, item_name,
+                       value_text, ack_device_rdt, event_deadline_ms
+                FROM commands
                 WHERE state = 'awaiting_event' AND event_deadline_ms < ?
                 ORDER BY event_deadline_ms, command_id
                 """,
@@ -2204,7 +2381,17 @@ class TwinCommandStore:
                         _persisted_identifier(
                             "event timeout device_id", row[1], 128
                         ),
-                        _persisted_integer("event deadline", row[2]),
+                        _persisted_identifier(
+                            "event timeout table_name", row[2], 128
+                        ),
+                        _persisted_identifier(
+                            "event timeout item_name", row[3], 128
+                        ),
+                        _persisted_text("event timeout value_text", row[4]),
+                        _persisted_optional_text(
+                            "event timeout ack_device_rdt", row[5]
+                        ),
+                        _persisted_integer("event deadline", row[6]),
                     )
                     for row in rows
                 )
@@ -3012,6 +3199,7 @@ class TwinCommandStore:
             raise StoreLockError(
                 f"cannot open process lock {self._lock_path}: {error}"
             ) from error
+        self._process_lock = (fd, (0, 0))
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             descriptor_stat = os.fstat(fd)
@@ -3021,14 +3209,9 @@ class TwinCommandStore:
             if descriptor_identity != path_identity:
                 raise StoreLockError("process lock path changed during acquisition")
         except (BlockingIOError, OSError) as error:
-            os.close(fd)
             raise StoreLockError(
                 f"process lock is already held for {self._db_path}"
             ) from error
-        except StoreLockError:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-            raise
         self._process_lock = (fd, descriptor_identity)
 
     def _verify_process_lock(self) -> None:
@@ -3591,6 +3774,43 @@ def _validate_setting_event(evidence: SettingEvent) -> tuple[SettingEvent, bool]
     return evidence, content_is_consistent
 
 
+def event_is_eligible_for_timeout_candidate(
+    *,
+    event: SettingEvent,
+    received_at_ms: int,
+    candidate: EventTimeoutCandidate,
+) -> bool:
+    """Return whether the store could match this event to this exact candidate."""
+    try:
+        normalized, content_is_consistent = _validate_setting_event(event)
+        _validate_sqlite_integer("received_at_ms", received_at_ms)
+    except (TwinStoreError, TypeError, ValueError):
+        return False
+    if not content_is_consistent or received_at_ms > candidate.event_deadline_ms:
+        return False
+    value_result = validate_setting_value(
+        normalized.table_name,
+        normalized.item_name,
+        normalized.new_value_text,
+    )
+    if not value_result.accepted or value_result.value_text is None:
+        return False
+    if (
+        normalized.device_id != candidate.device_id
+        or normalized.table_name != candidate.table_name
+        or normalized.item_name != candidate.item_name
+        or value_result.value_text != candidate.value_text
+    ):
+        return False
+    parsed_event_dt = _parse_protocol_datetime(normalized.device_dt)
+    parsed_ack_rdt = _parse_protocol_datetime(candidate.ack_device_rdt)
+    return not (
+        parsed_event_dt is not None
+        and parsed_ack_rdt is not None
+        and parsed_event_dt < parsed_ack_rdt
+    )
+
+
 def _parse_protocol_datetime(value: str | None) -> datetime | None:
     if value is None or not isinstance(value, str):
         return None
@@ -3658,6 +3878,92 @@ def _persisted_blob(name: str, value: object) -> bytes:
     if type(value) is not bytes:  # pylint: disable=unidiomatic-typecheck
         raise TwinStoreError(f"persisted {name} must be exact bytes")
     return value
+
+
+def _validate_transition_audit_snapshot(
+    snapshot: TransitionAuditSnapshot,
+) -> None:
+    """Reject corrupt cross-row identities before audit projection."""
+    command = snapshot.command
+    transition = snapshot.transition
+    attempt = snapshot.attempt
+    evidence = snapshot.evidence
+    if (
+        command.command_id != transition.command_id
+        or command.audit_id != transition.audit_id
+    ):
+        raise TwinStoreError("audit command/transition identity is inconsistent")
+    if transition.reason in _AUDIT_NO_ATTEMPT_REASONS:
+        if attempt is not None:
+            raise TwinStoreError(
+                "historical transition must not include a later attempt"
+            )
+    elif transition.reason in _AUDIT_REQUIRED_ATTEMPT_REASONS:
+        if attempt is None:
+            raise TwinStoreError(
+                "historical transition requires its exact attempt"
+            )
+    if attempt is not None:
+        if (
+            attempt.command_id != transition.command_id
+            or attempt.attempt_number != transition.attempt_number
+        ):
+            raise TwinStoreError(
+                "audit attempt/transition identity is inconsistent"
+            )
+        if (
+            transition.reason in _AUDIT_ATTEMPT_SESSION_REASONS
+            and attempt.session_id != transition.session_id
+        ):
+            raise TwinStoreError(
+                "audit attempt/transition session is inconsistent"
+            )
+    if transition.reason == "attempt_prepared":
+        if (
+            attempt is None
+            or transition.wire_frame is None
+            or transition.wire_frame != attempt.wire_frame
+        ):
+            raise TwinStoreError(
+                "prepared transition bytes do not match its attempt"
+            )
+    if transition.reason in {"ack_received", "nack_received"}:
+        if (
+            attempt is None
+            or transition.evidence_frame is None
+            or attempt.response_fingerprint is None
+            or hashlib.sha256(transition.evidence_frame).hexdigest()
+            != attempt.response_fingerprint
+        ):
+            raise TwinStoreError(
+                "response transition evidence is inconsistent"
+            )
+    if transition.reason == "event_confirmed":
+        if (
+            evidence is None
+            or evidence.command_id != command.command_id
+            or evidence.disposition != "confirmed"
+            or evidence.device_id != command.device_id
+            or evidence.table_name != command.table_name
+            or evidence.item_name != command.item_name
+            or evidence.evidence_frame != transition.evidence_frame
+        ):
+            raise TwinStoreError(
+                "event transition evidence identity is inconsistent"
+            )
+        normalized = validate_setting_value(
+            evidence.table_name,
+            evidence.item_name,
+            evidence.new_value_text,
+        )
+        if not normalized.accepted or normalized.value_text != command.value_text:
+            raise TwinStoreError(
+                "event transition evidence value is inconsistent"
+            )
+    elif evidence is not None:
+        raise TwinStoreError(
+            "non-event transition must not include event evidence"
+        )
 
 
 def _command_from_row(row: tuple[Any, ...]) -> TwinCommand:
@@ -3796,11 +4102,11 @@ def _audit_delivery_from_row(
 ) -> AuditDeliveryDecision:
     try:
         state = AuditDeliveryState(
-            _persisted_text("audit delivery state", row[4])
+            _persisted_text("audit delivery state", row[6])
         )
     except ValueError as error:
         raise TwinStoreError("persisted audit delivery state is invalid") from error
-    capped = _persisted_integer("audit delivery payload_capped", row[3])
+    capped = _persisted_integer("audit delivery payload_capped", row[5])
     if capped not in (0, 1):
         raise TwinStoreError("persisted audit delivery cap flag is invalid")
     return AuditDeliveryDecision(
@@ -3808,7 +4114,13 @@ def _audit_delivery_from_row(
             "audit delivery transition_id", row[0]
         ),
         audit_id=_persisted_identifier("audit delivery audit_id", row[1], 256),
-        raw_bytes=_persisted_integer("audit delivery raw_bytes", row[2]),
+        command_id=_persisted_identifier(
+            "audit delivery command_id", row[2], 256
+        ),
+        canonical_payload_sha256=_persisted_blob(
+            "audit delivery canonical_payload_sha256", row[3]
+        ),
+        raw_bytes=_persisted_integer("audit delivery raw_bytes", row[4]),
         payload_capped=bool(capped),
         state=state,
     )

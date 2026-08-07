@@ -45,6 +45,133 @@ import twin.store as store_module
 
 
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
+_FROZEN_V1_DDL = """
+CREATE TABLE schema_meta (
+    schema_version INTEGER PRIMARY KEY CHECK (schema_version >= 1),
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)
+);
+CREATE TABLE devices (
+    device_id TEXT PRIMARY KEY CHECK (length(device_id) BETWEEN 1 AND 128),
+    first_seen_at_ms INTEGER NOT NULL CHECK (first_seen_at_ms >= 0),
+    last_seen_at_ms INTEGER NOT NULL CHECK (last_seen_at_ms >= first_seen_at_ms),
+    next_wire_id INTEGER NOT NULL CHECK (next_wire_id >= 0),
+    next_wire_id_set INTEGER NOT NULL CHECK (next_wire_id_set >= 0)
+);
+CREATE TABLE commands (
+    command_id TEXT PRIMARY KEY,
+    audit_id TEXT NOT NULL UNIQUE,
+    device_id TEXT NOT NULL REFERENCES devices(device_id),
+    table_name TEXT NOT NULL CHECK (length(table_name) BETWEEN 1 AND 128),
+    item_name TEXT NOT NULL CHECK (length(item_name) BETWEEN 1 AND 128),
+    value_text TEXT NOT NULL CHECK (length(value_text) BETWEEN 1 AND 1024),
+    raw_ingress_text TEXT NOT NULL CHECK (length(raw_ingress_text) <= 16384),
+    state TEXT NOT NULL CHECK (state IN (
+        'pending','retry_pending','awaiting_ack','awaiting_event',
+        'confirmed','incomplete','failed','expired','superseded'
+    )),
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+    pending_expires_at_ms INTEGER NOT NULL CHECK (pending_expires_at_ms >= created_at_ms),
+    wire_id INTEGER,
+    wire_id_set INTEGER,
+    wire_dt TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 8),
+    active_session_id TEXT,
+    ack_deadline_ms INTEGER,
+    event_deadline_ms INTEGER,
+    acked_at_ms INTEGER,
+    ack_device_rdt TEXT,
+    completed_at_ms INTEGER,
+    predecessor_command_id TEXT REFERENCES commands(command_id),
+    last_wire_frame BLOB CHECK (last_wire_frame IS NULL OR length(last_wire_frame) <= 1048576),
+    last_error TEXT CHECK (last_error IS NULL OR length(last_error) <= 1024),
+    UNIQUE (command_id, audit_id),
+    CHECK (predecessor_command_id IS NULL OR predecessor_command_id <> command_id),
+    CHECK ((wire_id IS NULL AND wire_id_set IS NULL AND wire_dt IS NULL)
+        OR (wire_id IS NOT NULL AND wire_id_set IS NOT NULL AND wire_dt IS NOT NULL))
+);
+CREATE TABLE control_ingress_audit (
+    ingress_id TEXT PRIMARY KEY,
+    received_at_ms INTEGER NOT NULL CHECK (received_at_ms >= 0),
+    topic TEXT NOT NULL CHECK (length(topic) <= 1024),
+    topic_device_id TEXT CHECK (topic_device_id IS NULL OR length(topic_device_id) <= 128),
+    retain INTEGER NOT NULL CHECK (retain IN (0, 1)),
+    disposition TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK (length(reason) <= 1024),
+    raw_text TEXT NOT NULL CHECK (length(raw_text) <= 16384),
+    command_id TEXT,
+    audit_id TEXT,
+    CHECK ((command_id IS NULL AND audit_id IS NULL)
+        OR (command_id IS NOT NULL AND audit_id IS NOT NULL)),
+    FOREIGN KEY (command_id, audit_id) REFERENCES commands(command_id, audit_id)
+);
+CREATE TABLE command_attempts (
+    command_id TEXT NOT NULL REFERENCES commands(command_id),
+    attempt_number INTEGER NOT NULL CHECK (attempt_number BETWEEN 1 AND 8),
+    session_id TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 128),
+    prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
+    write_started_at_ms INTEGER,
+    drain_completed_at_ms INTEGER,
+    ack_deadline_ms INTEGER NOT NULL CHECK (ack_deadline_ms >= prepared_at_ms),
+    tsec_text TEXT NOT NULL,
+    ver_text TEXT NOT NULL CHECK (length(ver_text) = 5),
+    crc_text TEXT NOT NULL CHECK (length(crc_text) = 5),
+    wire_frame BLOB NOT NULL CHECK (length(wire_frame) <= 1048576),
+    wire_length INTEGER NOT NULL CHECK (wire_length = length(wire_frame)),
+    write_outcome TEXT NOT NULL CHECK (
+        write_outcome IN ('prepared','started','drained','unknown','failed')
+    ),
+    write_error TEXT CHECK (write_error IS NULL OR length(write_error) <= 1024),
+    response_fingerprint TEXT CHECK (
+        response_fingerprint IS NULL OR length(response_fingerprint) = 64
+    ),
+    response_rdt TEXT,
+    PRIMARY KEY (command_id, attempt_number)
+);
+CREATE TABLE command_transitions (
+    transition_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_id TEXT NOT NULL,
+    audit_id TEXT NOT NULL,
+    from_state TEXT,
+    to_state TEXT NOT NULL,
+    occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+    attempt_number INTEGER,
+    session_id TEXT,
+    reason TEXT NOT NULL CHECK (length(reason) <= 1024),
+    error_text TEXT CHECK (error_text IS NULL OR length(error_text) <= 1024),
+    wire_frame BLOB CHECK (wire_frame IS NULL OR length(wire_frame) <= 1048576),
+    evidence_frame BLOB CHECK (evidence_frame IS NULL OR length(evidence_frame) <= 1048576),
+    FOREIGN KEY (command_id, audit_id) REFERENCES commands(command_id, audit_id)
+);
+CREATE TABLE event_receipts (
+    evidence_id TEXT PRIMARY KEY CHECK (length(evidence_id) = 64),
+    received_at_ms INTEGER NOT NULL CHECK (received_at_ms >= 0),
+    device_id TEXT NOT NULL,
+    event_id_set INTEGER NOT NULL CHECK (event_id_set >= 0),
+    device_dt TEXT NOT NULL,
+    table_name TEXT NOT NULL CHECK (length(table_name) BETWEEN 1 AND 128),
+    item_name TEXT NOT NULL CHECK (length(item_name) BETWEEN 1 AND 128),
+    old_value_text TEXT NOT NULL CHECK (length(old_value_text) <= 1024),
+    new_value_text TEXT NOT NULL CHECK (length(new_value_text) <= 1024),
+    evidence_frame BLOB NOT NULL CHECK (length(evidence_frame) <= 1048576),
+    disposition TEXT NOT NULL CHECK (disposition IN ('confirmed','unmatched')),
+    command_id TEXT REFERENCES commands(command_id),
+    duplicate_count INTEGER NOT NULL DEFAULT 0 CHECK (duplicate_count >= 0),
+    last_seen_at_ms INTEGER NOT NULL CHECK (last_seen_at_ms >= received_at_ms)
+);
+CREATE INDEX idx_commands_fifo
+ON commands(device_id, state, created_at_ms, command_id);
+CREATE INDEX idx_commands_event_match
+ON commands(device_id, table_name, item_name, value_text, state, acked_at_ms);
+CREATE INDEX idx_commands_predecessor ON commands(predecessor_command_id);
+CREATE UNIQUE INDEX ux_commands_one_awaiting_ack_per_device
+ON commands(device_id) WHERE state = 'awaiting_ack';
+CREATE UNIQUE INDEX ux_commands_one_unsent_successor_per_target
+ON commands(device_id, table_name, item_name)
+WHERE state = 'pending' AND attempt_count = 0;
+CREATE UNIQUE INDEX ux_event_receipts_one_confirmation_per_command
+ON event_receipts(command_id) WHERE command_id IS NOT NULL;
+"""
 _EXPECTED_TABLES = {
     "schema_meta",
     "devices",
@@ -60,6 +187,23 @@ _EXPECTED_INDEXES = {
     "idx_commands_event_match",
     "idx_commands_predecessor",
     "idx_command_transitions_audit",
+    "ux_commands_one_awaiting_ack_per_device",
+    "ux_commands_one_unsent_successor_per_target",
+    "ux_event_receipts_one_confirmation_per_command",
+}
+_EXPECTED_V1_TABLES = {
+    "schema_meta",
+    "devices",
+    "commands",
+    "control_ingress_audit",
+    "command_attempts",
+    "command_transitions",
+    "event_receipts",
+}
+_EXPECTED_V1_INDEXES = {
+    "idx_commands_fifo",
+    "idx_commands_event_match",
+    "idx_commands_predecessor",
     "ux_commands_one_awaiting_ack_per_device",
     "ux_commands_one_unsent_successor_per_target",
     "ux_event_receipts_one_confirmation_per_command",
@@ -148,6 +292,7 @@ _EXPECTED_COLUMN_ARTIFACTS = {
     ),
     "settings_audit_deliveries": (
         ("transition_id", "INTEGER", 0, None, 1),
+        ("canonical_payload_sha256", "BLOB", 1, None, 0),
         ("raw_bytes", "INTEGER", 1, None, 0),
         ("payload_capped", "INTEGER", 1, None, 0),
         ("delivery_state", "TEXT", 1, None, 0),
@@ -382,6 +527,8 @@ _EXPECTED_CHECK_FRAGMENTS = {
         "CHECK (evidence_frame IS NULL OR length(evidence_frame) <= 1048576)",
     ),
     "settings_audit_deliveries": (
+        "CHECK ( typeof(canonical_payload_sha256) = 'blob' "
+        "AND length(canonical_payload_sha256) = 32 )",
         "CHECK (raw_bytes BETWEEN 0 AND 16384)",
         "CHECK (payload_capped IN (0, 1))",
         "CHECK (delivery_state IN ('pending','accepted'))",
@@ -448,6 +595,66 @@ class _RollbackFaultConnection:
         return self._connection.execute(statement, parameters)
 
     def close(self) -> None:
+        self._connection.close()
+
+
+class _MigrationControlFlow(BaseException):
+    """Test-only cancellation-like migration interruption."""
+
+
+class _MigrationInterruptConnection:
+    """Raise one exact control-flow object at a migration SQL boundary."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        boundary: str,
+        interruption: BaseException,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self._connection = connection
+        self.boundary = boundary
+        self.interruption = interruption
+        self.close_error = close_error
+        self.close_attempts = 0
+        self.raised = False
+        self.version_updated = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def execute(self, statement: str, parameters: Any = ()) -> Any:
+        normalized = " ".join(statement.split()).upper()
+        should_raise = (
+            self.boundary == "pre_ddl"
+            and normalized.startswith(
+                "CREATE TABLE SETTINGS_AUDIT_DELIVERIES"
+            )
+        ) or (
+            self.boundary == "post_ddl"
+            and normalized.startswith(
+                "UPDATE SCHEMA_META SET SCHEMA_VERSION"
+            )
+        ) or (
+            self.boundary == "final_validation"
+            and self.version_updated
+            and normalized.startswith("SELECT TYPE, NAME, SQL FROM SQLITE_SCHEMA")
+        )
+        if should_raise and not self.raised:
+            self.raised = True
+            raise self.interruption
+        result = self._connection.execute(statement, parameters)
+        if normalized.startswith("UPDATE SCHEMA_META SET SCHEMA_VERSION"):
+            self.version_updated = True
+        return result
+
+    def close(self) -> None:
+        self.close_attempts += 1
+        close_error = self.close_error
+        self.close_error = None
+        if close_error is not None:
+            raise close_error
         self._connection.close()
 
 
@@ -680,13 +887,48 @@ def _insert_minimal_command(connection: sqlite3.Connection) -> None:
     )
 
 
-def _downgrade_exact_v2_artifact_to_v1(path: Path) -> None:
+def _create_frozen_v1_artifact(path: Path) -> None:
     with _connect(path) as connection:
-        connection.execute("DROP INDEX idx_command_transitions_audit")
-        connection.execute("DROP TABLE settings_audit_deliveries")
+        connection.executescript(_FROZEN_V1_DDL)
         connection.execute(
-            "UPDATE schema_meta SET schema_version = 1 WHERE schema_version = 2"
+            "INSERT INTO schema_meta(schema_version, created_at_ms) "
+            "VALUES (1, 123)"
         )
+
+
+def _v1_runtime_snapshot(path: Path) -> tuple[Any, ...]:
+    with _connect(path) as connection:
+        objects = tuple(
+            sorted(
+                (
+                    str(row[0]),
+                    str(row[1]),
+                    _normalize_artifact_sql(str(row[2])),
+                )
+                for row in connection.execute(
+                    """
+                    SELECT type, name, sql FROM sqlite_schema
+                    WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+                    """
+                ).fetchall()
+            )
+        )
+        metadata = tuple(
+            connection.execute(
+                "SELECT schema_version, created_at_ms FROM schema_meta"
+            ).fetchall()
+        )
+        commands = tuple(
+            connection.execute(
+                "SELECT * FROM commands ORDER BY command_id"
+            ).fetchall()
+        )
+        transitions = tuple(
+            connection.execute(
+                "SELECT * FROM command_transitions ORDER BY transition_id"
+            ).fetchall()
+        )
+    return objects, metadata, commands, transitions
 
 
 def test_open_creates_schema_v2_and_repeated_open_is_idempotent(
@@ -710,13 +952,199 @@ def test_open_creates_schema_v2_and_repeated_open_is_idempotent(
     assert path.read_bytes() == first_bytes
 
 
+# pylint: disable-next=too-many-locals
+def test_frozen_v1_artifact_has_complete_independent_sqlite_semantics(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "frozen-v1.db"
+    _create_frozen_v1_artifact(path)
+
+    expected_explicit_indexes = {
+        "idx_commands_fifo": (
+            "commands",
+            0,
+            0,
+            ("device_id", "state", "created_at_ms", "command_id"),
+            None,
+        ),
+        "idx_commands_event_match": (
+            "commands",
+            0,
+            0,
+            (
+                "device_id",
+                "table_name",
+                "item_name",
+                "value_text",
+                "state",
+                "acked_at_ms",
+            ),
+            None,
+        ),
+        "idx_commands_predecessor": (
+            "commands",
+            0,
+            0,
+            ("predecessor_command_id",),
+            None,
+        ),
+        "ux_commands_one_awaiting_ack_per_device": (
+            "commands",
+            1,
+            1,
+            ("device_id",),
+            "state = 'awaiting_ack'",
+        ),
+        "ux_commands_one_unsent_successor_per_target": (
+            "commands",
+            1,
+            1,
+            ("device_id", "table_name", "item_name"),
+            "state = 'pending' AND attempt_count = 0",
+        ),
+        "ux_event_receipts_one_confirmation_per_command": (
+            "event_receipts",
+            1,
+            1,
+            ("command_id",),
+            "command_id IS NOT NULL",
+        ),
+    }
+
+    with _connect(path) as connection:
+        persistent_objects = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT type, name FROM sqlite_schema
+                WHERE name NOT LIKE 'sqlite_%'
+                """
+            ).fetchall()
+        }
+        assert persistent_objects == {
+            *(("table", name) for name in _EXPECTED_V1_TABLES),
+            *(("index", name) for name in _EXPECTED_V1_INDEXES),
+        }
+
+        table_list = {
+            (str(row[1]), str(row[2]), int(row[3]), int(row[4]), int(row[5]))
+            for row in connection.execute("PRAGMA table_list").fetchall()
+            if str(row[0]) == "main" and not str(row[1]).startswith("sqlite_")
+        }
+        assert table_list == {
+            (
+                table_name,
+                "table",
+                len(_EXPECTED_COLUMN_ARTIFACTS[table_name]),
+                0,
+                0,
+            )
+            for table_name in _EXPECTED_V1_TABLES
+        }
+
+        explicit_indexes: dict[
+            str, tuple[str, int, int, tuple[str, ...], str | None]
+        ] = {}
+        for table_name in sorted(_EXPECTED_V1_TABLES):
+            expected_columns = _EXPECTED_COLUMN_ARTIFACTS[table_name]
+            columns = tuple(
+                (
+                    str(row[1]),
+                    str(row[2]),
+                    int(row[3]),
+                    row[4],
+                    int(row[5]),
+                    int(row[6]),
+                )
+                for row in connection.execute(
+                    f"PRAGMA table_xinfo({table_name})"
+                ).fetchall()
+            )
+            assert columns == tuple((*column, 0) for column in expected_columns)
+            assert (
+                _foreign_key_artifacts(connection, table_name)
+                == _EXPECTED_FOREIGN_KEY_ARTIFACTS[table_name]
+            )
+
+            automatic_indexes = set()
+            for index_row in connection.execute(
+                f"PRAGMA index_list({table_name})"
+            ).fetchall():
+                index_name = str(index_row[1])
+                unique = int(index_row[2])
+                origin = str(index_row[3])
+                partial = int(index_row[4])
+                index_xinfo = tuple(
+                    (
+                        None if row[2] is None else str(row[2]),
+                        int(row[3]),
+                        str(row[4]),
+                        int(row[5]),
+                    )
+                    for row in connection.execute(
+                        f"PRAGMA index_xinfo({index_name})"
+                    ).fetchall()
+                )
+                index_columns = tuple(
+                    column_name
+                    for column_name, _, _, key_column in index_xinfo
+                    if key_column == 1 and column_name is not None
+                )
+                assert index_xinfo == (
+                    *((column_name, 0, "BINARY", 1) for column_name in index_columns),
+                    (None, 0, "BINARY", 0),
+                )
+                if index_name.startswith("sqlite_"):
+                    automatic_indexes.add(
+                        (origin, unique, partial, index_columns)
+                    )
+                    continue
+                index_sql = str(
+                    connection.execute(
+                        "SELECT sql FROM sqlite_schema WHERE name = ?",
+                        (index_name,),
+                    ).fetchone()[0]
+                )
+                normalized_index_sql = _normalize_artifact_sql(index_sql)
+                predicate = (
+                    normalized_index_sql.split(" WHERE ", 1)[1]
+                    if " WHERE " in normalized_index_sql
+                    else None
+                )
+                explicit_indexes[index_name] = (
+                    table_name,
+                    unique,
+                    partial,
+                    index_columns,
+                    predicate,
+                )
+            assert frozenset(automatic_indexes) == (
+                _EXPECTED_AUTOMATIC_INDEX_ARTIFACTS[table_name]
+            )
+
+            table_sql = str(
+                connection.execute(
+                    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?",
+                    (table_name,),
+                ).fetchone()[0]
+            )
+            normalized_table_sql = _normalize_artifact_sql(table_sql)
+            expected_checks = _EXPECTED_CHECK_FRAGMENTS[table_name]
+            assert normalized_table_sql.count("CHECK (") == len(expected_checks)
+            for constraint in expected_checks:
+                assert _normalize_artifact_sql(constraint) in normalized_table_sql
+
+        assert explicit_indexes == expected_explicit_indexes
+        assert connection.execute(
+            "SELECT schema_version, created_at_ms FROM schema_meta"
+        ).fetchall() == [(1, 123)]
+
+
 def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "migrate.db"
-    initial = TwinCommandStore(path, policy=control_policy)
-    initial.open(now_ms=123)
-    initial.close()
+    _create_frozen_v1_artifact(path)
     with _connect(path) as connection:
         _insert_minimal_command(connection)
         connection.execute(
@@ -727,8 +1155,6 @@ def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
             ) VALUES ('command-1', 'audit-1', NULL, 'pending', 1, 'created')
             """
         )
-    _downgrade_exact_v2_artifact_to_v1(path)
-
     migrated = TwinCommandStore(path, policy=control_policy)
     migrated.open(now_ms=999)
 
@@ -752,10 +1178,7 @@ def test_contract_wrong_v1_to_v2_ddl_rolls_back_and_can_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "migration-rollback.db"
-    initial = TwinCommandStore(path, policy=control_policy)
-    initial.open(now_ms=123)
-    initial.close()
-    _downgrade_exact_v2_artifact_to_v1(path)
+    _create_frozen_v1_artifact(path)
 
     with monkeypatch.context() as migration_patch:
         migration_patch.setattr(
@@ -773,17 +1196,196 @@ def test_contract_wrong_v1_to_v2_ddl_rolls_back_and_can_retry(
         assert connection.execute(
             "SELECT schema_version, created_at_ms FROM schema_meta"
         ).fetchall() == [(1, 123)]
-    assert _schema_objects(path, "table") == _EXPECTED_TABLES - {
-        "settings_audit_deliveries"
-    }
-    assert _schema_objects(path, "index") == _EXPECTED_INDEXES - {
-        "idx_command_transitions_audit"
-    }
+    assert _schema_objects(path, "table") == _EXPECTED_V1_TABLES
+    assert _schema_objects(path, "index") == _EXPECTED_V1_INDEXES
 
     retried = TwinCommandStore(path, policy=control_policy)
     retried.open(now_ms=1000)
     assert retried.schema_version == 2
     retried.close()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["pre_ddl", "post_ddl", "final_validation"],
+)
+@pytest.mark.parametrize(
+    "interruption_kind",
+    ["keyboard", "system_exit", "custom"],
+)
+def test_v1_migration_control_flow_releases_failed_open_owner(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    interruption_kind: str,
+) -> None:
+    path = tmp_path / f"interrupt-{boundary}-{interruption_kind}.db"
+    _create_frozen_v1_artifact(path)
+    with _connect(path) as connection:
+        _insert_minimal_command(connection)
+        connection.execute(
+            """
+            INSERT INTO command_transitions(
+                command_id, audit_id, from_state, to_state,
+                occurred_at_ms, reason
+            ) VALUES (
+                'command-1', 'audit-1', NULL, 'pending', 1,
+                'accepted_ingress'
+            )
+            """
+        )
+    before = _v1_runtime_snapshot(path)
+    interruption: BaseException
+    if interruption_kind == "keyboard":
+        interruption = KeyboardInterrupt("migration interrupted")
+    elif interruption_kind == "system_exit":
+        interruption = SystemExit("migration interrupted")
+    else:
+        interruption = _MigrationControlFlow("migration interrupted")
+    failed = TwinCommandStore(path, policy=control_policy)
+    real_connect = failed._connect_database  # pylint: disable=protected-access
+    wrapped: _MigrationInterruptConnection | None = None
+
+    def interrupted_connect(*, mode: str) -> sqlite3.Connection:
+        nonlocal wrapped
+        connection = real_connect(mode=mode)
+        if mode != "rw":
+            return connection
+        wrapped = _MigrationInterruptConnection(
+            connection,
+            boundary=boundary,
+            interruption=interruption,
+        )
+        return cast(sqlite3.Connection, wrapped)
+
+    monkeypatch.setattr(failed, "_connect_database", interrupted_connect)
+    retry = TwinCommandStore(path, policy=control_policy)
+    try:
+        with pytest.raises(type(interruption)) as caught:
+            failed.open(now_ms=999)
+
+        assert caught.value is interruption
+        assert wrapped is not None and wrapped.raised
+        assert not failed.is_open
+        assert failed.schema_version == 0
+        assert _v1_runtime_snapshot(path) == before
+        assert "settings_audit_deliveries" not in _schema_objects(
+            path, "table"
+        )
+        assert "idx_command_transitions_audit" not in _schema_objects(
+            path, "index"
+        )
+
+        retry.open(now_ms=1000)
+        assert retry.schema_version == 2
+    finally:
+        try:
+            failed.close()
+        except TwinStoreError:
+            pass
+        retry.close()
+
+
+def test_migration_control_flow_cleanup_failure_stays_fail_closed(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "migration-control-flow-cleanup-failure.db"
+    _create_frozen_v1_artifact(path)
+    interruption = _MigrationControlFlow("migration interrupted")
+    cleanup_error = KeyboardInterrupt("close interrupted")
+    failed = TwinCommandStore(path, policy=control_policy)
+    real_connect = failed._connect_database  # pylint: disable=protected-access
+    wrapped: _MigrationInterruptConnection | None = None
+
+    def interrupted_connect(*, mode: str) -> sqlite3.Connection:
+        nonlocal wrapped
+        connection = real_connect(mode=mode)
+        if mode != "rw":
+            return connection
+        wrapped = _MigrationInterruptConnection(
+            connection,
+            boundary="pre_ddl",
+            interruption=interruption,
+            close_error=cleanup_error,
+        )
+        return cast(sqlite3.Connection, wrapped)
+
+    monkeypatch.setattr(failed, "_connect_database", interrupted_connect)
+    contender = TwinCommandStore(path, policy=control_policy)
+    try:
+        with pytest.raises(TwinStoreError) as caught:
+            failed.open(now_ms=999)
+
+        assert caught.value.__cause__ is cleanup_error
+        assert "migration interrupted" in str(caught.value)
+        assert "close interrupted" in str(caught.value)
+        assert failed.is_open
+        assert wrapped is not None and wrapped.close_attempts == 1
+        with pytest.raises(TwinStoreError, match="cleanup failed"):
+            failed.verify_health()
+        with pytest.raises(StoreLockError):
+            contender.open(now_ms=1000)
+
+        failed.close()
+        assert wrapped.close_attempts == 2
+        assert not failed.is_open
+        contender.open(now_ms=1001)
+        assert contender.schema_version == 2
+    finally:
+        try:
+            failed.close()
+        except TwinStoreError:
+            pass
+        contender.close()
+
+
+def test_process_lock_post_flock_control_flow_releases_untracked_fd(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "post-flock-interrupt.db"
+    interruption = _MigrationControlFlow("post-flock interruption")
+    real_fstat = os.fstat
+    interrupted = False
+    injected_tracebacks: list[Any] = []
+
+    def interrupt_first_fstat(fd: int):
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            try:
+                raise interruption
+            except _MigrationControlFlow as caught:
+                injected_tracebacks.append(caught.__traceback__)
+                raise
+        return real_fstat(fd)
+
+    monkeypatch.setattr(store_module.os, "fstat", interrupt_first_fstat)
+    failed = TwinCommandStore(path, policy=control_policy)
+
+    with pytest.raises(_MigrationControlFlow) as observed:
+        failed.open(now_ms=1)
+
+    assert observed.value is interruption
+    assert injected_tracebacks
+    traceback_cursor = observed.value.__traceback__
+    traceback_retained = False
+    while traceback_cursor is not None:
+        if traceback_cursor is injected_tracebacks[0]:
+            traceback_retained = True
+            break
+        traceback_cursor = traceback_cursor.tb_next
+    assert traceback_retained is True
+    assert failed.is_open is False
+
+    fresh = TwinCommandStore(path, policy=control_policy)
+    fresh.open(now_ms=2)
+    assert fresh.is_open is True
+    fresh.close()
 
 
 def test_constructor_rejects_non_policy(tmp_path: Path) -> None:
@@ -984,7 +1586,9 @@ def test_schema_v2_complete_independent_sqlite_artifact_contract(
                 ).fetchone()[0]
             )
             normalized_table_sql = _normalize_artifact_sql(table_sql)
-            for constraint in _EXPECTED_CHECK_FRAGMENTS[table_name]:
+            expected_checks = _EXPECTED_CHECK_FRAGMENTS[table_name]
+            assert normalized_table_sql.count("CHECK (") == len(expected_checks)
+            for constraint in expected_checks:
                 assert _normalize_artifact_sql(constraint) in normalized_table_sql
 
         assert explicit_indexes == _EXPECTED_EXPLICIT_INDEX_ARTIFACTS
@@ -2309,7 +2913,9 @@ def test_negative_audit_delivery_request_is_rejected_without_degradation(
     with pytest.raises(ValueError, match="requested_raw_bytes"):
         store.propose_audit_delivery(
             audit_id=command.audit_id,
+            command_id=command.command_id,
             transition_id=transition.transition_id,
+            canonical_payload_sha256=b"x" * 32,
             requested_raw_bytes=-1,
         )
 

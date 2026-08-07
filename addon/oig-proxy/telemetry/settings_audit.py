@@ -28,12 +28,13 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from functools import partial
 import hashlib
+import json
 import logging
 import re
 import secrets
 import threading
 import time
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Any, cast, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from protocol.frame import ValidatedFrame
@@ -49,7 +50,9 @@ class AuditAcceptanceLedger(Protocol):
         self,
         *,
         audit_id: str,
+        command_id: str,
         transition_id: int,
+        canonical_payload_sha256: bytes,
         requested_raw_bytes: int,
     ) -> AuditDeliveryDecision:
         """Persist or replay one compact pending decision."""
@@ -67,13 +70,63 @@ class AuditAcceptanceLedger(Protocol):
         """Delete one pending decision after sink failure."""
         raise NotImplementedError
 
+    def read_transition_audit_snapshot(
+        self, transition_id: int
+    ) -> TransitionAuditSnapshot:
+        """Reconstruct one transition from durable historical facts."""
+        raise NotImplementedError
+
+    def read_pending_audit_transition_ids(
+        self,
+        *,
+        after_transition_id: int = 0,
+        limit: int = 128,
+    ) -> tuple[int, ...]:
+        """Read one ordered bounded page of pending transitions."""
+        raise NotImplementedError
+
 
 logger = logging.getLogger(__name__)
 
-_AUDIT_LIFECYCLE_LOCKS = tuple(threading.Lock() for _ in range(64))
-_AUDIT_LOCK_EXECUTOR = ThreadPoolExecutor(
-    max_workers=1,
-    thread_name_prefix="settings-audit-lock",
+
+class _AuditLifecycleStripe:
+    """One lock plus one bounded acquisition lane for an audit-id stripe."""
+
+    __slots__ = ("executor", "lock")
+
+    def __init__(self, index: int) -> None:
+        self.lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"settings-audit-lock-{index}",
+        )
+
+    def acquire(self, blocking: bool = True) -> bool:
+        """Delegate lock acquisition for sync publishers and diagnostics."""
+        return self.lock.acquire(blocking=blocking)
+
+    def release(self) -> None:
+        """Release this stripe after one complete delivery lifecycle."""
+        self.lock.release()
+
+    def __enter__(self) -> _AuditLifecycleStripe:
+        self.acquire()
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.release()
+
+
+_AUDIT_LIFECYCLE_LOCKS = tuple(
+    _AuditLifecycleStripe(index) for index in range(64)
+)
+_AUDIT_EXTERNAL_LOCK_EXECUTOR = ThreadPoolExecutor(
+    max_workers=16,
+    thread_name_prefix="settings-audit-external-lock",
+)
+_AUDIT_LEDGER_EXECUTOR = ThreadPoolExecutor(
+    max_workers=16,
+    thread_name_prefix="settings-audit-ledger",
 )
 
 
@@ -596,7 +649,10 @@ _COMMITTED_STEP_BY_REASON = {
     "nack_received": SettingStep.NACK,
     "event_confirmed": SettingStep.EVENT_CONFIRMED,
     "pending_ttl_expired": SettingStep.EXPIRED,
+    "recovery_pending_expired": SettingStep.EXPIRED,
     "event_timeout": SettingStep.INCOMPLETE,
+    "recovery_event_timeout": SettingStep.INCOMPLETE,
+    "recovery_attempt_limit": SettingStep.FAILED,
 }
 
 
@@ -612,18 +668,18 @@ def _step_from_snapshot(snapshot: TransitionAuditSnapshot) -> SettingStep:
         "shutdown",
         "ack_timeout",
     }:
-        if snapshot.command.state.value == "retry_pending":
+        if snapshot.transition.to_state.value == "retry_pending":
             return SettingStep.RETRY
         return SettingStep.FAILED
     if reason == "render_failed":
         return SettingStep.FAILED
-    if snapshot.command.state.value == "failed":
+    if snapshot.transition.to_state.value == "failed":
         return SettingStep.FAILED
     raise ValueError(f"unknown committed setting transition reason: {reason}")
 
 
 def _result_from_snapshot(snapshot: TransitionAuditSnapshot) -> SettingResult:
-    state = snapshot.command.state.value
+    state = snapshot.transition.to_state.value
     if state == "confirmed":
         return SettingResult.CONFIRMED
     if state == "superseded":
@@ -637,7 +693,122 @@ def _result_from_snapshot(snapshot: TransitionAuditSnapshot) -> SettingResult:
     return SettingResult.PENDING
 
 
+_AUDIT_NO_ATTEMPT_REASONS = frozenset({"selected", "render_failed"})
+_AUDIT_REQUIRED_ATTEMPT_REASONS = frozenset(
+    {
+        "attempt_prepared",
+        "write_started",
+        "attempt_drained",
+        "write_unknown",
+        "write_failed",
+        "ack_received",
+        "nack_received",
+        "event_confirmed",
+        "disconnect",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+        "ack_timeout",
+        "event_timeout",
+        "recovery_event_timeout",
+        "recovery_attempt_limit",
+    }
+)
+_AUDIT_ATTEMPT_SESSION_REASONS = frozenset(
+    {
+        "attempt_prepared",
+        "write_started",
+        "attempt_drained",
+        "write_unknown",
+        "write_failed",
+        "ack_received",
+        "nack_received",
+        "disconnect",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+        "ack_timeout",
+    }
+)
+_HISTORICAL_WRITE_OUTCOME = {
+    "attempt_prepared": "prepared",
+    "write_started": "started",
+    "attempt_drained": "drained",
+    "write_unknown": "unknown",
+    "write_failed": "failed",
+}
+_RETRY_ERROR_REASONS = frozenset(
+    {
+        "disconnect",
+        "unexpected_response",
+        "stream_error",
+        "shutdown",
+        "ack_timeout",
+    }
+)
+
+
+def _validate_projectable_snapshot(
+    snapshot: TransitionAuditSnapshot,
+) -> None:
+    """Validate cross-row identities before deriving canonical payload."""
+    command = snapshot.command
+    transition = snapshot.transition
+    attempt = snapshot.attempt
+    evidence = snapshot.evidence
+    if (
+        command.command_id != transition.command_id
+        or command.audit_id != transition.audit_id
+    ):
+        raise ValueError("audit command/transition identity changed")
+    if transition.reason in _AUDIT_NO_ATTEMPT_REASONS:
+        if attempt is not None:
+            raise ValueError("audit transition gained a later attempt")
+    elif transition.reason in _AUDIT_REQUIRED_ATTEMPT_REASONS:
+        if attempt is None:
+            raise ValueError("audit transition lost its exact attempt")
+    if attempt is not None:
+        if (
+            attempt.command_id != transition.command_id
+            or attempt.attempt_number != transition.attempt_number
+        ):
+            raise ValueError("audit attempt identity changed")
+        if (
+            transition.reason in _AUDIT_ATTEMPT_SESSION_REASONS
+            and attempt.session_id != transition.session_id
+        ):
+            raise ValueError("audit attempt session changed")
+    if transition.reason == "attempt_prepared" and (
+        attempt is None
+        or transition.wire_frame is None
+        or transition.wire_frame != attempt.wire_frame
+    ):
+        raise ValueError("audit prepared bytes changed")
+    if transition.reason in {"ack_received", "nack_received"} and (
+        attempt is None
+        or transition.evidence_frame is None
+        or attempt.response_fingerprint is None
+        or hashlib.sha256(transition.evidence_frame).hexdigest()
+        != attempt.response_fingerprint
+    ):
+        raise ValueError("audit response evidence changed")
+    if transition.reason == "event_confirmed":
+        if (
+            evidence is None
+            or evidence.command_id != command.command_id
+            or evidence.disposition != "confirmed"
+            or evidence.device_id != command.device_id
+            or evidence.table_name != command.table_name
+            or evidence.item_name != command.item_name
+            or evidence.evidence_frame != transition.evidence_frame
+        ):
+            raise ValueError("audit event evidence identity changed")
+    elif evidence is not None:
+        raise ValueError("non-event audit gained event evidence")
+
+
 def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord:
+    _validate_projectable_snapshot(snapshot)
     command = snapshot.command
     transition = snapshot.transition
     attempt = snapshot.attempt
@@ -645,12 +816,14 @@ def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord
     sensitive = _is_sensitive_key(command.item_name)
     raw_text = "[REDACTED]" if sensitive else command.raw_ingress_text
     raw_text, truncation = truncate_raw_text(raw_text)
-    wire_frame = attempt.wire_frame if attempt is not None else transition.wire_frame
-    evidence_frame = (
-        evidence.evidence_frame
-        if evidence is not None
-        else transition.evidence_frame
+    wire_frame = (
+        transition.wire_frame
+        if transition.wire_frame is not None
+        else attempt.wire_frame
+        if attempt is not None
+        else None
     )
+    evidence_frame = transition.evidence_frame
     evidence_id = evidence.evidence_id if evidence is not None else None
     if (
         evidence_id is None
@@ -663,54 +836,78 @@ def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord
         evidence_frame = (
             b"[REDACTED]" if evidence_frame is not None else None
         )
-    record = SettingsAuditRecord(
-        audit_id=command.audit_id,
+    first_attempt_not_yet_persisted = (
+        transition.reason in _AUDIT_NO_ATTEMPT_REASONS
+        and transition.from_state is not None
+        and transition.from_state.value == "pending"
+    )
+    has_wire_identity = (
+        transition.attempt_number is not None
+        and not first_attempt_not_yet_persisted
+    )
+    confirmed = transition.to_state.value == "confirmed"
+    write_outcome = (
+        _HISTORICAL_WRITE_OUTCOME.get(
+            transition.reason,
+            attempt.write_outcome.value,
+        )
+        if attempt is not None
+        else None
+    )
+    error = transition.error_text
+    if error is None and transition.reason in _RETRY_ERROR_REASONS:
+        error = transition.reason
+    return SettingsAuditRecord(
+        audit_id=transition.audit_id,
         device_id=command.device_id,
         table=command.table_name,
         key=command.item_name,
         step=_step_from_snapshot(snapshot),
         result=_result_from_snapshot(snapshot),
         session_id=transition.session_id or "",
-        msg_id=command.wire_id,
-        id_set=command.wire_id_set,
-        value_text=(
-            "[REDACTED]" if sensitive else command.value_text
-        ),
+        msg_id=command.wire_id if has_wire_identity else None,
+        id_set=command.wire_id_set if has_wire_identity else None,
+        value_text=("[REDACTED]" if sensitive else command.value_text),
         value_kind="string",
         confirmed_value_text=(
-            "[REDACTED]"
-            if sensitive and command.state.value == "confirmed"
-            else command.value_text
-            if command.state.value == "confirmed"
+            "[REDACTED]" if sensitive and confirmed else command.value_text
+            if confirmed
             else ""
         ),
-        confirmed_value_kind=(
-            "string" if command.state.value == "confirmed" else ""
-        ),
+        confirmed_value_kind="string" if confirmed else "",
         raw_text=raw_text,
         raw_text_truncated=truncation.was_truncated,
         raw_text_bytes_original=truncation.original_bytes,
         audit_payload_capped=False,
         timestamp=_utc_iso(transition.occurred_at_ms / 1000),
         transition_id=transition.transition_id,
-        command_id=command.command_id,
+        command_id=transition.command_id,
         attempt_number=transition.attempt_number,
         from_state=transition.from_state,
         to_state=transition.to_state,
-        wire_dt=command.wire_dt,
+        wire_dt=command.wire_dt if has_wire_identity else None,
         tsec_text=attempt.tsec_text if attempt is not None else None,
         ver_text=attempt.ver_text if attempt is not None else None,
         crc_text=attempt.crc_text if attempt is not None else None,
-        write_outcome=(
-            attempt.write_outcome.value if attempt is not None else None
-        ),
+        write_outcome=write_outcome,
         wire_length=attempt.wire_length if attempt is not None else None,
         wire_frame=wire_frame,
         evidence_id=evidence_id,
         evidence_frame=evidence_frame,
-        error=transition.error_text or command.last_error,
+        error=error,
     )
-    return record
+
+
+def _canonical_payload_sha256(record: SettingsAuditRecord) -> bytes:
+    """Return the domain-separated canonical pre-budget payload identity."""
+    serialized = json.dumps(
+        record_to_dict(record),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(b"settings-audit-v2\0" + serialized).digest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,51 +918,74 @@ class AuditAccountingDiagnostics:
     volatile_payload_bytes: int
 
 
-async def _offload_audit_ledger(operation: Callable[[], Any]) -> Any:
-    """Drain one ledger mutation before cancellation can escape."""
-    worker = asyncio.create_task(asyncio.to_thread(operation))
+@dataclass(frozen=True, slots=True)
+class AuditReplayReport:
+    """Ordered transition IDs attempted by one bounded restart replay."""
+
+    transition_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _AuditLedgerCompletion:
+    """Definitive executor outcome plus cancellation observed while waiting."""
+
+    result: Any | None
+    error: BaseException | None
+    cancellation_latched: bool
+
+
+async def _offload_audit_ledger(
+    operation: Callable[[], Any],
+) -> _AuditLedgerCompletion:
+    """Own a raw executor completion independently of asyncio wrappers."""
+    worker = _AUDIT_LEDGER_EXECUTOR.submit(operation)
+    wrapped = asyncio.wrap_future(worker)
     cancellation_latched = False
     result: Any = None
     worker_error: BaseException | None = None
     while True:
         try:
-            result = await asyncio.shield(worker)
+            result = await asyncio.shield(wrapped)
             break
         except asyncio.CancelledError:
-            if worker.cancelled():
-                raise
+            if wrapped.cancelled():
+                worker_error = asyncio.CancelledError()
+                break
             cancellation_latched = True
         except BaseException as error:  # pylint: disable=broad-exception-caught
             worker_error = error
             break
-    if cancellation_latched:
-        raise asyncio.CancelledError() from worker_error
-    if worker_error is not None:
-        raise worker_error
-    return result
+    return _AuditLedgerCompletion(
+        result,
+        worker_error,
+        cancellation_latched,
+    )
 
 
-def _audit_lifecycle_lock(audit_id: str) -> threading.Lock:
+def _audit_lifecycle_lock(audit_id: str) -> _AuditLifecycleStripe:
     digest = hashlib.sha256(audit_id.encode("utf-8")).digest()
     stripe = int.from_bytes(digest[:2], "big") % len(_AUDIT_LIFECYCLE_LOCKS)
     return _AUDIT_LIFECYCLE_LOCKS[stripe]
 
 
-async def _acquire_audit_lifecycle_lock(lock: threading.Lock) -> None:
-    """Acquire a process lock off-loop without leaking it on cancellation."""
-    worker = asyncio.get_running_loop().run_in_executor(
-        _AUDIT_LOCK_EXECUTOR,
-        lock.acquire,
+async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
+    """Acquire one stripe and report cancellation retained by its owner."""
+    executor = (
+        lock.executor
+        if isinstance(lock, _AuditLifecycleStripe)
+        else _AUDIT_EXTERNAL_LOCK_EXECUTOR
     )
+    worker = executor.submit(lock.acquire)
+    wrapped = asyncio.wrap_future(worker)
     cancellation_latched = False
     acquired = False
     worker_error: BaseException | None = None
     while True:
         try:
-            acquired = await asyncio.shield(worker)
+            acquired = await asyncio.shield(wrapped)
             break
         except asyncio.CancelledError:
-            if worker.cancelled():
+            if wrapped.cancelled():
                 raise
             cancellation_latched = True
         except BaseException as error:  # pylint: disable=broad-exception-caught
@@ -776,8 +996,11 @@ async def _acquire_audit_lifecycle_lock(lock: threading.Lock) -> None:
     if not acquired:
         raise RuntimeError("audit lifecycle lock acquisition failed")
     if cancellation_latched:
+        if isinstance(lock, _AuditLifecycleStripe):
+            return True
         lock.release()
         raise asyncio.CancelledError()
+    return False
 
 
 class SettingsAuditPublisher:
@@ -805,11 +1028,16 @@ class SettingsAuditPublisher:
     def _bounded_record(
         record: SettingsAuditRecord,
         decision: AuditDeliveryDecision,
+        canonical_payload_sha256: bytes,
     ) -> SettingsAuditRecord:
         if record.transition_id != decision.transition_id:
             raise ValueError("audit delivery transition identity changed")
         if record.audit_id != decision.audit_id:
             raise ValueError("audit delivery audit identity changed")
+        if record.command_id != decision.command_id:
+            raise ValueError("audit delivery command identity changed")
+        if canonical_payload_sha256 != decision.canonical_payload_sha256:
+            raise ValueError("audit delivery canonical identity changed")
         raw_text = _truncate_utf8_text(record.raw_text, decision.raw_bytes)
         return replace(
             record,
@@ -828,6 +1056,27 @@ class SettingsAuditPublisher:
             raise ValueError("committed audit record requires transition_id")
         return record.audit_id, record.transition_id
 
+    @staticmethod
+    def _assert_authoritative_projection(
+        caller: SettingsAuditRecord,
+        authoritative: SettingsAuditRecord,
+    ) -> bytes:
+        caller_digest = _canonical_payload_sha256(caller)
+        authoritative_digest = _canonical_payload_sha256(authoritative)
+        if (
+            caller.transition_id != authoritative.transition_id
+            or caller.audit_id != authoritative.audit_id
+            or caller.command_id != authoritative.command_id
+            or caller_digest != authoritative_digest
+        ):
+            raise ValueError("audit delivery canonical identity changed")
+        return authoritative_digest
+
+    @staticmethod
+    def _validate_page_size(page_size: int) -> None:
+        if type(page_size) is not int or not 1 <= page_size <= 1024:
+            raise ValueError("page_size must be between 1 and 1024")
+
     def publish_committed(self, snapshot: TransitionAuditSnapshot) -> None:
         """Publish off-loop; running-loop callers must use the async API."""
         if self._sink is None:
@@ -841,21 +1090,43 @@ class SettingsAuditPublisher:
                 "durable audit publication on a running loop requires "
                 "publish_committed_async"
             )
-        record = _project_committed(snapshot)
-        audit_id, transition_id = self._identity(record)
+        caller_record = _project_committed(snapshot)
         ledger = self._acceptance_ledger
         if ledger is None:
             raise RuntimeError("durable acceptance ledger is unavailable")
+        try:
+            authoritative_snapshot = ledger.read_transition_audit_snapshot(
+                snapshot.transition.transition_id
+            )
+            record = _project_committed(authoritative_snapshot)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("settings audit authoritative projection failed")
+            return
+        canonical_digest = self._assert_authoritative_projection(
+            caller_record,
+            record,
+        )
+        audit_id, transition_id = self._identity(record)
+        if record.command_id is None:
+            raise ValueError("committed audit record requires command_id")
         with _audit_lifecycle_lock(audit_id):
             try:
                 decision = ledger.propose_audit_delivery(
                     audit_id=audit_id,
+                    command_id=record.command_id,
                     transition_id=transition_id,
+                    canonical_payload_sha256=canonical_digest,
                     requested_raw_bytes=len(
                         record.raw_text.encode("utf-8", errors="replace")
                     ),
                 )
-                bounded = self._bounded_record(record, decision)
+                bounded = self._bounded_record(
+                    record,
+                    decision,
+                    canonical_digest,
+                )
+            except ValueError:
+                raise
             except Exception:  # pylint: disable=broad-exception-caught
                 logger.exception("settings audit delivery proposal failed")
                 return
@@ -888,59 +1159,236 @@ class SettingsAuditPublisher:
         """Publish with ledger SQLite work offloaded from the owning loop."""
         if self._sink is None:
             return
-        record = _project_committed(snapshot)
-        audit_id, transition_id = self._identity(record)
+        caller_record = _project_committed(snapshot)
         ledger = self._acceptance_ledger
         if ledger is None:
             raise RuntimeError("durable acceptance ledger is unavailable")
-        lifecycle_lock = _audit_lifecycle_lock(audit_id)
-        await _acquire_audit_lifecycle_lock(lifecycle_lock)
+        authority = await _offload_audit_ledger(
+            partial(
+                ledger.read_transition_audit_snapshot,
+                snapshot.transition.transition_id,
+            )
+        )
+        cancellation_latched = authority.cancellation_latched
+        cancellation_cause = authority.error
+        if authority.error is not None:
+            if not isinstance(authority.error, Exception):
+                if cancellation_latched:
+                    raise asyncio.CancelledError() from authority.error
+                raise authority.error
+            logger.error(
+                "settings audit authoritative projection failed",
+                exc_info=(
+                    type(authority.error),
+                    authority.error,
+                    authority.error.__traceback__,
+                ),
+            )
+            if cancellation_latched:
+                raise asyncio.CancelledError() from authority.error
+            return
         try:
-            try:
-                decision = await _offload_audit_ledger(
-                    partial(
-                        ledger.propose_audit_delivery,
-                        audit_id=audit_id,
-                        transition_id=transition_id,
-                        requested_raw_bytes=len(
-                            record.raw_text.encode("utf-8", errors="replace")
+            record = _project_committed(
+                cast("TransitionAuditSnapshot", authority.result)
+            )
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            logger.exception("settings audit authoritative projection failed")
+            if cancellation_latched:
+                raise asyncio.CancelledError() from error
+            return
+        canonical_digest = self._assert_authoritative_projection(
+            caller_record,
+            record,
+        )
+        audit_id, transition_id = self._identity(record)
+        if record.command_id is None:
+            raise ValueError("committed audit record requires command_id")
+        lifecycle_lock = _audit_lifecycle_lock(audit_id)
+        acquisition_cancelled = bool(
+            await _acquire_audit_lifecycle_lock(lifecycle_lock)
+        )
+        cancellation_latched = (
+            cancellation_latched or acquisition_cancelled
+        )
+        integrity_error: ValueError | None = None
+        control_flow_error: BaseException | None = None
+        try:
+            proposal = await _offload_audit_ledger(
+                partial(
+                    ledger.propose_audit_delivery,
+                    audit_id=audit_id,
+                    command_id=record.command_id,
+                    transition_id=transition_id,
+                    canonical_payload_sha256=canonical_digest,
+                    requested_raw_bytes=len(
+                        record.raw_text.encode("utf-8", errors="replace")
+                    ),
+                )
+            )
+            cancellation_latched = (
+                cancellation_latched or proposal.cancellation_latched
+            )
+            cancellation_cause = proposal.error
+            if proposal.error is not None:
+                if isinstance(proposal.error, ValueError):
+                    integrity_error = proposal.error
+                elif not isinstance(proposal.error, Exception):
+                    control_flow_error = proposal.error
+                else:
+                    logger.error(
+                        "settings audit delivery proposal failed",
+                        exc_info=(
+                            type(proposal.error),
+                            proposal.error,
+                            proposal.error.__traceback__,
                         ),
                     )
-                )
-                bounded = self._bounded_record(record, decision)
-            except Exception:  # pylint: disable=broad-exception-caught
-                logger.exception("settings audit delivery proposal failed")
-                return
-            try:
-                self._sink(replace(bounded))
-            except Exception:  # pylint: disable=broad-exception-caught
+            else:
                 try:
-                    await _offload_audit_ledger(
-                        partial(
-                            ledger.reject_audit_delivery,
-                            audit_id=audit_id,
-                            transition_id=transition_id,
-                        )
+                    bounded = self._bounded_record(
+                        record,
+                        cast("AuditDeliveryDecision", proposal.result),
+                        canonical_digest,
                     )
+                except ValueError as error:
+                    integrity_error = error
                 except Exception:  # pylint: disable=broad-exception-caught
-                    logger.exception("settings audit proposal rollback failed")
-                logger.exception("settings audit sink rejected committed transition")
-                return
-            try:
-                await _offload_audit_ledger(
-                    partial(
-                        ledger.accept_audit_delivery,
-                        audit_id=audit_id,
-                        transition_id=transition_id,
-                    )
-                )
-            except Exception:  # pylint: disable=broad-exception-caught
-                logger.exception(
-                    "settings audit acceptance finalization failed; "
-                    "replay remains pending"
-                )
+                    logger.exception("settings audit delivery proposal failed")
+                else:
+                    try:
+                        self._sink(replace(bounded))
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        rejection = await _offload_audit_ledger(
+                            partial(
+                                ledger.reject_audit_delivery,
+                                audit_id=audit_id,
+                                transition_id=transition_id,
+                            )
+                        )
+                        cancellation_latched = (
+                            cancellation_latched
+                            or rejection.cancellation_latched
+                        )
+                        if rejection.error is not None:
+                            cancellation_cause = rejection.error
+                            logger.error(
+                                "settings audit proposal rollback failed",
+                                exc_info=(
+                                    type(rejection.error),
+                                    rejection.error,
+                                    rejection.error.__traceback__,
+                                ),
+                            )
+                        logger.exception(
+                            "settings audit sink rejected committed transition"
+                        )
+                    else:
+                        acceptance = await _offload_audit_ledger(
+                            partial(
+                                ledger.accept_audit_delivery,
+                                audit_id=audit_id,
+                                transition_id=transition_id,
+                            )
+                        )
+                        cancellation_latched = (
+                            cancellation_latched
+                            or acceptance.cancellation_latched
+                        )
+                        if acceptance.error is not None:
+                            cancellation_cause = acceptance.error
+                            logger.error(
+                                "settings audit acceptance finalization failed; "
+                                "replay remains pending",
+                                exc_info=(
+                                    type(acceptance.error),
+                                    acceptance.error,
+                                    acceptance.error.__traceback__,
+                                ),
+                            )
         finally:
             lifecycle_lock.release()
+        if cancellation_latched:
+            raise asyncio.CancelledError() from (
+                cancellation_cause or integrity_error or control_flow_error
+            )
+        if control_flow_error is not None:
+            raise control_flow_error
+        if integrity_error is not None:
+            raise integrity_error
+
+    def replay_pending(self, *, page_size: int = 128) -> AuditReplayReport:
+        """Replay every pending durable transition without retained snapshots."""
+        self._validate_page_size(page_size)
+        ledger = self._acceptance_ledger
+        if ledger is None:
+            raise RuntimeError("durable acceptance ledger is unavailable")
+        attempted: list[int] = []
+        after_transition_id = 0
+        while True:
+            transition_ids = ledger.read_pending_audit_transition_ids(
+                after_transition_id=after_transition_id,
+                limit=page_size,
+            )
+            if not transition_ids:
+                break
+            for transition_id in transition_ids:
+                snapshot = ledger.read_transition_audit_snapshot(
+                    transition_id
+                )
+                self.publish_committed(snapshot)
+                attempted.append(transition_id)
+            after_transition_id = transition_ids[-1]
+        return AuditReplayReport(tuple(attempted))
+
+    async def replay_pending_async(
+        self, *, page_size: int = 128
+    ) -> AuditReplayReport:
+        """Asynchronously replay pending transitions from durable pages."""
+        self._validate_page_size(page_size)
+        ledger = self._acceptance_ledger
+        if ledger is None:
+            raise RuntimeError("durable acceptance ledger is unavailable")
+        attempted: list[int] = []
+        after_transition_id = 0
+        while True:
+            page = await _offload_audit_ledger(
+                partial(
+                    ledger.read_pending_audit_transition_ids,
+                    after_transition_id=after_transition_id,
+                    limit=page_size,
+                )
+            )
+            if page.error is not None:
+                if page.cancellation_latched:
+                    raise asyncio.CancelledError() from page.error
+                raise page.error
+            if page.cancellation_latched:
+                raise asyncio.CancelledError()
+            transition_ids = page.result
+            if not transition_ids:
+                break
+            for transition_id in transition_ids:
+                snapshot_result = await _offload_audit_ledger(
+                    partial(
+                        ledger.read_transition_audit_snapshot,
+                        transition_id,
+                    )
+                )
+                if snapshot_result.error is not None:
+                    if snapshot_result.cancellation_latched:
+                        raise asyncio.CancelledError() from snapshot_result.error
+                    raise snapshot_result.error
+                if snapshot_result.cancellation_latched:
+                    raise asyncio.CancelledError()
+                await self.publish_committed_async(
+                    cast(
+                        "TransitionAuditSnapshot",
+                        snapshot_result.result,
+                    )
+                )
+                attempted.append(transition_id)
+            after_transition_id = transition_ids[-1]
+        return AuditReplayReport(tuple(attempted))
 
 
 @dataclass(frozen=True, slots=True)
