@@ -362,6 +362,8 @@ async def test_box_request_after_cloud_setting_ack_waits_for_cycle_completion(
 async def test_held_isnewset_is_rerouted_with_a_new_expectation(
     online_harness: OnlineHarness,
 ) -> None:
+    capture = MagicMock()
+    online_harness.server.frame_capture = capture
     await online_harness.open_cycle()
     cloud_setting = _frame(
         result="Setting",
@@ -386,6 +388,12 @@ async def test_held_isnewset_is_rerouted_with_a_new_expectation(
 
     assert online_harness.raw_cloud.writes[-1] == later_poll
     assert online_harness.context.dialog.expectation_count == 1
+    captured_poll = [
+        call
+        for call in capture.capture.call_args_list
+        if call.kwargs["raw_bytes"] == later_poll
+    ]
+    assert len(captured_poll) == 1
 
     _enqueue_second(online_harness.store)
     later_end = _frame(result="END", extra="<Marker>second-cycle</Marker>")

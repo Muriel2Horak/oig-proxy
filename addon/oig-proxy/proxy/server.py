@@ -801,14 +801,17 @@ class ProxyServer:
         self,
         context: ProxyConnectionContext,
         event: StreamFrameEvent,
+        *,
+        capture: bool = True,
     ) -> None:
         frame = event.frame
-        self._capture_frame(
-            frame.raw,
-            "box_to_cloud",
-            conn_id=context.conn_id,
-            peer=context.peer,
-        )
+        if capture:
+            self._capture_frame(
+                frame.raw,
+                "box_to_cloud",
+                conn_id=context.conn_id,
+                peer=context.peer,
+            )
         validation = validate_frame(frame)
         validated = validation.validated
         if validated is None:
@@ -1091,6 +1094,7 @@ class ProxyServer:
                     await self._route_box_frame(
                         context,
                         StreamFrameEvent(FrameDirection.BOX_TO_PROXY, held),
+                        capture=False,
                     )
                     if context.close_requested.is_set():
                         break
@@ -1167,6 +1171,7 @@ class ProxyServer:
                 await self._route_box_frame(
                     context,
                     StreamFrameEvent(FrameDirection.BOX_TO_PROXY, held),
+                    capture=False,
                 )
                 if context.close_requested.is_set():
                     break
