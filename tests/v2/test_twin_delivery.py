@@ -516,6 +516,54 @@ async def test_write_before_invocation_failure_is_known_and_retryable(
 
 
 @pytest.mark.asyncio
+async def test_executor_renderer_cancellation_does_not_spin_or_retain_lock(
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    sentinel = asyncio.CancelledError("renderer cancelled")
+
+    def cancelled_renderer(_context: Any) -> Any:
+        raise sentinel
+
+    coordinator = TwinCoordinator(
+        store,
+        renderer=cancelled_renderer,
+        clock_ms=_Clock(),
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    real_shield = asyncio.shield
+    shield_calls: defaultdict[int, int] = defaultdict(int)
+
+    def reject_reawait(awaitable: Any) -> asyncio.Future[Any]:
+        identity = id(awaitable)
+        shield_calls[identity] += 1
+        if shield_calls[identity] > 1:
+            raise AssertionError("executor future was awaited more than once")
+        return real_shield(awaitable)
+
+    monkeypatch.setattr(asyncio, "shield", reject_reawait)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="session-a",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=writer,
+        )
+
+    assert caught.value is sentinel
+    assert store.single_nonterminal("123").state is CommandState.PENDING
+    assert writer.frames == []
+    assert not coordinator._device_lock(  # pylint: disable=protected-access
+        "123"
+    ).locked()
+    assert shield_calls
+    assert max(shield_calls.values()) == 1
+
+
+@pytest.mark.asyncio
 async def test_drain_uncertainty_is_persisted_and_connection_closes(
     coordinator: TwinCoordinator,
     store: TwinCommandStore,

@@ -947,10 +947,15 @@ async def _offload_audit_ledger(
         try:
             result = await asyncio.shield(wrapped)
             break
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
             if wrapped.cancelled():
-                worker_error = asyncio.CancelledError()
+                worker_error = error
                 break
+            if wrapped.done():
+                operation_error = wrapped.exception()
+                if isinstance(operation_error, asyncio.CancelledError):
+                    worker_error = operation_error
+                    break
             cancellation_latched = True
         except BaseException as error:  # pylint: disable=broad-exception-caught
             worker_error = error
@@ -987,6 +992,11 @@ async def _acquire_audit_lifecycle_lock(lock: Any) -> bool:
         except asyncio.CancelledError:
             if wrapped.cancelled():
                 raise
+            if wrapped.done():
+                operation_error = wrapped.exception()
+                if isinstance(operation_error, asyncio.CancelledError):
+                    worker_error = operation_error
+                    break
             cancellation_latched = True
         except BaseException as error:  # pylint: disable=broad-exception-caught
             worker_error = error

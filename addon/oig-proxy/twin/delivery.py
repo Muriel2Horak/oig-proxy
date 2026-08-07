@@ -418,6 +418,10 @@ class TwinCoordinator:
             except asyncio.CancelledError as error:
                 if wrapped.cancelled():
                     return None, error, cancellation_latched
+                if wrapped.done():
+                    operation_error = wrapped.exception()
+                    if isinstance(operation_error, asyncio.CancelledError):
+                        return None, operation_error, cancellation_latched
                 cancellation_latched = True
             except BaseException as error:  # pylint: disable=broad-exception-caught
                 return None, error, cancellation_latched

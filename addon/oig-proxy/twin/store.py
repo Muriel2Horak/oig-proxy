@@ -61,7 +61,7 @@ from .state import (
 )
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _BUSY_TIMEOUT_MS = 5000
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_WIRE_FRAME_BYTES = 1_048_576
@@ -227,6 +227,19 @@ CREATE TABLE command_transitions (
 )
 """
 
+_CREATE_SETTINGS_AUDIT_DELIVERIES_V2 = """
+CREATE TABLE settings_audit_deliveries (
+    transition_id INTEGER PRIMARY KEY REFERENCES command_transitions(transition_id),
+    canonical_payload_sha256 BLOB NOT NULL CHECK (
+        typeof(canonical_payload_sha256) = 'blob'
+        AND length(canonical_payload_sha256) = 32
+    ),
+    raw_bytes INTEGER NOT NULL CHECK (raw_bytes BETWEEN 0 AND 16384),
+    payload_capped INTEGER NOT NULL CHECK (payload_capped IN (0, 1)),
+    delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','accepted'))
+)
+"""
+
 _CREATE_SETTINGS_AUDIT_DELIVERIES = """
 CREATE TABLE settings_audit_deliveries (
     transition_id INTEGER PRIMARY KEY REFERENCES command_transitions(transition_id),
@@ -330,6 +343,18 @@ _EXPECTED_SCHEMA_SQL_V1 = {
     ("index", "ux_commands_one_awaiting_ack_per_device"): _CREATE_INDEX_ONE_AWAITING_ACK,
     ("index", "ux_commands_one_unsent_successor_per_target"): _CREATE_INDEX_ONE_UNSENT_SUCCESSOR,
     ("index", "ux_event_receipts_one_confirmation_per_command"): _CREATE_INDEX_ONE_CONFIRMATION,
+}
+
+_EXPECTED_SCHEMA_SQL_V2 = {
+    **_EXPECTED_SCHEMA_SQL_V1,
+    (
+        "table",
+        "settings_audit_deliveries",
+    ): _CREATE_SETTINGS_AUDIT_DELIVERIES_V2,
+    (
+        "index",
+        "idx_command_transitions_audit",
+    ): _CREATE_INDEX_TRANSITIONS_AUDIT,
 }
 
 _EXPECTED_SCHEMA_SQL = {
@@ -3441,8 +3466,112 @@ class TwinCommandStore:
     ) -> None:
         if from_version == _SCHEMA_VERSION:
             return
-        if from_version != 1:
+        if from_version not in {1, 2}:
             raise MigrationError(f"unsupported schema version {from_version}")
+        current_version = from_version
+        while current_version < _SCHEMA_VERSION:
+            if current_version == 1:
+                operation = TwinCommandStore._migrate_v1_to_v2
+            else:
+                operation = TwinCommandStore._migrate_v2_to_v3
+            TwinCommandStore._migrate_schema_step(
+                connection,
+                from_version=current_version,
+                to_version=current_version + 1,
+                operation=operation,
+            )
+            current_version += 1
+
+    @staticmethod
+    def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+        connection.execute(_CREATE_SETTINGS_AUDIT_DELIVERIES_V2)
+        connection.execute(_CREATE_INDEX_TRANSITIONS_AUDIT)
+
+    @staticmethod
+    def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "ALTER TABLE settings_audit_deliveries "
+            "RENAME TO settings_audit_deliveries_v2"
+        )
+        connection.execute(_CREATE_SETTINGS_AUDIT_DELIVERIES)
+        rows = connection.execute(
+            """
+            SELECT delivery.transition_id,
+                   transition.audit_id,
+                   transition.command_id,
+                   delivery.canonical_payload_sha256,
+                   delivery.raw_bytes,
+                   delivery.payload_capped,
+                   delivery.delivery_state
+            FROM settings_audit_deliveries_v2 AS delivery
+            LEFT JOIN command_transitions AS transition
+              ON transition.transition_id = delivery.transition_id
+            ORDER BY delivery.transition_id
+            """
+        )
+        for row in rows:
+            transition_id = _persisted_integer(
+                "audit delivery transition_id", row[0]
+            )
+            audit_id = _persisted_text("audit delivery audit_id", row[1])
+            command_id = _persisted_text("audit delivery command_id", row[2])
+            canonical_digest = _persisted_blob(
+                "audit delivery canonical_payload_sha256", row[3]
+            )
+            if len(canonical_digest) != 32:
+                raise MigrationError(
+                    "audit delivery canonical digest must be 32 bytes"
+                )
+            raw_bytes = _persisted_integer("audit delivery raw_bytes", row[4])
+            if raw_bytes > 16_384:
+                raise MigrationError("audit delivery raw_bytes exceeds its cap")
+            payload_capped = _persisted_integer(
+                "audit delivery payload_capped", row[5]
+            )
+            if payload_capped not in {0, 1}:
+                raise MigrationError(
+                    "audit delivery payload_capped is not boolean"
+                )
+            delivery_state = _persisted_text(
+                "audit delivery delivery_state", row[6]
+            )
+            if delivery_state not in {"pending", "accepted"}:
+                raise MigrationError("audit delivery state is invalid")
+            integrity_digest = derive_audit_delivery_decision_integrity(
+                transition_id=transition_id,
+                audit_id=audit_id,
+                command_id=command_id,
+                canonical_payload_sha256=canonical_digest,
+                raw_bytes=raw_bytes,
+                payload_capped=bool(payload_capped),
+            )
+            connection.execute(
+                """
+                INSERT INTO settings_audit_deliveries(
+                    transition_id, canonical_payload_sha256,
+                    decision_integrity_sha256, raw_bytes,
+                    payload_capped, delivery_state
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    transition_id,
+                    canonical_digest,
+                    integrity_digest,
+                    raw_bytes,
+                    payload_capped,
+                    delivery_state,
+                ),
+            )
+        connection.execute("DROP TABLE settings_audit_deliveries_v2")
+
+    @staticmethod
+    def _migrate_schema_step(
+        connection: sqlite3.Connection,
+        *,
+        from_version: int,
+        to_version: int,
+        operation: Callable[[sqlite3.Connection], None],
+    ) -> None:
         try:
             connection.execute("BEGIN IMMEDIATE")
             current_version, _created_at_ms = TwinCommandStore._read_schema_meta(
@@ -3453,17 +3582,16 @@ class TwinCommandStore:
             TwinCommandStore._validate_schema_sql(
                 connection, version=from_version
             )
-            connection.execute(_CREATE_SETTINGS_AUDIT_DELIVERIES)
-            connection.execute(_CREATE_INDEX_TRANSITIONS_AUDIT)
+            operation(connection)
             cursor = connection.execute(
                 "UPDATE schema_meta SET schema_version = ? "
                 "WHERE schema_version = ?",
-                (_SCHEMA_VERSION, from_version),
+                (to_version, from_version),
             )
             if cursor.rowcount != 1:
                 raise MigrationError("schema authority changed during migration")
             TwinCommandStore._validate_schema_sql(
-                connection, version=_SCHEMA_VERSION
+                connection, version=to_version
             )
             connection.execute("COMMIT")
         except BaseException as error:  # pylint: disable=broad-exception-caught
@@ -3475,7 +3603,8 @@ class TwinCommandStore:
                 rollback_error = caught
             if rollback_error is not None:
                 raise MigrationError(
-                    f"schema v1 to v2 migration failed: {error}; "
+                    f"schema v{from_version} to v{to_version} "
+                    f"migration failed: {error}; "
                     f"rollback failed: {rollback_error}"
                 ) from rollback_error
             if not isinstance(error, Exception):
@@ -3483,7 +3612,8 @@ class TwinCommandStore:
             if isinstance(error, MigrationError):
                 raise
             raise MigrationError(
-                f"schema v1 to v2 migration failed: {error}"
+                f"schema v{from_version} to v{to_version} "
+                f"migration failed: {error}"
             ) from error
 
     @staticmethod
@@ -3529,9 +3659,17 @@ class TwinCommandStore:
             for object_type, name, sql in rows
             if sql is not None
         }
-        expected = (
-            _EXPECTED_SCHEMA_SQL_V1 if version == 1 else _EXPECTED_SCHEMA_SQL
-        )
+        expected_by_version = {
+            1: _EXPECTED_SCHEMA_SQL_V1,
+            2: _EXPECTED_SCHEMA_SQL_V2,
+            3: _EXPECTED_SCHEMA_SQL,
+        }
+        try:
+            expected = expected_by_version[version]
+        except KeyError as error:
+            raise MigrationError(
+                f"unsupported schema version {version}"
+            ) from error
         if set(actual) != set(expected):
             raise MigrationError(
                 f"schema v{version} objects do not match the required artifact set"

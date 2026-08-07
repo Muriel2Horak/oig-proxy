@@ -19,6 +19,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -998,6 +999,155 @@ async def test_cancelled_async_lock_acquisition_releases_acquired_stripe(
         blocking=False
     ) is True
     real_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_executor_ledger_cancellation_is_returned_without_reawait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = asyncio.CancelledError("ledger operation cancelled")
+    real_shield = asyncio.shield
+    shield_calls: dict[int, int] = {}
+
+    def reject_reawait(awaitable: Any) -> asyncio.Future[Any]:
+        identity = id(awaitable)
+        shield_calls[identity] = shield_calls.get(identity, 0) + 1
+        if shield_calls[identity] > 1:
+            raise AssertionError("executor future was awaited more than once")
+        return real_shield(awaitable)
+
+    def cancelled_operation() -> None:
+        raise sentinel
+
+    monkeypatch.setattr(asyncio, "shield", reject_reawait)
+
+    completion = await settings_audit_module._offload_audit_ledger(  # pylint: disable=protected-access
+        cancelled_operation
+    )
+
+    assert completion.error is sentinel
+    assert completion.result is None
+    assert completion.cancellation_latched is False
+    assert shield_calls
+    assert max(shield_calls.values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_publisher_worker_cancellation_releases_stripe_and_retries(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _large_lifecycle_snapshots(store, deterministic_renderer)[0]
+    sentinel = asyncio.CancelledError("proposal cancelled")
+    original_proposal = store.propose_audit_delivery
+    proposal_calls = 0
+    delivered: list[SettingsAuditRecord] = []
+    real_shield = asyncio.shield
+    shielded: list[Any] = []
+
+    def cancel_first_proposal(**kwargs):
+        nonlocal proposal_calls
+        proposal_calls += 1
+        if proposal_calls == 1:
+            raise sentinel
+        return original_proposal(**kwargs)
+
+    def reject_reawait(awaitable: Any) -> asyncio.Future[Any]:
+        if any(candidate is awaitable for candidate in shielded):
+            raise AssertionError("executor future was awaited more than once")
+        shielded.append(awaitable)
+        return real_shield(awaitable)
+
+    monkeypatch.setattr(store, "propose_audit_delivery", cancel_first_proposal)
+    monkeypatch.setattr(asyncio, "shield", reject_reawait)
+    publisher = SettingsAuditPublisher(
+        delivered.append,
+        acceptance_ledger=store,
+    )
+    lifecycle_lock = settings_audit_module._audit_lifecycle_lock(  # pylint: disable=protected-access
+        snapshot.command.audit_id
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await publisher.publish_committed_async(snapshot)
+
+    assert caught.value is sentinel
+    assert proposal_calls == 1
+    assert delivered == []
+    assert store.audit_delivery_decision_count() == 0
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+    await publisher.publish_committed_async(snapshot)
+
+    assert proposal_calls == 2
+    assert len(delivered) == 1
+    assert store.audit_delivery_decision_count() == 1
+    assert lifecycle_lock.acquire(blocking=False) is True
+    lifecycle_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_executor_lock_cancellation_is_raised_without_reawait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = asyncio.CancelledError("lock acquisition cancelled")
+    real_shield = asyncio.shield
+    shield_calls: dict[int, int] = {}
+
+    class CancelledAcquireLock:
+        """Fail one executor acquisition, then behave like a real lock."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.acquire_calls = 0
+            self.release_calls = 0
+
+        def acquire(self) -> bool:
+            self.acquire_calls += 1
+            if self.acquire_calls == 1:
+                raise sentinel
+            return self._lock.acquire()
+
+        def release(self) -> None:
+            self.release_calls += 1
+            self._lock.release()
+
+        @property
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+    def reject_reawait(awaitable: Any) -> asyncio.Future[Any]:
+        identity = id(awaitable)
+        shield_calls[identity] = shield_calls.get(identity, 0) + 1
+        if shield_calls[identity] > 1:
+            raise AssertionError("executor future was awaited more than once")
+        return real_shield(awaitable)
+
+    lock = CancelledAcquireLock()
+    monkeypatch.setattr(asyncio, "shield", reject_reawait)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await settings_audit_module._acquire_audit_lifecycle_lock(  # pylint: disable=protected-access
+            lock
+        )
+
+    assert caught.value is sentinel
+    assert lock.acquire_calls == 1
+    assert lock.release_calls == 0
+    assert lock.locked is False
+    assert shield_calls
+    assert max(shield_calls.values()) == 1
+
+    assert await settings_audit_module._acquire_audit_lifecycle_lock(  # pylint: disable=protected-access
+        lock
+    ) is False
+    assert lock.acquire_calls == 2
+    assert lock.locked is True
+    lock.release()
+    assert lock.release_calls == 1
+    assert lock.locked is False
 
 
 @pytest.mark.asyncio

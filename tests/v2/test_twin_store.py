@@ -18,6 +18,7 @@ import uuid
 import pytest
 
 from twin.state import (
+    AuditDeliveryState,
     AttemptRenderContext,
     AttemptRenderer,
     AttemptWriteOutcome,
@@ -26,6 +27,7 @@ from twin.state import (
     ControlIngress,
     ControlPolicy,
     DeviceState,
+    derive_audit_delivery_decision_integrity,
     IngressDisposition,
     PragmaSnapshot,
     RenderedAttempt,
@@ -172,6 +174,20 @@ ON commands(device_id, table_name, item_name)
 WHERE state = 'pending' AND attempt_count = 0;
 CREATE UNIQUE INDEX ux_event_receipts_one_confirmation_per_command
 ON event_receipts(command_id) WHERE command_id IS NOT NULL;
+"""
+_FROZEN_V2_AUDIT_DDL = """
+CREATE TABLE settings_audit_deliveries (
+    transition_id INTEGER PRIMARY KEY REFERENCES command_transitions(transition_id),
+    canonical_payload_sha256 BLOB NOT NULL CHECK (
+        typeof(canonical_payload_sha256) = 'blob'
+        AND length(canonical_payload_sha256) = 32
+    ),
+    raw_bytes INTEGER NOT NULL CHECK (raw_bytes BETWEEN 0 AND 16384),
+    payload_capped INTEGER NOT NULL CHECK (payload_capped IN (0, 1)),
+    delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','accepted'))
+);
+CREATE INDEX idx_command_transitions_audit
+ON command_transitions(audit_id, transition_id);
 """
 _EXPECTED_TABLES = {
     "schema_meta",
@@ -606,7 +622,7 @@ class _MigrationControlFlow(BaseException):
     """Test-only cancellation-like migration interruption."""
 
 
-class _MigrationInterruptConnection:
+class _MigrationInterruptConnection:  # pylint: disable=too-many-instance-attributes
     """Raise one exact control-flow object at a migration SQL boundary."""
 
     def __init__(
@@ -622,6 +638,8 @@ class _MigrationInterruptConnection:
         self.interruption = interruption
         self.close_error = close_error
         self.close_attempts = 0
+        self.rollback_attempts = 0
+        self.in_transaction_at_close: bool | None = None
         self.raised = False
         self.version_updated = False
 
@@ -630,6 +648,8 @@ class _MigrationInterruptConnection:
 
     def execute(self, statement: str, parameters: Any = ()) -> Any:
         normalized = " ".join(statement.split()).upper()
+        if normalized == "ROLLBACK":
+            self.rollback_attempts += 1
         should_raise = (
             self.boundary == "pre_ddl"
             and normalized.startswith(
@@ -649,12 +669,22 @@ class _MigrationInterruptConnection:
             self.raised = True
             raise self.interruption
         result = self._connection.execute(statement, parameters)
+        if (
+            self.boundary == "post_copy"
+            and not self.raised
+            and normalized.startswith(
+                "INSERT INTO SETTINGS_AUDIT_DELIVERIES"
+            )
+        ):
+            self.raised = True
+            raise self.interruption
         if normalized.startswith("UPDATE SCHEMA_META SET SCHEMA_VERSION"):
             self.version_updated = True
         return result
 
     def close(self) -> None:
         self.close_attempts += 1
+        self.in_transaction_at_close = self._connection.in_transaction
         close_error = self.close_error
         self.close_error = None
         if close_error is not None:
@@ -891,12 +921,52 @@ def _insert_minimal_command(connection: sqlite3.Connection) -> None:
     )
 
 
+def _insert_frozen_v2_audit_decision(
+    connection: sqlite3.Connection,
+) -> tuple[int, bytes]:
+    _insert_minimal_command(connection)
+    cursor = connection.execute(
+        """
+        INSERT INTO command_transitions(
+            command_id, audit_id, from_state, to_state,
+            occurred_at_ms, reason
+        ) VALUES (
+            'command-1', 'audit-1', NULL, 'pending', 1,
+            'accepted_ingress'
+        )
+        """
+    )
+    transition_id = cursor.lastrowid
+    assert type(transition_id) is int  # pylint: disable=unidiomatic-typecheck
+    canonical_digest = hashlib.sha256(b"frozen-v2-payload").digest()
+    connection.execute(
+        """
+        INSERT INTO settings_audit_deliveries(
+            transition_id, canonical_payload_sha256, raw_bytes,
+            payload_capped, delivery_state
+        ) VALUES (?, ?, 321, 1, 'accepted')
+        """,
+        (transition_id, canonical_digest),
+    )
+    return transition_id, canonical_digest
+
+
 def _create_frozen_v1_artifact(path: Path) -> None:
     with _connect(path) as connection:
         connection.executescript(_FROZEN_V1_DDL)
         connection.execute(
             "INSERT INTO schema_meta(schema_version, created_at_ms) "
             "VALUES (1, 123)"
+        )
+
+
+def _create_frozen_v2_artifact(path: Path) -> None:
+    with _connect(path) as connection:
+        connection.executescript(_FROZEN_V1_DDL)
+        connection.executescript(_FROZEN_V2_AUDIT_DDL)
+        connection.execute(
+            "INSERT INTO schema_meta(schema_version, created_at_ms) "
+            "VALUES (2, 123)"
         )
 
 
@@ -935,13 +1005,29 @@ def _v1_runtime_snapshot(path: Path) -> tuple[Any, ...]:
     return objects, metadata, commands, transitions
 
 
-def test_open_creates_schema_v2_and_repeated_open_is_idempotent(
+def _v2_runtime_snapshot(path: Path) -> tuple[Any, ...]:
+    base = _v1_runtime_snapshot(path)
+    with _connect(path) as connection:
+        deliveries = tuple(
+            connection.execute(
+                """
+                SELECT transition_id, canonical_payload_sha256, raw_bytes,
+                       payload_capped, delivery_state
+                FROM settings_audit_deliveries
+                ORDER BY transition_id
+                """
+            ).fetchall()
+        )
+    return *base, deliveries
+
+
+def test_open_creates_schema_v3_and_repeated_open_is_idempotent(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
     first = TwinCommandStore(path, policy=control_policy)
     first.open(now_ms=1000)
-    assert first.schema_version == 2
+    assert first.schema_version == 3
     assert first.schema_created_at_ms == 1000
     assert first.policy is control_policy
     first.close()
@@ -949,7 +1035,7 @@ def test_open_creates_schema_v2_and_repeated_open_is_idempotent(
     first_bytes = path.read_bytes()
     second = TwinCommandStore(path, policy=control_policy)
     second.open(now_ms=2000)
-    assert second.schema_version == 2
+    assert second.schema_version == 3
     assert second.schema_created_at_ms == 1000
     second.close()
 
@@ -1144,7 +1230,7 @@ def test_frozen_v1_artifact_has_complete_independent_sqlite_semantics(
         ).fetchall() == [(1, 123)]
 
 
-def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
+def test_exact_v1_artifact_migrates_to_v3_without_losing_ledger_data(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "migrate.db"
@@ -1162,7 +1248,7 @@ def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
     migrated = TwinCommandStore(path, policy=control_policy)
     migrated.open(now_ms=999)
 
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert migrated.schema_created_at_ms == 123
     assert migrated.read_command("command-1").audit_id == "audit-1"
     assert len(migrated.read_transitions("command-1")) == 1
@@ -1181,13 +1267,182 @@ def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
         ]
         assert connection.execute(
             "SELECT schema_version FROM schema_meta"
-        ).fetchall() == [(2,)]
+        ).fetchall() == [(3,)]
 
     reopened = TwinCommandStore(path, policy=control_policy)
     reopened.open(now_ms=1000)
-    assert reopened.schema_version == 2
+    assert reopened.schema_version == 3
     assert reopened.schema_created_at_ms == 123
     reopened.close()
+
+
+def test_exact_base_v2_artifact_migrates_to_v3_and_backfills_integrity(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "migrate-v2.db"
+    _create_frozen_v2_artifact(path)
+    with _connect(path) as connection:
+        transition_id, canonical_digest = _insert_frozen_v2_audit_decision(
+            connection
+        )
+
+    migrated = TwinCommandStore(path, policy=control_policy)
+    migrated.open(now_ms=999)
+
+    assert migrated.schema_version == 3
+    assert migrated.schema_created_at_ms == 123
+    decision = migrated.read_audit_delivery_decision(
+        audit_id="audit-1",
+        transition_id=cast(int, transition_id)
+    )
+    assert decision.state is AuditDeliveryState.ACCEPTED
+    assert decision.canonical_payload_sha256 == canonical_digest
+    assert decision.raw_bytes == 321
+    assert decision.payload_capped is True
+    assert decision.decision_integrity_sha256 == (
+        derive_audit_delivery_decision_integrity(
+            transition_id=cast(int, transition_id),
+            audit_id="audit-1",
+            command_id="command-1",
+            canonical_payload_sha256=canonical_digest,
+            raw_bytes=321,
+            payload_capped=True,
+        )
+    )
+    migrated.close()
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=1000)
+    assert reopened.schema_version == 3
+    assert reopened.read_audit_delivery_decision(
+        audit_id="audit-1",
+        transition_id=cast(int, transition_id)
+    ) == decision
+    reopened.close()
+
+
+def test_contract_wrong_v2_to_v3_ddl_rolls_back_and_can_retry(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "migration-v2-rollback.db"
+    _create_frozen_v2_artifact(path)
+    with _connect(path) as connection:
+        _insert_frozen_v2_audit_decision(connection)
+    before = _v2_runtime_snapshot(path)
+
+    wrong_ddl = store_module._CREATE_SETTINGS_AUDIT_DELIVERIES.replace(  # pylint: disable=protected-access
+        "BETWEEN 0 AND 16384", "BETWEEN 0 AND 16383"
+    )
+    with monkeypatch.context() as migration_patch:
+        migration_patch.setattr(
+            store_module,
+            "_CREATE_SETTINGS_AUDIT_DELIVERIES",
+            wrong_ddl,
+        )
+        with pytest.raises(
+            MigrationError, match="schema v3 object differs from contract"
+        ):
+            TwinCommandStore(path, policy=control_policy).open(now_ms=999)
+
+    assert _v2_runtime_snapshot(path) == before
+    assert "settings_audit_deliveries_v2" not in _schema_objects(path, "table")
+
+    retried = TwinCommandStore(path, policy=control_policy)
+    retried.open(now_ms=1000)
+    assert retried.schema_version == 3
+    retried.close()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["pre_ddl", "post_copy", "post_ddl", "final_validation"],
+)
+@pytest.mark.parametrize(
+    "interruption_kind",
+    ["keyboard", "system_exit", "custom"],
+)
+# pylint: disable-next=too-many-locals
+def test_v2_migration_control_flow_releases_failed_open_owner(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    interruption_kind: str,
+) -> None:
+    path = tmp_path / f"v2-interrupt-{boundary}-{interruption_kind}.db"
+    _create_frozen_v2_artifact(path)
+    with _connect(path) as connection:
+        transition_id, canonical_digest = _insert_frozen_v2_audit_decision(
+            connection
+        )
+    before = _v2_runtime_snapshot(path)
+    interruption: BaseException
+    if interruption_kind == "keyboard":
+        interruption = KeyboardInterrupt("migration interrupted")
+    elif interruption_kind == "system_exit":
+        interruption = SystemExit("migration interrupted")
+    else:
+        interruption = _MigrationControlFlow("migration interrupted")
+    failed = TwinCommandStore(path, policy=control_policy)
+    real_connect = failed._connect_database  # pylint: disable=protected-access
+    wrapped: _MigrationInterruptConnection | None = None
+
+    def interrupted_connect(*, mode: str) -> sqlite3.Connection:
+        nonlocal wrapped
+        connection = real_connect(mode=mode)
+        if mode != "rw":
+            return connection
+        wrapped = _MigrationInterruptConnection(
+            connection,
+            boundary=boundary,
+            interruption=interruption,
+        )
+        return cast(sqlite3.Connection, wrapped)
+
+    monkeypatch.setattr(failed, "_connect_database", interrupted_connect)
+    retry = TwinCommandStore(path, policy=control_policy)
+    try:
+        with pytest.raises(type(interruption)) as caught:
+            failed.open(now_ms=999)
+
+        assert caught.value is interruption
+        assert wrapped is not None and wrapped.raised
+        assert wrapped.rollback_attempts == 1
+        assert wrapped.close_attempts == 1
+        assert wrapped.in_transaction_at_close is False
+        assert not failed.is_open
+        assert failed.schema_version == 0
+        assert _v2_runtime_snapshot(path) == before
+        assert "settings_audit_deliveries_v2" not in _schema_objects(
+            path, "table"
+        )
+
+        retry.open(now_ms=1000)
+        assert retry.schema_version == 3
+        decision = retry.read_audit_delivery_decision(
+            audit_id="audit-1",
+            transition_id=transition_id,
+        )
+        assert decision.state is AuditDeliveryState.ACCEPTED
+        assert decision.decision_integrity_sha256 == (
+            derive_audit_delivery_decision_integrity(
+                transition_id=transition_id,
+                audit_id="audit-1",
+                command_id="command-1",
+                canonical_payload_sha256=canonical_digest,
+                raw_bytes=321,
+                payload_capped=True,
+            )
+        )
+    finally:
+        try:
+            failed.close()
+        except TwinStoreError:
+            pass
+        retry.close()
 
 
 def test_contract_wrong_v1_to_v2_ddl_rolls_back_and_can_retry(
@@ -1219,7 +1474,7 @@ def test_contract_wrong_v1_to_v2_ddl_rolls_back_and_can_retry(
 
     retried = TwinCommandStore(path, policy=control_policy)
     retried.open(now_ms=1000)
-    assert retried.schema_version == 2
+    assert retried.schema_version == 3
     retried.close()
 
 
@@ -1296,7 +1551,7 @@ def test_v1_migration_control_flow_releases_failed_open_owner(
         )
 
         retry.open(now_ms=1000)
-        assert retry.schema_version == 2
+        assert retry.schema_version == 3
     finally:
         try:
             failed.close()
@@ -1351,7 +1606,7 @@ def test_migration_control_flow_cleanup_failure_stays_fail_closed(
         assert wrapped.close_attempts == 2
         assert not failed.is_open
         contender.open(now_ms=1001)
-        assert contender.schema_version == 2
+        assert contender.schema_version == 3
     finally:
         try:
             failed.close()
@@ -1457,7 +1712,7 @@ def test_open_releases_lock_and_preserves_artifacts_on_setup_failure(
     assert not store.is_open
 
 
-def test_schema_v2_has_exact_tables_indexes_and_composite_identity_foreign_keys(
+def test_schema_v3_has_exact_tables_indexes_and_composite_identity_foreign_keys(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -1516,7 +1771,7 @@ def test_schema_v2_has_exact_tables_indexes_and_composite_identity_foreign_keys(
 
 
 # pylint: disable-next=too-many-locals
-def test_schema_v2_complete_independent_sqlite_artifact_contract(
+def test_schema_v3_complete_independent_sqlite_artifact_contract(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -1612,7 +1867,7 @@ def test_schema_v2_complete_independent_sqlite_artifact_contract(
         assert explicit_indexes == _EXPECTED_EXPLICIT_INDEX_ARTIFACTS
 
 
-def test_schema_v2_transition_ids_are_never_reused_after_highest_delete(
+def test_schema_v3_transition_ids_are_never_reused_after_highest_delete(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -1648,7 +1903,7 @@ def test_schema_v2_transition_ids_are_never_reused_after_highest_delete(
     assert second_transition_id > first_transition_id
 
 
-def test_schema_v2_partial_unique_indexes_enforce_their_predicates(
+def test_schema_v3_partial_unique_indexes_enforce_their_predicates(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -1717,7 +1972,7 @@ def test_schema_v2_partial_unique_indexes_enforce_their_predicates(
             )
 
 
-def test_schema_v2_enforces_core_state_wire_attempt_and_event_checks(
+def test_schema_v3_enforces_core_state_wire_attempt_and_event_checks(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -2144,7 +2399,7 @@ def test_unsupported_schema_fails_closed_without_downgrade(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
-    _create_schema_meta_only(path, version=3)
+    _create_schema_meta_only(path, version=4)
     original = path.read_bytes()
     store = TwinCommandStore(path, policy=control_policy)
 
@@ -2156,7 +2411,7 @@ def test_unsupported_schema_fails_closed_without_downgrade(
     with _connect(path) as connection:
         assert connection.execute(
             "SELECT schema_version, created_at_ms FROM schema_meta"
-        ).fetchall() == [(3, 123)]
+        ).fetchall() == [(4, 123)]
 
 
 def test_nonempty_sqlite_without_schema_meta_fails_closed_without_mutation(
