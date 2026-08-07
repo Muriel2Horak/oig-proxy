@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -144,6 +145,37 @@ def _require_int(name: str, value: int) -> None:
         raise TypeError(f"{name} must be an integer")
 
 
+_AUDIT_DELIVERY_DECISION_INTEGRITY_DOMAIN = b"settings-audit-decision-v2\0"
+
+
+def derive_audit_delivery_decision_integrity(
+    *,
+    transition_id: int,
+    audit_id: str,
+    command_id: str,
+    canonical_payload_sha256: bytes,
+    raw_bytes: int,
+    payload_capped: bool,
+) -> bytes:
+    """Derive the v2 digest binding one final audit accounting decision."""
+    audit_id_bytes = audit_id.encode("utf-8")
+    command_id_bytes = command_id.encode("utf-8")
+    encoded = b"".join(
+        (
+            _AUDIT_DELIVERY_DECISION_INTEGRITY_DOMAIN,
+            transition_id.to_bytes(8, "big", signed=False),
+            len(audit_id_bytes).to_bytes(4, "big", signed=False),
+            audit_id_bytes,
+            len(command_id_bytes).to_bytes(4, "big", signed=False),
+            command_id_bytes,
+            canonical_payload_sha256,
+            raw_bytes.to_bytes(4, "big", signed=False),
+            b"\x01" if payload_capped else b"\x00",
+        )
+    )
+    return hashlib.sha256(encoded).digest()
+
+
 @dataclass(frozen=True, slots=True)
 class ControlPolicy:
     """Validated transaction lifecycle limits, expressed in milliseconds."""
@@ -242,6 +274,7 @@ class AuditDeliveryDecision:
     audit_id: str
     command_id: str
     canonical_payload_sha256: bytes
+    decision_integrity_sha256: bytes
     raw_bytes: int
     payload_capped: bool
     state: AuditDeliveryState
@@ -259,6 +292,11 @@ class AuditDeliveryDecision:
             or len(self.canonical_payload_sha256) != 32
         ):
             raise ValueError("canonical_payload_sha256 must be 32 bytes")
+        if (
+            not isinstance(self.decision_integrity_sha256, bytes)
+            or len(self.decision_integrity_sha256) != 32
+        ):
+            raise ValueError("decision_integrity_sha256 must be 32 bytes")
         _require_int("raw_bytes", self.raw_bytes)
         if not 0 <= self.raw_bytes <= 16 * 1024:
             raise ValueError("raw_bytes must be between 0 and 16384")
@@ -266,6 +304,20 @@ class AuditDeliveryDecision:
             raise TypeError("payload_capped must be a boolean")
         if not isinstance(self.state, AuditDeliveryState):
             raise TypeError("state must be an AuditDeliveryState")
+        self.verify_integrity()
+
+    def verify_integrity(self) -> None:
+        """Recompute and verify final accounting at any consumer boundary."""
+        expected_integrity = derive_audit_delivery_decision_integrity(
+            transition_id=self.transition_id,
+            audit_id=self.audit_id,
+            command_id=self.command_id,
+            canonical_payload_sha256=self.canonical_payload_sha256,
+            raw_bytes=self.raw_bytes,
+            payload_capped=self.payload_capped,
+        )
+        if self.decision_integrity_sha256 != expected_integrity:
+            raise ValueError("audit delivery decision integrity mismatch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,6 +559,7 @@ class EventTimeoutCandidate:
     table_name: str
     item_name: str
     value_text: str
+    acked_at_ms: int
     ack_device_rdt: str | None
     event_deadline_ms: int
 

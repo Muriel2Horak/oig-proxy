@@ -31,6 +31,8 @@ from .state import (
     AttemptRenderer,
     AttemptWriteOutcome,
     ClaimDisposition,
+    CommandAttempt,
+    CommandTransition,
     CommandState,
     DeliveryDecision,
     DeliveryDisposition,
@@ -88,6 +90,146 @@ class DeadlineSweepError(RuntimeError):
         self.partial_report = partial_report
 
 
+def _validate_device_deadline_snapshot(
+    snapshot: TransitionAuditSnapshot,
+) -> None:
+    """Require the exact nested contract emitted by a device deadline sweep."""
+    command = snapshot.command
+    transition = snapshot.transition
+    if snapshot.evidence is not None:
+        raise RuntimeError("device sweep snapshot must not include event evidence")
+    if transition.to_state is CommandState.EXPIRED:
+        if (
+            transition.from_state is not CommandState.PENDING
+            or transition.reason != "pending_ttl_expired"
+        ):
+            raise RuntimeError("device sweep expiry origin is inconsistent")
+        if (
+            snapshot.attempt is not None
+            or transition.attempt_number is not None
+            or transition.session_id is not None
+        ):
+            raise RuntimeError("device sweep pending expiry gained an attempt")
+        if (
+            type(command.attempt_count) is not int
+            or command.attempt_count != 0
+            or command.active_session_id is not None
+            or command.ack_deadline_ms is not None
+        ):
+            raise RuntimeError("device sweep pending command origin is inconsistent")
+        return
+    if transition.to_state not in {
+        CommandState.RETRY_PENDING,
+        CommandState.FAILED,
+    }:
+        raise RuntimeError("device sweep snapshot target is invalid")
+    if (
+        transition.from_state is not CommandState.AWAITING_ACK
+        or transition.reason != RetryReason.ACK_TIMEOUT.value
+    ):
+        raise RuntimeError("device sweep retry origin is inconsistent")
+    attempt = snapshot.attempt
+    if type(attempt) is not CommandAttempt:
+        raise RuntimeError("device sweep ACK timeout requires an exact attempt")
+    attempt = cast(CommandAttempt, attempt)
+    if (
+        type(command.attempt_count) is not int
+        or command.attempt_count < 1
+        or type(attempt.attempt_number) is not int
+        or attempt.attempt_number < 1
+        or type(transition.attempt_number) is not int
+        or transition.attempt_number < 1
+    ):
+        raise RuntimeError("device sweep ACK-timeout attempt number is invalid")
+    if (
+        type(attempt.session_id) is not str
+        or not attempt.session_id
+        or type(transition.session_id) is not str
+        or not transition.session_id
+    ):
+        raise RuntimeError("device sweep ACK-timeout session is invalid")
+    if (
+        attempt.command_id != command.command_id
+        or attempt.attempt_number != command.attempt_count
+        or transition.attempt_number != attempt.attempt_number
+        or transition.session_id != attempt.session_id
+    ):
+        raise RuntimeError("device sweep ACK-timeout identity is inconsistent")
+    if (
+        command.active_session_id is not None
+        or command.ack_deadline_ms is not None
+    ):
+        raise RuntimeError("device sweep ACK-timeout ownership was not released")
+
+
+def _validate_device_sweep_report(
+    device_id: str, report: SweepReport
+) -> None:
+    """Reject malformed worker accounting before aggregate reconciliation."""
+    if type(report) is not SweepReport:  # pylint: disable=unidiomatic-typecheck
+        raise RuntimeError("device sweep report must have the exact type")
+    if type(report.snapshots) is not tuple:  # pylint: disable=unidiomatic-typecheck
+        raise RuntimeError("device sweep snapshots must be an exact tuple")
+    counters = (
+        report.expired_pending,
+        report.retry_pending,
+        report.failed_attempt_limit,
+        report.incomplete_event_timeout,
+    )
+    if any(type(counter) is not int or counter < 0 for counter in counters):
+        raise RuntimeError("device sweep counters must be nonnegative integers")
+    if sum(counters) != len(report.snapshots):
+        raise RuntimeError("device sweep counters do not match snapshot count")
+    if report.incomplete_event_timeout != 0:
+        raise RuntimeError("device sweep returned event-timeout work")
+    previous_transition_id = 0
+    transition_ids: set[int] = set()
+    semantic_counters = {
+        CommandState.EXPIRED: 0,
+        CommandState.RETRY_PENDING: 0,
+        CommandState.FAILED: 0,
+    }
+    for snapshot in report.snapshots:
+        if type(snapshot) is not TransitionAuditSnapshot:
+            raise RuntimeError("device sweep returned an invalid snapshot")
+        if type(snapshot.command) is not TwinCommand:
+            raise RuntimeError("device sweep returned an invalid command")
+        if type(snapshot.transition) is not CommandTransition:
+            raise RuntimeError("device sweep returned an invalid transition")
+        command = snapshot.command
+        transition = snapshot.transition
+        if command.device_id != device_id:
+            raise RuntimeError("device sweep returned another device's snapshot")
+        if (
+            command.command_id != transition.command_id
+            or command.audit_id != transition.audit_id
+        ):
+            raise RuntimeError("device sweep snapshot identity is inconsistent")
+        if command.state is not transition.to_state:
+            raise RuntimeError("device sweep snapshot state is inconsistent")
+        if transition.to_state not in semantic_counters:
+            raise RuntimeError("device sweep snapshot target is invalid")
+        _validate_device_deadline_snapshot(snapshot)
+        semantic_counters[transition.to_state] += 1
+        transition_id = transition.transition_id
+        if type(transition_id) is not int or transition_id < 1:
+            raise RuntimeError("device sweep transition ID must be positive")
+        if transition_id in transition_ids:
+            raise RuntimeError("device sweep transition IDs must be unique")
+        if transition_id <= previous_transition_id:
+            raise RuntimeError(
+                "device sweep transition IDs must be strictly ascending"
+            )
+        transition_ids.add(transition_id)
+        previous_transition_id = transition_id
+    if (
+        semantic_counters[CommandState.EXPIRED],
+        semantic_counters[CommandState.RETRY_PENDING],
+        semantic_counters[CommandState.FAILED],
+    ) != counters[:3]:
+        raise RuntimeError("device sweep counters do not match snapshot states")
+
+
 @dataclass(slots=True)
 class _RegisteredEventEntry:
     """Loop-owned lifecycle for one synchronously captured event receipt."""
@@ -110,8 +252,18 @@ class _EventTimeoutReservation:
     table_name: str
     item_name: str
     value_text: str
+    acked_at_ms: int
     ack_device_rdt: str | None
     event_deadline_ms: int
+
+
+@dataclass(slots=True)
+class _DeadlineDeviceLease:
+    """Transfer one acquired device lock to the aggregate sweep owner."""
+
+    device_id: str
+    lock: asyncio.Lock
+    acquired: bool = False
 
 
 class TwinCoordinator:
@@ -134,6 +286,7 @@ class TwinCoordinator:
         self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self._monotonic = monotonic or time.monotonic
         self._device_locks: dict[str, asyncio.Lock] = {}
+        self._deadline_sweep_lock = asyncio.Lock()
         self._registered_events: dict[str, _RegisteredEventEntry] = {}
         self._next_event_receipt_sequence = 1
         self._event_loop: asyncio.AbstractEventLoop | None = None
@@ -224,13 +377,19 @@ class TwinCoordinator:
         if self._audit is None:
             return
         cancellation_latched = False
+        publication_error: BaseException | None = None
         for snapshot in snapshots:
             try:
                 await self._audit.publish_committed_async(snapshot)
             except asyncio.CancelledError:
                 cancellation_latched = True
+            except BaseException as caught:  # pylint: disable=broad-exception-caught
+                publication_error = caught
+                break
         if cancellation_latched:
-            raise asyncio.CancelledError()
+            raise asyncio.CancelledError() from publication_error
+        if publication_error is not None:
+            raise publication_error
 
     async def _refresh_status(self) -> None:
         worker = _COORDINATOR_MUTATION_EXECUTOR.submit(
@@ -297,8 +456,13 @@ class TwinCoordinator:
                     on_success(result)
                 try:
                     await self._publish(snapshots(result))
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as caught:
                     cancellation_latched = True
+                    if (
+                        reconciliation_error is None
+                        and caught.__cause__ is not None
+                    ):
+                        reconciliation_error = caught.__cause__
             elif on_failure is not None:
                 on_failure(error)
         except BaseException as caught:  # pylint: disable=broad-exception-caught
@@ -307,8 +471,13 @@ class TwinCoordinator:
             try:
                 await self._refresh_status()
                 break
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as caught:
                 cancellation_latched = True
+                if (
+                    reconciliation_error is None
+                    and caught.__cause__ is not None
+                ):
+                    reconciliation_error = caught.__cause__
             except BaseException as caught:  # pylint: disable=broad-exception-caught
                 if reconciliation_error is None:
                     reconciliation_error = caught
@@ -991,13 +1160,14 @@ class TwinCoordinator:
         self, reservation: _EventTimeoutReservation
     ) -> bool:
         candidate = EventTimeoutCandidate(
-            reservation.command_id,
-            reservation.device_id,
-            reservation.table_name,
-            reservation.item_name,
-            reservation.value_text,
-            reservation.ack_device_rdt,
-            reservation.event_deadline_ms,
+            command_id=reservation.command_id,
+            device_id=reservation.device_id,
+            table_name=reservation.table_name,
+            item_name=reservation.item_name,
+            value_text=reservation.value_text,
+            acked_at_ms=reservation.acked_at_ms,
+            ack_device_rdt=reservation.ack_device_rdt,
+            event_deadline_ms=reservation.event_deadline_ms,
         )
         return any(
             event_is_eligible_for_timeout_candidate(
@@ -1068,129 +1238,233 @@ class TwinCoordinator:
         """Run pending/ACK sweep plus two-pass exact event-timeout grace."""
         event_loop = self._bind_event_loop()
         effective_now = self._clock_ms() if now_ms is None else now_ms
-        deadline_devices = await asyncio.to_thread(
-            self._store.read_deadline_devices, now_ms=effective_now
-        )
+
+        def validated_device_sweep(device_id: str) -> SweepReport:
+            report = self._store.sweep_device_deadlines(
+                device_id=device_id,
+                now_ms=effective_now,
+            )
+            try:
+                _validate_device_sweep_report(device_id, report)
+                for snapshot in report.snapshots:
+                    authoritative = self._store.read_transition_audit_snapshot(
+                        snapshot.transition.transition_id
+                    )
+                    if snapshot != authoritative:
+                        raise RuntimeError(
+                            "device sweep snapshot differs from durable state"
+                        )
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                raise RuntimeError(
+                    f"device sweep returned invalid report: {device_id}: {error}"
+                ) from error
+            return report
 
         async def sweep_device(
-            device_id: str,
+            lease: _DeadlineDeviceLease,
         ) -> tuple[SweepReport, bool]:
+            await lease.lock.acquire()
+            lease.acquired = True
             retained: list[SweepReport] = []
             try:
-                async with self._device_lock(device_id):
-                    report = await self._run_mutation_locked(
-                        partial(
-                            self._store.sweep_device_deadlines,
-                            device_id=device_id,
-                            now_ms=effective_now,
-                        ),
-                        snapshots=lambda _report: (),
-                        on_success=retained.append,
-                    )
+                report = await self._run_mutation_locked(
+                    partial(validated_device_sweep, lease.device_id),
+                    snapshots=lambda _report: (),
+                    on_success=retained.append,
+                )
             except asyncio.CancelledError:
                 if retained:
                     return retained[0], True
                 raise
             return report, False
 
-        device_tasks = tuple(
-            (
-                device_id,
-                asyncio.create_task(sweep_device(device_id)),
+        async with self._deadline_sweep_lock:
+            deadline_devices = await asyncio.to_thread(
+                self._store.read_deadline_devices,
+                now_ms=effective_now,
             )
-            for device_id in deadline_devices
-        )
-
-        async def settle_device_sweeps(
-        ) -> tuple[tuple[Any, ...], bool]:
-            outcomes: list[Any] = []
+            if (
+                type(deadline_devices) is not tuple  # pylint: disable=unidiomatic-typecheck
+                or any(
+                    type(device_id) is not str or not device_id  # pylint: disable=unidiomatic-typecheck
+                    for device_id in deadline_devices
+                )
+            ):
+                raise RuntimeError(
+                    "deadline devices must be an exact tuple of non-empty strings"
+                )
+            if deadline_devices != tuple(sorted(set(deadline_devices))):
+                raise RuntimeError(
+                    "deadline devices must be unique and strictly sorted"
+                )
+            device_leases = tuple(
+                _DeadlineDeviceLease(
+                    device_id=device_id,
+                    lock=self._device_lock(device_id),
+                )
+                for device_id in deadline_devices
+            )
+            device_tasks: list[tuple[str, asyncio.Task[Any]]] = []
+            settled_tasks: set[asyncio.Task[Any]] = set()
             cancellation_latched = False
-            for _device_id, task in device_tasks:
-                outcome, error, wait_cancelled = await self._drain_task(task)
-                cancellation_latched = (
-                    cancellation_latched or wait_cancelled
-                )
-                if error is not None:
-                    if isinstance(error, asyncio.CancelledError):
-                        cancellation_latched = True
-                    outcomes.append(error)
-                    continue
-                if not isinstance(outcome, tuple):
-                    raise RuntimeError("device sweep returned no outcome")
-                report, worker_cancelled = outcome
-                outcomes.append(report)
-                cancellation_latched = (
-                    cancellation_latched or worker_cancelled
-                )
-            return tuple(outcomes), cancellation_latched
-
-        settlement = asyncio.create_task(settle_device_sweeps())
-        settled, settlement_error, cancellation_latched = (
-            await self._drain_task(settlement)
-        )
-        if settlement_error is not None:
-            await self._refresh_status()
-            if cancellation_latched:
-                raise asyncio.CancelledError() from settlement_error
-            raise settlement_error
-        if not isinstance(settled, tuple):
-            raise RuntimeError("deadline sweep settlement returned no outcomes")
-        outcomes, worker_cancellation_latched = settled
-        cancellation_latched = (
-            cancellation_latched or worker_cancellation_latched
-        )
-        device_reports: list[SweepReport] = []
-        failures: list[tuple[str, BaseException]] = []
-        for device_id, outcome in zip(deadline_devices, outcomes, strict=True):
-            if isinstance(outcome, BaseException):
-                if isinstance(outcome, asyncio.CancelledError):
-                    cancellation_latched = True
-                else:
-                    failures.append((device_id, outcome))
-            else:
-                device_reports.append(outcome)
-        base_snapshots = tuple(
-            sorted(
-                (
-                    snapshot
-                    for report in device_reports
-                    for snapshot in report.snapshots
-                ),
-                key=lambda snapshot: snapshot.transition.transition_id,
-            )
-        )
-        reconciliation_error: BaseException | None = None
-        try:
-            await self._publish(base_snapshots)
-        except asyncio.CancelledError:
-            cancellation_latched = True
-        except BaseException as caught:  # pylint: disable=broad-exception-caught
-            reconciliation_error = caught
-        while True:
+            creation_failure: tuple[str, BaseException] | None = None
             try:
-                await self._refresh_status()
-                break
-            except asyncio.CancelledError:
-                cancellation_latched = True
-            except BaseException as caught:  # pylint: disable=broad-exception-caught
-                reconciliation_error = caught
-                break
-        base_report = SweepReport(
-            sum(report.expired_pending for report in device_reports),
-            sum(report.retry_pending for report in device_reports),
-            sum(report.failed_attempt_limit for report in device_reports),
-            0,
-            base_snapshots,
-        )
-        if reconciliation_error is not None:
-            if cancellation_latched:
-                raise asyncio.CancelledError() from reconciliation_error
-            raise reconciliation_error
-        if cancellation_latched:
-            cause = failures[0][1] if failures else None
-            raise asyncio.CancelledError() from cause
-        if failures:
-            raise DeadlineSweepError(tuple(failures), base_report)
+                for lease in device_leases:
+                    worker = sweep_device(lease)
+                    try:
+                        task = asyncio.create_task(worker)
+                    except BaseException as caught:  # pylint: disable=broad-exception-caught
+                        worker.close()  # pylint: disable=no-member
+                        creation_failure = (lease.device_id, caught)
+                        if isinstance(caught, asyncio.CancelledError):
+                            cancellation_latched = True
+                        break
+                    device_tasks.append((lease.device_id, task))
+                outcomes: list[tuple[str, Any]] = []
+                for device_id, task in device_tasks:
+                    outcome, error, wait_cancelled = await self._drain_task(task)
+                    settled_tasks.add(task)
+                    cancellation_latched = (
+                        cancellation_latched or wait_cancelled
+                    )
+                    if error is not None:
+                        if isinstance(error, asyncio.CancelledError):
+                            cancellation_latched = True
+                        outcomes.append((device_id, error))
+                        continue
+                    if (
+                        type(outcome) is not tuple  # pylint: disable=unidiomatic-typecheck
+                        or len(outcome) != 2
+                        or type(outcome[0]) is not SweepReport  # pylint: disable=unidiomatic-typecheck
+                        or type(outcome[1]) is not bool  # pylint: disable=unidiomatic-typecheck
+                    ):
+                        outcomes.append(
+                            (
+                                device_id,
+                                RuntimeError(
+                                    "device sweep returned invalid outcome: "
+                                    f"{device_id}"
+                                ),
+                            )
+                        )
+                        continue
+                    report, worker_cancelled = outcome
+                    cancellation_latched = (
+                        cancellation_latched or worker_cancelled
+                    )
+                    try:
+                        _validate_device_sweep_report(device_id, report)
+                    except Exception as error:  # pylint: disable=broad-exception-caught
+                        outcomes.append(
+                            (
+                                device_id,
+                                RuntimeError(
+                                    "device sweep returned invalid report: "
+                                    f"{device_id}: {error}"
+                                ),
+                            )
+                        )
+                        continue
+                    outcomes.append((device_id, report))
+                device_reports: list[SweepReport] = []
+                failures: list[tuple[str, BaseException]] = []
+                for device_id, outcome in outcomes:
+                    if isinstance(outcome, BaseException):
+                        if isinstance(outcome, asyncio.CancelledError):
+                            cancellation_latched = True
+                        else:
+                            failures.append((device_id, outcome))
+                    else:
+                        device_reports.append(outcome)
+                base_snapshots = tuple(
+                    sorted(
+                        (
+                            snapshot
+                            for report in device_reports
+                            for snapshot in report.snapshots
+                        ),
+                        key=lambda snapshot: snapshot.transition.transition_id,
+                    )
+                )
+                reconciliation_error: BaseException | None = None
+                try:
+                    await self._publish(base_snapshots)
+                except asyncio.CancelledError as caught:
+                    cancellation_latched = True
+                    if (
+                        reconciliation_error is None
+                        and caught.__cause__ is not None
+                    ):
+                        reconciliation_error = caught.__cause__
+                except BaseException as caught:  # pylint: disable=broad-exception-caught
+                    reconciliation_error = caught
+                while True:
+                    try:
+                        await self._refresh_status()
+                        break
+                    except asyncio.CancelledError as caught:
+                        cancellation_latched = True
+                        if (
+                            reconciliation_error is None
+                            and caught.__cause__ is not None
+                        ):
+                            reconciliation_error = caught.__cause__
+                    except BaseException as caught:  # pylint: disable=broad-exception-caught
+                        if reconciliation_error is None:
+                            reconciliation_error = caught
+                        break
+                base_report = SweepReport(
+                    sum(
+                        report.expired_pending for report in device_reports
+                    ),
+                    sum(report.retry_pending for report in device_reports),
+                    sum(
+                        report.failed_attempt_limit
+                        for report in device_reports
+                    ),
+                    0,
+                    base_snapshots,
+                )
+                if reconciliation_error is not None:
+                    if cancellation_latched:
+                        raise asyncio.CancelledError() from reconciliation_error
+                    raise reconciliation_error
+                if cancellation_latched:
+                    cause = failures[0][1] if failures else None
+                    raise asyncio.CancelledError() from cause
+                if creation_failure is not None:
+                    _device_id, creation_error = creation_failure
+                    if failures:
+                        raise creation_error from DeadlineSweepError(
+                            tuple(failures), base_report
+                        )
+                    raise creation_error
+                if failures:
+                    raise DeadlineSweepError(tuple(failures), base_report)
+            finally:
+                cleanup_cancellation_latched = False
+                for _device_id, task in device_tasks:
+                    if not task.done():
+                        task.cancel()
+                for _device_id, task in device_tasks:
+                    if task not in settled_tasks:
+                        _outcome, _error, wait_cancelled = (
+                            await self._drain_task(task)
+                        )
+                        cleanup_cancellation_latched = (
+                            cleanup_cancellation_latched or wait_cancelled
+                        )
+                for lease in reversed(device_leases):
+                    if lease.acquired:
+                        lease.lock.release()
+                        lease.acquired = False
+                if cleanup_cancellation_latched:
+                    cause = (
+                        creation_failure[1]
+                        if creation_failure is not None
+                        else None
+                    )
+                    raise asyncio.CancelledError() from cause
         candidates = await asyncio.to_thread(
             self._store.read_event_timeout_candidates, now_ms=effective_now
         )
@@ -1213,13 +1487,14 @@ class TwinCoordinator:
                 continue
             async with self._device_lock(candidate.device_id):
                 reservation = _EventTimeoutReservation(
-                    candidate.command_id,
-                    candidate.device_id,
-                    candidate.table_name,
-                    candidate.item_name,
-                    candidate.value_text,
-                    candidate.ack_device_rdt,
-                    candidate.event_deadline_ms,
+                    command_id=candidate.command_id,
+                    device_id=candidate.device_id,
+                    table_name=candidate.table_name,
+                    item_name=candidate.item_name,
+                    value_text=candidate.value_text,
+                    acked_at_ms=candidate.acked_at_ms,
+                    ack_device_rdt=candidate.ack_device_rdt,
+                    event_deadline_ms=candidate.event_deadline_ms,
                 )
                 if self._has_eligible_registered_event(reservation):
                     continue

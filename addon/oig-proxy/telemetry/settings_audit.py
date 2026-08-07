@@ -1038,6 +1038,7 @@ class SettingsAuditPublisher:
             raise ValueError("audit delivery command identity changed")
         if canonical_payload_sha256 != decision.canonical_payload_sha256:
             raise ValueError("audit delivery canonical identity changed")
+        decision.verify_integrity()
         raw_text = _truncate_utf8_text(record.raw_text, decision.raw_bytes)
         return replace(
             record,

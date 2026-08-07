@@ -16,6 +16,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any, cast, Literal
 
 import pytest
@@ -28,12 +29,13 @@ from telemetry.settings_audit import (
     SettingsAuditRecord,
 )
 from twin.ack_parser import SettingEvent, SettingResponse, derive_event_evidence_id
-from twin.delivery import TwinCoordinator
+from twin.delivery import DeadlineSweepError, TwinCoordinator
 from twin.state import (
     ActiveLocalAttempt,
     AttemptWriteOutcome,
     AttemptWriteResult,
     CommandState,
+    CommandTransition,
     ControlIngress,
     DeliveryDisposition,
     DeliveryTrigger,
@@ -42,6 +44,8 @@ from twin.state import (
     EventMatchResult,
     LocalResponseDisposition,
     RetryReason,
+    SweepReport,
+    TransitionAuditSnapshot,
     TwinCommand,
 )
 from twin.store import StoreRecordNotFound, TwinCommandStore
@@ -89,6 +93,10 @@ class _Clock:
         value = self.value
         self.value += 1
         return value
+
+
+class _ForgedTransitionAuditSnapshot(TransitionAuditSnapshot):
+    """Structurally valid subclass rejected by an exact snapshot contract."""
 
 
 async def _cancel_owner_and_internal_tasks(
@@ -3039,6 +3047,582 @@ async def test_deadline_sweep_progresses_distinct_devices_in_parallel(
 
 
 @pytest.mark.asyncio
+# pylint: disable-next=too-many-statements
+async def test_deadline_sweep_retains_device_locks_through_reconciliation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands = (_enqueue(store), _enqueue(store, device_id="456"))
+    awaiting_commands: list[TwinCommand] = []
+    for index, command in enumerate(commands):
+        prepared_at_ms = 200 + index * 10
+        session_id = f"initial-session-{command.device_id}"
+        claim = store.prepare_next_attempt(
+            device_id=command.device_id,
+            session_id=session_id,
+            prepared_at_ms=prepared_at_ms,
+            render=deterministic_renderer,
+        )
+        assert claim.command is not None
+        assert claim.attempt is not None
+        store.mark_write_started(
+            command_id=claim.command.command_id,
+            attempt_number=claim.attempt.attempt_number,
+            session_id=session_id,
+            started_at_ms=prepared_at_ms + 1,
+        )
+        store.mark_attempt_drained(
+            command_id=claim.command.command_id,
+            attempt_number=claim.attempt.attempt_number,
+            session_id=session_id,
+            drained_at_ms=prepared_at_ms + 2,
+        )
+        awaiting = store.read_command(command.command_id)
+        assert awaiting.state is CommandState.AWAITING_ACK
+        assert awaiting.ack_deadline_ms is not None
+        awaiting_commands.append(awaiting)
+
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+
+    class AcquisitionTracingLock(asyncio.Lock):
+        """Record exact lock acquisition attempts and completions."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.acquisition_attempts = 0
+            self.acquisitions = 0
+            self.second_attempted = asyncio.Event()
+
+        async def acquire(self) -> Literal[True]:
+            self.acquisition_attempts += 1
+            if self.acquisition_attempts == 2:
+                self.second_attempted.set()
+            acquired = await super().acquire()
+            self.acquisitions += 1
+            return acquired
+
+    traced_lock = AcquisitionTracingLock()
+    coordinator._device_locks["123"] = traced_lock  # pylint: disable=protected-access
+
+    second_entered = threading.Event()
+    second_release = threading.Event()
+    original_sweep = store.sweep_device_deadlines
+
+    def block_second_device(*, device_id: str, now_ms: int) -> SweepReport:
+        if device_id == "456":
+            second_entered.set()
+            assert second_release.wait(timeout=1)
+        return original_sweep(device_id=device_id, now_ms=now_ms)
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", block_second_device)
+
+    base_refresh_completed = asyncio.Event()
+    original_refresh = coordinator._refresh_status  # pylint: disable=protected-access
+    sweep_owner: asyncio.Task[SweepReport] | None = None
+
+    async def observe_base_refresh() -> None:
+        await original_refresh()
+        if asyncio.current_task() is sweep_owner:
+            base_refresh_completed.set()
+
+    monkeypatch.setattr(coordinator, "_refresh_status", observe_base_refresh)
+
+    original_create_task = asyncio.create_task
+    device_workers: list[asyncio.Task[Any]] = []
+
+    def capture_device_worker(coroutine: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        task = original_create_task(coroutine, **kwargs)
+        device_workers.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", capture_device_worker)
+    effective_now = max(
+        cast(int, command.ack_deadline_ms) for command in awaiting_commands
+    ) + 1
+    sweep_owner = original_create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    assert await asyncio.to_thread(second_entered.wait, 0.1)
+    assert len(device_workers) == 2
+    monkeypatch.setattr(asyncio, "create_task", original_create_task)
+
+    first_worker_completed = asyncio.Event()
+    device_workers[0].add_done_callback(
+        lambda _task: first_worker_completed.set()
+    )
+    await first_worker_completed.wait()
+    assert traced_lock.acquisitions == 1
+
+    retry_writer_entered = asyncio.Event()
+    retry_writer_release = asyncio.Event()
+    retry_task = original_create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="retry-session-123",
+            received_at_ms=effective_now + 1,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(
+                store,
+                entered=retry_writer_entered,
+                release=retry_writer_release,
+            ),
+        )
+    )
+    await traced_lock.second_attempted.wait()
+    retry_acquired_before_release = traced_lock.acquisitions == 2
+    if retry_acquired_before_release:
+        await retry_writer_entered.wait()
+    records_before_release = tuple(records)
+    base_refresh_preceded_retry = (
+        base_refresh_completed.is_set()
+        if retry_acquired_before_release
+        else None
+    )
+
+    second_release.set()
+    await retry_writer_entered.wait()
+    if base_refresh_preceded_retry is None:
+        base_refresh_preceded_retry = base_refresh_completed.is_set()
+    retry_writer_release.set()
+    sweep, retry = await asyncio.gather(sweep_owner, retry_task)
+
+    transition_ids = [record.transition_id for record in records]
+    assert retry_acquired_before_release is False
+    assert records_before_release == ()
+    assert base_refresh_preceded_retry is True
+    assert sweep.retry_pending == 2
+    assert retry.disposition is DeliveryDisposition.SENT
+    assert [record.step for record in records] == [
+        SettingStep.RETRY,
+        SettingStep.RETRY,
+        SettingStep.SELECTED,
+        SettingStep.ATTEMPT_PREPARED,
+        SettingStep.WRITE_STARTED,
+        SettingStep.ATTEMPT_DRAINED,
+    ]
+    assert all(transition_id is not None for transition_id in transition_ids)
+    assert transition_ids == sorted(
+        cast(int, transition_id) for transition_id in transition_ids
+    )
+    assert coordinator.cached_status_snapshot.awaiting_ack == 1
+    assert coordinator.cached_status_snapshot.retry_pending == 1
+
+
+@pytest.mark.asyncio
+async def test_deadline_sweep_reconciles_commit_after_task_creation_failure(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    loop = asyncio.get_running_loop()
+    prior_task_factory = loop.get_task_factory()
+    eager_task_factory = getattr(asyncio, "eager_task_factory", None)
+    original_create_task = asyncio.create_task
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_calls = 0
+
+    def fail_second_task_creation(
+        coroutine: Any, **kwargs: Any
+    ) -> asyncio.Task[Any]:
+        nonlocal create_calls
+        create_calls += 1
+        if create_calls == 1 and eager_task_factory is None:
+            coroutine.close()
+            report = store.sweep_device_deadlines(
+                device_id=first.device_id,
+                now_ms=effective_now,
+            )
+            completed = loop.create_future()
+            completed.set_result((report, False))
+            task = cast(asyncio.Task[Any], completed)
+            created_tasks.append(task)
+            return task
+        if create_calls == 2:
+            coroutine.close()
+            raise RuntimeError("injected second task creation failure")
+        task = original_create_task(coroutine, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    if eager_task_factory is not None:
+        loop.set_task_factory(eager_task_factory)
+    monkeypatch.setattr(asyncio, "create_task", fail_second_task_creation)
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="injected second task creation failure",
+        ):
+            await coordinator.sweep_deadlines(now_ms=effective_now)
+    finally:
+        monkeypatch.setattr(asyncio, "create_task", original_create_task)
+        if eager_task_factory is not None:
+            loop.set_task_factory(prior_task_factory)
+
+    assert len(created_tasks) == 1
+    assert all(task.done() for task in created_tasks)
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.PENDING
+    assert [(record.device_id, record.step) for record in records] == [
+        (first.device_id, SettingStep.EXPIRED)
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 1
+    assert coordinator.cached_status_snapshot.count(CommandState.PENDING) == 1
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.asyncio
+async def test_deadline_sweep_cleanup_cancellation_dominates_creation_failure(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    loop = asyncio.get_running_loop()
+    original_create_task = asyncio.create_task
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_calls = 0
+
+    def cancel_during_failed_creation(
+        coroutine: Any, **kwargs: Any
+    ) -> asyncio.Task[Any]:
+        nonlocal create_calls
+        create_calls += 1
+        if create_calls == 2:
+            coroutine.close()
+            owner = asyncio.current_task()
+            assert owner is not None
+            loop.call_soon(owner.cancel)
+            raise RuntimeError("injected second task creation failure")
+        task = original_create_task(coroutine, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    monkeypatch.setattr(asyncio, "create_task", cancel_during_failed_creation)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await coordinator.sweep_deadlines(now_ms=effective_now)
+    finally:
+        monkeypatch.setattr(asyncio, "create_task", original_create_task)
+
+    assert len(created_tasks) == 1
+    assert all(task.done() for task in created_tasks)
+    expired = tuple(
+        command
+        for command in (
+            store.read_command(first.command_id),
+            store.read_command(second.command_id),
+        )
+        if command.state is CommandState.EXPIRED
+    )
+    assert [(record.device_id, record.step) for record in records] == [
+        (command.device_id, SettingStep.EXPIRED) for command in expired
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == len(
+        expired
+    )
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.asyncio
+async def test_deadline_sweep_does_not_release_foreign_lock_on_worker_cancel(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked = _enqueue(store)
+    sibling = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    foreign_lock = coordinator._device_lock(  # pylint: disable=protected-access
+        blocked.device_id
+    )
+    await foreign_lock.acquire()
+    sibling_finished = threading.Event()
+    original_sweep = store.sweep_device_deadlines
+
+    def observe_sibling(*, device_id: str, now_ms: int) -> SweepReport:
+        report = original_sweep(device_id=device_id, now_ms=now_ms)
+        if device_id == sibling.device_id:
+            sibling_finished.set()
+        return report
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", observe_sibling)
+    original_create_task = asyncio.create_task
+    device_workers: list[asyncio.Task[Any]] = []
+
+    def capture_worker(coroutine: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        task = original_create_task(coroutine, **kwargs)
+        device_workers.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", capture_worker)
+    effective_now = max(
+        blocked.pending_expires_at_ms,
+        sibling.pending_expires_at_ms,
+    ) + 1
+    sweep_task = original_create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    try:
+        assert await asyncio.to_thread(sibling_finished.wait, 0.2)
+        assert len(device_workers) == 2
+        monkeypatch.setattr(asyncio, "create_task", original_create_task)
+        device_workers[0].cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await sweep_task
+
+        assert foreign_lock.locked() is True
+        assert all(task.done() for task in device_workers)
+        assert store.read_command(blocked.command_id).state is CommandState.PENDING
+        assert store.read_command(sibling.command_id).state is CommandState.EXPIRED
+        assert [(record.device_id, record.step) for record in records] == [
+            (sibling.device_id, SettingStep.EXPIRED)
+        ]
+    finally:
+        if foreign_lock.locked():
+            foreign_lock.release()
+        if not sweep_task.done():
+            sweep_task.cancel()
+            await asyncio.gather(sweep_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_deadline_sweeps_serialize_base_reconciliation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    original_read = store.read_deadline_devices
+    read_calls = 0
+    second_read = threading.Event()
+
+    def observe_enumeration(*, now_ms: int) -> tuple[str, ...]:
+        nonlocal read_calls
+        read_calls += 1
+        if read_calls == 2:
+            second_read.set()
+        return original_read(now_ms=now_ms)
+
+    monkeypatch.setattr(store, "read_deadline_devices", observe_enumeration)
+    original_publish = coordinator._publish  # pylint: disable=protected-access
+    publish_entered = asyncio.Event()
+    publish_release = asyncio.Event()
+
+    async def block_first_aggregate(
+        snapshots: tuple[TransitionAuditSnapshot, ...],
+    ) -> None:
+        if snapshots and not publish_entered.is_set():
+            publish_entered.set()
+            await publish_release.wait()
+        await original_publish(snapshots)
+
+    monkeypatch.setattr(coordinator, "_publish", block_first_aggregate)
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    first_sweep = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    await asyncio.wait_for(publish_entered.wait(), timeout=0.2)
+    second_sweep = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    try:
+        second_enumerated_while_first_owned = await asyncio.to_thread(
+            second_read.wait, 0.05
+        )
+        assert second_enumerated_while_first_owned is False
+    finally:
+        publish_release.set()
+
+    first_report, second_report = await asyncio.gather(
+        first_sweep,
+        second_sweep,
+    )
+    assert first_report.expired_pending == 2
+    assert second_report.expired_pending == 0
+    assert read_calls == 2
+    assert [record.step for record in records] == [
+        SettingStep.EXPIRED,
+        SettingStep.EXPIRED,
+    ]
+    assert [record.transition_id for record in records] == sorted(
+        cast(int, record.transition_id) for record in records
+    )
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.asyncio
+async def test_publication_error_does_not_override_latched_cancellation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    sentinel = RuntimeError("injected second publication failure")
+
+    class CancelThenFailPublisher:
+        """Latch owner cancellation before one later publication error."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def publish_committed_async(
+            self, _snapshot: TransitionAuditSnapshot
+        ) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                owner = asyncio.current_task()
+                assert owner is not None
+                owner.cancel()
+                await asyncio.sleep(0)
+            raise sentinel
+
+    publisher = CancelThenFailPublisher()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=publisher,
+        clock_ms=_Clock(),
+    )
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await sweep_task
+
+    assert caught.value.__cause__ is sentinel
+    assert publisher.calls == 2
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.parametrize(
+    "deadline_devices",
+    [
+        pytest.param(["123"], id="list"),
+        pytest.param(("",), id="empty-device"),
+        pytest.param(("456", "123"), id="unsorted"),
+        pytest.param(("123", "123"), id="duplicate"),
+        pytest.param((123,), id="non-string"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_deadline_sweep_rejects_malformed_device_enumeration(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    deadline_devices: Any,
+) -> None:
+    mutation_called = threading.Event()
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+    )
+
+    def malformed_enumeration(*, now_ms: int) -> Any:
+        del now_ms
+        return deadline_devices
+
+    def unexpected_mutation(*, device_id: str, now_ms: int) -> SweepReport:
+        del device_id, now_ms
+        mutation_called.set()
+        raise AssertionError("malformed enumeration reached mutation")
+
+    monkeypatch.setattr(store, "read_deadline_devices", malformed_enumeration)
+    monkeypatch.setattr(store, "sweep_device_deadlines", unexpected_mutation)
+
+    with pytest.raises(RuntimeError, match="deadline devices must be"):
+        await coordinator.sweep_deadlines(now_ms=900_101)
+
+    assert mutation_called.is_set() is False
+    assert coordinator._device_locks == {}  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
 async def test_deadline_sweep_reconciles_success_before_sibling_failure(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -3105,6 +3689,626 @@ async def test_deadline_sweep_reconciles_success_before_sibling_failure(
     assert dict(coordinator.cached_status_snapshot.state_counts)[
         CommandState.PENDING
     ] == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_device_sweep_report_reconciles_successful_sibling(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    malformed = _enqueue(store)
+    successful = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    original = store.sweep_device_deadlines
+
+    def malformed_first(*, device_id: str, now_ms: int):
+        if device_id == malformed.device_id:
+            snapshots = cast(
+                tuple[TransitionAuditSnapshot, ...],
+                (object(),),
+            )
+            return SweepReport(1, 0, 0, 0, snapshots)
+        return original(device_id=device_id, now_ms=now_ms)
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", malformed_first)
+    effective_now = max(
+        malformed.pending_expires_at_ms,
+        successful.pending_expires_at_ms,
+    ) + 1
+
+    with pytest.raises(DeadlineSweepError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert [device_id for device_id, _error in caught.value.failures] == ["123"]
+    assert isinstance(caught.value.failures[0][1], RuntimeError)
+    partial = caught.value.partial_report
+    assert partial.expired_pending == 1
+    assert partial.retry_pending == 0
+    assert partial.failed_attempt_limit == 0
+    assert partial.incomplete_event_timeout == 0
+    assert len(partial.snapshots) == 1
+    assert partial.snapshots[0].command.device_id == successful.device_id
+    assert store.read_command(malformed.command_id).state is CommandState.PENDING
+    assert store.read_command(successful.command_id).state is CommandState.EXPIRED
+    assert [record.step for record in records] == [SettingStep.EXPIRED]
+    assert coordinator.cached_status_snapshot.count(CommandState.PENDING) == 1
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 1
+
+
+@pytest.mark.parametrize(
+    "container_kind",
+    ["changing-tuple", "report-subclass"],
+)
+@pytest.mark.asyncio
+async def test_mutable_report_container_reconciles_only_valid_sibling(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    container_kind: str,
+) -> None:
+    malformed = _enqueue(store)
+    successful = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    original_sweep = store.sweep_device_deadlines
+    iterations = 0
+
+    class ChangingSnapshotTuple(tuple):
+        """Change iteration contents after the validation passes."""
+
+        def __iter__(self):
+            nonlocal iterations
+            iterations += 1
+            if iterations <= 3:
+                return super().__iter__()
+            return iter((object(),))
+
+    class SweepReportSubclass(SweepReport):
+        """Exercise rejection of a structurally valid report subclass."""
+
+    def mutable_report(*, device_id: str, now_ms: int) -> SweepReport:
+        report = original_sweep(device_id=device_id, now_ms=now_ms)
+        if device_id != malformed.device_id:
+            return report
+        if container_kind == "changing-tuple":
+            snapshots = ChangingSnapshotTuple(report.snapshots)
+            return SweepReport(
+                report.expired_pending,
+                report.retry_pending,
+                report.failed_attempt_limit,
+                report.incomplete_event_timeout,
+                snapshots,
+            )
+        return SweepReportSubclass(
+            report.expired_pending,
+            report.retry_pending,
+            report.failed_attempt_limit,
+            report.incomplete_event_timeout,
+            report.snapshots,
+        )
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", mutable_report)
+    effective_now = max(
+        malformed.pending_expires_at_ms,
+        successful.pending_expires_at_ms,
+    ) + 1
+
+    with pytest.raises(DeadlineSweepError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert [device_id for device_id, _error in caught.value.failures] == [
+        malformed.device_id
+    ]
+    assert caught.value.partial_report.expired_pending == 1
+    assert len(caught.value.partial_report.snapshots) == 1
+    assert caught.value.partial_report.snapshots[0].command.device_id == (
+        successful.device_id
+    )
+    assert store.read_command(malformed.command_id).state is CommandState.EXPIRED
+    assert store.read_command(successful.command_id).state is CommandState.EXPIRED
+    assert [(record.device_id, record.step) for record in records] == [
+        (successful.device_id, SettingStep.EXPIRED)
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+
+
+@pytest.mark.asyncio
+async def test_deadline_sweep_rejects_mutable_worker_outcome_tuple(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+
+    class MutableOutcomeTuple(tuple):
+        """Expose valid indexed values but substitute during unpacking."""
+
+        def __iter__(self):
+            return iter((self[0], "forged-cancellation"))
+
+    original_create_task = asyncio.create_task
+
+    def wrap_worker(coroutine: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        async def mutable_outcome() -> MutableOutcomeTuple:
+            outcome = await coroutine
+            return MutableOutcomeTuple(outcome)
+
+        return original_create_task(mutable_outcome(), **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_task", wrap_worker)
+    sweep_task = original_create_task(
+        coordinator.sweep_deadlines(
+            now_ms=command.pending_expires_at_ms + 1,
+        )
+    )
+
+    with pytest.raises(DeadlineSweepError) as caught:
+        await sweep_task
+
+    assert [device_id for device_id, _error in caught.value.failures] == [
+        command.device_id
+    ]
+    assert caught.value.partial_report.snapshots == ()
+    assert store.read_command(command.command_id).state is CommandState.EXPIRED
+    assert records == []
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 1
+    assert all(
+        not lock.locked()
+        for lock in coordinator._device_locks.values()  # pylint: disable=protected-access
+    )
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "counter-category",
+        "command-type",
+        "transition-type",
+        "command-link",
+        "audit-link",
+        "state-target-link",
+        "snapshot-type",
+        "attempt-type",
+        "evidence-type",
+        "unsupported-target",
+    ],
+)
+@pytest.mark.asyncio
+async def test_semantically_forged_sweep_report_reconciles_only_valid_sibling(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
+) -> None:
+    forged_command = _enqueue(store)
+    successful = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    original = store.sweep_device_deadlines
+    forged_report_returned = threading.Event()
+
+    def semantically_forged(*, device_id: str, now_ms: int):
+        report = original(device_id=device_id, now_ms=now_ms)
+        if device_id != forged_command.device_id:
+            return report
+        snapshot = report.snapshots[0]
+        counters = (1, 0, 0)
+        forged_snapshot: Any = snapshot
+        if malformation == "counter-category":
+            counters = (0, 1, 0)
+        elif malformation == "command-type":
+            forged_snapshot = replace(
+                snapshot,
+                command=cast(
+                    TwinCommand,
+                    SimpleNamespace(
+                        command_id=snapshot.command.command_id,
+                        audit_id=snapshot.command.audit_id,
+                        device_id=snapshot.command.device_id,
+                        state=snapshot.command.state,
+                    ),
+                ),
+            )
+        elif malformation == "transition-type":
+            forged_snapshot = replace(
+                snapshot,
+                transition=cast(
+                    CommandTransition,
+                    SimpleNamespace(
+                        transition_id=snapshot.transition.transition_id,
+                        command_id=snapshot.transition.command_id,
+                        audit_id=snapshot.transition.audit_id,
+                        to_state=snapshot.transition.to_state,
+                    ),
+                ),
+            )
+        elif malformation == "command-link":
+            forged_snapshot = replace(
+                snapshot,
+                transition=replace(
+                    snapshot.transition,
+                    command_id="forged-command-link",
+                ),
+            )
+        elif malformation == "audit-link":
+            forged_snapshot = replace(
+                snapshot,
+                transition=replace(
+                    snapshot.transition,
+                    audit_id="forged-audit-link",
+                ),
+            )
+        elif malformation == "state-target-link":
+            forged_snapshot = replace(
+                snapshot,
+                command=replace(
+                    snapshot.command,
+                    state=CommandState.RETRY_PENDING,
+                ),
+            )
+        elif malformation == "snapshot-type":
+            forged_snapshot = _ForgedTransitionAuditSnapshot(
+                snapshot.command,
+                snapshot.transition,
+                snapshot.attempt,
+                snapshot.evidence,
+            )
+        elif malformation == "attempt-type":
+            forged_snapshot = replace(
+                snapshot,
+                attempt=cast(Any, object()),
+            )
+        elif malformation == "evidence-type":
+            forged_snapshot = replace(
+                snapshot,
+                evidence=cast(Any, object()),
+            )
+        else:
+            forged_snapshot = replace(
+                snapshot,
+                command=replace(
+                    snapshot.command,
+                    state=CommandState.CONFIRMED,
+                ),
+                transition=replace(
+                    snapshot.transition,
+                    to_state=CommandState.CONFIRMED,
+                ),
+            )
+        forged_report_returned.set()
+        return SweepReport(*counters, 0, (forged_snapshot,))
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", semantically_forged)
+    effective_now = max(
+        forged_command.pending_expires_at_ms,
+        successful.pending_expires_at_ms,
+    ) + 1
+
+    with pytest.raises(DeadlineSweepError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert forged_report_returned.is_set()
+    assert [device_id for device_id, _error in caught.value.failures] == ["123"]
+    partial = caught.value.partial_report
+    assert (
+        partial.expired_pending,
+        partial.retry_pending,
+        partial.failed_attempt_limit,
+        partial.incomplete_event_timeout,
+    ) == (1, 0, 0, 0)
+    assert len(partial.snapshots) == 1
+    assert partial.snapshots[0].command.device_id == successful.device_id
+    assert store.read_command(forged_command.command_id).state is CommandState.EXPIRED
+    assert store.read_command(successful.command_id).state is CommandState.EXPIRED
+    assert [(record.device_id, record.step) for record in records] == [
+        (successful.device_id, SettingStep.EXPIRED)
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+    assert coordinator.cached_status_snapshot.count(CommandState.RETRY_PENDING) == 0
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "attempt-command-link",
+        "attempt-number-link",
+        "attempt-session-link",
+        "transition-attempt-link",
+        "transition-session-link",
+        "empty-session-link",
+        "non-string-session-link",
+        "boolean-attempt-link",
+        "attempt-write-error",
+    ],
+)
+@pytest.mark.asyncio
+# pylint: disable-next=too-many-statements
+async def test_forged_ack_timeout_attempt_linkage_reconciles_only_valid_sibling(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
+) -> None:
+    forged_command = _enqueue(store)
+    successful = _enqueue(store, device_id="456")
+    awaiting_commands: dict[str, TwinCommand] = {}
+    for index, command in enumerate((forged_command, successful)):
+        prepared_at_ms = 200 + index * 10
+        session_id = f"sweep-session-{command.device_id}"
+        claim = store.prepare_next_attempt(
+            device_id=command.device_id,
+            session_id=session_id,
+            prepared_at_ms=prepared_at_ms,
+            render=deterministic_renderer,
+        )
+        assert claim.command is not None
+        assert claim.attempt is not None
+        store.mark_write_started(
+            command_id=claim.command.command_id,
+            attempt_number=claim.attempt.attempt_number,
+            session_id=session_id,
+            started_at_ms=prepared_at_ms + 1,
+        )
+        store.mark_attempt_drained(
+            command_id=claim.command.command_id,
+            attempt_number=claim.attempt.attempt_number,
+            session_id=session_id,
+            drained_at_ms=prepared_at_ms + 2,
+        )
+        awaiting = store.read_command(command.command_id)
+        assert awaiting.state is CommandState.AWAITING_ACK
+        assert awaiting.ack_deadline_ms is not None
+        awaiting_commands[command.device_id] = awaiting
+
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    original = store.sweep_device_deadlines
+    forged_report_returned = threading.Event()
+
+    def forged_attempt_linkage(*, device_id: str, now_ms: int):
+        report = original(device_id=device_id, now_ms=now_ms)
+        if device_id != forged_command.device_id:
+            return report
+        snapshot = report.snapshots[0]
+        assert snapshot.attempt is not None
+        forged_snapshot = snapshot
+        if malformation == "attempt-command-link":
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(
+                    snapshot.attempt,
+                    command_id="forged-attempt-command",
+                ),
+            )
+        elif malformation == "attempt-number-link":
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(
+                    snapshot.attempt,
+                    attempt_number=snapshot.attempt.attempt_number + 1,
+                ),
+            )
+        elif malformation == "attempt-session-link":
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(
+                    snapshot.attempt,
+                    session_id="forged-attempt-session",
+                ),
+            )
+        elif malformation == "transition-attempt-link":
+            forged_snapshot = replace(
+                snapshot,
+                transition=replace(
+                    snapshot.transition,
+                    attempt_number=snapshot.attempt.attempt_number + 1,
+                ),
+            )
+        elif malformation == "transition-session-link":
+            forged_snapshot = replace(
+                snapshot,
+                transition=replace(
+                    snapshot.transition,
+                    session_id="forged-transition-session",
+                ),
+            )
+        elif malformation == "empty-session-link":
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(snapshot.attempt, session_id=""),
+                transition=replace(snapshot.transition, session_id=""),
+            )
+        elif malformation == "non-string-session-link":
+            forged_session = cast(Any, object())
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(
+                    snapshot.attempt,
+                    session_id=forged_session,
+                ),
+                transition=replace(
+                    snapshot.transition,
+                    session_id=forged_session,
+                ),
+            )
+        elif malformation == "boolean-attempt-link":
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(snapshot.attempt, attempt_number=True),
+                transition=replace(snapshot.transition, attempt_number=True),
+            )
+        else:
+            forged_snapshot = replace(
+                snapshot,
+                attempt=replace(
+                    snapshot.attempt,
+                    write_error="forged-unprojected-error",
+                ),
+            )
+        forged_report_returned.set()
+        return SweepReport(0, 1, 0, 0, (forged_snapshot,))
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", forged_attempt_linkage)
+    effective_now = max(
+        cast(int, command.ack_deadline_ms)
+        for command in awaiting_commands.values()
+    ) + 1
+
+    with pytest.raises(DeadlineSweepError) as caught:
+        await coordinator.sweep_deadlines(now_ms=effective_now)
+
+    assert forged_report_returned.is_set()
+    assert [device_id for device_id, _error in caught.value.failures] == ["123"]
+    partial = caught.value.partial_report
+    assert (
+        partial.expired_pending,
+        partial.retry_pending,
+        partial.failed_attempt_limit,
+        partial.incomplete_event_timeout,
+    ) == (0, 1, 0, 0)
+    assert len(partial.snapshots) == 1
+    assert partial.snapshots[0].command.device_id == successful.device_id
+    assert store.read_command(forged_command.command_id).state is (
+        CommandState.RETRY_PENDING
+    )
+    assert store.read_command(successful.command_id).state is (
+        CommandState.RETRY_PENDING
+    )
+    assert [(record.device_id, record.step) for record in records] == [
+        (successful.device_id, SettingStep.RETRY)
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.RETRY_PENDING) == 2
+    assert coordinator.cached_status_snapshot.count(CommandState.AWAITING_ACK) == 0
+
+
+@pytest.mark.asyncio
+async def test_malformed_cancelled_worker_preserves_cancellation_dominance(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled_command = _enqueue(store)
+    successful = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    entered = {device_id: threading.Event() for device_id in ("123", "456")}
+    release = {device_id: threading.Event() for device_id in ("123", "456")}
+    finished = {device_id: threading.Event() for device_id in ("123", "456")}
+    original = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int):
+        entered[device_id].set()
+        assert release[device_id].wait(timeout=1)
+        try:
+            report = original(device_id=device_id, now_ms=now_ms)
+            if device_id == cancelled_command.device_id:
+                snapshots = cast(
+                    tuple[TransitionAuditSnapshot, ...],
+                    (object(),),
+                )
+                return SweepReport(1, 0, 0, 0, snapshots)
+            return report
+        finally:
+            finished[device_id].set()
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    original_create_task = asyncio.create_task
+    device_workers: list[asyncio.Task[Any]] = []
+
+    def capture_device_worker(coro, **kwargs):
+        task = original_create_task(coro, **kwargs)
+        device_workers.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", capture_device_worker)
+    effective_now = max(
+        cancelled_command.pending_expires_at_ms,
+        successful.pending_expires_at_ms,
+    ) + 1
+    sweep_task = original_create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    assert await asyncio.to_thread(entered["123"].wait, 0.2)
+    assert await asyncio.to_thread(entered["456"].wait, 0.2)
+    assert len(device_workers) == 2
+    monkeypatch.setattr(asyncio, "create_task", original_create_task)
+
+    device_workers[0].cancel()
+    release["123"].set()
+    assert await asyncio.to_thread(finished["123"].wait, 0.2)
+    sibling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(sibling_turn.set)
+    await sibling_turn.wait()
+    waited_for_sibling = not sweep_task.done()
+    assert records == []
+    release["456"].set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep_task
+    await asyncio.gather(*device_workers, return_exceptions=True)
+
+    assert waited_for_sibling is True
+    assert await asyncio.to_thread(finished["456"].wait, 0.2)
+    assert store.read_command(cancelled_command.command_id).state is (
+        CommandState.EXPIRED
+    )
+    assert store.read_command(successful.command_id).state is CommandState.EXPIRED
+    assert [(record.device_id, record.step) for record in records] == [
+        (successful.device_id, SettingStep.EXPIRED)
+    ]
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
 
 
 @pytest.mark.asyncio
@@ -3184,6 +4388,110 @@ async def test_cancelled_deadline_sweep_reconciles_all_device_commits(
 
 
 @pytest.mark.asyncio
+# pylint: disable-next=too-many-statements
+async def test_pre_settlement_cancellation_drains_workers_before_propagating(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append,
+            acceptance_ledger=store,
+        ),
+        clock_ms=_Clock(),
+    )
+    entered = {device_id: threading.Event() for device_id in ("123", "456")}
+    release = {device_id: threading.Event() for device_id in ("123", "456")}
+    finished = {device_id: threading.Event() for device_id in ("123", "456")}
+    original_sweep = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int):
+        entered[device_id].set()
+        assert release[device_id].wait(timeout=1)
+        try:
+            return original_sweep(device_id=device_id, now_ms=now_ms)
+        finally:
+            finished[device_id].set()
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+
+    async def immediate_refresh() -> None:
+        coordinator._cached_status = (  # pylint: disable=protected-access
+            store.status_snapshot()
+        )
+
+    monkeypatch.setattr(coordinator, "_refresh_status", immediate_refresh)
+    original_create_task = asyncio.create_task
+    created_tasks: list[asyncio.Task[Any]] = []
+    sweep_reference: dict[str, asyncio.Task[Any]] = {}
+
+    def inject_pre_settlement_cancellation(coro, **kwargs):
+        task = original_create_task(coro, **kwargs)
+        created_tasks.append(task)
+        if len(created_tasks) == 2:
+            owner = asyncio.current_task()
+            assert owner is sweep_reference["task"]
+            owner.cancel()
+        elif len(created_tasks) == 3 and not any(
+            barrier.is_set() for barrier in entered.values()
+        ):
+            task.cancel()
+        return task
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_task",
+        inject_pre_settlement_cancellation,
+    )
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    sweep_task = original_create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    sweep_reference["task"] = sweep_task
+    assert await asyncio.to_thread(entered["123"].wait, 0.2)
+    assert await asyncio.to_thread(entered["456"].wait, 0.2)
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    cancellation_waited_for_workers = not sweep_task.done()
+    assert records == []
+    release["123"].set()
+    assert await asyncio.to_thread(finished["123"].wait, 0.2)
+    sibling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(sibling_turn.set)
+    await sibling_turn.wait()
+    cancellation_waited_for_sibling = not sweep_task.done()
+    assert records == []
+    release["456"].set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep_task
+    await asyncio.gather(*created_tasks, return_exceptions=True)
+
+    assert cancellation_waited_for_workers is True
+    assert cancellation_waited_for_sibling is True
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    assert [record.step for record in records] == [
+        SettingStep.EXPIRED,
+        SettingStep.EXPIRED,
+    ]
+    assert [record.transition_id for record in records] == sorted(
+        cast(int, record.transition_id) for record in records
+    )
+    assert coordinator.cached_status_snapshot.count(CommandState.EXPIRED) == 2
+
+
+@pytest.mark.asyncio
 async def test_direct_sweep_worker_cancellation_preserves_aggregate_reports(
     store: TwinCommandStore,
     deterministic_renderer: Callable,
@@ -3210,36 +4518,28 @@ async def test_direct_sweep_worker_cancellation_preserves_aggregate_reports(
         return original(device_id=device_id, now_ms=now_ms)
 
     monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    original_create_task = asyncio.create_task
+    device_workers: list[asyncio.Task[Any]] = []
+
+    def capture_device_worker(coro, **kwargs):
+        task = original_create_task(coro, **kwargs)
+        device_workers.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", capture_device_worker)
     effective_now = max(
         first.pending_expires_at_ms,
         second.pending_expires_at_ms,
     ) + 1
-    sweep_task = asyncio.create_task(
+    sweep_task = original_create_task(
         coordinator.sweep_deadlines(now_ms=effective_now)
     )
     assert await asyncio.to_thread(entered["123"].wait, 0.1)
     assert await asyncio.to_thread(entered["456"].wait, 0.1)
-    internal_tasks = tuple(
-        task
-        for task in asyncio.all_tasks()
-        if task is not asyncio.current_task() and task is not sweep_task
-    )
-    settlement = next(
-        task
-        for task in internal_tasks
-        if "settle_device_sweeps"
-        in getattr(task.get_coro(), "__qualname__", "")
-    )
-    device_workers = tuple(
-        task
-        for task in internal_tasks
-        if "sweep_device" in getattr(task.get_coro(), "__qualname__", "")
-        and task is not settlement
-    )
     assert len(device_workers) == 2
+    monkeypatch.setattr(asyncio, "create_task", original_create_task)
 
     device_workers[0].cancel()
-    settlement.cancel()
     release["123"].set()
     release["456"].set()
 
@@ -3475,6 +4775,83 @@ async def test_two_pass_sweeper_marks_exact_unchanged_candidate_incomplete(
     assert grace.incomplete_event_timeout == 0
     assert second.incomplete_event_timeout == 1
     assert store.read_command(active.command_id).state is CommandState.INCOMPLETE
+
+
+@pytest.mark.parametrize(
+    ("receipt_offset", "expected_state"),
+    [
+        pytest.param(-1, CommandState.INCOMPLETE, id="before-ack"),
+        pytest.param(0, CommandState.CONFIRMED, id="equal-ack"),
+        pytest.param(1, CommandState.CONFIRMED, id="after-ack"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_timeout_authorization_uses_inclusive_ack_receipt_lower_bound(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_offset: int,
+    expected_state: CommandState,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw_ack = b"ack-receipt-lower-bound"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw_ack),
+        context=_context(active, raw_ack, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    acked_at_ms = command.acked_at_ms
+    deadline = command.event_deadline_ms
+    assert acked_at_ms is not None
+    assert deadline is not None
+    await coordinator.sweep_deadlines(now_ms=deadline + 1)
+    mutation_entered = threading.Event()
+    mutation_release = threading.Event()
+    original_timeout = store.mark_event_incomplete
+
+    def blocked_timeout(**kwargs):
+        mutation_entered.set()
+        assert mutation_release.wait(timeout=1)
+        return original_timeout(**kwargs)
+
+    monkeypatch.setattr(store, "mark_event_incomplete", blocked_timeout)
+    monotonic["value"] = 1.1
+    sweep = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=deadline + 2)
+    )
+    assert await asyncio.to_thread(mutation_entered.wait, 0.1)
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            acked_at_ms + receipt_offset,
+            b"ack-receipt-boundary-event",
+        ),
+    )
+    mutation_release.set()
+    report = await sweep
+    decision = await coordinator.handle_registered_event(token)
+
+    if expected_state is CommandState.CONFIRMED:
+        assert report.incomplete_event_timeout == 0
+        assert decision.disposition is EventDisposition.CONFIRMED
+    else:
+        assert report.incomplete_event_timeout == 1
+        assert decision.disposition is EventDisposition.UNMATCHED
+    assert store.read_command(active.command_id).state is expected_state
 
 
 @pytest.mark.parametrize(

@@ -41,6 +41,7 @@ from .state import (
     ControlIngress,
     ControlPolicy,
     DeviceState,
+    derive_audit_delivery_decision_integrity,
     EnqueueResult,
     EventDisposition,
     EventMatchResult,
@@ -232,6 +233,10 @@ CREATE TABLE settings_audit_deliveries (
     canonical_payload_sha256 BLOB NOT NULL CHECK (
         typeof(canonical_payload_sha256) = 'blob'
         AND length(canonical_payload_sha256) = 32
+    ),
+    decision_integrity_sha256 BLOB NOT NULL CHECK (
+        typeof(decision_integrity_sha256) = 'blob'
+        AND length(decision_integrity_sha256) = 32
     ),
     raw_bytes INTEGER NOT NULL CHECK (raw_bytes BETWEEN 0 AND 16384),
     payload_capped INTEGER NOT NULL CHECK (payload_capped IN (0, 1)),
@@ -812,46 +817,68 @@ class TwinCommandStore:
                         "audit delivery canonical identity changed"
                     )
                 return existing
-            used_row = connection.execute(
+            decision_rows = connection.execute(
                 """
-                SELECT COALESCE(SUM(delivery.raw_bytes), 0)
+                SELECT delivery.transition_id, transition.audit_id,
+                       transition.command_id,
+                       delivery.canonical_payload_sha256,
+                       delivery.decision_integrity_sha256,
+                       delivery.raw_bytes, delivery.payload_capped,
+                       delivery.delivery_state
                 FROM settings_audit_deliveries AS delivery
                 JOIN command_transitions AS transition
                   ON transition.transition_id = delivery.transition_id
                 WHERE transition.audit_id = ?
+                ORDER BY delivery.transition_id
                 """,
                 (normalized_audit_id,),
-            ).fetchone()
-            if used_row is None:
-                raise TwinStoreError("audit delivery budget query returned no row")
-            used_bytes = _persisted_integer(
-                "audit delivery used bytes", used_row[0]
             )
-            remaining_bytes = max(0, 64 * 1024 - used_bytes)
+            used_bytes = 0
+            for decision_row in decision_rows:
+                persisted_decision = _audit_delivery_from_row(decision_row)
+                used_bytes += persisted_decision.raw_bytes
+            if used_bytes > 64 * 1024:
+                raise CorruptStoreError(
+                    "persisted audit delivery budget exceeds 65536 bytes"
+                )
+            remaining_bytes = 64 * 1024 - used_bytes
             raw_bytes = min(requested_raw_bytes, remaining_bytes)
             payload_capped = requested_raw_bytes > raw_bytes
+            decision_integrity_sha256 = (
+                derive_audit_delivery_decision_integrity(
+                    transition_id=transition_id,
+                    audit_id=normalized_audit_id,
+                    command_id=normalized_command_id,
+                    canonical_payload_sha256=normalized_digest,
+                    raw_bytes=raw_bytes,
+                    payload_capped=payload_capped,
+                )
+            )
             connection.execute(
                 """
                 INSERT INTO settings_audit_deliveries(
-                    transition_id, canonical_payload_sha256, raw_bytes,
-                    payload_capped, delivery_state
-                ) VALUES (?, ?, ?, ?, 'pending')
+                    transition_id, canonical_payload_sha256,
+                    decision_integrity_sha256, raw_bytes, payload_capped,
+                    delivery_state
+                ) VALUES (?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     transition_id,
                     normalized_digest,
+                    decision_integrity_sha256,
                     raw_bytes,
                     int(payload_capped),
                 ),
             )
             return AuditDeliveryDecision(
-                transition_id,
-                normalized_audit_id,
-                normalized_command_id,
-                normalized_digest,
-                raw_bytes,
-                payload_capped,
-                AuditDeliveryState.PENDING,
+                transition_id=transition_id,
+                audit_id=normalized_audit_id,
+                command_id=normalized_command_id,
+                canonical_payload_sha256=normalized_digest,
+                decision_integrity_sha256=decision_integrity_sha256,
+                raw_bytes=raw_bytes,
+                payload_capped=payload_capped,
+                state=AuditDeliveryState.PENDING,
             )
 
         return self._run_mutation("propose audit delivery", operation)
@@ -890,13 +917,18 @@ class TwinCommandStore:
                     (transition_id,),
                 )
                 decision = AuditDeliveryDecision(
-                    decision.transition_id,
-                    decision.audit_id,
-                    decision.command_id,
-                    decision.canonical_payload_sha256,
-                    decision.raw_bytes,
-                    decision.payload_capped,
-                    AuditDeliveryState.ACCEPTED,
+                    transition_id=decision.transition_id,
+                    audit_id=decision.audit_id,
+                    command_id=decision.command_id,
+                    canonical_payload_sha256=(
+                        decision.canonical_payload_sha256
+                    ),
+                    decision_integrity_sha256=(
+                        decision.decision_integrity_sha256
+                    ),
+                    raw_bytes=decision.raw_bytes,
+                    payload_capped=decision.payload_capped,
+                    state=AuditDeliveryState.ACCEPTED,
                 )
             return decision
 
@@ -917,6 +949,16 @@ class TwinCommandStore:
                 audit_id=normalized_audit_id,
                 transition_id=transition_id,
             )
+            decision = self._read_audit_delivery_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            if (
+                decision is None
+                or decision.state is not AuditDeliveryState.PENDING
+            ):
+                return False
             cursor = connection.execute(
                 """
                 DELETE FROM settings_audit_deliveries
@@ -939,21 +981,26 @@ class TwinCommandStore:
         with self._mutex:
             self.verify_health()
             connection = self._require_connection()
-            self._require_audit_transition_locked(
-                connection,
-                audit_id=normalized_audit_id,
-                transition_id=transition_id,
-            )
-            decision = self._read_audit_delivery_locked(
-                connection,
-                audit_id=normalized_audit_id,
-                transition_id=transition_id,
-            )
-            if decision is None:
-                raise StoreRecordNotFound(
-                    f"audit delivery decision not found: {transition_id}"
+            try:
+                self._require_audit_transition_locked(
+                    connection,
+                    audit_id=normalized_audit_id,
+                    transition_id=transition_id,
                 )
-            return decision
+                decision = self._read_audit_delivery_locked(
+                    connection,
+                    audit_id=normalized_audit_id,
+                    transition_id=transition_id,
+                )
+                if decision is None:
+                    raise StoreRecordNotFound(
+                        f"audit delivery decision not found: {transition_id}"
+                    )
+                return decision
+            except TwinStoreError as error:
+                if not isinstance(error, StoreRecordNotFound):
+                    self._set_degradation(str(error))
+                raise
 
     def audit_delivery_decision_count(self) -> int:
         """Return the compact durable row count for diagnostics and tests."""
@@ -985,20 +1032,62 @@ class TwinCommandStore:
             self.verify_health()
             rows = self._require_connection().execute(
                 """
-                SELECT transition_id
-                FROM settings_audit_deliveries
-                WHERE delivery_state = 'pending' AND transition_id > ?
-                ORDER BY transition_id
+                SELECT transition.transition_id, transition.audit_id,
+                       transition.command_id, delivery.transition_id,
+                       delivery.canonical_payload_sha256,
+                       delivery.decision_integrity_sha256,
+                       delivery.raw_bytes, delivery.payload_capped,
+                       delivery.delivery_state
+                FROM command_transitions AS transition
+                LEFT JOIN settings_audit_deliveries AS delivery
+                  ON delivery.transition_id = transition.transition_id
+                WHERE transition.transition_id > ?
+                  AND (
+                    delivery.transition_id IS NULL
+                    OR delivery.delivery_state = 'pending'
+                  )
+                ORDER BY transition.transition_id
                 LIMIT ?
                 """,
                 (after_transition_id, limit),
             ).fetchall()
-            return tuple(
-                _persisted_integer(
-                    "pending audit transition_id", row[0]
-                )
-                for row in rows
-            )
+            try:
+                transition_ids: list[int] = []
+                for row in rows:
+                    transition_id = _persisted_integer(
+                        "pending audit transition_id", row[0]
+                    )
+                    audit_id = _persisted_identifier(
+                        "pending audit audit_id", row[1], 256
+                    )
+                    command_id = _persisted_identifier(
+                        "pending audit command_id", row[2], 256
+                    )
+                    if row[3] is not None:
+                        decision = _audit_delivery_from_row(
+                            (
+                                row[3],
+                                audit_id,
+                                command_id,
+                                row[4],
+                                row[5],
+                                row[6],
+                                row[7],
+                                row[8],
+                            )
+                        )
+                        if (
+                            decision.transition_id != transition_id
+                            or decision.state is not AuditDeliveryState.PENDING
+                        ):
+                            raise CorruptStoreError(
+                                "pending audit decision identity is inconsistent"
+                            )
+                    transition_ids.append(transition_id)
+                return tuple(transition_ids)
+            except TwinStoreError as error:
+                self._set_degradation(str(error))
+                raise
 
     def read_transition_audit_snapshot(
         self, transition_id: int
@@ -1101,6 +1190,7 @@ class TwinCommandStore:
             SELECT delivery.transition_id, transition.audit_id,
                    transition.command_id,
                    delivery.canonical_payload_sha256,
+                   delivery.decision_integrity_sha256,
                    delivery.raw_bytes, delivery.payload_capped,
                    delivery.delivery_state
             FROM settings_audit_deliveries AS delivery
@@ -2365,7 +2455,8 @@ class TwinCommandStore:
             rows = self._require_connection().execute(
                 """
                 SELECT command_id, device_id, table_name, item_name,
-                       value_text, ack_device_rdt, event_deadline_ms
+                       value_text, acked_at_ms, ack_device_rdt,
+                       event_deadline_ms
                 FROM commands
                 WHERE state = 'awaiting_event' AND event_deadline_ms < ?
                 ORDER BY event_deadline_ms, command_id
@@ -2373,28 +2464,44 @@ class TwinCommandStore:
                 (now_ms,),
             ).fetchall()
             try:
-                return tuple(
-                    EventTimeoutCandidate(
-                        _persisted_identifier(
-                            "event timeout command_id", row[0], 256
-                        ),
-                        _persisted_identifier(
-                            "event timeout device_id", row[1], 128
-                        ),
-                        _persisted_identifier(
-                            "event timeout table_name", row[2], 128
-                        ),
-                        _persisted_identifier(
-                            "event timeout item_name", row[3], 128
-                        ),
-                        _persisted_text("event timeout value_text", row[4]),
-                        _persisted_optional_text(
-                            "event timeout ack_device_rdt", row[5]
-                        ),
-                        _persisted_integer("event deadline", row[6]),
+                candidates: list[EventTimeoutCandidate] = []
+                for row in rows:
+                    acked_at_ms = _persisted_integer(
+                        "event timeout acked_at_ms", row[5]
                     )
-                    for row in rows
-                )
+                    event_deadline_ms = _persisted_integer(
+                        "event deadline", row[7]
+                    )
+                    if acked_at_ms > event_deadline_ms:
+                        raise TwinStoreError(
+                            "persisted event timeout acked_at_ms exceeds "
+                            "event deadline"
+                        )
+                    candidates.append(
+                        EventTimeoutCandidate(
+                            command_id=_persisted_identifier(
+                                "event timeout command_id", row[0], 256
+                            ),
+                            device_id=_persisted_identifier(
+                                "event timeout device_id", row[1], 128
+                            ),
+                            table_name=_persisted_identifier(
+                                "event timeout table_name", row[2], 128
+                            ),
+                            item_name=_persisted_identifier(
+                                "event timeout item_name", row[3], 128
+                            ),
+                            value_text=_persisted_text(
+                                "event timeout value_text", row[4]
+                            ),
+                            acked_at_ms=acked_at_ms,
+                            ack_device_rdt=_persisted_optional_text(
+                                "event timeout ack_device_rdt", row[6]
+                            ),
+                            event_deadline_ms=event_deadline_ms,
+                        )
+                    )
+                return tuple(candidates)
             except TwinStoreError as error:
                 self._set_degradation(str(error))
                 raise
@@ -3786,7 +3893,11 @@ def event_is_eligible_for_timeout_candidate(
         _validate_sqlite_integer("received_at_ms", received_at_ms)
     except (TwinStoreError, TypeError, ValueError):
         return False
-    if not content_is_consistent or received_at_ms > candidate.event_deadline_ms:
+    if (
+        not content_is_consistent
+        or received_at_ms < candidate.acked_at_ms
+        or received_at_ms > candidate.event_deadline_ms
+    ):
         return False
     value_result = validate_setting_value(
         normalized.table_name,
@@ -4097,33 +4208,57 @@ def _transition_from_row(row: tuple[Any, ...]) -> CommandTransition:
     )
 
 
-def _audit_delivery_from_row(
-    row: tuple[Any, ...]
-) -> AuditDeliveryDecision:
+def _audit_delivery_from_row(row: tuple[Any, ...]) -> AuditDeliveryDecision:
     try:
         state = AuditDeliveryState(
-            _persisted_text("audit delivery state", row[6])
+            _persisted_text("audit delivery state", row[7])
         )
     except ValueError as error:
         raise TwinStoreError("persisted audit delivery state is invalid") from error
-    capped = _persisted_integer("audit delivery payload_capped", row[5])
+    transition_id = _persisted_integer(
+        "audit delivery transition_id", row[0]
+    )
+    audit_id = _persisted_identifier(
+        "audit delivery audit_id", row[1], 256
+    )
+    command_id = _persisted_identifier(
+        "audit delivery command_id", row[2], 256
+    )
+    canonical_payload_sha256 = _persisted_blob(
+        "audit delivery canonical_payload_sha256", row[3]
+    )
+    decision_integrity_sha256 = _persisted_blob(
+        "audit delivery decision_integrity_sha256", row[4]
+    )
+    raw_bytes = _persisted_integer("audit delivery raw_bytes", row[5])
+    capped = _persisted_integer("audit delivery payload_capped", row[6])
     if capped not in (0, 1):
         raise TwinStoreError("persisted audit delivery cap flag is invalid")
-    return AuditDeliveryDecision(
-        transition_id=_persisted_integer(
-            "audit delivery transition_id", row[0]
-        ),
-        audit_id=_persisted_identifier("audit delivery audit_id", row[1], 256),
-        command_id=_persisted_identifier(
-            "audit delivery command_id", row[2], 256
-        ),
-        canonical_payload_sha256=_persisted_blob(
-            "audit delivery canonical_payload_sha256", row[3]
-        ),
-        raw_bytes=_persisted_integer("audit delivery raw_bytes", row[4]),
+    expected_integrity = derive_audit_delivery_decision_integrity(
+        transition_id=transition_id,
+        audit_id=audit_id,
+        command_id=command_id,
+        canonical_payload_sha256=canonical_payload_sha256,
+        raw_bytes=raw_bytes,
         payload_capped=bool(capped),
-        state=state,
     )
+    if decision_integrity_sha256 != expected_integrity:
+        raise CorruptStoreError("audit delivery decision integrity mismatch")
+    try:
+        return AuditDeliveryDecision(
+            transition_id=transition_id,
+            audit_id=audit_id,
+            command_id=command_id,
+            canonical_payload_sha256=canonical_payload_sha256,
+            decision_integrity_sha256=decision_integrity_sha256,
+            raw_bytes=raw_bytes,
+            payload_capped=bool(capped),
+            state=state,
+        )
+    except (TypeError, ValueError) as error:
+        raise CorruptStoreError(
+            "persisted audit delivery decision is invalid"
+        ) from error
 
 
 def _ingress_from_row(row: tuple[Any, ...]) -> ControlIngress:

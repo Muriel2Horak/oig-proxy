@@ -12,6 +12,8 @@ from twin.state import (
     AckResult,
     AttemptRenderContext,
     AttemptWriteOutcome,
+    AuditDeliveryDecision,
+    AuditDeliveryState,
     ClaimDisposition,
     ClaimResult,
     CommandAttempt,
@@ -41,6 +43,34 @@ from twin.state import (
     TransitionAuditSnapshot,
 )
 import twin.state as state_module
+
+
+def test_audit_delivery_decision_rejects_accounting_integrity_drift() -> None:
+    decision = AuditDeliveryDecision(
+        transition_id=1,
+        audit_id="audit-00000000000000000000000000000000",
+        command_id="cmd-00000000000000000000000000000000",
+        canonical_payload_sha256=bytes(range(32)),
+        decision_integrity_sha256=bytes.fromhex(
+            "c63ff2ac7a177abb8738fcabbfe55950d"
+            "f3d4800b48546784ac77654dd95572a"
+        ),
+        raw_bytes=7,
+        payload_capped=False,
+        state=AuditDeliveryState.PENDING,
+    )
+
+    with pytest.raises(ValueError, match="decision integrity"):
+        decision.__class__(
+            transition_id=decision.transition_id,
+            audit_id=decision.audit_id,
+            command_id=decision.command_id,
+            canonical_payload_sha256=decision.canonical_payload_sha256,
+            decision_integrity_sha256=decision.decision_integrity_sha256,
+            raw_bytes=8,
+            payload_capped=decision.payload_capped,
+            state=decision.state,
+        )
 
 
 def test_command_state_values_and_terminal_set_are_exact() -> None:
@@ -207,6 +237,19 @@ def test_twin_command_snapshot_is_frozen(command: TwinCommand) -> None:
             ),
         ),
         (
+            AuditDeliveryDecision,
+            (
+                "transition_id",
+                "audit_id",
+                "command_id",
+                "canonical_payload_sha256",
+                "decision_integrity_sha256",
+                "raw_bytes",
+                "payload_capped",
+                "state",
+            ),
+        ),
+        (
             SettingEventReceipt,
             (
                 "evidence_id",
@@ -326,6 +369,7 @@ def test_twin_command_snapshot_is_frozen(command: TwinCommand) -> None:
                 "table_name",
                 "item_name",
                 "value_text",
+                "acked_at_ms",
                 "ack_device_rdt",
                 "event_deadline_ms",
             ),

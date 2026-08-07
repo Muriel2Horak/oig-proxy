@@ -11,7 +11,10 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -41,7 +44,32 @@ from twin.state import (
     RetryReason,
     TransitionAuditSnapshot,
 )
-from twin.store import CorruptStoreError, TwinCommandStore
+from twin.store import CorruptStoreError, TwinCommandStore, TwinStoreError
+
+
+def test_settings_audit_imports_in_fresh_interpreter_without_cycle() -> None:
+    project_root = Path(__file__).parents[2]
+    environment = os.environ.copy()
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        path
+        for path in (
+            str(project_root / "addon" / "oig-proxy"),
+            existing_pythonpath,
+        )
+        if path
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import telemetry.settings_audit"],
+        cwd=project_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def _observe(store: TwinCommandStore, device_id: str = "123") -> None:
@@ -1093,6 +1121,117 @@ async def test_sync_durable_publish_is_rejected_on_running_loop(
         publisher.publish_committed(snapshot)
 
 
+def test_reopened_sync_replay_discovers_transition_without_delivery_decision(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "missing-sync-audit-decision.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe(store)
+    raw_text = "sync-crash-before-proposal"
+    snapshot = _enqueue(store, raw_text=raw_text).snapshots[0]
+    transition_id = snapshot.transition.transition_id
+    command_id = snapshot.command.command_id
+    audit_id = snapshot.command.audit_id
+    del snapshot
+    store.close()
+    del store
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=2)
+    delivered: list[SettingsAuditRecord] = []
+    report = SettingsAuditPublisher(
+        delivered.append,
+        acceptance_ledger=reopened,
+    ).replay_pending(page_size=1)
+
+    assert report.transition_ids == (transition_id,)
+    assert len(delivered) == 1
+    record = delivered[0]
+    assert (
+        record.transition_id,
+        record.command_id,
+        record.audit_id,
+        record.step,
+        record.result,
+        record.raw_text,
+        record.audit_payload_capped,
+    ) == (
+        transition_id,
+        command_id,
+        audit_id,
+        SettingStep.ENQUEUED,
+        SettingResult.PENDING,
+        raw_text,
+        False,
+    )
+    decision = reopened.read_audit_delivery_decision(
+        audit_id=audit_id,
+        transition_id=transition_id,
+    )
+    assert decision.state.value == "accepted"
+    assert decision.raw_bytes == len(raw_text.encode("utf-8"))
+    assert reopened.audit_delivery_decision_count() == 1
+    reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_reopened_async_replay_discovers_transition_without_decision(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "missing-async-audit-decision.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe(store)
+    raw_text = "async-crash-before-proposal"
+    snapshot = _enqueue(store, raw_text=raw_text).snapshots[0]
+    transition_id = snapshot.transition.transition_id
+    command_id = snapshot.command.command_id
+    audit_id = snapshot.command.audit_id
+    del snapshot
+    store.close()
+    del store
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=2)
+    delivered: list[SettingsAuditRecord] = []
+    report = await SettingsAuditPublisher(
+        delivered.append,
+        acceptance_ledger=reopened,
+    ).replay_pending_async(page_size=1)
+
+    assert report.transition_ids == (transition_id,)
+    assert len(delivered) == 1
+    record = delivered[0]
+    assert (
+        record.transition_id,
+        record.command_id,
+        record.audit_id,
+        record.step,
+        record.result,
+        record.raw_text,
+        record.audit_payload_capped,
+    ) == (
+        transition_id,
+        command_id,
+        audit_id,
+        SettingStep.ENQUEUED,
+        SettingResult.PENDING,
+        raw_text,
+        False,
+    )
+    decision = reopened.read_audit_delivery_decision(
+        audit_id=audit_id,
+        transition_id=transition_id,
+    )
+    assert decision.state.value == "accepted"
+    assert decision.raw_bytes == len(raw_text.encode("utf-8"))
+    assert reopened.audit_delivery_decision_count() == 1
+    reopened.close()
+
+
 def test_close_reopen_replays_identical_capped_terminal_without_new_row(
     tmp_path: Path,
     control_policy: ControlPolicy,
@@ -1336,6 +1475,56 @@ def test_reopened_pending_audits_page_and_replay_without_snapshots(
     reopened.close()
 
 
+def test_pending_enumerator_pages_mixed_missing_pending_and_accepted_holes(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)
+    transition_ids = tuple(
+        snapshot.transition.transition_id for snapshot in snapshots
+    )
+    publisher = SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    )
+    publisher.publish_committed(snapshots[0])
+    publisher.publish_committed(snapshots[4])
+    original_accept = store.accept_audit_delivery
+
+    def retain_pending(**_kwargs):
+        raise RuntimeError("retain one pending decision between missing holes")
+
+    monkeypatch.setattr(store, "accept_audit_delivery", retain_pending)
+    publisher.publish_committed(snapshots[2])
+    monkeypatch.setattr(store, "accept_audit_delivery", original_accept)
+    expected_work = transition_ids[1:4]
+
+    first_page = store.read_pending_audit_transition_ids(limit=2)
+    second_page = store.read_pending_audit_transition_ids(
+        after_transition_id=expected_work[1],
+        limit=2,
+    )
+    third_page = store.read_pending_audit_transition_ids(
+        after_transition_id=expected_work[-1],
+        limit=2,
+    )
+
+    assert first_page == expected_work[:2]
+    assert second_page == expected_work[2:]
+    assert third_page == ()
+    delivered: list[SettingsAuditRecord] = []
+    report = SettingsAuditPublisher(
+        delivered.append,
+        acceptance_ledger=store,
+    ).replay_pending(page_size=2)
+    assert report.transition_ids == expected_work
+    assert [record.transition_id for record in delivered] == list(expected_work)
+    assert len(set(record.transition_id for record in delivered)) == 3
+    assert store.read_pending_audit_transition_ids() == ()
+    assert store.audit_delivery_decision_count() == len(transition_ids)
+
+
 @pytest.mark.asyncio
 async def test_reopened_pending_async_replay_uses_only_durable_rows(
     tmp_path: Path,
@@ -1357,10 +1546,10 @@ async def test_reopened_pending_async_replay_uses_only_durable_rows(
         expected.append,
         acceptance_ledger=store,
     )
-    for snapshot in snapshots[:3]:
+    for snapshot in snapshots:
         await publisher.publish_committed_async(snapshot)
     transition_ids = tuple(
-        snapshot.transition.transition_id for snapshot in snapshots[:3]
+        snapshot.transition.transition_id for snapshot in snapshots
     )
     del publisher, snapshots
     store.close()
@@ -1447,7 +1636,7 @@ async def test_async_replay_cancellation_after_page_read_stops_before_delivery(
     deterministic_renderer: AttemptRenderer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)[:3]
+    snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)
     original_accept = store.accept_audit_delivery
 
     def retain_pending(**_kwargs):
@@ -1506,7 +1695,7 @@ async def test_async_replay_cancellation_after_page_read_stops_before_delivery(
 
     assert page_calls == [(0, 1)]
     assert delivered == []
-    assert original_page(limit=4) == transition_ids
+    assert original_page(limit=6) == transition_ids
 
 
 @pytest.mark.asyncio
@@ -1515,7 +1704,7 @@ async def test_async_replay_cancellation_drains_only_current_publication(
     deterministic_renderer: AttemptRenderer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)[:3]
+    snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)
     original_accept = store.accept_audit_delivery
 
     def retain_pending(**_kwargs):
@@ -1565,7 +1754,7 @@ async def test_async_replay_cancellation_drains_only_current_publication(
 
     assert accepted_ids == [transition_ids[0]]
     assert [record.transition_id for record in delivered] == [transition_ids[0]]
-    assert store.read_pending_audit_transition_ids(limit=4) == transition_ids[1:]
+    assert store.read_pending_audit_transition_ids(limit=6) == transition_ids[1:]
 
 
 @pytest.mark.parametrize("drift", ["command", "attempt"])
@@ -1649,6 +1838,278 @@ def test_first_canonical_payload_drift_creates_no_delivery_row(
     assert store.audit_delivery_decision_count() == 0
 
 
+@pytest.mark.parametrize(
+    "drift",
+    ["raw_bytes", "payload_capped"],
+)
+def test_reopened_accounting_drift_fails_before_sync_replay_sink(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    path = tmp_path / f"sync-accounting-drift-{drift}.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe(store)
+    snapshot = _enqueue(store, raw_text="accounting-integrity").snapshots[0]
+
+    def retain_pending(**_kwargs):
+        raise RuntimeError("retain pending decision for restart replay")
+
+    monkeypatch.setattr(store, "accept_audit_delivery", retain_pending)
+    SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    ).publish_committed(snapshot)
+    store.close()
+    with sqlite3.connect(path) as connection:
+        if drift == "raw_bytes":
+            connection.execute(
+                "UPDATE settings_audit_deliveries SET raw_bytes = 1"
+            )
+        else:
+            connection.execute(
+                "UPDATE settings_audit_deliveries SET payload_capped = 1"
+            )
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=2)
+    delivered: list[SettingsAuditRecord] = []
+    try:
+        with pytest.raises(TwinStoreError, match="integrity"):
+            SettingsAuditPublisher(
+                delivered.append,
+                acceptance_ledger=reopened,
+            ).replay_pending(page_size=1)
+        assert delivered == []
+        with pytest.raises(TwinStoreError, match="integrity"):
+            reopened.verify_health()
+    finally:
+        reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_reopened_accounting_drift_fails_before_async_replay_sink(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "async-accounting-drift.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe(store)
+    snapshot = _enqueue(store, raw_text="async-accounting-integrity").snapshots[0]
+
+    def retain_pending(**_kwargs):
+        raise RuntimeError("retain pending decision for async restart replay")
+
+    monkeypatch.setattr(store, "accept_audit_delivery", retain_pending)
+    await SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    ).publish_committed_async(snapshot)
+    store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE settings_audit_deliveries SET raw_bytes = 0"
+        )
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=2)
+    delivered: list[SettingsAuditRecord] = []
+    try:
+        with pytest.raises(TwinStoreError, match="integrity"):
+            await SettingsAuditPublisher(
+                delivered.append,
+                acceptance_ledger=reopened,
+            ).replay_pending_async(page_size=1)
+        assert delivered == []
+        with pytest.raises(TwinStoreError, match="integrity"):
+            reopened.verify_health()
+    finally:
+        reopened.close()
+
+
+def test_direct_audit_decision_read_rejects_accounting_integrity_drift(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "direct-accounting-drift.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe(store)
+    snapshot = _enqueue(store, raw_text="direct-accounting-integrity").snapshots[0]
+
+    def retain_pending(**_kwargs):
+        raise RuntimeError("retain pending decision for direct read")
+
+    monkeypatch.setattr(store, "accept_audit_delivery", retain_pending)
+    SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    ).publish_committed(snapshot)
+    store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE settings_audit_deliveries SET raw_bytes = 2"
+        )
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=2)
+    try:
+        with pytest.raises(TwinStoreError, match="integrity"):
+            reopened.read_audit_delivery_decision(
+                audit_id=snapshot.command.audit_id,
+                transition_id=snapshot.transition.transition_id,
+            )
+        with pytest.raises(TwinStoreError, match="integrity"):
+            reopened.verify_health()
+    finally:
+        reopened.close()
+
+
+def test_pending_enumerator_rejects_decision_integrity_digest_corruption(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "decision-integrity-digest-drift.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    _observe(store)
+    snapshot = _enqueue(store, raw_text="decision-integrity-digest").snapshots[0]
+
+    def retain_pending(**_kwargs):
+        raise RuntimeError("retain pending decision for enumeration")
+
+    monkeypatch.setattr(store, "accept_audit_delivery", retain_pending)
+    SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    ).publish_committed(snapshot)
+    store.close()
+    with sqlite3.connect(path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(settings_audit_deliveries)"
+            ).fetchall()
+        }
+        assert "decision_integrity_sha256" in columns
+        connection.execute(
+            """
+            UPDATE settings_audit_deliveries
+            SET decision_integrity_sha256 = ?
+            """,
+            (b"\x00" * 32,),
+        )
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=2)
+    try:
+        with pytest.raises(TwinStoreError, match="integrity"):
+            reopened.read_pending_audit_transition_ids(limit=1)
+        with pytest.raises(TwinStoreError, match="integrity"):
+            reopened.verify_health()
+    finally:
+        reopened.close()
+
+
+def test_accepted_delivery_integrity_drift_blocks_later_proposal_and_sink(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    path = tmp_path / "accepted-budget-integrity-drift.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    try:
+        snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)
+        delivered: list[SettingsAuditRecord] = []
+        publisher = SettingsAuditPublisher(
+            delivered.append,
+            acceptance_ledger=store,
+        )
+        publisher.publish_committed(snapshots[0])
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "UPDATE settings_audit_deliveries SET raw_bytes = 1"
+            )
+
+        publisher.publish_committed(snapshots[1])
+
+        assert [record.transition_id for record in delivered] == [
+            snapshots[0].transition.transition_id
+        ]
+        with sqlite3.connect(path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM settings_audit_deliveries"
+            ).fetchone() == (1,)
+        with pytest.raises(TwinStoreError, match="integrity"):
+            store.verify_health()
+    finally:
+        store.close()
+
+
+def test_sync_publisher_rejects_forged_delivery_accounting_before_sink(
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _observe(store)
+    snapshot = _enqueue(store, raw_text="forged-sync-accounting").snapshots[0]
+    original_proposal = store.propose_audit_delivery
+
+    def forge_accounting(**kwargs):
+        decision = original_proposal(**kwargs)
+        object.__setattr__(decision, "raw_bytes", 0)
+        return decision
+
+    monkeypatch.setattr(store, "propose_audit_delivery", forge_accounting)
+    delivered: list[SettingsAuditRecord] = []
+
+    with pytest.raises(ValueError, match="decision integrity"):
+        SettingsAuditPublisher(
+            delivered.append,
+            acceptance_ledger=store,
+        ).publish_committed(snapshot)
+
+    assert delivered == []
+    assert store.read_pending_audit_transition_ids() == (
+        snapshot.transition.transition_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_publisher_rejects_forged_delivery_accounting_before_sink(
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _observe(store)
+    snapshot = _enqueue(store, raw_text="forged-async-accounting").snapshots[0]
+    original_proposal = store.propose_audit_delivery
+
+    def forge_accounting(**kwargs):
+        decision = original_proposal(**kwargs)
+        object.__setattr__(decision, "payload_capped", True)
+        return decision
+
+    monkeypatch.setattr(store, "propose_audit_delivery", forge_accounting)
+    delivered: list[SettingsAuditRecord] = []
+
+    with pytest.raises(ValueError, match="decision integrity"):
+        await SettingsAuditPublisher(
+            delivered.append,
+            acceptance_ledger=store,
+        ).publish_committed_async(snapshot)
+
+    assert delivered == []
+    assert store.read_pending_audit_transition_ids() == (
+        snapshot.transition.transition_id,
+    )
+
+
 @pytest.mark.parametrize("identity", ["transition", "audit", "command"])
 def test_caller_identity_mismatch_is_rejected_before_sink(
     store: TwinCommandStore,
@@ -1728,14 +2189,13 @@ def test_corrupt_canonical_digest_never_reaches_sink(
             (corrupt_digest, snapshot.transition.transition_id),
         )
 
-    if len(corrupt_digest) == 32:
-        with pytest.raises(ValueError):
-            publisher.publish_committed(snapshot)
-    else:
-        publisher.publish_committed(snapshot)
+    publisher.publish_committed(snapshot)
 
     assert len(delivered) == 1
-    if len(corrupt_digest) != 32:
+    if len(corrupt_digest) == 32:
+        with pytest.raises(TwinStoreError, match="integrity"):
+            store.verify_health()
+    else:
         with pytest.raises(CorruptStoreError, match="CHECK constraint"):
             store.read_audit_delivery_decision(
                 audit_id=snapshot.command.audit_id,
@@ -1744,22 +2204,66 @@ def test_corrupt_canonical_digest_never_reaches_sink(
     store.close()
 
 
-def test_pending_replay_advances_cursor_when_acceptance_stays_pending(
+def test_missing_replay_sink_failure_restores_budget_and_retries_next_call(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    snapshots = _large_lifecycle_snapshots(store, deterministic_renderer)
+    transition_ids = tuple(
+        snapshot.transition.transition_id for snapshot in snapshots
+    )
+    setup_publisher = SettingsAuditPublisher(
+        lambda _record: None,
+        acceptance_ledger=store,
+    )
+    for snapshot in snapshots[2:]:
+        setup_publisher.publish_committed(snapshot)
+    calls: list[SettingsAuditRecord] = []
+
+    def reject_first(record: SettingsAuditRecord) -> None:
+        calls.append(record)
+        if len(calls) == 1:
+            raise RuntimeError("first newly discovered transition rejected")
+
+    first_report = SettingsAuditPublisher(
+        reject_first,
+        acceptance_ledger=store,
+    ).replay_pending(page_size=1)
+
+    assert first_report.transition_ids == transition_ids[:2]
+    assert [record.transition_id for record in calls] == list(transition_ids[:2])
+    assert [len(record.raw_text.encode("utf-8")) for record in calls] == [
+        16 * 1024,
+        16 * 1024,
+    ]
+    assert store.audit_delivery_decision_count() == 4
+    assert store.read_pending_audit_transition_ids() == (transition_ids[0],)
+
+    retried: list[SettingsAuditRecord] = []
+    second_report = SettingsAuditPublisher(
+        retried.append,
+        acceptance_ledger=store,
+    ).replay_pending(page_size=1)
+
+    assert second_report.transition_ids == (transition_ids[0],)
+    assert [record.transition_id for record in retried] == [transition_ids[0]]
+    assert retried[0].raw_text == ""
+    assert retried[0].audit_payload_capped is True
+    assert store.audit_delivery_decision_count() == 5
+    assert store.read_pending_audit_transition_ids() == ()
+
+
+def test_missing_replay_advances_cursor_when_acceptance_stays_pending(
     store: TwinCommandStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _observe(store)
     snapshot = _enqueue(store).snapshots[0]
-    delivered: list[SettingsAuditRecord] = []
 
     def fail_acceptance(**_kwargs):
         raise RuntimeError("acceptance remains pending")
 
     monkeypatch.setattr(store, "accept_audit_delivery", fail_acceptance)
-    SettingsAuditPublisher(
-        delivered.append,
-        acceptance_ledger=store,
-    ).publish_committed(snapshot)
     page_calls = 0
     original_page = store.read_pending_audit_transition_ids
 

@@ -13,6 +13,7 @@ import sqlite3
 from types import SimpleNamespace
 from collections.abc import Callable
 from typing import Any, cast, Iterator, Literal
+import uuid
 
 import pytest
 
@@ -293,6 +294,7 @@ _EXPECTED_COLUMN_ARTIFACTS = {
     "settings_audit_deliveries": (
         ("transition_id", "INTEGER", 0, None, 1),
         ("canonical_payload_sha256", "BLOB", 1, None, 0),
+        ("decision_integrity_sha256", "BLOB", 1, None, 0),
         ("raw_bytes", "INTEGER", 1, None, 0),
         ("payload_capped", "INTEGER", 1, None, 0),
         ("delivery_state", "TEXT", 1, None, 0),
@@ -529,6 +531,8 @@ _EXPECTED_CHECK_FRAGMENTS = {
     "settings_audit_deliveries": (
         "CHECK ( typeof(canonical_payload_sha256) = 'blob' "
         "AND length(canonical_payload_sha256) = 32 )",
+        "CHECK ( typeof(decision_integrity_sha256) = 'blob' "
+        "AND length(decision_integrity_sha256) = 32 )",
         "CHECK (raw_bytes BETWEEN 0 AND 16384)",
         "CHECK (payload_capped IN (0, 1))",
         "CHECK (delivery_state IN ('pending','accepted'))",
@@ -1164,6 +1168,20 @@ def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
     assert len(migrated.read_transitions("command-1")) == 1
     assert migrated.audit_delivery_decision_count() == 0
     migrated.close()
+
+    with _connect(path) as connection:
+        migrated_columns = tuple(
+            (str(row[1]), str(row[2]), int(row[3]), row[4], int(row[5]))
+            for row in connection.execute(
+                "PRAGMA table_info(settings_audit_deliveries)"
+            ).fetchall()
+        )
+        assert migrated_columns == _EXPECTED_COLUMN_ARTIFACTS[
+            "settings_audit_deliveries"
+        ]
+        assert connection.execute(
+            "SELECT schema_version FROM schema_meta"
+        ).fetchall() == [(2,)]
 
     reopened = TwinCommandStore(path, policy=control_policy)
     reopened.open(now_ms=1000)
@@ -2923,6 +2941,83 @@ def test_negative_audit_delivery_request_is_rejected_without_degradation(
     assert store.verify_health() == PragmaSnapshot("wal", 2, 1, 5000)
 
 
+def test_audit_delivery_decision_integrity_uses_exact_v2_encoding(
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        store_module.uuid,
+        "uuid4",
+        lambda: uuid.UUID(int=0),
+    )
+    command = _enqueue_lifecycle(
+        store,
+        value_text="2",
+        received_at_ms=100,
+    )
+    transition = store.read_transitions(command.command_id)[0]
+    assert transition.transition_id == 1
+    assert command.audit_id == "audit-00000000000000000000000000000000"
+    assert command.command_id == "cmd-00000000000000000000000000000000"
+
+    decision = store.propose_audit_delivery(
+        audit_id=command.audit_id,
+        command_id=command.command_id,
+        transition_id=transition.transition_id,
+        canonical_payload_sha256=bytes(range(32)),
+        requested_raw_bytes=7,
+    )
+
+    assert getattr(decision, "decision_integrity_sha256", b"").hex() == (
+        "c63ff2ac7a177abb8738fcabbfe55950df3d4800b48546784ac77654dd95572a"
+    )
+    assert decision.raw_bytes == 7
+    assert decision.payload_capped is False
+
+
+def test_reject_audit_delivery_validates_pending_integrity_before_delete(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+) -> None:
+    path = tmp_path / "corrupt-pending-audit-rejection.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    try:
+        command = _enqueue_lifecycle(
+            store,
+            value_text="2",
+            received_at_ms=100,
+        )
+        transition = store.read_transitions(command.command_id)[0]
+        store.propose_audit_delivery(
+            audit_id=command.audit_id,
+            command_id=command.command_id,
+            transition_id=transition.transition_id,
+            canonical_payload_sha256=b"x" * 32,
+            requested_raw_bytes=7,
+        )
+        with _connect(path) as connection:
+            connection.execute(
+                "UPDATE settings_audit_deliveries SET raw_bytes = 6"
+            )
+
+        with pytest.raises(TwinStoreError, match="integrity"):
+            store.reject_audit_delivery(
+                audit_id=command.audit_id,
+                transition_id=transition.transition_id,
+            )
+
+        with _connect(path) as connection:
+            assert connection.execute(
+                "SELECT raw_bytes, delivery_state "
+                "FROM settings_audit_deliveries"
+            ).fetchone() == (6, "pending")
+        with pytest.raises(TwinStoreError, match="integrity"):
+            store.verify_health()
+    finally:
+        store.close()
+
+
 def test_enqueue_commits_ingress_command_and_transition_atomically(
     store: TwinCommandStore,
 ) -> None:
@@ -4215,6 +4310,7 @@ def test_event_timeout_candidates_and_exact_cas_are_strict(
     assert tuple(candidate.command_id for candidate in candidates) == (
         attempt.command_id,
     )
+    assert getattr(candidates[0], "acked_at_ms", None) == 300
     assert store.mark_event_incomplete(
         command_id=attempt.command_id,
         expected_event_deadline_ms=deadline + 1,
@@ -4232,6 +4328,47 @@ def test_event_timeout_candidates_and_exact_cas_are_strict(
     )
     assert completed is not None
     assert completed.command.state is CommandState.INCOMPLETE
+
+
+@pytest.mark.parametrize(
+    ("poison", "expected_error"),
+    [
+        pytest.param(None, "acked_at_ms", id="missing"),
+        pytest.param(300.5, "acked_at_ms", id="non-integer"),
+        pytest.param("after-deadline", "acked_at_ms", id="after-deadline"),
+    ],
+)
+def test_event_timeout_candidate_rejects_invalid_ack_receipt_time(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    poison: object,
+    expected_error: str,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    acknowledged = store.acknowledge_and_prepare_next(
+        command_id=attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=_response(),
+        received_at_ms=300,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+    assert acknowledged.accepted_command is not None
+    deadline = acknowledged.accepted_command.event_deadline_ms
+    assert deadline is not None
+    persisted_poison = deadline + 1 if poison == "after-deadline" else poison
+    assert store._connection is not None  # pylint: disable=protected-access
+    store._connection.execute(  # pylint: disable=protected-access
+        "UPDATE commands SET acked_at_ms = ? WHERE command_id = ?",
+        (persisted_poison, attempt.command_id),
+    )
+
+    with pytest.raises(TwinStoreError, match=expected_error):
+        store.read_event_timeout_candidates(now_ms=deadline + 1)
+    with pytest.raises(TwinStoreError, match=expected_error):
+        store.verify_health()
 
 
 def test_event_timeout_candidate_real_poison_degrades_fail_closed(
