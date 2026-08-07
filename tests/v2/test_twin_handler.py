@@ -1,562 +1,427 @@
-"""Tests for TwinControlHandler.
+"""Exact-device, retain-aware durable MQTT control ingress tests."""
 
-Tests verify:
-- Handler initialization
-- MQTT subscription on start
-- Message parsing and enqueueing
-- Log output verification
-- Unsubscribe on stop
-
-Run: PYTHONPATH=addon/oig-proxy pytest tests/v2/test_twin_handler.py -v
-"""
-
-# pyright: reportMissingImports=false
-
-# pylint: disable=too-many-public-methods,protected-access,missing-function-docstring,missing-class-docstring
+from __future__ import annotations
 
 import asyncio
-import json
-from unittest.mock import MagicMock, call
+from dataclasses import dataclass, field
+from typing import Any, Callable
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from telemetry.collector import TelemetryCollector
 from twin.handler import TwinControlHandler
-from twin.state import TwinQueue
-
-
-class TestTwinControlHandler:
-    """Tests for TwinControlHandler class."""
-
-    @pytest.fixture
-    def mock_mqtt(self):
-        """Create a mock MQTT client."""
-        mqtt = MagicMock()
-        mqtt.is_ready.return_value = True
-        mqtt.subscribe.return_value = True
-        mqtt.unsubscribe.return_value = True
-        return mqtt
-
-    @pytest.fixture
-    def twin_queue(self):
-        """Create a fresh TwinQueue instance."""
-        return TwinQueue()
-
-    @pytest.fixture
-    def handler(self, mock_mqtt, twin_queue):
-        """Create a TwinControlHandler instance."""
-        return TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="test_device_123",
-        )
-
-    def test_handler_initialization(self, handler, mock_mqtt, twin_queue):
-        """Test handler is initialized with correct attributes."""
-        assert handler._mqtt == mock_mqtt
-        assert handler._twin_queue == twin_queue
-        assert handler._device_id == "test_device_123"
-        assert handler._namespace == "oig_local"
-        assert handler._topic == "oig/+/control/set"
-        assert handler._topic_compat == "oig_local/+/set/#"
-        assert handler._subscribed is False
-
-    def test_start_subscribes_to_topic(self, handler, mock_mqtt):
-        """Test start() subscribes to the control topic."""
-        asyncio.run(handler.start())
-
-        assert mock_mqtt.subscribe.call_count == 2
-        mock_mqtt.subscribe.assert_has_calls(
-            [
-                call("oig/+/control/set", handler._on_message),
-                call("oig_local/+/set/#", handler._on_message),
-            ]
-        )
-        assert handler._subscribed is True
-
-    def test_start_when_mqtt_not_ready(self, handler, mock_mqtt):
-        """Test start() does nothing when MQTT is not ready."""
-        mock_mqtt.is_ready.return_value = False
-
-        asyncio.run(handler.start())
-
-        mock_mqtt.subscribe.assert_not_called()
-        assert handler._subscribed is False
-
-    def test_stop_unsubscribes_from_topic(self, handler, mock_mqtt):
-        """Test stop() unsubscribes from the control topic."""
-        asyncio.run(handler.start())
-        assert handler._subscribed is True
-
-        asyncio.run(handler.stop())
-
-        assert mock_mqtt.unsubscribe.call_count == 2
-        mock_mqtt.unsubscribe.assert_has_calls(
-            [
-                call("oig/+/control/set"),
-                call("oig_local/+/set/#"),
-            ]
-        )
-        assert handler._subscribed is False
-
-    def test_stop_when_not_subscribed(self, handler, mock_mqtt):
-        """Test stop() does nothing when not subscribed."""
-        asyncio.run(handler.stop())
-
-        mock_mqtt.unsubscribe.assert_not_called()
-
-    def test_stop_when_mqtt_not_ready(self, handler, mock_mqtt):
-        """Test stop() handles MQTT not being ready."""
-        asyncio.run(handler.start())
-        mock_mqtt.is_ready.return_value = False
-
-        asyncio.run(handler.stop())
-
-        mock_mqtt.unsubscribe.assert_not_called()
-
-    def test_on_message_parses_and_enqueues(self, handler, twin_queue):
-        """Test _on_message parses JSON and enqueues setting."""
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 1
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting is not None
-        assert setting.table == "tbl_box_prms"
-        assert setting.key == "MODE"
-        assert setting.value == 2
-
-    def test_on_message_with_string_value(self, handler, twin_queue):
-        """Test _on_message handles string values."""
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": "2"})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting.value == 2
-
-    def test_on_message_with_float_value(self, handler, twin_queue):
-        """Test _on_message coerces whole-number float to int for integer keys."""
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2.0})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting is not None
-        assert setting.value == 2
-
-    def test_on_message_rejects_non_integer_float(self, handler, twin_queue):
-        """Non-integer float on an integer-only control key is rejected (no unvalidated write)."""
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 56.5})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.get("tbl_box_prms", "MODE") is None
-
-    def test_on_message_with_boolean_value(self, handler, twin_queue):
-        """Test _on_message handles boolean values."""
-        payload = json.dumps({"table": "tbl_box_prms", "key": "SA", "value": True})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        setting = twin_queue.get("tbl_box_prms", "SA")
-        assert setting.value == 1
-
-    def test_on_message_missing_table(self, handler, twin_queue, caplog):
-        """Test _on_message handles missing table field."""
-        payload = json.dumps({"key": "T_Room", "value": 22})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "Invalid message format" in caplog.text
-
-    def test_on_message_missing_key(self, handler, twin_queue, caplog):
-        """Test _on_message handles missing key field."""
-        payload = json.dumps({"table": "tbl_set", "value": 22})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "Invalid message format" in caplog.text
-
-    def test_on_message_missing_value(self, handler, twin_queue, caplog):
-        """Test _on_message handles missing value field."""
-        payload = json.dumps({"table": "tbl_set", "key": "T_Room"})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "Invalid message format" in caplog.text
-
-    def test_on_message_invalid_json(self, handler, twin_queue, caplog):
-        """Test _on_message handles invalid JSON."""
-        payload = b"not valid json"
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload)
-
-        assert twin_queue.size() == 0
-        assert "Failed to parse JSON" in caplog.text
-
-    def test_on_message_logs_enqueued(self, handler, twin_queue, caplog):
-        """Test _on_message logs the enqueued setting."""
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
-
-        with caplog.at_level("INFO"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert "Twin setting enqueued: tbl_box_prms:MODE=2" in caplog.text
-
-    def test_on_message_overwrites_same_key(self, handler, twin_queue):
-        """Test _on_message overwrites existing setting with same key."""
-        payload1 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
-        payload2 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 1})
-
-        handler._on_message("oig/test_device_123/control/set", payload1.encode("utf-8"))
-        handler._on_message("oig/test_device_123/control/set", payload2.encode("utf-8"))
-
-        assert twin_queue.size() == 1
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting.value == 1
-
-    def test_on_message_different_keys(self, handler, twin_queue):
-        """Test _on_message handles different keys."""
-        payload1 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
-        payload2 = json.dumps({"table": "tbl_box_prms", "key": "SA", "value": 1})
-
-        handler._on_message("oig/test_device_123/control/set", payload1.encode("utf-8"))
-        handler._on_message("oig/test_device_123/control/set", payload2.encode("utf-8"))
-
-        assert twin_queue.size() == 2
-
-    def test_on_message_different_tables(self, handler, twin_queue):
-        """Test _on_message handles different tables."""
-        payload1 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
-        payload2 = json.dumps({"table": "tbl_batt_prms", "key": "BAT_MIN", "value": 25})
-
-        handler._on_message("oig/test_device_123/control/set", payload1.encode("utf-8"))
-        handler._on_message("oig/test_device_123/control/set", payload2.encode("utf-8"))
-
-        assert twin_queue.size() == 2
-        assert twin_queue.get("tbl_box_prms", "MODE").value == 2
-        assert twin_queue.get("tbl_batt_prms", "BAT_MIN").value == 25
-
-
-class TestTwinControlHandlerEdgeCases:
-    """Edge case tests for TwinControlHandler."""
-
-    @pytest.fixture
-    def mock_mqtt(self):
-        """Create a mock MQTT client."""
-        mqtt = MagicMock()
-        mqtt.is_ready.return_value = True
-        mqtt.subscribe.return_value = True
-        mqtt.unsubscribe.return_value = True
-        return mqtt
-
-    @pytest.fixture
-    def twin_queue(self):
-        """Create a fresh TwinQueue instance."""
-        return TwinQueue()
-
-    @pytest.fixture
-    def handler(self, mock_mqtt, twin_queue):
-        """Create a TwinControlHandler instance."""
-        return TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="test_device_123",
-        )
-
-    def test_on_message_with_null_value(self, handler, twin_queue, caplog):
-        """Test _on_message rejects null value as invalid."""
-        payload = json.dumps({"table": "tbl_set", "key": "T_Null", "value": None})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "Invalid message format" in caplog.text
-
-    def test_on_message_with_list_value(self, handler, twin_queue):
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": [1, 2, 3]})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-
-    def test_on_message_with_dict_value(self, handler, twin_queue):
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": {"a": 1}})
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-
-    def test_on_message_empty_json(self, handler, twin_queue, caplog):
-        """Test _on_message handles empty JSON object."""
-        payload = json.dumps({})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "Invalid message format" in caplog.text
-
-    def test_on_message_extra_fields(self, handler, twin_queue):
-        """Test _on_message ignores extra fields."""
-        payload = json.dumps({
-            "table": "tbl_box_prms",
-            "key": "MODE",
-            "value": 2,
-            "extra": "ignored",
-        })
-
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting.value == 2
-
-    def test_on_message_rejects_not_allowed_setting(self, handler, twin_queue, caplog):
-        payload = json.dumps({"table": "tbl_box_prms", "key": "NOT_ALLOWED", "value": 1})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "not allowed" in caplog.text
-
-    def test_on_message_rejects_value_below_min(self, handler, twin_queue, caplog):
-        payload = json.dumps({"table": "tbl_batt_prms", "key": "BAT_MIN", "value": 10})
-
-        with caplog.at_level("WARNING"):
-            handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert twin_queue.size() == 0
-        assert "below min" in caplog.text
-
-    def test_on_message_accepts_compat_topic_value_with_validation(self, handler, twin_queue):
-        handler._on_message(
-            "oig_local/test_device_123/set/tbl_batt_prms/BAT_MIN",
-            b"22",
-        )
-
-        setting = twin_queue.get("tbl_batt_prms", "BAT_MIN")
-        assert setting is not None
-        assert setting.value == 22
-
-    @pytest.mark.parametrize(
-        ("payload", "expected"),
-        [
-            (b"true", 1),
-            (b"ON", 1),
-            (b"false", 0),
-            (b"off", 0),
-        ],
+from twin.state import CommandState, IngressDisposition
+from twin.store import StoreRecordNotFound, TwinCommandStore
+
+
+@dataclass
+class FakeMQTT:
+    """Minimal synchronous transport boundary used by the handler."""
+
+    ready: bool = True
+    subscribe_results: list[bool] = field(default_factory=list)
+    subscriptions: list[tuple[str, Callable[..., None]]] = field(default_factory=list)
+    unsubscriptions: list[str] = field(default_factory=list)
+
+    def is_ready(self) -> bool:
+        return self.ready
+
+    def subscribe(self, topic: str, callback: Callable[..., None]) -> bool:
+        result = self.subscribe_results.pop(0) if self.subscribe_results else True
+        if result:
+            self.subscriptions.append((topic, callback))
+        return result
+
+    def unsubscribe(self, topic: str) -> bool:
+        self.unsubscriptions.append(topic)
+        self.subscriptions = [
+            item for item in self.subscriptions if item[0] != topic
+        ]
+        return True
+
+
+def _learn_device(store: TwinCommandStore) -> None:
+    store.observe_device(
+        device_id="123",
+        observed_at_ms=90,
+        observed_wire_id=14_000_000,
+        observed_wire_id_set=1_786_000_000,
     )
-    def test_on_message_accepts_compat_switch_payloads(self, handler, twin_queue, payload, expected):
-        handler._on_message(
-            "oig_local/test_device_123/set/tbl_box_prms/SA",
-            payload,
-        )
-
-        setting = twin_queue.get("tbl_box_prms", "SA")
-        assert setting is not None
-        assert setting.value == expected
-
-    def test_on_message_routes_proxy_control_without_queue(self, mock_mqtt, twin_queue):
-        called = []
-
-        def _cb(table, key, value):
-            called.append((table, key, value))
-            return True
-
-        handler = TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="test_device_123",
-            proxy_control_handler=_cb,
-        )
-
-        payload = json.dumps({"table": "proxy_control", "key": "PROXY_MODE", "value": 2})
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
-
-        assert called == [("proxy_control", "PROXY_MODE", 2)]
-        assert twin_queue.size() == 0
-
-    def test_start_uses_custom_namespace_for_compat_topic(self, mock_mqtt, twin_queue):
-        handler = TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="test_device_123",
-            namespace="custom_ns",
-        )
-
-        asyncio.run(handler.start())
-
-        mock_mqtt.subscribe.assert_has_calls(
-            [
-                call("oig/+/control/set", handler._on_message),
-                call("custom_ns/+/set/#", handler._on_message),
-            ]
-        )
-
-    def test_on_message_accepts_custom_namespace_compat_topic(self, mock_mqtt, twin_queue):
-        handler = TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="test_device_123",
-            namespace="custom_ns",
-        )
-
-        handler._on_message(
-            "custom_ns/test_device_123/set/tbl_batt_prms/BAT_MIN",
-            b"22",
-        )
-
-        setting = twin_queue.get("tbl_batt_prms", "BAT_MIN")
-        assert setting is not None
-        assert setting.value == 22
-
-    def test_handler_with_different_device_id(self, mock_mqtt, twin_queue):
-        """Test handler uses correct topic for different device ID."""
-        handler = TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="my_device_456",
-        )
-
-        assert handler._topic == "oig/+/control/set"
-
-    def test_start_logs_subscription(self, handler, mock_mqtt, caplog):
-        """Test start() logs subscription message."""
-        with caplog.at_level("INFO"):
-            asyncio.run(handler.start())
-
-        assert "Subscribed to oig/+/control/set" in caplog.text
-
-    def test_stop_logs_unsubscription(self, handler, mock_mqtt, caplog):
-        """Test stop() logs unsubscription message."""
-        asyncio.run(handler.start())
-
-        with caplog.at_level("INFO"):
-            asyncio.run(handler.stop())
-
-        assert "Unsubscribed from oig/+/control/set" in caplog.text
 
 
-class TestTwinControlHandlerSettingsAudit:
-    @pytest.fixture
-    def mock_mqtt(self):
-        mqtt = MagicMock()
-        mqtt.is_ready.return_value = True
-        return mqtt
+def _handler(
+    store: TwinCommandStore,
+    mqtt: FakeMQTT,
+    *,
+    device_id: str = "123",
+    enabled: bool = True,
+    proxy_control: Callable[[str, str, str], bool] | None = None,
+    publisher: Any | None = None,
+) -> TwinControlHandler:
+    return TwinControlHandler(
+        mqtt=mqtt,
+        store=store,
+        device_id=device_id,
+        control_enabled=enabled,
+        loop=asyncio.get_running_loop(),
+        proxy_control_handler=proxy_control,
+        audit_publisher=publisher,
+    )
 
-    @pytest.fixture
-    def twin_queue(self):
-        return TwinQueue()
 
-    @pytest.fixture
-    def telemetry_collector(self):
-        return TelemetryCollector(interval_s=300)
+@pytest.mark.asyncio
+async def test_start_subscribes_only_exact_device_topics(
+    store: TwinCommandStore,
+) -> None:
+    mqtt = FakeMQTT()
+    handler = _handler(store, mqtt)
 
-    @pytest.fixture
-    def handler(self, mock_mqtt, twin_queue, telemetry_collector):
-        return TwinControlHandler(
-            mqtt=mock_mqtt,
-            twin_queue=twin_queue,
-            device_id="test_device_123",
-            telemetry_collector=telemetry_collector,
-        )
+    assert await handler.start() is True
+    assert [topic for topic, _callback in mqtt.subscriptions] == [
+        "oig/123/control/set",
+        "oig_local/123/set/#",
+    ]
 
-    def test_accepted_setting_audit_records_incoming_and_enqueued_steps(
-        self,
-        handler,
-        telemetry_collector,
-        twin_queue,
-    ):
-        payload = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
 
-        handler._on_message("oig/test_device_123/control/set", payload.encode("utf-8"))
+@pytest.mark.asyncio
+async def test_start_rolls_back_first_subscription_when_second_fails(
+    store: TwinCommandStore,
+) -> None:
+    mqtt = FakeMQTT(subscribe_results=[True, False])
+    handler = _handler(store, mqtt)
 
-        assert twin_queue.size() == 1
-        assert len(telemetry_collector.settings_audit) == 2
+    assert await handler.start() is False
+    assert mqtt.unsubscriptions == ["oig/123/control/set"]
+    assert mqtt.subscriptions == []
 
-        incoming, enqueued = telemetry_collector.settings_audit
-        assert incoming["step"] == "incoming"
-        assert incoming["result"] == "pending"
-        assert incoming["raw_text"] == payload
-        assert incoming["audit_id"].startswith("aud_")
 
-        assert enqueued["step"] == "enqueued"
-        assert enqueued["result"] == "pending"
-        assert enqueued["raw_text"] == payload
-        assert enqueued["audit_id"] == incoming["audit_id"]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("device_id", ("", "bad/device", "bad+", "bad#", "bad\0"))
+async def test_unknown_or_unsafe_device_refuses_subscription_and_audits(
+    store: TwinCommandStore,
+    device_id: str,
+) -> None:
+    mqtt = FakeMQTT()
+    handler = _handler(store, mqtt, device_id=device_id)
 
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting is not None
-        assert setting.audit_id == incoming["audit_id"]
-        assert getattr(setting, "raw_text", "") == payload
+    assert await handler.start() is False
+    assert mqtt.subscriptions == []
+    await handler.handle_message(
+        "oig/123/control/set",
+        b"{}",
+        False,
+        received_at_ms=100,
+    )
+    assert store.read_latest_ingress().disposition is IngressDisposition.REJECTED_UNKNOWN_DEVICE
 
-    def test_rejected_setting_audit_still_emits_diagnostics(
-        self,
-        handler,
-        telemetry_collector,
-        twin_queue,
-    ):
-        handler._on_message(
-            "oig_local/test_device_123/set/tbl_batt_prms/BAT_MIN",
-            b"10",
-        )
 
-        assert twin_queue.size() == 0
-        assert len(telemetry_collector.settings_audit) == 2
+@pytest.mark.asyncio
+async def test_disabled_handler_never_subscribes_and_rejects_before_parse(
+    store: TwinCommandStore,
+) -> None:
+    mqtt = FakeMQTT()
+    handler = _handler(store, mqtt, enabled=False)
 
-        incoming, rejected = telemetry_collector.settings_audit
-        assert incoming["step"] == "incoming"
-        assert incoming["raw_text"] == "10"
-        assert rejected["step"] == "rejected_validation"
-        assert rejected["result"] == "rejected"
-        assert rejected["raw_text"] == "10"
-        assert rejected["audit_id"] == incoming["audit_id"]
-        assert telemetry_collector.setting_burst_current_active is True
-        assert telemetry_collector.setting_burst_next_windows_remaining == 1
+    assert await handler.start() is False
+    await handler.handle_message(
+        "oig/123/control/set",
+        b"not-json",
+        False,
+        received_at_ms=100,
+    )
+    assert mqtt.subscriptions == []
+    assert store.read_latest_ingress().disposition is IngressDisposition.REJECTED_DISABLED
 
-    def test_overwrite_same_key_audit_emits_superseded_before_replacement_enqueue(
-        self,
-        handler,
-        telemetry_collector,
-        twin_queue,
-    ):
-        payload1 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 2})
-        payload2 = json.dumps({"table": "tbl_box_prms", "key": "MODE", "value": 1})
 
-        handler._on_message("oig/test_device_123/control/set", payload1.encode("utf-8"))
-        first_audit_id = telemetry_collector.settings_audit[-1]["audit_id"]
+@pytest.mark.asyncio
+async def test_retained_message_is_rejected_before_json_and_enqueue(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    handler = _handler(store, FakeMQTT())
 
-        handler._on_message("oig/test_device_123/control/set", payload2.encode("utf-8"))
+    await handler.handle_message(
+        "oig/123/control/set",
+        b"not-json",
+        True,
+        received_at_ms=100,
+    )
 
-        assert twin_queue.size() == 1
-        steps = [record["step"] for record in telemetry_collector.settings_audit]
-        assert steps == ["incoming", "enqueued", "incoming", "superseded", "enqueued"]
+    ingress = store.read_latest_ingress()
+    assert ingress.disposition is IngressDisposition.REJECTED_RETAINED
+    assert ingress.command_id is None and ingress.audit_id is None
+    assert store.status_snapshot("123").nonterminal_commands == 0
 
-        replacement_enqueued = telemetry_collector.settings_audit[-1]
-        replacement_incoming = telemetry_collector.settings_audit[-3]
-        superseded = telemetry_collector.settings_audit[-2]
 
-        assert superseded["audit_id"] == first_audit_id
-        assert superseded["result"] == "superseded"
-        assert superseded["raw_text"] == payload1
-        assert replacement_incoming["audit_id"] != first_audit_id
-        assert replacement_enqueued["audit_id"] == replacement_incoming["audit_id"]
-        assert replacement_enqueued["raw_text"] == payload2
+@pytest.mark.asyncio
+async def test_exact_json_command_links_ingress_command_and_audit(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    publisher = MagicMock()
+    publisher.publish_committed_async = AsyncMock()
+    handler = _handler(store, FakeMQTT(), publisher=publisher)
 
-        setting = twin_queue.get("tbl_box_prms", "MODE")
-        assert setting is not None
-        assert setting.value == 1
-        assert setting.audit_id == replacement_enqueued["audit_id"]
-        assert getattr(setting, "raw_text", "") == payload2
+    await handler.handle_message(
+        "oig/123/control/set",
+        b'{"device_id":"123","table":"tbl_box_prms","key":"MODE","value":2}',
+        False,
+        received_at_ms=100,
+    )
+
+    command = store.single_nonterminal("123")
+    ingress = store.read_latest_ingress()
+    assert (
+        command.device_id,
+        command.table_name,
+        command.item_name,
+        command.value_text,
+        command.state,
+    ) == ("123", "tbl_box_prms", "MODE", "2", CommandState.PENDING)
+    assert (ingress.command_id, ingress.audit_id) == (
+        command.command_id,
+        command.audit_id,
+    )
+    publisher.publish_committed_async.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("topic", "payload", "expected"),
+    (
+        (
+            "oig/999/control/set",
+            b'{"table":"tbl_box_prms","key":"MODE","value":2}',
+            IngressDisposition.REJECTED_DEVICE_MISMATCH,
+        ),
+        (
+            "oig/123/control/set/extra",
+            b"{}",
+            IngressDisposition.REJECTED_TOPIC,
+        ),
+        (
+            "oig/123/control/set",
+            b'{"device_id":"999","table":"tbl_box_prms","key":"MODE","value":2}',
+            IngressDisposition.REJECTED_DEVICE_MISMATCH,
+        ),
+        (
+            "oig_local/123/set/tbl_box_prms/MODE/extra",
+            b"2",
+            IngressDisposition.REJECTED_TOPIC,
+        ),
+    ),
+)
+async def test_topic_and_payload_device_mismatches_are_audited(
+    store: TwinCommandStore,
+    topic: str,
+    payload: bytes,
+    expected: IngressDisposition,
+) -> None:
+    _learn_device(store)
+    handler = _handler(store, FakeMQTT())
+
+    await handler.handle_message(
+        topic,
+        payload,
+        False,
+        received_at_ms=100,
+    )
+
+    assert store.read_latest_ingress().disposition is expected
+    assert store.status_snapshot("123").nonterminal_commands == 0
+
+
+@pytest.mark.asyncio
+async def test_exact_five_segment_compatibility_topic_enqueues(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    handler = _handler(store, FakeMQTT())
+
+    await handler.handle_message(
+        "oig_local/123/set/tbl_box_prms/MODE",
+        b" 2 ",
+        False,
+        received_at_ms=100,
+    )
+
+    assert store.single_nonterminal("123").value_text == "2"
+    assert store.read_latest_ingress().disposition is IngressDisposition.ACCEPTED_COMMAND
+
+
+@pytest.mark.asyncio
+async def test_payload_size_boundary_accepts_and_one_byte_over_rejects(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    handler = _handler(store, FakeMQTT())
+    base = b'{"table":"tbl_box_prms","key":"MODE","value":2}'
+    exact = base + b" " * (16_384 - len(base))
+
+    await handler.handle_message(
+        "oig/123/control/set",
+        exact,
+        False,
+        received_at_ms=100,
+    )
+    assert store.read_latest_ingress().disposition is IngressDisposition.ACCEPTED_COMMAND
+
+    await handler.handle_message(
+        "oig/123/control/set",
+        exact + b"x",
+        False,
+        received_at_ms=101,
+    )
+    assert store.read_latest_ingress().disposition is IngressDisposition.REJECTED_OVERSIZE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    (
+        (b"\xff", IngressDisposition.REJECTED_UTF8),
+        (b"{", IngressDisposition.REJECTED_JSON),
+        (b'{"table":"tbl_box_prms","key":"MODE","value":NaN}', IngressDisposition.REJECTED_JSON),
+        (b'[]', IngressDisposition.REJECTED_SCHEMA),
+        (b'{"table":1,"key":"MODE","value":2}', IngressDisposition.REJECTED_SCHEMA),
+        (b'{"table":"tbl_box_prms","key":"UNKNOWN","value":2}', IngressDisposition.REJECTED_NOT_ALLOWED),
+        (b'{"table":"tbl_box_prms","key":"MODE","value":2.5}', IngressDisposition.REJECTED_VALUE),
+    ),
+)
+async def test_bounded_validation_rejections(
+    store: TwinCommandStore,
+    payload: bytes,
+    expected: IngressDisposition,
+) -> None:
+    _learn_device(store)
+    handler = _handler(store, FakeMQTT())
+
+    await handler.handle_message(
+        "oig/123/control/set",
+        payload,
+        False,
+        received_at_ms=100,
+    )
+
+    assert store.read_latest_ingress().disposition is expected
+    assert store.status_snapshot("123").nonterminal_commands == 0
+
+
+@pytest.mark.asyncio
+async def test_forbidden_xml_text_is_rejected_before_enqueue(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    handler = _handler(store, FakeMQTT())
+
+    await handler.handle_message(
+        "oig_local/123/set/tbl_box_prms/MODE",
+        b"2\x01",
+        False,
+        received_at_ms=100,
+    )
+
+    assert store.read_latest_ingress().disposition is IngressDisposition.REJECTED_XML
+
+
+@pytest.mark.asyncio
+async def test_proxy_control_is_audited_before_dispatch_without_command_ids(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    dispatched: list[tuple[str, str, str]] = []
+
+    def proxy_control(table: str, key: str, value: str) -> bool:
+        ingress = store.read_latest_ingress()
+        assert ingress.disposition is IngressDisposition.ACCEPTED_PROXY_CONTROL
+        assert ingress.command_id is None and ingress.audit_id is None
+        dispatched.append((table, key, value))
+        return True
+
+    handler = _handler(
+        store,
+        FakeMQTT(),
+        proxy_control=proxy_control,
+    )
+    await handler.handle_message(
+        "oig/123/control/set",
+        b'{"table":"proxy_control","key":"PROXY_MODE","value":2}',
+        False,
+        received_at_ms=100,
+    )
+
+    assert dispatched == [("proxy_control", "PROXY_MODE", "2")]
+    assert store.status_snapshot("123").nonterminal_commands == 0
+
+
+@pytest.mark.asyncio
+async def test_retained_proxy_control_never_dispatches(
+    store: TwinCommandStore,
+) -> None:
+    dispatched = MagicMock()
+    handler = _handler(store, FakeMQTT(), proxy_control=dispatched)
+
+    await handler.handle_message(
+        "oig/123/control/set",
+        b'{"table":"proxy_control","key":"PROXY_MODE","value":2}',
+        True,
+        received_at_ms=100,
+    )
+
+    dispatched.assert_not_called()
+    assert store.read_latest_ingress().disposition is IngressDisposition.REJECTED_RETAINED
+
+
+@pytest.mark.asyncio
+async def test_paho_callback_schedules_sqlite_work_on_application_loop(
+    store: TwinCommandStore,
+) -> None:
+    _learn_device(store)
+    mqtt = FakeMQTT()
+    handler = _handler(store, mqtt)
+    assert await handler.start()
+    callback = mqtt.subscriptions[0][1]
+
+    callback(
+        "oig/123/control/set",
+        b'{"table":"tbl_box_prms","key":"MODE","value":2}',
+        False,
+    )
+    await asyncio.sleep(0)
+    await handler.stop()
+
+    assert store.single_nonterminal("123").state is CommandState.PENDING
+    assert mqtt.unsubscriptions == [
+        "oig/123/control/set",
+        "oig_local/123/set/#",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_store_never_dispatches_proxy_control() -> None:
+    store = MagicMock()
+    store.record_proxy_control_ingress.side_effect = RuntimeError("unavailable")
+    dispatched = MagicMock()
+    handler = TwinControlHandler(
+        mqtt=FakeMQTT(),
+        store=store,
+        device_id="123",
+        control_enabled=True,
+        loop=asyncio.get_running_loop(),
+        proxy_control_handler=dispatched,
+    )
+
+    await handler.handle_message(
+        "oig/123/control/set",
+        b'{"table":"proxy_control","key":"PROXY_MODE","value":2}',
+        False,
+        received_at_ms=100,
+    )
+
+    dispatched.assert_not_called()
+    assert handler.store_failure_count == 1
+
+
+def test_store_fixture_has_no_unexpected_ingress(store: TwinCommandStore) -> None:
+    with pytest.raises(StoreRecordNotFound):
+        store.read_latest_ingress()

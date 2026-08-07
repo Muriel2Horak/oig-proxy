@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
@@ -43,6 +44,85 @@ def inject_mock_paho(client: MQTTClient, connected: bool = True) -> MagicMock:
     client._client = mock_paho
     client.connected = connected
     return mock_paho
+
+
+def test_on_message_passes_immutable_payload_and_retain_metadata():
+    client = make_client()
+    paho = inject_mock_paho(client)
+    received: list[tuple[str, bytes, bool]] = []
+    paho.subscribe.return_value = (0, 1)
+    assert client.subscribe(
+        "oig/123/control/set",
+        lambda *args: received.append(args),
+    )
+    message = SimpleNamespace(
+        topic="oig/123/control/set",
+        payload=bytearray(b"payload"),
+        retain=True,
+    )
+
+    client._on_message(None, None, message)
+
+    assert received == [("oig/123/control/set", b"payload", True)]
+
+
+def test_on_connect_restores_registered_subscriptions_in_sorted_order():
+    client = make_client()
+    paho = inject_mock_paho(client)
+    paho.subscribe.return_value = (0, 1)
+    assert client.subscribe("oig_local/123/set/#", MagicMock())
+    assert client.subscribe("oig/123/control/set", MagicMock())
+    paho.subscribe.reset_mock()
+
+    client._on_connect(paho, None, None, 0)
+
+    assert paho.subscribe.call_args_list == [
+        call("oig/123/control/set", qos=client.qos),
+        call("oig_local/123/set/#", qos=client.qos),
+    ]
+
+
+def test_failed_initial_subscribe_is_not_registered():
+    client = make_client()
+    paho = inject_mock_paho(client)
+    paho.subscribe.return_value = (4, 1)
+
+    assert client.subscribe("oig/123/control/set", MagicMock()) is False
+    assert client.registered_subscriptions == frozenset()
+
+
+def test_unsubscribe_while_disconnected_prevents_reconnect_restore():
+    client = make_client()
+    paho = inject_mock_paho(client)
+    paho.subscribe.return_value = (0, 1)
+    assert client.subscribe("oig/123/control/set", MagicMock())
+    client.connected = False
+
+    assert client.unsubscribe("oig/123/control/set") is True
+    assert client.registered_subscriptions == frozenset()
+    paho.unsubscribe.assert_not_called()
+
+
+def test_message_callback_exception_isolated_from_paho_thread(caplog):
+    client = make_client()
+    paho = inject_mock_paho(client)
+    paho.subscribe.return_value = (0, 1)
+    assert client.subscribe(
+        "oig/123/control/set",
+        MagicMock(side_effect=RuntimeError("boom")),
+    )
+
+    client._on_message(
+        None,
+        None,
+        SimpleNamespace(
+            topic="oig/123/control/set",
+            payload=b"x",
+            retain=False,
+        ),
+    )
+
+    assert "Callback error" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +574,9 @@ def test_send_discovery_clears_dedup_on_reconnect():
 
 def test_build_object_id_normalizes_non_alnum():
     assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B") == "oig_local_dev_01_tbl_box_a_b"
-    assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B", is_control=True) == "oig_local_dev_01_tbl_box_a_b_cfg"
+    assert MQTTClient._build_object_id(
+        "DEV-01", "tbl.box", "A+B", is_control=True
+    ) == "oig_local_dev_01_tbl_box_a_b_cfg"
 
 
 # ---------------------------------------------------------------------------
@@ -584,13 +666,39 @@ async def test_health_check_loop_reconnects_when_disconnected():
 
 
 @pytest.mark.asyncio
+async def test_health_check_invokes_on_ready_only_after_successful_recovery():
+    c = make_client()
+    c.connected = False
+    outcomes = iter((False, True))
+
+    def recover(_device_id: str) -> bool:
+        result = next(outcomes)
+        c.connected = result
+        return result
+
+    c.connect = MagicMock(side_effect=recover)
+    c.HEALTH_CHECK_INTERVAL = 0.01
+    on_ready = AsyncMock()
+
+    task = asyncio.create_task(
+        c.health_check_loop("DEV01", on_ready=on_ready)
+    )
+    await asyncio.sleep(0.035)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert c.connect.call_count == 2
+    on_ready.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_health_check_loop_does_not_reconnect_when_connected():
     """health_check_loop nevolá connect() pokud je již připojeno."""
     c = make_client()
     inject_mock_paho(c, connected=True)
 
     reconnect_calls = []
-    original_connect = c.connect
 
     def fake_connect(device_id: str) -> bool:
         reconnect_calls.append(device_id)

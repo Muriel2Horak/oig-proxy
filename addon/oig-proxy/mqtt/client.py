@@ -16,11 +16,13 @@ import json
 import logging
 import re
 import time
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from settings_constraints import CONTROL_WRITE_WHITELIST, SETTING_CONSTRAINTS, SettingConstraint
 
 logger = logging.getLogger(__name__)
+
+MQTTMessageCallback = Callable[[str, bytes, bool], None]
 
 
 def _json_number_from_decimal(value: Decimal) -> int | float:
@@ -28,6 +30,7 @@ def _json_number_from_decimal(value: Decimal) -> int | float:
     if value == value.to_integral_value():
         return int(value)
     return float(value)
+
 
 DEVICE_NAMES: dict[str, str] = {
     "inverter": "Střídač",
@@ -95,7 +98,7 @@ class MQTTClient:
         self.publish_failed = 0
 
         # Subscriptions
-        self._subscriptions: dict[str, Callable[[str, bytes], None]] = {}
+        self._subscriptions: dict[str, MQTTMessageCallback] = {}
         self._connect_device_id: str = "unknown"
 
     # ------------------------------------------------------------------
@@ -191,6 +194,14 @@ class MQTTClient:
                 avail_topic = f"{self.namespace}/{device_id}/availability"
                 client.publish(avail_topic, "online", retain=True, qos=1)
                 self._availability_online_sent.add(device_id)
+            for topic in sorted(self._subscriptions):
+                result, _mid = client.subscribe(topic, qos=self.qos)
+                if result != 0:
+                    logger.error(
+                        "MQTT: Subscription restore failed for %s (rc=%s)",
+                        topic,
+                        result,
+                    )
             logger.info("MQTT: Připojeno (rc=0)")
         else:
             self.connected = False
@@ -412,8 +423,9 @@ class MQTTClient:
                     state_map = {raw: label for raw, label in ordered_items}
                     command_map = {label: raw for raw, label in ordered_items}
                     control_payload["options"] = [label for _raw, label in ordered_items]
+                    state_json = json.dumps(state_map, ensure_ascii=False)
                     control_payload["value_template"] = (
-                        f"{{{{ ({json.dumps(state_map, ensure_ascii=False)}).get((value_json.get('{sensor_key}') | string), "
+                        f"{{{{ ({state_json}).get((value_json.get('{sensor_key}') | string), "
                         f"value_json.get('{sensor_key}') | string) }}}}"
                     )
                     control_payload["command_template"] = (
@@ -488,7 +500,12 @@ class MQTTClient:
     # Health check
     # ------------------------------------------------------------------
 
-    async def health_check_loop(self, device_id: str) -> None:
+    async def health_check_loop(
+        self,
+        device_id: str,
+        *,
+        on_ready: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         """Asyncio korutina – periodicky reconnectuje pokud je odpojeno."""
         import asyncio
 
@@ -502,6 +519,8 @@ class MQTTClient:
                 logger.warning("MQTT: Reconnect...")
                 if self.connect(device_id):
                     logger.info("MQTT: ✅ Reconnect úspěšný")
+                    if on_ready is not None:
+                        await on_ready()
                 else:
                     logger.warning("MQTT: ❌ Reconnect selhal")
 
@@ -509,7 +528,7 @@ class MQTTClient:
     # Subscribe / Unsubscribe
     # ------------------------------------------------------------------
 
-    def subscribe(self, topic: str, callback: Callable[[str, bytes], None]) -> bool:
+    def subscribe(self, topic: str, callback: MQTTMessageCallback) -> bool:
         """Subscribe to an MQTT topic.
 
         Args:
@@ -523,14 +542,13 @@ class MQTTClient:
             logger.error("MQTT: Cannot subscribe, not connected")
             return False
 
-        self._subscriptions[topic] = callback
-
         try:
             client = self._client
             if client is None:
                 return False
             result, _mid = client.subscribe(topic, qos=self.qos)
             if result == 0:
+                self._subscriptions[topic] = callback
                 logger.debug("MQTT: Subscribed to %s", topic)
                 return True
             logger.error("MQTT: Subscribe failed for %s (rc=%s)", topic, result)
@@ -548,11 +566,9 @@ class MQTTClient:
         Returns:
             True if unsubscription was successful
         """
+        self._subscriptions.pop(topic, None)
         if not self.is_ready():
-            return False
-
-        if topic in self._subscriptions:
-            del self._subscriptions[topic]
+            return True
 
         try:
             client = self._client
@@ -568,19 +584,25 @@ class MQTTClient:
             logger.error("MQTT: Unsubscribe exception for %s: %s", topic, exc)
             return False
 
+    @property
+    def registered_subscriptions(self) -> frozenset[str]:
+        """Return immutable topics that reconnect must restore."""
+        return frozenset(self._subscriptions)
+
     def _on_message(self, client: Any, _userdata: Any, msg: Any) -> None:
         """Internal callback for incoming MQTT messages.
 
         Routes messages to registered callbacks.
         """
-        topic = msg.topic
-        payload = msg.payload
+        topic = str(msg.topic)
+        payload = bytes(msg.payload)
+        retain = bool(msg.retain)
 
         # Find matching callback
         for sub_topic, callback in self._subscriptions.items():
             if self._topic_matches(sub_topic, topic):
                 try:
-                    callback(topic, payload)
+                    callback(topic, payload, retain)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("MQTT: Callback error for %s: %s", topic, exc)
                 return
