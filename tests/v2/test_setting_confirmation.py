@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,7 @@ def _awaiting_event(
             result="ACK",
             reason="Setting",
             rdt_text=response_rdt,
-            fingerprint="a" * 64,
+            fingerprint=hashlib.sha256(b"ack").hexdigest(),
         ),
         received_at_ms=300,
         evidence_frame=b"ack",
@@ -186,6 +187,90 @@ def test_matcher_requires_exact_device_table_key_and_canonical_value(
         )
         assert result.disposition is EventDisposition.UNMATCHED
         assert result.confirmation is None
+
+
+def test_forged_typed_event_fields_are_durably_unmatched_by_content_identity(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    command, _attempt = _awaiting_event(store, deterministic_renderer)
+    exact = _event(new_value_text="3")
+    forged = replace(exact, new_value_text="2")
+
+    unmatched = store.record_event(
+        evidence=forged,
+        received_at_ms=500,
+        evidence_frame=b"forged-event",
+    )
+    replay = store.record_event(
+        evidence=exact,
+        received_at_ms=501,
+        evidence_frame=b"forged-event",
+    )
+
+    assert unmatched.disposition is EventDisposition.UNMATCHED
+    assert unmatched.evidence.new_value_text == "2"
+    assert replay.disposition is EventDisposition.DUPLICATE
+    assert replay.confirmation is None
+    assert store.read_command(command.command_id).state is CommandState.AWAITING_EVENT
+
+
+def test_non_remote_event_content_is_durably_unmatched(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    command, _attempt = _awaiting_event(store, deterministic_renderer)
+    exact = _event()
+    content = exact.content_text.replace("Remotely", "Locally", 1)
+    evidence = replace(
+        exact,
+        content_text=content,
+        evidence_id=derive_event_evidence_id(
+            exact.device_id,
+            exact.event_id_set,
+            exact.device_dt,
+            content,
+        ),
+    )
+
+    result = store.record_event(
+        evidence=evidence,
+        received_at_ms=500,
+        evidence_frame=b"local-event",
+    )
+
+    assert result.disposition is EventDisposition.UNMATCHED
+    assert result.confirmation is None
+    assert store.read_command(command.command_id).state is CommandState.AWAITING_EVENT
+
+
+def test_unknown_device_event_is_persisted_before_observation_and_stays_duplicate(
+    store: TwinCommandStore,
+) -> None:
+    evidence = _event(device_id="unseen-device")
+
+    unmatched = store.record_event(
+        evidence=evidence,
+        received_at_ms=100,
+        evidence_frame=b"unknown-device-event",
+    )
+    store.observe_device(
+        device_id="unseen-device",
+        observed_at_ms=200,
+        observed_wire_id=10,
+        observed_wire_id_set=10,
+    )
+    replay = store.record_event(
+        evidence=evidence,
+        received_at_ms=201,
+        evidence_frame=b"unknown-device-event",
+    )
+
+    assert unmatched.disposition is EventDisposition.UNMATCHED
+    assert unmatched.evidence.device_id == "unseen-device"
+    assert replay.disposition is EventDisposition.DUPLICATE
+    assert replay.confirmation is None
+    assert replay.evidence.duplicate_count == 1
 
 
 def test_event_canonicalizes_value_without_changing_raw_receipt(

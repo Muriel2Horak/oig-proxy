@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -219,13 +220,6 @@ _EXPECTED_FOREIGN_KEY_ARTIFACTS = {
             (
                 "commands",
                 (("command_id", "command_id"),),
-                "NO ACTION",
-                "NO ACTION",
-                "NONE",
-            ),
-            (
-                "devices",
-                (("device_id", "device_id"),),
                 "NO ACTION",
                 "NO ACTION",
                 "NONE",
@@ -2396,7 +2390,9 @@ def test_predecessor_and_identical_awaiting_event_commands_block_successor(
         command_id=first.command_id,
         attempt_number=1,
         session_id="session-a",
-        response=SettingResponse("ACK", "Setting", None, "a" * 64),
+        response=SettingResponse(
+            "ACK", "Setting", None, hashlib.sha256(b"ack").hexdigest()
+        ),
         received_at_ms=304,
         evidence_frame=b"ack",
         render=deterministic_renderer,
@@ -2539,6 +2535,65 @@ def test_prepare_render_failure_is_terminal_without_consuming_counters_or_attemp
     assert store.read_device("123") == before
     with pytest.raises(StoreRecordNotFound):
         store.read_attempt(command.command_id, 1)
+
+
+@pytest.mark.parametrize(
+    "poison_sql",
+    [
+        "UPDATE command_attempts SET tsec_text = '' WHERE command_id = ?",
+        "UPDATE command_attempts SET ver_text = 'abcde' WHERE command_id = ?",
+        "UPDATE command_attempts SET crc_text = '99999' WHERE command_id = ?",
+        (
+            "UPDATE command_attempts SET wire_frame = X'', wire_length = 0 "
+            "WHERE command_id = ?"
+        ),
+    ],
+)
+def test_attempt_read_rejects_persisted_render_contract_poison_and_degrades(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    poison_sql: str,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    assert store._connection is not None  # pylint: disable=protected-access
+    store._connection.execute(  # pylint: disable=protected-access
+        poison_sql,
+        (command.command_id,),
+    )
+
+    with pytest.raises(TwinStoreError, match="attempt render contract"):
+        store.read_attempt(command.command_id, 1)
+    with pytest.raises(TwinStoreError, match="attempt render contract"):
+        store.verify_health()
+
+
+def test_attempt_read_rejects_nonnormalized_persisted_session_and_degrades(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    assert store._connection is not None  # pylint: disable=protected-access
+    store._connection.execute(  # pylint: disable=protected-access
+        "UPDATE command_attempts SET session_id = ? WHERE command_id = ?",
+        (" session ", command.command_id),
+    )
+
+    with pytest.raises(TwinStoreError, match="attempt session_id"):
+        store.read_attempt(command.command_id, 1)
+    with pytest.raises(TwinStoreError, match="attempt session_id"):
+        store.verify_health()
 
 
 def test_repeated_claim_same_session_is_noop_and_other_session_is_rejected(
@@ -2741,6 +2796,38 @@ def test_attempt_limits_one_and_eight_are_terminal(
     ).disposition is ClaimDisposition.NO_ELIGIBLE
 
 
+@pytest.mark.parametrize(
+    "reason", [RetryReason.WRITE_FAILED, RetryReason.WRITE_UNKNOWN]
+)
+def test_generic_retry_rejects_write_outcome_reasons_without_mutation(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+    reason: RetryReason,
+) -> None:
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    before = store.read_command(command.command_id)
+
+    with pytest.raises(ValueError, match="write outcome"):
+        store.release_for_retry(
+            command_id=command.command_id,
+            attempt_number=1,
+            session_id="a",
+            occurred_at_ms=201,
+            reason=reason,
+        )
+
+    assert store.read_command(command.command_id) == before
+    assert store.read_attempt(command.command_id, 1).write_outcome is (
+        AttemptWriteOutcome.PREPARED
+    )
+
+
 def test_attempt_transition_failure_rolls_back_write_outcome(
     tmp_path: Path,
     control_policy: ControlPolicy,
@@ -2824,7 +2911,8 @@ def _prepared_and_drained(
 def _response(
     result: Literal["ACK", "NACK"] = "ACK",
     *,
-    fingerprint: str = "a" * 64,
+    evidence_frame: bytes = b"ack",
+    fingerprint: str | None = None,
     rdt_text: str | None = "06.08.2026 10:12:00",
     reason: str | None = "Setting",
 ) -> SettingResponse:
@@ -2832,7 +2920,11 @@ def _response(
         result=result,
         reason=reason,
         rdt_text=rdt_text,
-        fingerprint=fingerprint,
+        fingerprint=(
+            hashlib.sha256(evidence_frame).hexdigest()
+            if fingerprint is None
+            else fingerprint
+        ),
     )
 
 
@@ -2895,7 +2987,143 @@ def test_ack_rejects_wrong_session_and_late_response_without_mutation(
     assert store.read_command(attempt.command_id) == command_before
 
 
-def test_ack_deduplicates_session_batch_and_rejects_decreasing_parseable_rdt(
+@pytest.mark.parametrize("result", ["ACK", "NACK"])
+def test_response_rejects_prepared_attempt_without_mutation(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+    result: Literal["ACK", "NACK"],
+) -> None:
+    store = store_factory(8)
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    prepared = store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    assert prepared.attempt is not None
+    frame = result.lower().encode("ascii")
+    before = store.read_command(command.command_id)
+
+    with pytest.raises(StaleAttemptError, match="write"):
+        if result == "ACK":
+            store.acknowledge_and_prepare_next(
+                command_id=command.command_id,
+                attempt_number=1,
+                session_id="a",
+                response=_response("ACK", evidence_frame=frame),
+                received_at_ms=201,
+                evidence_frame=frame,
+                render=deterministic_renderer,
+            )
+        else:
+            store.mark_nack(
+                command_id=command.command_id,
+                attempt_number=1,
+                session_id="a",
+                response=_response("NACK", evidence_frame=frame),
+                received_at_ms=201,
+                evidence_frame=frame,
+            )
+
+    assert store.read_command(command.command_id) == before
+    assert store.read_attempt(command.command_id, 1).response_fingerprint is None
+
+
+@pytest.mark.parametrize("result", ["ACK", "NACK"])
+def test_response_rejects_timestamp_before_write_start_without_mutation(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+    result: Literal["ACK", "NACK"],
+) -> None:
+    store = store_factory(8)
+    command = _enqueue_lifecycle(store, value_text="2", received_at_ms=100)
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="a",
+        prepared_at_ms=200,
+        render=deterministic_renderer,
+    )
+    store.mark_write_started(
+        command_id=command.command_id,
+        attempt_number=1,
+        session_id="a",
+        started_at_ms=201,
+    )
+    frame = f"{result.lower()}-early".encode("ascii")
+    before = store.read_command(command.command_id)
+
+    with pytest.raises(StaleAttemptError, match="write start"):
+        if result == "ACK":
+            store.acknowledge_and_prepare_next(
+                command_id=command.command_id,
+                attempt_number=1,
+                session_id="a",
+                response=_response("ACK", evidence_frame=frame),
+                received_at_ms=199,
+                evidence_frame=frame,
+                render=deterministic_renderer,
+            )
+        else:
+            store.mark_nack(
+                command_id=command.command_id,
+                attempt_number=1,
+                session_id="a",
+                response=_response("NACK", evidence_frame=frame),
+                received_at_ms=199,
+                evidence_frame=frame,
+            )
+
+    assert store.read_command(command.command_id) == before
+    assert store.read_attempt(command.command_id, 1).response_fingerprint is None
+
+
+@pytest.mark.parametrize("result", ["ACK", "NACK"])
+def test_response_fingerprint_must_hash_exact_evidence_bytes_before_mutation(
+    store_factory: Callable[[int], TwinCommandStore],
+    deterministic_renderer: AttemptRenderer,
+    result: Literal["ACK", "NACK"],
+) -> None:
+    store = store_factory(8)
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    frame = f"{result.lower()}-evidence".encode("ascii")
+    response = _response(
+        result,
+        evidence_frame=frame,
+        fingerprint=hashlib.sha256(b"different-bytes").hexdigest(),
+    )
+    assert response.fingerprint != _response(
+        result, evidence_frame=frame
+    ).fingerprint
+    before = store.read_command(attempt.command_id)
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        if result == "ACK":
+            store.acknowledge_and_prepare_next(
+                command_id=attempt.command_id,
+                attempt_number=1,
+                session_id="a",
+                response=response,
+                received_at_ms=attempt.ack_deadline_ms,
+                evidence_frame=frame,
+                render=deterministic_renderer,
+            )
+        else:
+            store.mark_nack(
+                command_id=attempt.command_id,
+                attempt_number=1,
+                session_id="a",
+                response=response,
+                received_at_ms=attempt.ack_deadline_ms,
+                evidence_frame=frame,
+            )
+
+    assert store.read_command(attempt.command_id) == before
+    assert store.read_attempt(attempt.command_id, 1).response_fingerprint is None
+
+
+def test_ack_deduplicates_exact_attempt_and_rejects_decreasing_parseable_rdt(
     store: TwinCommandStore,
     deterministic_renderer: AttemptRenderer,
 ) -> None:
@@ -2906,7 +3134,7 @@ def test_ack_deduplicates_session_batch_and_rejects_decreasing_parseable_rdt(
         attempt_number=1,
         session_id="a",
         received_at_ms=210,
-        response=_response(fingerprint="b" * 64),
+        response=_response(evidence_frame=b"ack-1"),
         evidence_frame=b"ack-1",
         render=deterministic_renderer,
     )
@@ -2914,14 +3142,29 @@ def test_ack_deduplicates_session_batch_and_rejects_decreasing_parseable_rdt(
         command_id=first_attempt.command_id,
         attempt_number=1,
         session_id="a",
-        received_at_ms=211,
-        response=_response(fingerprint="b" * 64),
+        received_at_ms=first_attempt.ack_deadline_ms + 1,
+        response=_response(evidence_frame=b"ack-1"),
         evidence_frame=b"ack-1",
         render=deterministic_renderer,
     )
     assert duplicate.duplicate
     assert duplicate.accepted_command is None
     assert duplicate.snapshots == ()
+    for command_id, attempt_number, session_id in (
+        ("other-command", 1, "a"),
+        (first_attempt.command_id, 2, "a"),
+        (first_attempt.command_id, 1, "other-session"),
+    ):
+        with pytest.raises(StaleAttemptError):
+            store.acknowledge_and_prepare_next(
+                command_id=command_id,
+                attempt_number=attempt_number,
+                session_id=session_id,
+                received_at_ms=first_attempt.ack_deadline_ms + 1,
+                response=_response(evidence_frame=b"ack-1"),
+                evidence_frame=b"ack-1",
+                render=deterministic_renderer,
+            )
 
     # A distinct target can be active in the same UUID session batch while the
     # first command awaits event evidence.
@@ -2937,6 +3180,12 @@ def test_ack_deduplicates_session_batch_and_rejects_decreasing_parseable_rdt(
         prepared_at_ms=230,
         render=deterministic_renderer,
     )
+    store.mark_write_started(
+        command_id=next_command.command_id,
+        attempt_number=1,
+        session_id="a",
+        started_at_ms=230,
+    )
     with pytest.raises(StaleAttemptError, match="Rdt"):
         store.acknowledge_and_prepare_next(
             command_id=next_command.command_id,
@@ -2944,12 +3193,62 @@ def test_ack_deduplicates_session_batch_and_rejects_decreasing_parseable_rdt(
             session_id="a",
             received_at_ms=231,
             response=_response(
-                fingerprint="c" * 64,
+                evidence_frame=b"ack-2",
                 rdt_text="06.08.2026 10:11:59",
             ),
             evidence_frame=b"ack-2",
             render=deterministic_renderer,
         )
+
+
+def test_identical_response_bytes_are_valid_for_a_later_distinct_session(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    first_attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert first_attempt is not None
+    shared_frame = b"shared-ack"
+    store.acknowledge_and_prepare_next(
+        command_id=first_attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        received_at_ms=210,
+        response=_response(evidence_frame=shared_frame),
+        evidence_frame=shared_frame,
+        render=deterministic_renderer,
+    )
+    second = _enqueue_lifecycle(
+        store,
+        value_text="1",
+        received_at_ms=220,
+        item_name="SA",
+    )
+    store.prepare_next_attempt(
+        device_id="123",
+        session_id="b",
+        prepared_at_ms=230,
+        render=deterministic_renderer,
+    )
+    store.mark_write_started(
+        command_id=second.command_id,
+        attempt_number=1,
+        session_id="b",
+        started_at_ms=231,
+    )
+
+    result = store.acknowledge_and_prepare_next(
+        command_id=second.command_id,
+        attempt_number=1,
+        session_id="b",
+        received_at_ms=232,
+        response=_response(evidence_frame=shared_frame),
+        evidence_frame=shared_frame,
+        render=deterministic_renderer,
+    )
+
+    assert not result.duplicate
+    assert result.accepted_command is not None
+    assert result.accepted_command.command_id == second.command_id
 
 
 def test_ack_atomically_prepares_next_eligible_distinct_target(
@@ -2993,7 +3292,7 @@ def test_nack_is_terminal_with_diagnostic_and_exact_duplicate_is_noop(
     assert attempt is not None
     nack = _response(
         "NACK",
-        fingerprint="d" * 64,
+        evidence_frame=b"nack",
         reason="WC",
     )
 
@@ -3010,7 +3309,7 @@ def test_nack_is_terminal_with_diagnostic_and_exact_duplicate_is_noop(
         attempt_number=1,
         session_id="a",
         response=nack,
-        received_at_ms=attempt.ack_deadline_ms,
+        received_at_ms=attempt.ack_deadline_ms + 1,
         evidence_frame=b"nack",
     )
 
@@ -3021,6 +3320,20 @@ def test_nack_is_terminal_with_diagnostic_and_exact_duplicate_is_noop(
     assert duplicate.duplicate
     assert duplicate.accepted_command is None
     assert duplicate.snapshots == ()
+    for command_id, attempt_number, session_id in (
+        ("other-command", 1, "a"),
+        (attempt.command_id, 2, "a"),
+        (attempt.command_id, 1, "other-session"),
+    ):
+        with pytest.raises(StaleAttemptError):
+            store.mark_nack(
+                command_id=command_id,
+                attempt_number=attempt_number,
+                session_id=session_id,
+                response=nack,
+                received_at_ms=attempt.ack_deadline_ms + 1,
+                evidence_frame=b"nack",
+            )
     with pytest.raises(StaleAttemptError):
         store.release_for_retry(
             command_id=attempt.command_id,
@@ -3175,6 +3488,34 @@ def test_event_timeout_candidates_and_exact_cas_are_strict(
     )
     assert completed is not None
     assert completed.command.state is CommandState.INCOMPLETE
+
+
+def test_event_timeout_candidate_real_poison_degrades_fail_closed(
+    store: TwinCommandStore,
+    deterministic_renderer: AttemptRenderer,
+) -> None:
+    attempt = _prepared_and_drained(store, deterministic_renderer)
+    assert attempt is not None
+    acknowledged = store.acknowledge_and_prepare_next(
+        command_id=attempt.command_id,
+        attempt_number=1,
+        session_id="a",
+        response=_response(),
+        received_at_ms=300,
+        evidence_frame=b"ack",
+        render=deterministic_renderer,
+    )
+    assert acknowledged.accepted_command is not None
+    assert store._connection is not None  # pylint: disable=protected-access
+    store._connection.execute(  # pylint: disable=protected-access
+        "UPDATE commands SET event_deadline_ms = 300.5 WHERE command_id = ?",
+        (attempt.command_id,),
+    )
+
+    with pytest.raises(TwinStoreError, match="event deadline"):
+        store.read_event_timeout_candidates(now_ms=400)
+    with pytest.raises(TwinStoreError, match="event deadline"):
+        store.verify_health()
 
 
 def test_recover_maps_active_states_and_preserves_terminals(
@@ -3404,6 +3745,8 @@ def test_lifecycle_rollback_failure_degrades_fail_closed(
     assert fault.rollback_attempts == 1
     with pytest.raises(TwinStoreError, match="rollback failed"):
         store.verify_health()
+    with pytest.raises(TwinStoreError, match="rollback failed"):
+        store.status_snapshot()
     store.close()
 
 
@@ -3433,6 +3776,8 @@ def test_post_commit_reporting_failure_degrades_with_durable_commit_preserved(
         )
     with pytest.raises(TwinStoreError, match="ambiguous"):
         store.verify_health()
+    with pytest.raises(TwinStoreError, match="ambiguous"):
+        store.status_snapshot()
     store.close()
 
     reopened = TwinCommandStore(path, policy=control_policy)
@@ -3469,6 +3814,8 @@ def test_read_command_rejects_noninteger_persisted_timestamp_and_degrades(
         reopened.read_command(command.command_id)
     with pytest.raises(TwinStoreError, match="persisted command"):
         reopened.verify_health()
+    with pytest.raises(TwinStoreError, match="persisted command"):
+        reopened.status_snapshot()
     reopened.close()
 
 

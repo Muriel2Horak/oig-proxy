@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 from datetime import datetime
 import os
 from pathlib import Path
@@ -17,7 +18,12 @@ from zoneinfo import ZoneInfo
 
 from settings_constraints import validate_setting_value
 
-from .ack_parser import SettingEvent, SettingResponse, derive_event_evidence_id
+from .ack_parser import (
+    SettingEvent,
+    SettingResponse,
+    derive_event_evidence_id,
+    parse_setting_event_content,
+)
 from .state import (
     AckResult,
     AttemptRenderContext,
@@ -184,7 +190,7 @@ _CREATE_EVENT_RECEIPTS = """
 CREATE TABLE event_receipts (
     evidence_id TEXT PRIMARY KEY CHECK (length(evidence_id) = 64),
     received_at_ms INTEGER NOT NULL CHECK (received_at_ms >= 0),
-    device_id TEXT NOT NULL REFERENCES devices(device_id),
+    device_id TEXT NOT NULL,
     event_id_set INTEGER NOT NULL CHECK (event_id_set >= 0),
     device_dt TEXT NOT NULL,
     table_name TEXT NOT NULL CHECK (length(table_name) BETWEEN 1 AND 128),
@@ -1212,6 +1218,8 @@ class TwinCommandStore:
         def operation(connection: sqlite3.Connection) -> AckResult:
             if self._response_is_duplicate_locked(
                 connection,
+                command_id=normalized_command_id,
+                attempt_number=attempt_number,
                 session_id=normalized_session_id,
                 fingerprint=response.fingerprint,
             ):
@@ -1226,8 +1234,7 @@ class TwinCommandStore:
                 attempt_number=attempt_number,
                 session_id=normalized_session_id,
             )
-            if received_at_ms > attempt.ack_deadline_ms:
-                raise StaleAttemptError("response arrived after ACK deadline")
+            _validate_response_attempt_window(attempt, received_at_ms)
             self._reject_decreasing_response_rdt_locked(
                 connection,
                 session_id=normalized_session_id,
@@ -1332,6 +1339,8 @@ class TwinCommandStore:
         def operation(connection: sqlite3.Connection) -> NackResult:
             if self._response_is_duplicate_locked(
                 connection,
+                command_id=normalized_command_id,
+                attempt_number=attempt_number,
                 session_id=normalized_session_id,
                 fingerprint=response.fingerprint,
             ):
@@ -1342,8 +1351,7 @@ class TwinCommandStore:
                 attempt_number=attempt_number,
                 session_id=normalized_session_id,
             )
-            if received_at_ms > attempt.ack_deadline_ms:
-                raise StaleAttemptError("response arrived after ACK deadline")
+            _validate_response_attempt_window(attempt, received_at_ms)
             self._reject_decreasing_response_rdt_locked(
                 connection,
                 session_id=normalized_session_id,
@@ -1418,16 +1426,28 @@ class TwinCommandStore:
     def _response_is_duplicate_locked(
         connection: sqlite3.Connection,
         *,
+        command_id: str,
+        attempt_number: int,
         session_id: str,
         fingerprint: str,
     ) -> bool:
-        return connection.execute(
+        rows = connection.execute(
             """
-            SELECT 1 FROM command_attempts
-            WHERE session_id = ? AND response_fingerprint = ? LIMIT 1
+            SELECT command_id, attempt_number, session_id FROM command_attempts
+            WHERE session_id = ? AND response_fingerprint = ?
             """,
             (session_id, fingerprint),
-        ).fetchone() is not None
+        ).fetchall()
+        if not rows:
+            return False
+        if any(
+            row == (command_id, attempt_number, session_id)
+            for row in rows
+        ):
+            return True
+        raise StaleAttemptError(
+            "response evidence belongs to a different command attempt"
+        )
 
     @staticmethod
     def _reject_decreasing_response_rdt_locked(
@@ -1463,7 +1483,7 @@ class TwinCommandStore:
         evidence_frame: bytes,
     ) -> EventMatchResult:
         """Persist immutable evidence and confirm at most one exact command."""
-        normalized_evidence = _validate_setting_event(evidence)
+        normalized_evidence, content_is_consistent = _validate_setting_event(evidence)
         _validate_sqlite_integer("received_at_ms", received_at_ms)
         normalized_frame = _validate_evidence_frame(evidence_frame)
 
@@ -1495,13 +1515,6 @@ class TwinCommandStore:
                     None,
                 )
 
-            if connection.execute(
-                "SELECT 1 FROM devices WHERE device_id = ?",
-                (normalized_evidence.device_id,),
-            ).fetchone() is None:
-                raise StoreRecordNotFound(
-                    f"device record not found: {normalized_evidence.device_id}"
-                )
             connection.execute(
                 """
                 INSERT INTO event_receipts(
@@ -1525,6 +1538,19 @@ class TwinCommandStore:
                     received_at_ms,
                 ),
             )
+            if not content_is_consistent:
+                receipt = self._read_event_receipt_locked(
+                    connection, normalized_evidence.evidence_id
+                )
+                return EventMatchResult(
+                    EventDisposition.UNMATCHED,
+                    None,
+                    None,
+                    None,
+                    receipt,
+                    None,
+                    None,
+                )
             value_result = validate_setting_value(
                 normalized_evidence.table_name,
                 normalized_evidence.item_name,
@@ -1844,10 +1870,22 @@ class TwinCommandStore:
                 """,
                 (now_ms,),
             ).fetchall()
-            return tuple(
-                EventTimeoutCandidate(str(row[0]), str(row[1]), int(row[2]))
-                for row in rows
-            )
+            try:
+                return tuple(
+                    EventTimeoutCandidate(
+                        _persisted_identifier(
+                            "event timeout command_id", row[0], 256
+                        ),
+                        _persisted_identifier(
+                            "event timeout device_id", row[1], 128
+                        ),
+                        _persisted_integer("event deadline", row[2]),
+                    )
+                    for row in rows
+                )
+            except TwinStoreError as error:
+                self._set_degradation(str(error))
+                raise
 
     def mark_event_incomplete(
         self,
@@ -2009,8 +2047,7 @@ class TwinCommandStore:
         with self._mutex:
             degradation_reason = self._store_state[2]
             if degradation_reason is not None:
-                counts = tuple((state, 0) for state in CommandState)
-                return StoreStatus(counts, 0, False, degradation_reason)
+                raise TwinStoreError(degradation_reason)
             self.verify_health()
             connection = self._require_connection()
             if normalized_device_id is None:
@@ -2284,6 +2321,10 @@ class TwinCommandStore:
         _validate_sqlite_integer("occurred_at_ms", occurred_at_ms)
         if not isinstance(reason, RetryReason):
             raise ValueError("reason must be a RetryReason")
+        if reason in (RetryReason.WRITE_FAILED, RetryReason.WRITE_UNKNOWN):
+            raise ValueError(
+                "write outcome retry reasons require their dedicated update methods"
+            )
         bounded_error = (
             _validate_bounded_text("error", error, 1024)
             if error is not None
@@ -3003,27 +3044,41 @@ def _validate_rendered_attempt(
 ) -> None:
     if not isinstance(rendered, RenderedAttempt):
         raise ValueError("renderer must return RenderedAttempt")
-    if not isinstance(rendered.tsec_text, str) or not rendered.tsec_text:
-        raise ValueError("tsec_text must be non-empty text")
-    if (
-        not isinstance(rendered.ver_text, str)
-        or _FIVE_DIGITS.fullmatch(rendered.ver_text) is None
-        or int(rendered.ver_text) > 65535
-    ):
-        raise ValueError("ver_text must be a five-digit uint16 decimal")
+    _validate_attempt_render_fields(
+        rendered.tsec_text,
+        rendered.ver_text,
+        rendered.crc_text,
+        rendered.wire_frame,
+    )
     if rendered.ver_text in used_ver_texts:
         raise ValueError("ver_text was already used by this command")
+
+
+def _validate_attempt_render_fields(
+    tsec_text: object,
+    ver_text: object,
+    crc_text: object,
+    wire_frame: object,
+) -> None:
+    if not isinstance(tsec_text, str) or not tsec_text:
+        raise ValueError("tsec_text must be non-empty text")
     if (
-        not isinstance(rendered.crc_text, str)
-        or _FIVE_DIGITS.fullmatch(rendered.crc_text) is None
-        or int(rendered.crc_text) > 65535
+        not isinstance(ver_text, str)
+        or _FIVE_DIGITS.fullmatch(ver_text) is None
+        or int(ver_text) > 65535
+    ):
+        raise ValueError("ver_text must be a five-digit uint16 decimal")
+    if (
+        not isinstance(crc_text, str)
+        or _FIVE_DIGITS.fullmatch(crc_text) is None
+        or int(crc_text) > 65535
     ):
         raise ValueError("crc_text must be a five-digit uint16 decimal")
-    if type(rendered.wire_frame) is not bytes:  # pylint: disable=unidiomatic-typecheck
+    if type(wire_frame) is not bytes:  # pylint: disable=unidiomatic-typecheck
         raise ValueError("wire_frame must be exact bytes")
-    if not rendered.wire_frame:
+    if not wire_frame:
         raise ValueError("wire_frame must be non-empty")
-    if len(rendered.wire_frame) > _MAX_WIRE_FRAME_BYTES:
+    if len(wire_frame) > _MAX_WIRE_FRAME_BYTES:
         raise ValueError("wire_frame exceeds 1048576 bytes")
 
 
@@ -3065,8 +3120,26 @@ def _validate_response_inputs(
     if response.rdt_text is not None:
         _validate_bounded_text("response Rdt", response.rdt_text, 1024)
     _validate_sqlite_integer("received_at_ms", received_at_ms)
-    _validate_evidence_frame(evidence_frame)
+    normalized_frame = _validate_evidence_frame(evidence_frame)
+    if hashlib.sha256(normalized_frame).hexdigest() != response.fingerprint:
+        raise ValueError("response fingerprint does not match evidence_frame")
     return normalized_command_id, normalized_session_id
+
+
+def _validate_response_attempt_window(
+    attempt: CommandAttempt, received_at_ms: int
+) -> None:
+    if attempt.write_outcome not in (
+        AttemptWriteOutcome.STARTED,
+        AttemptWriteOutcome.DRAINED,
+    ):
+        raise StaleAttemptError("response arrived before the wire write started")
+    if attempt.write_started_at_ms is None:
+        raise StaleAttemptError("response attempt has no durable write start")
+    if received_at_ms < attempt.write_started_at_ms:
+        raise StaleAttemptError("response timestamp precedes the wire write start")
+    if received_at_ms > attempt.ack_deadline_ms:
+        raise StaleAttemptError("response arrived after ACK deadline")
 
 
 def _validate_evidence_id(evidence_id: str) -> str:
@@ -3078,7 +3151,7 @@ def _validate_evidence_id(evidence_id: str) -> str:
     return evidence_id
 
 
-def _validate_setting_event(evidence: SettingEvent) -> SettingEvent:
+def _validate_setting_event(evidence: SettingEvent) -> tuple[SettingEvent, bool]:
     if not isinstance(evidence, SettingEvent):
         raise TypeError("evidence must be a SettingEvent")
     _validate_evidence_id(evidence.evidence_id)
@@ -3100,7 +3173,14 @@ def _validate_setting_event(evidence: SettingEvent) -> SettingEvent:
     )
     if derived != evidence.evidence_id:
         raise ValueError("evidence_id does not match the immutable event envelope")
-    return evidence
+    parsed_content = parse_setting_event_content(evidence.content_text)
+    content_is_consistent = parsed_content == (
+        evidence.table_name,
+        evidence.item_name,
+        evidence.old_value_text,
+        evidence.new_value_text,
+    )
+    return evidence, content_is_consistent
 
 
 def _parse_protocol_datetime(value: str | None) -> datetime | None:
@@ -3149,6 +3229,15 @@ def _persisted_text(
 
 def _persisted_optional_text(name: str, value: object) -> str | None:
     return None if value is None else _persisted_text(name, value)
+
+
+def _persisted_identifier(name: str, value: object, maximum: int) -> str:
+    text = _persisted_text(name, value)
+    if text.strip() != text:
+        raise TwinStoreError(f"persisted {name} must be normalized")
+    if len(text) > maximum:
+        raise TwinStoreError(f"persisted {name} exceeds {maximum} characters")
+    return text
 
 
 def _persisted_optional_blob(name: str, value: object) -> bytes | None:
@@ -3221,14 +3310,25 @@ def _attempt_from_row(row: tuple[Any, ...]) -> CommandAttempt:
         )
     except ValueError as error:
         raise TwinStoreError("persisted attempt write_outcome is invalid") from error
+    tsec_text = _persisted_text("attempt tsec_text", row[7], allow_empty=True)
+    ver_text = _persisted_text("attempt ver_text", row[8], allow_empty=True)
+    crc_text = _persisted_text("attempt crc_text", row[9], allow_empty=True)
     wire_frame = _persisted_blob("attempt wire_frame", row[10])
+    try:
+        _validate_attempt_render_fields(
+            tsec_text, ver_text, crc_text, wire_frame
+        )
+    except ValueError as error:
+        raise TwinStoreError(
+            f"persisted attempt render contract is invalid: {error}"
+        ) from error
     wire_length = _persisted_integer("attempt wire_length", row[11])
     if wire_length != len(wire_frame):
         raise TwinStoreError("persisted attempt wire length is inconsistent")
     return CommandAttempt(
-        command_id=_persisted_text("attempt command_id", row[0]),
+        command_id=_persisted_identifier("attempt command_id", row[0], 256),
         attempt_number=_persisted_integer("attempt attempt_number", row[1]),
-        session_id=_persisted_text("attempt session_id", row[2]),
+        session_id=_persisted_identifier("attempt session_id", row[2], 128),
         prepared_at_ms=_persisted_integer("attempt prepared_at_ms", row[3]),
         write_started_at_ms=_persisted_optional_integer(
             "attempt write_started_at_ms", row[4]
@@ -3237,9 +3337,9 @@ def _attempt_from_row(row: tuple[Any, ...]) -> CommandAttempt:
             "attempt drain_completed_at_ms", row[5]
         ),
         ack_deadline_ms=_persisted_integer("attempt ack_deadline_ms", row[6]),
-        tsec_text=_persisted_text("attempt tsec_text", row[7]),
-        ver_text=_persisted_text("attempt ver_text", row[8]),
-        crc_text=_persisted_text("attempt crc_text", row[9]),
+        tsec_text=tsec_text,
+        ver_text=ver_text,
+        crc_text=crc_text,
         wire_frame=wire_frame,
         wire_length=wire_length,
         write_outcome=outcome,

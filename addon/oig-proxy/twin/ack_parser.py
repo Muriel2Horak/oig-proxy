@@ -105,6 +105,13 @@ class _SettingEventContentParser:  # pylint: disable=too-few-public-methods
         return value
 
 
+def parse_setting_event_content(content: str) -> tuple[str, str, str, str] | None:
+    """Parse one complete remote Setting-event content value."""
+    if not isinstance(content, str):
+        return None
+    return _SettingEventContentParser(content).parse()
+
+
 @dataclass(frozen=True, slots=True)
 class SettingResponse:
     """Immutable BOX-originated ACK or NACK evidence."""
@@ -244,7 +251,7 @@ def parse_setting_event(  # pylint: disable=too-many-return-statements
     device_dt = parse_direct_text(frame, "DT")
     if not device_dt:
         return None
-    parsed_content = _SettingEventContentParser(metadata.content).parse()
+    parsed_content = parse_setting_event_content(metadata.content)
     if parsed_content is None:
         return None
     table_name, item_name, old_value, new_value = parsed_content
