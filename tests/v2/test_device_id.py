@@ -44,6 +44,15 @@ class TestDeviceIdManager:
             assert result is None
             assert manager.device_id is None
 
+    def test_load_rejects_non_object_document(self, tmp_path):
+        path = tmp_path / "device_id.json"
+        path.write_text("[]", encoding="utf-8")
+
+        manager = DeviceIdManager(str(path))
+
+        assert manager.load() is None
+        assert manager.device_id is None
+
     def test_load_returns_device_id_and_sets_property(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "device_id.json")

@@ -3,7 +3,7 @@
 # pyright: reportMissingImports=false
 # pylint: disable=import-error,missing-function-docstring
 
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 from typing import Any
 
 import pytest
@@ -43,8 +43,8 @@ from twin.state import (
 )
 
 
-def test_audit_delivery_decision_rejects_accounting_integrity_drift() -> None:
-    decision = AuditDeliveryDecision(
+def _valid_audit_delivery_decision() -> AuditDeliveryDecision:
+    return AuditDeliveryDecision(
         transition_id=1,
         audit_id="audit-00000000000000000000000000000000",
         command_id="cmd-00000000000000000000000000000000",
@@ -58,17 +58,37 @@ def test_audit_delivery_decision_rejects_accounting_integrity_drift() -> None:
         state=AuditDeliveryState.PENDING,
     )
 
+
+def test_audit_delivery_decision_rejects_accounting_integrity_drift() -> None:
+    decision = _valid_audit_delivery_decision()
+
     with pytest.raises(ValueError, match="decision integrity"):
-        decision.__class__(
-            transition_id=decision.transition_id,
-            audit_id=decision.audit_id,
-            command_id=decision.command_id,
-            canonical_payload_sha256=decision.canonical_payload_sha256,
-            decision_integrity_sha256=decision.decision_integrity_sha256,
-            raw_bytes=8,
-            payload_capped=decision.payload_capped,
-            state=decision.state,
-        )
+        replace(decision, raw_bytes=8)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value", "error_type", "message"),
+    (
+        ("transition_id", 0, ValueError, "transition_id must be positive"),
+        ("audit_id", "", ValueError, "audit_id length"),
+        ("command_id", "", ValueError, "command_id length"),
+        ("canonical_payload_sha256", b"", ValueError, "must be 32 bytes"),
+        ("decision_integrity_sha256", b"", ValueError, "must be 32 bytes"),
+        ("raw_bytes", -1, ValueError, "raw_bytes must be between"),
+        ("payload_capped", 1, TypeError, "payload_capped must be a boolean"),
+        ("state", "pending", TypeError, "state must be an AuditDeliveryState"),
+    ),
+)
+def test_audit_delivery_decision_rejects_invalid_boundary_fields(
+    field_name: str,
+    invalid_value: object,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    decision = _valid_audit_delivery_decision()
+
+    with pytest.raises(error_type, match=message):
+        replace(decision, **{field_name: invalid_value})
 
 
 def test_command_state_values_and_terminal_set_are_exact() -> None:

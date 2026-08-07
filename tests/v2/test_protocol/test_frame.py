@@ -140,6 +140,32 @@ def test_extract_frame_from_buffer_multiple():
     assert len(buf) == 0
 
 
+@pytest.mark.parametrize(
+    ("suffix", "expected_frame", "expected_remainder"),
+    (
+        (b"", b"<Frame></Frame>", b""),
+        (b"\nnext", b"<Frame></Frame>\n", b"next"),
+        (b"next", b"<Frame></Frame>", b"next"),
+    ),
+)
+def test_extract_frame_from_buffer_preserves_supported_legacy_suffixes(
+    suffix: bytes,
+    expected_frame: bytes,
+    expected_remainder: bytes,
+) -> None:
+    buf = bytearray(b"<Frame></Frame>" + suffix)
+
+    assert extract_frame_from_buffer(buf) == expected_frame
+    assert bytes(buf) == expected_remainder
+
+
+def test_extract_frame_from_buffer_waits_for_fragmented_crlf() -> None:
+    buf = bytearray(b"<Frame></Frame>\r")
+
+    assert extract_frame_from_buffer(buf) is None
+    assert buf == bytearray(b"<Frame></Frame>\r")
+
+
 def test_infer_table_name_tblname():
     xml = "<TblName>tbl_actual</TblName><ID_Device>123</ID_Device>"
     assert infer_table_name(xml) == "tbl_actual"
@@ -166,6 +192,16 @@ def test_infer_device_id_none():
 def test_frame_direction_values_are_stable() -> None:
     assert FrameDirection.BOX_TO_PROXY.value == "box_to_proxy"
     assert FrameDirection.CLOUD_TO_PROXY.value == "cloud_to_proxy"
+
+
+def test_stream_assembler_rejects_non_positive_limit() -> None:
+    with pytest.raises(ValueError, match="max_frame_bytes must be positive"):
+        FrameStreamAssembler(max_frame_bytes=0)
+
+
+def test_stream_assembler_rejects_negative_receipt_time() -> None:
+    with pytest.raises(ValueError, match="received_at_ms must be non-negative"):
+        FrameStreamAssembler().feed(b"", received_at_ms=-1)
 
 
 def test_stream_assembly_preserves_exact_raw_frames_and_remainder() -> None:

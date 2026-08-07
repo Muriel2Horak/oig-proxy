@@ -29,6 +29,7 @@ from twin.ack_parser import (  # noqa: E402
     derive_event_evidence_id,
     parse_box_ack,
     parse_setting_event,
+    parse_setting_event_content,
     parse_setting_response,
     parse_tbl_events_ack,
 )
@@ -89,6 +90,32 @@ def test_parse_box_ack_non_ack_returns_none() -> None:
     assert parse_box_ack(b"<Result>NACK</Result>") == {"result": "NACK"}
 
 
+def test_parse_box_ack_requires_result() -> None:
+    assert parse_box_ack(b"<Reason>Setting</Reason>") is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "Remote",
+        "Remotely tbl/item: [1]->[2]",
+        "Remotely : tbl/item [1]->[2]",
+        "Remotely : tbl/item: value",
+        "Remotely : tbl[bad]/item: [1]->[2]",
+    ),
+)
+def test_parse_setting_event_content_rejects_incomplete_grammar(content: str) -> None:
+    assert parse_setting_event_content(content) is None
+
+
+def test_parse_setting_event_content_rejects_missing_suffix() -> None:
+    assert parse_setting_event_content("Remotely") is None
+
+
+def test_parse_setting_event_content_rejects_non_text() -> None:
+    assert parse_setting_event_content(None) is None  # type: ignore[arg-type]
+
+
 def test_parse_tbl_events_ack_setting_event() -> None:
     parsed = parse_tbl_events_ack(
         {
@@ -102,6 +129,10 @@ def test_parse_tbl_events_ack_setting_event() -> None:
 
 def test_parse_tbl_events_ack_non_setting_returns_none() -> None:
     assert parse_tbl_events_ack({"_table": "tbl_events", "Type": "Factory"}) is None
+
+
+def test_parse_tbl_events_ack_rejects_wrong_table() -> None:
+    assert parse_tbl_events_ack({"_table": "tbl_actual", "Type": "Setting"}) is None
 
 
 def test_parse_setting_ack_returns_reason_rdt_and_exact_sha256(

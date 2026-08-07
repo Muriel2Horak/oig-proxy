@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -256,6 +257,68 @@ async def test_local_write_rejects_wrong_dialogue_owner() -> None:
         )
 
     assert raw.writes == []
+
+
+@pytest.mark.asyncio
+async def test_dialogue_release_rejects_wrong_owner() -> None:
+    writer = SerializedBoxWriter(RecordingStreamWriter(), clock_ms=lambda: 10)
+    await writer.acquire_dialogue("session-1")
+
+    with pytest.raises(DialogStateError, match="current dialogue owner"):
+        await writer.release_dialogue("session-2")
+
+    await writer.release_dialogue("session-1")
+
+
+@pytest.mark.asyncio
+async def test_local_write_requires_dialogue_owner() -> None:
+    writer = SerializedBoxWriter(RecordingStreamWriter(), clock_ms=lambda: 10)
+
+    with pytest.raises(DialogStateError, match="requires a dialogue owner"):
+        await writer.write_frame(
+            b"setting",
+            purpose=BoxWritePurpose.LOCAL_SETTING,
+        )
+
+
+@pytest.mark.asyncio
+async def test_offline_response_rejects_wrong_dialogue_owner() -> None:
+    writer = SerializedBoxWriter(RecordingStreamWriter(), clock_ms=lambda: 10)
+    await writer.acquire_dialogue("session-1")
+
+    with pytest.raises(DialogStateError, match="offline response"):
+        await writer.write_frame(
+            b"end",
+            purpose=BoxWritePurpose.OFFLINE_RESPONSE,
+            owner_session_id="session-2",
+        )
+
+    await writer.release_dialogue("session-1")
+
+
+@pytest.mark.asyncio
+async def test_writer_rejects_invalid_public_arguments() -> None:
+    writer = SerializedBoxWriter(RecordingStreamWriter(), clock_ms=lambda: 10)
+
+    with pytest.raises(ValueError, match="session_id must be a non-empty string"):
+        await writer.acquire_dialogue("")
+    with pytest.raises(TypeError, match="frame must be exact bytes"):
+        await writer.write_frame(
+            cast(bytes, "frame"),
+            purpose=BoxWritePurpose.CLOUD_FORWARD,
+        )
+    with pytest.raises(TypeError, match="purpose must be a BoxWritePurpose"):
+        await writer.write_frame(
+            b"frame",
+            purpose=cast(BoxWritePurpose, "cloud_forward"),
+        )
+    with pytest.raises(TypeError, match="attempt must be an ActiveLocalAttempt"):
+        await writer.write_attempt(
+            cast(ActiveLocalAttempt, object()),
+            before_write=_no_op,
+        )
+
+    assert writer.invocation_count == 0
 
 
 @pytest.mark.asyncio
