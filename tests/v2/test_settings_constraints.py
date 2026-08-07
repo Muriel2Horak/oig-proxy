@@ -564,7 +564,7 @@ def test_string_subclass_uses_non_virtual_bounded_preprocessing() -> None:
 
 
 class _HugeDecimalWithoutStringConversion(Decimal):  # pylint: disable=too-few-public-methods
-    def __str__(self) -> str:
+    def __str__(self, *_args: object, **_kwargs: object) -> str:
         raise AssertionError("oversized Decimal must be rejected before string conversion")
 
 

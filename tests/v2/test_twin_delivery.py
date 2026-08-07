@@ -4991,8 +4991,9 @@ async def test_deadline_creation_error_retains_prior_and_device_failure(
 
     assert caught.value is creation_error
     assert creation_error.__cause__ is prior_error
-    aggregate_error = prior_error.__cause__
-    assert isinstance(aggregate_error, DeadlineSweepError)
+    aggregate_cause = prior_error.__cause__
+    assert isinstance(aggregate_cause, DeadlineSweepError)
+    aggregate_error = cast(DeadlineSweepError, aggregate_cause)
     assert aggregate_error.failures == ((first.device_id, device_error),)
     assert aggregate_error.partial_report.snapshots == ()
     assert create_calls == 2
