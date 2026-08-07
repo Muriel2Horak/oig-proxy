@@ -481,13 +481,15 @@ class TwinCommandStore:
                 )
             connection.execute("COMMIT")
             return state
-        except Exception as error:  # pylint: disable=broad-exception-caught
-            rollback_error: Exception | None = None
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            rollback_error: BaseException | None = None
             try:
                 if connection.in_transaction:
                     connection.execute("ROLLBACK")
-            except Exception as caught:  # pylint: disable=broad-exception-caught
+            except BaseException as caught:  # pylint: disable=broad-exception-caught
                 rollback_error = caught
+            if rollback_error is None and not isinstance(error, Exception):
+                raise
             if isinstance(error, TwinStoreError):
                 reason = str(error)
             else:

@@ -408,6 +408,41 @@ class _RollbackFaultConnection:
         self._connection.close()
 
 
+class _ObservationBaseExceptionConnection:
+    """Connection proxy that raises after BEGIN and can fail rollback."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        operation_error: BaseException,
+        rollback_error: BaseException | None = None,
+    ) -> None:
+        self._connection = connection
+        self.operation_error: BaseException | None = operation_error
+        self.rollback_error = rollback_error
+        self.rollback_attempts = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def execute(self, statement: str, parameters: Any = ()) -> Any:
+        normalized = " ".join(statement.split()).upper()
+        if normalized.startswith("SELECT FIRST_SEEN_AT_MS"):
+            operation_error = self.operation_error
+            self.operation_error = None
+            if operation_error is not None:
+                raise operation_error
+        if normalized == "ROLLBACK":
+            self.rollback_attempts += 1
+            if self.rollback_error is not None:
+                raise self.rollback_error
+        return self._connection.execute(statement, parameters)
+
+    def close(self) -> None:
+        self._connection.close()
+
+
 @contextmanager
 def _connect(path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(path, isolation_level=None)
@@ -743,6 +778,42 @@ def test_schema_v1_complete_independent_sqlite_artifact_contract(
                 assert _normalize_artifact_sql(constraint) in normalized_table_sql
 
         assert explicit_indexes == _EXPECTED_EXPLICIT_INDEX_ARTIFACTS
+
+
+def test_schema_v1_transition_ids_are_never_reused_after_highest_delete(
+    tmp_path: Path, control_policy: ControlPolicy
+) -> None:
+    path = tmp_path / "twin.db"
+    store = TwinCommandStore(path, policy=control_policy)
+    store.open(now_ms=1)
+    store.close()
+
+    with _connect(path) as connection:
+        _insert_minimal_command(connection)
+        first_cursor = connection.execute(
+            """
+            INSERT INTO command_transitions(
+                command_id, audit_id, from_state, to_state,
+                occurred_at_ms, reason
+            ) VALUES ('command-1', 'audit-1', NULL, 'pending', 1, 'created')
+            """
+        )
+        first_transition_id = int(first_cursor.lastrowid or 0)
+        connection.execute(
+            "DELETE FROM command_transitions WHERE transition_id = ?",
+            (first_transition_id,),
+        )
+        second_cursor = connection.execute(
+            """
+            INSERT INTO command_transitions(
+                command_id, audit_id, from_state, to_state,
+                occurred_at_ms, reason
+            ) VALUES ('command-1', 'audit-1', NULL, 'pending', 2, 'recreated')
+            """
+        )
+        second_transition_id = int(second_cursor.lastrowid or 0)
+
+    assert second_transition_id > first_transition_id
 
 
 def test_schema_v1_partial_unique_indexes_enforce_their_predicates(
@@ -1758,6 +1829,79 @@ def test_observe_device_rollback_failure_remains_degraded_and_unhealthy(
     with pytest.raises(TwinStoreError, match="rollback failed"):
         store.verify_health()
     store.close()
+
+
+def test_observe_device_keyboard_interrupt_rolls_back_and_remains_healthy(
+    tmp_path: Path, control_policy: ControlPolicy
+) -> None:
+    store = TwinCommandStore(tmp_path / "twin.db", policy=control_policy)
+    store.open(now_ms=1)
+    assert store._connection is not None  # pylint: disable=protected-access
+    cancellation = KeyboardInterrupt("cancelled observation")
+    interrupted_connection = _ObservationBaseExceptionConnection(
+        store._connection,  # pylint: disable=protected-access
+        operation_error=cancellation,
+    )
+    store._connection = cast(  # pylint: disable=protected-access
+        sqlite3.Connection, interrupted_connection
+    )
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            store.observe_device(
+                device_id="device-1",
+                observed_at_ms=10,
+                observed_wire_id=20,
+                observed_wire_id_set=30,
+            )
+
+        assert caught.value is cancellation
+        assert interrupted_connection.rollback_attempts == 1
+        assert not interrupted_connection.in_transaction
+        assert store.verify_health() == PragmaSnapshot("wal", 2, 1, 5000)
+        assert store.observe_device(
+            device_id="device-1",
+            observed_at_ms=10,
+            observed_wire_id=20,
+            observed_wire_id_set=30,
+        ) == DeviceState("device-1", 10, 10, 21, 31)
+    finally:
+        store.close()
+
+
+def test_observe_device_base_exception_rollback_failure_degrades_store(
+    tmp_path: Path, control_policy: ControlPolicy
+) -> None:
+    store = TwinCommandStore(tmp_path / "twin.db", policy=control_policy)
+    store.open(now_ms=1)
+    assert store._connection is not None  # pylint: disable=protected-access
+    failed_connection = _ObservationBaseExceptionConnection(
+        store._connection,  # pylint: disable=protected-access
+        operation_error=BaseException("cancelled observation"),
+        rollback_error=BaseException("rollback halted"),
+    )
+    store._connection = cast(  # pylint: disable=protected-access
+        sqlite3.Connection, failed_connection
+    )
+
+    try:
+        with pytest.raises(TwinStoreError, match="rollback failed") as caught:
+            store.observe_device(
+                device_id="device-1",
+                observed_at_ms=10,
+                observed_wire_id=20,
+                observed_wire_id_set=30,
+            )
+
+        assert "cancelled observation" in str(caught.value)
+        assert "rollback halted" in str(caught.value)
+        assert len(str(caught.value)) <= 1024
+        assert failed_connection.rollback_attempts == 1
+        assert failed_connection.in_transaction
+        with pytest.raises(TwinStoreError, match="rollback failed"):
+            store.verify_health()
+    finally:
+        store.close()
 
 
 def test_observe_device_reports_begin_failure_without_rollback_attempt(
