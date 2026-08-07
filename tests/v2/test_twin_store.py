@@ -52,12 +52,14 @@ _EXPECTED_TABLES = {
     "control_ingress_audit",
     "command_attempts",
     "command_transitions",
+    "settings_audit_deliveries",
     "event_receipts",
 }
 _EXPECTED_INDEXES = {
     "idx_commands_fifo",
     "idx_commands_event_match",
     "idx_commands_predecessor",
+    "idx_command_transitions_audit",
     "ux_commands_one_awaiting_ack_per_device",
     "ux_commands_one_unsent_successor_per_target",
     "ux_event_receipts_one_confirmation_per_command",
@@ -144,6 +146,12 @@ _EXPECTED_COLUMN_ARTIFACTS = {
         ("wire_frame", "BLOB", 0, None, 0),
         ("evidence_frame", "BLOB", 0, None, 0),
     ),
+    "settings_audit_deliveries": (
+        ("transition_id", "INTEGER", 0, None, 1),
+        ("raw_bytes", "INTEGER", 1, None, 0),
+        ("payload_capped", "INTEGER", 1, None, 0),
+        ("delivery_state", "TEXT", 1, None, 0),
+    ),
     "event_receipts": (
         ("evidence_id", "TEXT", 0, None, 1),
         ("received_at_ms", "INTEGER", 1, None, 0),
@@ -215,6 +223,17 @@ _EXPECTED_FOREIGN_KEY_ARTIFACTS = {
             )
         }
     ),
+    "settings_audit_deliveries": frozenset(
+        {
+            (
+                "command_transitions",
+                (("transition_id", "transition_id"),),
+                "NO ACTION",
+                "NO ACTION",
+                "NONE",
+            )
+        }
+    ),
     "event_receipts": frozenset(
         {
             (
@@ -247,6 +266,13 @@ _EXPECTED_EXPLICIT_INDEX_ARTIFACTS = {
         0,
         0,
         ("predecessor_command_id",),
+        None,
+    ),
+    "idx_command_transitions_audit": (
+        "command_transitions",
+        0,
+        0,
+        ("audit_id", "transition_id"),
         None,
     ),
     "ux_commands_one_awaiting_ack_per_device": (
@@ -286,6 +312,7 @@ _EXPECTED_AUTOMATIC_INDEX_ARTIFACTS = {
         {("pk", 1, 0, ("command_id", "attempt_number"))}
     ),
     "command_transitions": frozenset(),
+    "settings_audit_deliveries": frozenset(),
     "event_receipts": frozenset({("pk", 1, 0, ("evidence_id",))}),
 }
 _EXPECTED_CHECK_FRAGMENTS = {
@@ -353,6 +380,11 @@ _EXPECTED_CHECK_FRAGMENTS = {
         "CHECK (error_text IS NULL OR length(error_text) <= 1024)",
         "CHECK (wire_frame IS NULL OR length(wire_frame) <= 1048576)",
         "CHECK (evidence_frame IS NULL OR length(evidence_frame) <= 1048576)",
+    ),
+    "settings_audit_deliveries": (
+        "CHECK (raw_bytes BETWEEN 0 AND 16384)",
+        "CHECK (payload_capped IN (0, 1))",
+        "CHECK (delivery_state IN ('pending','accepted'))",
     ),
     "event_receipts": (
         "CHECK (length(evidence_id) = 64)",
@@ -648,13 +680,22 @@ def _insert_minimal_command(connection: sqlite3.Connection) -> None:
     )
 
 
-def test_open_creates_schema_v1_and_repeated_open_is_idempotent(
+def _downgrade_exact_v2_artifact_to_v1(path: Path) -> None:
+    with _connect(path) as connection:
+        connection.execute("DROP INDEX idx_command_transitions_audit")
+        connection.execute("DROP TABLE settings_audit_deliveries")
+        connection.execute(
+            "UPDATE schema_meta SET schema_version = 1 WHERE schema_version = 2"
+        )
+
+
+def test_open_creates_schema_v2_and_repeated_open_is_idempotent(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
     first = TwinCommandStore(path, policy=control_policy)
     first.open(now_ms=1000)
-    assert first.schema_version == 1
+    assert first.schema_version == 2
     assert first.schema_created_at_ms == 1000
     assert first.policy is control_policy
     first.close()
@@ -662,11 +703,87 @@ def test_open_creates_schema_v1_and_repeated_open_is_idempotent(
     first_bytes = path.read_bytes()
     second = TwinCommandStore(path, policy=control_policy)
     second.open(now_ms=2000)
-    assert second.schema_version == 1
+    assert second.schema_version == 2
     assert second.schema_created_at_ms == 1000
     second.close()
 
     assert path.read_bytes() == first_bytes
+
+
+def test_exact_v1_artifact_migrates_to_v2_without_losing_ledger_data(
+    tmp_path: Path, control_policy: ControlPolicy
+) -> None:
+    path = tmp_path / "migrate.db"
+    initial = TwinCommandStore(path, policy=control_policy)
+    initial.open(now_ms=123)
+    initial.close()
+    with _connect(path) as connection:
+        _insert_minimal_command(connection)
+        connection.execute(
+            """
+            INSERT INTO command_transitions(
+                command_id, audit_id, from_state, to_state,
+                occurred_at_ms, reason
+            ) VALUES ('command-1', 'audit-1', NULL, 'pending', 1, 'created')
+            """
+        )
+    _downgrade_exact_v2_artifact_to_v1(path)
+
+    migrated = TwinCommandStore(path, policy=control_policy)
+    migrated.open(now_ms=999)
+
+    assert migrated.schema_version == 2
+    assert migrated.schema_created_at_ms == 123
+    assert migrated.read_command("command-1").audit_id == "audit-1"
+    assert len(migrated.read_transitions("command-1")) == 1
+    assert migrated.audit_delivery_decision_count() == 0
+    migrated.close()
+
+    reopened = TwinCommandStore(path, policy=control_policy)
+    reopened.open(now_ms=1000)
+    assert reopened.schema_version == 2
+    assert reopened.schema_created_at_ms == 123
+    reopened.close()
+
+
+def test_contract_wrong_v1_to_v2_ddl_rolls_back_and_can_retry(
+    tmp_path: Path,
+    control_policy: ControlPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "migration-rollback.db"
+    initial = TwinCommandStore(path, policy=control_policy)
+    initial.open(now_ms=123)
+    initial.close()
+    _downgrade_exact_v2_artifact_to_v1(path)
+
+    with monkeypatch.context() as migration_patch:
+        migration_patch.setattr(
+            store_module,
+            "_CREATE_INDEX_TRANSITIONS_AUDIT",
+            "CREATE INDEX idx_command_transitions_audit "
+            "ON command_transitions(transition_id)",
+        )
+        with pytest.raises(
+            MigrationError, match="schema v2 object differs from contract"
+        ):
+            TwinCommandStore(path, policy=control_policy).open(now_ms=999)
+
+    with _connect(path) as connection:
+        assert connection.execute(
+            "SELECT schema_version, created_at_ms FROM schema_meta"
+        ).fetchall() == [(1, 123)]
+    assert _schema_objects(path, "table") == _EXPECTED_TABLES - {
+        "settings_audit_deliveries"
+    }
+    assert _schema_objects(path, "index") == _EXPECTED_INDEXES - {
+        "idx_command_transitions_audit"
+    }
+
+    retried = TwinCommandStore(path, policy=control_policy)
+    retried.open(now_ms=1000)
+    assert retried.schema_version == 2
+    retried.close()
 
 
 def test_constructor_rejects_non_policy(tmp_path: Path) -> None:
@@ -720,7 +837,7 @@ def test_open_releases_lock_and_preserves_artifacts_on_setup_failure(
     assert not store.is_open
 
 
-def test_schema_v1_has_exact_tables_indexes_and_composite_identity_foreign_keys(
+def test_schema_v2_has_exact_tables_indexes_and_composite_identity_foreign_keys(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -779,7 +896,7 @@ def test_schema_v1_has_exact_tables_indexes_and_composite_identity_foreign_keys(
 
 
 # pylint: disable-next=too-many-locals
-def test_schema_v1_complete_independent_sqlite_artifact_contract(
+def test_schema_v2_complete_independent_sqlite_artifact_contract(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -873,7 +990,7 @@ def test_schema_v1_complete_independent_sqlite_artifact_contract(
         assert explicit_indexes == _EXPECTED_EXPLICIT_INDEX_ARTIFACTS
 
 
-def test_schema_v1_transition_ids_are_never_reused_after_highest_delete(
+def test_schema_v2_transition_ids_are_never_reused_after_highest_delete(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -909,7 +1026,7 @@ def test_schema_v1_transition_ids_are_never_reused_after_highest_delete(
     assert second_transition_id > first_transition_id
 
 
-def test_schema_v1_partial_unique_indexes_enforce_their_predicates(
+def test_schema_v2_partial_unique_indexes_enforce_their_predicates(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -978,7 +1095,7 @@ def test_schema_v1_partial_unique_indexes_enforce_their_predicates(
             )
 
 
-def test_schema_v1_enforces_core_state_wire_attempt_and_event_checks(
+def test_schema_v2_enforces_core_state_wire_attempt_and_event_checks(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
@@ -1405,7 +1522,7 @@ def test_unsupported_schema_fails_closed_without_downgrade(
     tmp_path: Path, control_policy: ControlPolicy
 ) -> None:
     path = tmp_path / "twin.db"
-    _create_schema_meta_only(path, version=2)
+    _create_schema_meta_only(path, version=3)
     original = path.read_bytes()
     store = TwinCommandStore(path, policy=control_policy)
 
@@ -1417,7 +1534,7 @@ def test_unsupported_schema_fails_closed_without_downgrade(
     with _connect(path) as connection:
         assert connection.execute(
             "SELECT schema_version, created_at_ms FROM schema_meta"
-        ).fetchall() == [(2, 123)]
+        ).fetchall() == [(3, 123)]
 
 
 def test_nonempty_sqlite_without_schema_meta_fails_closed_without_mutation(
@@ -2177,6 +2294,27 @@ def _enqueue_lifecycle(
         item_name=item_name,
         value_text=value_text,
     ).command
+
+
+def test_negative_audit_delivery_request_is_rejected_without_degradation(
+    store: TwinCommandStore,
+) -> None:
+    command = _enqueue_lifecycle(
+        store,
+        value_text="2",
+        received_at_ms=100,
+    )
+    transition = store.read_transitions(command.command_id)[0]
+
+    with pytest.raises(ValueError, match="requested_raw_bytes"):
+        store.propose_audit_delivery(
+            audit_id=command.audit_id,
+            transition_id=transition.transition_id,
+            requested_raw_bytes=-1,
+        )
+
+    assert store.audit_delivery_decision_count() == 0
+    assert store.verify_health() == PragmaSnapshot("wal", 2, 1, 5000)
 
 
 def test_enqueue_commits_ingress_command_and_transition_atomically(

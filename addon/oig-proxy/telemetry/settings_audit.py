@@ -19,26 +19,62 @@ Influx Constraints:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections import deque
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from enum import Enum
+from functools import partial
 import hashlib
 import logging
 import re
 import secrets
+import threading
 import time
-from enum import Enum
-from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from protocol.frame import ValidatedFrame
     from protocol.parser import FrameMetadata
     from twin.ack_parser import SettingEvent, SettingResponse
-    from twin.state import TransitionAuditSnapshot
+    from twin.state import AuditDeliveryDecision, TransitionAuditSnapshot
+
+
+class AuditAcceptanceLedger(Protocol):
+    """Compact durable proposal/acceptance boundary used by the publisher."""
+
+    def propose_audit_delivery(
+        self,
+        *,
+        audit_id: str,
+        transition_id: int,
+        requested_raw_bytes: int,
+    ) -> AuditDeliveryDecision:
+        """Persist or replay one compact pending decision."""
+        raise NotImplementedError
+
+    def accept_audit_delivery(
+        self, *, audit_id: str, transition_id: int
+    ) -> AuditDeliveryDecision:
+        """Mark one pending decision accepted after sink success."""
+        raise NotImplementedError
+
+    def reject_audit_delivery(
+        self, *, audit_id: str, transition_id: int
+    ) -> bool:
+        """Delete one pending decision after sink failure."""
+        raise NotImplementedError
 
 
 logger = logging.getLogger(__name__)
+
+_AUDIT_LIFECYCLE_LOCKS = tuple(threading.Lock() for _ in range(64))
+_AUDIT_LOCK_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="settings-audit-lock",
+)
 
 
 # ----------------------------------------------------------------------
@@ -677,62 +713,234 @@ def _project_committed(snapshot: TransitionAuditSnapshot) -> SettingsAuditRecord
     return record
 
 
+@dataclass(frozen=True, slots=True)
+class AuditAccountingDiagnostics:
+    """Bounded publisher-local accounting state."""
+
+    volatile_entries: int
+    volatile_payload_bytes: int
+
+
+async def _offload_audit_ledger(operation: Callable[[], Any]) -> Any:
+    """Drain one ledger mutation before cancellation can escape."""
+    worker = asyncio.create_task(asyncio.to_thread(operation))
+    cancellation_latched = False
+    result: Any = None
+    worker_error: BaseException | None = None
+    while True:
+        try:
+            result = await asyncio.shield(worker)
+            break
+        except asyncio.CancelledError:
+            if worker.cancelled():
+                raise
+            cancellation_latched = True
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            worker_error = error
+            break
+    if cancellation_latched:
+        raise asyncio.CancelledError() from worker_error
+    if worker_error is not None:
+        raise worker_error
+    return result
+
+
+def _audit_lifecycle_lock(audit_id: str) -> threading.Lock:
+    digest = hashlib.sha256(audit_id.encode("utf-8")).digest()
+    stripe = int.from_bytes(digest[:2], "big") % len(_AUDIT_LIFECYCLE_LOCKS)
+    return _AUDIT_LIFECYCLE_LOCKS[stripe]
+
+
+async def _acquire_audit_lifecycle_lock(lock: threading.Lock) -> None:
+    """Acquire a process lock off-loop without leaking it on cancellation."""
+    worker = asyncio.get_running_loop().run_in_executor(
+        _AUDIT_LOCK_EXECUTOR,
+        lock.acquire,
+    )
+    cancellation_latched = False
+    acquired = False
+    worker_error: BaseException | None = None
+    while True:
+        try:
+            acquired = await asyncio.shield(worker)
+            break
+        except asyncio.CancelledError:
+            if worker.cancelled():
+                raise
+            cancellation_latched = True
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            worker_error = error
+            break
+    if worker_error is not None:
+        raise worker_error
+    if not acquired:
+        raise RuntimeError("audit lifecycle lock acquisition failed")
+    if cancellation_latched:
+        lock.release()
+        raise asyncio.CancelledError()
+
+
 class SettingsAuditPublisher:
-    """Task 8 committed-transition publisher boundary."""
+    """Durable, replay-stable committed-transition publisher boundary."""
+
+    __slots__ = ("_sink", "_acceptance_ledger")
 
     def __init__(
-        self, sink: Callable[[SettingsAuditRecord], None] | None = None
+        self,
+        sink: Callable[[SettingsAuditRecord], None] | None = None,
+        *,
+        acceptance_ledger: AuditAcceptanceLedger | None = None,
     ) -> None:
+        if sink is not None and acceptance_ledger is None:
+            raise ValueError("a durable acceptance_ledger is required")
         self._sink = sink
-        self._accepted_raw_bytes: dict[str, int] = {}
-        self._accepted_records: dict[
-            tuple[str, int | None], SettingsAuditRecord
-        ] = {}
+        self._acceptance_ledger = acceptance_ledger
 
+    @property
+    def accounting_diagnostics(self) -> AuditAccountingDiagnostics:
+        """Report the intentionally empty volatile accounting footprint."""
+        return AuditAccountingDiagnostics(0, 0)
+
+    @staticmethod
     def _bounded_record(
-        self, record: SettingsAuditRecord
-    ) -> tuple[SettingsAuditRecord, int, tuple[str, int | None]]:
-        key = (record.audit_id, record.transition_id)
-        accepted = self._accepted_records.get(key)
-        if accepted is not None:
-            return replace(accepted), 0, key
-        used_bytes = self._accepted_raw_bytes.get(record.audit_id, 0)
-        remaining_bytes = max(0, _MAX_TOTAL_RAW_BYTES - used_bytes)
-        raw_bytes = len(record.raw_text.encode("utf-8", errors="replace"))
-        aggregate_capped = raw_bytes > remaining_bytes
-        raw_text = _truncate_utf8_text(record.raw_text, remaining_bytes)
-        accepted_bytes = len(raw_text.encode("utf-8", errors="replace"))
-        return (
-            replace(
-                record,
-                raw_text=raw_text,
-                raw_text_truncated=(
-                    record.raw_text_truncated or aggregate_capped
-                ),
-                audit_payload_capped=aggregate_capped,
+        record: SettingsAuditRecord,
+        decision: AuditDeliveryDecision,
+    ) -> SettingsAuditRecord:
+        if record.transition_id != decision.transition_id:
+            raise ValueError("audit delivery transition identity changed")
+        if record.audit_id != decision.audit_id:
+            raise ValueError("audit delivery audit identity changed")
+        raw_text = _truncate_utf8_text(record.raw_text, decision.raw_bytes)
+        return replace(
+            record,
+            raw_text=raw_text,
+            raw_text_truncated=(
+                record.raw_text_truncated
+                or len(raw_text.encode("utf-8", errors="replace"))
+                < len(record.raw_text.encode("utf-8", errors="replace"))
             ),
-            accepted_bytes,
-            key,
+            audit_payload_capped=decision.payload_capped,
         )
 
+    @staticmethod
+    def _identity(record: SettingsAuditRecord) -> tuple[str, int]:
+        if record.transition_id is None:
+            raise ValueError("committed audit record requires transition_id")
+        return record.audit_id, record.transition_id
+
     def publish_committed(self, snapshot: TransitionAuditSnapshot) -> None:
-        """Project one committed snapshot without owning lifecycle truth."""
+        """Publish off-loop; running-loop callers must use the async API."""
         if self._sink is None:
             return
         try:
-            bounded, accepted_bytes, key = self._bounded_record(
-                _project_committed(snapshot)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "durable audit publication on a running loop requires "
+                "publish_committed_async"
             )
-            already_accepted = key in self._accepted_records
-            self._sink(replace(bounded))
-            if not already_accepted:
-                self._accepted_raw_bytes[bounded.audit_id] = (
-                    self._accepted_raw_bytes.get(bounded.audit_id, 0)
-                    + accepted_bytes
+        record = _project_committed(snapshot)
+        audit_id, transition_id = self._identity(record)
+        ledger = self._acceptance_ledger
+        if ledger is None:
+            raise RuntimeError("durable acceptance ledger is unavailable")
+        with _audit_lifecycle_lock(audit_id):
+            try:
+                decision = ledger.propose_audit_delivery(
+                    audit_id=audit_id,
+                    transition_id=transition_id,
+                    requested_raw_bytes=len(
+                        record.raw_text.encode("utf-8", errors="replace")
+                    ),
                 )
-                self._accepted_records[key] = replace(bounded)
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("settings audit sink rejected committed transition")
+                bounded = self._bounded_record(record, decision)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception("settings audit delivery proposal failed")
+                return
+            try:
+                self._sink(replace(bounded))
+            except Exception:  # pylint: disable=broad-exception-caught
+                try:
+                    ledger.reject_audit_delivery(
+                        audit_id=audit_id,
+                        transition_id=transition_id,
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logger.exception("settings audit proposal rollback failed")
+                logger.exception("settings audit sink rejected committed transition")
+                return
+            try:
+                ledger.accept_audit_delivery(
+                    audit_id=audit_id,
+                    transition_id=transition_id,
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception(
+                    "settings audit acceptance finalization failed; "
+                    "replay remains pending"
+                )
+
+    async def publish_committed_async(
+        self, snapshot: TransitionAuditSnapshot
+    ) -> None:
+        """Publish with ledger SQLite work offloaded from the owning loop."""
+        if self._sink is None:
+            return
+        record = _project_committed(snapshot)
+        audit_id, transition_id = self._identity(record)
+        ledger = self._acceptance_ledger
+        if ledger is None:
+            raise RuntimeError("durable acceptance ledger is unavailable")
+        lifecycle_lock = _audit_lifecycle_lock(audit_id)
+        await _acquire_audit_lifecycle_lock(lifecycle_lock)
+        try:
+            try:
+                decision = await _offload_audit_ledger(
+                    partial(
+                        ledger.propose_audit_delivery,
+                        audit_id=audit_id,
+                        transition_id=transition_id,
+                        requested_raw_bytes=len(
+                            record.raw_text.encode("utf-8", errors="replace")
+                        ),
+                    )
+                )
+                bounded = self._bounded_record(record, decision)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception("settings audit delivery proposal failed")
+                return
+            try:
+                self._sink(replace(bounded))
+            except Exception:  # pylint: disable=broad-exception-caught
+                try:
+                    await _offload_audit_ledger(
+                        partial(
+                            ledger.reject_audit_delivery,
+                            audit_id=audit_id,
+                            transition_id=transition_id,
+                        )
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logger.exception("settings audit proposal rollback failed")
+                logger.exception("settings audit sink rejected committed transition")
+                return
+            try:
+                await _offload_audit_ledger(
+                    partial(
+                        ledger.accept_audit_delivery,
+                        audit_id=audit_id,
+                        transition_id=transition_id,
+                    )
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception(
+                    "settings audit acceptance finalization failed; "
+                    "replay remains pending"
+                )
+        finally:
+            lifecycle_lock.release()
 
 
 @dataclass(frozen=True, slots=True)

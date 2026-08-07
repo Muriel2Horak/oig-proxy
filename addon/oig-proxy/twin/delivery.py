@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
-from contextlib import contextmanager
+from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import partial
 import hashlib
 import logging
 import secrets
-import threading
 import time
 import uuid
-from datetime import datetime, timezone
-from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch
@@ -65,6 +64,41 @@ class _RegisteredEventConsumed(ValueError):
     """Signal that another handler already claimed an exact receipt token."""
 
 
+class DeadlineSweepError(RuntimeError):
+    """Aggregate settled device failures plus the committed partial report."""
+
+    def __init__(
+        self,
+        failures: tuple[tuple[str, BaseException], ...],
+        partial_report: SweepReport,
+    ) -> None:
+        devices = ", ".join(device_id for device_id, _error in failures)
+        super().__init__(f"deadline sweep failed for devices: {devices}")
+        self.failures = failures
+        self.partial_report = partial_report
+
+
+@dataclass(slots=True)
+class _RegisteredEventEntry:
+    """Loop-owned lifecycle for one synchronously captured event receipt."""
+
+    token: RegisteredEventToken
+    receipt_sequence: int
+    owner: asyncio.Task[Any] | None = None
+    worker: asyncio.Task[EventMatchResult] | None = None
+    result: EventMatchResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _EventTimeoutReservation:
+    """Loop-owned ordering claim granted immediately before SQLite COMMIT."""
+
+    command_id: str
+    device_id: str
+    event_deadline_ms: int
+    registration_generation: int
+
+
 class TwinCoordinator:
     """Serialize durable local-setting delivery per exact device."""
 
@@ -85,8 +119,13 @@ class TwinCoordinator:
         self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self._monotonic = monotonic or time.monotonic
         self._device_locks: dict[str, asyncio.Lock] = {}
-        self._registered_events: dict[str, RegisteredEventToken] = {}
-        self._event_registration_guard = threading.RLock()
+        self._registered_events: dict[str, _RegisteredEventEntry] = {}
+        self._next_event_receipt_sequence = 1
+        self._event_registration_generation: dict[str, int] = defaultdict(int)
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._event_timeout_reservations: dict[
+            str, _EventTimeoutReservation
+        ] = {}
         self._event_timeout_candidates: dict[
             str, tuple[str, int, float]
         ] = {}
@@ -156,17 +195,82 @@ class TwinCoordinator:
             self._device_locks[device_id] = lock
         return lock
 
-    def _publish(self, snapshots: tuple[TransitionAuditSnapshot, ...]) -> None:
+    def _bind_event_loop(self) -> asyncio.AbstractEventLoop:
+        """Bind synchronous event registration to one owning event loop."""
+        loop = asyncio.get_running_loop()
+        if self._event_loop is None:
+            self._event_loop = loop
+        elif self._event_loop is not loop:
+            raise RuntimeError("TwinCoordinator event state belongs to another loop")
+        return loop
+
+    async def _publish(
+        self, snapshots: tuple[TransitionAuditSnapshot, ...]
+    ) -> None:
         if self._audit is None:
             return
         for snapshot in snapshots:
-            self._audit.publish_committed(snapshot)
+            await self._audit.publish_committed_async(snapshot)
 
     async def _refresh_status(self) -> None:
         try:
             self._cached_status = await asyncio.to_thread(self._store.status_snapshot)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.warning("TwinCoordinator: passive status refresh failed", exc_info=True)
+
+    @staticmethod
+    async def _drain_task(
+        task: asyncio.Task[Any],
+    ) -> tuple[Any | None, BaseException | None, bool]:
+        """Wait for a task definitively while latching outer cancellation."""
+        cancellation_latched = False
+        while True:
+            try:
+                return await asyncio.shield(task), None, cancellation_latched
+            except asyncio.CancelledError as error:
+                if task.cancelled():
+                    return None, error, cancellation_latched
+                cancellation_latched = True
+            except BaseException as error:  # pylint: disable=broad-exception-caught
+                return None, error, cancellation_latched
+
+    async def _run_mutation_locked(
+        self,
+        operation: Callable[[], Any],
+        *,
+        snapshots: Callable[[Any], tuple[TransitionAuditSnapshot, ...]],
+        on_success: Callable[[Any], None] | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
+    ) -> Any:
+        """Drain one device-owned store mutation before cancellation escapes."""
+        worker = asyncio.create_task(asyncio.to_thread(operation))
+        result, error, cancellation_latched = await self._drain_task(worker)
+
+        async def reconcile() -> None:
+            if error is None:
+                if on_success is not None:
+                    on_success(result)
+                await self._publish(snapshots(result))
+            elif on_failure is not None:
+                on_failure(error)
+            await self._refresh_status()
+
+        reconciliation = asyncio.create_task(reconcile())
+        _, reconciliation_error, reconciliation_cancelled = (
+            await self._drain_task(reconciliation)
+        )
+        cancellation_latched = (
+            cancellation_latched or reconciliation_cancelled
+        )
+        if reconciliation_error is not None:
+            if cancellation_latched:
+                raise asyncio.CancelledError() from reconciliation_error
+            raise reconciliation_error
+        if cancellation_latched:
+            raise asyncio.CancelledError() from error
+        if error is not None:
+            raise error
+        return result
 
     @staticmethod
     def _active_from_claim(claim: Any) -> ActiveLocalAttempt:
@@ -200,16 +304,17 @@ class TwinCoordinator:
         if not isinstance(trigger, DeliveryTrigger):
             return DeliveryDecision(DeliveryDisposition.UNAUTHORIZED, None, False)
         async with self._device_lock(device_id):
-            claim = await asyncio.to_thread(
-                self._store.prepare_next_attempt,
-                device_id=device_id,
-                session_id=session_id,
-                prepared_at_ms=received_at_ms,
-                render=self._renderer,
+            claim = await self._run_mutation_locked(
+                partial(
+                    self._store.prepare_next_attempt,
+                    device_id=device_id,
+                    session_id=session_id,
+                    prepared_at_ms=received_at_ms,
+                    render=self._renderer,
+                ),
+                snapshots=lambda settled: settled.snapshots,
             )
-            self._publish(claim.snapshots)
             if claim.disposition is not ClaimDisposition.PREPARED:
-                await self._refresh_status()
                 mapping = {
                     ClaimDisposition.NO_ELIGIBLE: DeliveryDisposition.NO_ELIGIBLE,
                     ClaimDisposition.ACTIVE_DELIVERY_ELSEWHERE: (
@@ -230,31 +335,34 @@ class TwinCoordinator:
                 prepared_at_ms = (
                     active.ack_deadline_ms - self._store.policy.ack_timeout_ms
                 )
-                snapshot = await asyncio.to_thread(
-                    self._store.mark_write_started,
-                    command_id=active.command_id,
-                    attempt_number=active.attempt_number,
-                    session_id=active.session_id,
-                    started_at_ms=max(self._clock_ms(), prepared_at_ms),
+                snapshot = await self._run_mutation_locked(
+                    partial(
+                        self._store.mark_write_started,
+                        command_id=active.command_id,
+                        attempt_number=active.attempt_number,
+                        session_id=active.session_id,
+                        started_at_ms=max(self._clock_ms(), prepared_at_ms),
+                    ),
+                    snapshots=lambda settled: (settled,),
                 )
-                self._publish((snapshot,))
                 committed.append(snapshot)
 
             result = await writer.write_attempt(active, before_write=before_write)
             if result.outcome is AttemptWriteOutcome.FAILED:
                 if not result.error_text:
                     raise ValueError("failed writer result requires an error")
-                failed = await asyncio.to_thread(
-                    self._store.mark_write_failed,
-                    command_id=active.command_id,
-                    attempt_number=active.attempt_number,
-                    session_id=active.session_id,
-                    occurred_at_ms=result.started_at_ms,
-                    error=result.error_text,
+                failed = await self._run_mutation_locked(
+                    partial(
+                        self._store.mark_write_failed,
+                        command_id=active.command_id,
+                        attempt_number=active.attempt_number,
+                        session_id=active.session_id,
+                        occurred_at_ms=result.started_at_ms,
+                        error=result.error_text,
+                    ),
+                    snapshots=lambda settled: (settled,),
                 )
-                self._publish((failed,))
                 committed.append(failed)
-                await self._refresh_status()
                 return DeliveryDecision(
                     DeliveryDisposition.WRITE_FAILED,
                     None,
@@ -264,17 +372,18 @@ class TwinCoordinator:
             if result.outcome is AttemptWriteOutcome.UNKNOWN:
                 if not result.error_text:
                     raise ValueError("unknown writer result requires an error")
-                unknown = await asyncio.to_thread(
-                    self._store.mark_write_unknown,
-                    command_id=active.command_id,
-                    attempt_number=active.attempt_number,
-                    session_id=active.session_id,
-                    occurred_at_ms=result.started_at_ms,
-                    error=result.error_text,
+                unknown = await self._run_mutation_locked(
+                    partial(
+                        self._store.mark_write_unknown,
+                        command_id=active.command_id,
+                        attempt_number=active.attempt_number,
+                        session_id=active.session_id,
+                        occurred_at_ms=result.started_at_ms,
+                        error=result.error_text,
+                    ),
+                    snapshots=lambda settled: (settled,),
                 )
-                self._publish((unknown,))
                 committed.append(unknown)
-                await self._refresh_status()
                 return DeliveryDecision(
                     DeliveryDisposition.WRITE_UNKNOWN,
                     None,
@@ -285,16 +394,17 @@ class TwinCoordinator:
                 raise ValueError("writer result must be failed, unknown, or drained")
             if result.drain_completed_at_ms is None:
                 raise ValueError("drained writer result requires completion time")
-            drained = await asyncio.to_thread(
-                self._store.mark_attempt_drained,
-                command_id=active.command_id,
-                attempt_number=active.attempt_number,
-                session_id=active.session_id,
-                drained_at_ms=result.drain_completed_at_ms,
+            drained = await self._run_mutation_locked(
+                partial(
+                    self._store.mark_attempt_drained,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    drained_at_ms=result.drain_completed_at_ms,
+                ),
+                snapshots=lambda settled: (settled,),
             )
-            self._publish((drained,))
             committed.append(drained)
-            await self._refresh_status()
             written = ActiveLocalAttempt(
                 active.command_id,
                 active.audit_id,
@@ -321,16 +431,17 @@ class TwinCoordinator:
     ) -> TransitionAuditSnapshot:
         """Durably release one exact active dialogue for retry or failure."""
         async with self._device_lock(active.device_id):
-            snapshot = await asyncio.to_thread(
-                self._store.release_for_retry,
-                command_id=active.command_id,
-                attempt_number=active.attempt_number,
-                session_id=active.session_id,
-                occurred_at_ms=occurred_at_ms,
-                reason=reason,
+            snapshot = await self._run_mutation_locked(
+                partial(
+                    self._store.release_for_retry,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    occurred_at_ms=occurred_at_ms,
+                    reason=reason,
+                ),
+                snapshots=lambda settled: (settled,),
             )
-            self._publish((snapshot,))
-            await self._refresh_status()
             return snapshot
 
     async def _reject_response_locked(
@@ -344,13 +455,16 @@ class TwinCoordinator:
         snapshots: tuple[TransitionAuditSnapshot, ...] = ()
         command = None
         try:
-            snapshot = await asyncio.to_thread(
-                self._store.release_for_retry,
-                command_id=active.command_id,
-                attempt_number=active.attempt_number,
-                session_id=active.session_id,
-                occurred_at_ms=occurred_at_ms,
-                reason=reason,
+            snapshot = await self._run_mutation_locked(
+                partial(
+                    self._store.release_for_retry,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    occurred_at_ms=occurred_at_ms,
+                    reason=reason,
+                ),
+                snapshots=lambda settled: (settled,),
             )
         except StaleAttemptError:
             try:
@@ -362,8 +476,6 @@ class TwinCoordinator:
         else:
             command = snapshot.command
             snapshots = (snapshot,)
-            self._publish(snapshots)
-        await self._refresh_status()
         return LocalResponseDecision(
             disposition,
             command,
@@ -384,29 +496,33 @@ class TwinCoordinator:
             prepared_at_ms = (
                 active.ack_deadline_ms - self._store.policy.ack_timeout_ms
             )
-            snapshot = await asyncio.to_thread(
-                self._store.mark_write_started,
-                command_id=active.command_id,
-                attempt_number=active.attempt_number,
-                session_id=active.session_id,
-                started_at_ms=max(self._clock_ms(), prepared_at_ms),
+            snapshot = await self._run_mutation_locked(
+                partial(
+                    self._store.mark_write_started,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    started_at_ms=max(self._clock_ms(), prepared_at_ms),
+                ),
+                snapshots=lambda settled: (settled,),
             )
             committed.append(snapshot)
-            self._publish((snapshot,))
 
         result = await writer.write_attempt(active, before_write=before_write)
         if result.outcome is AttemptWriteOutcome.DRAINED:
             if result.drain_completed_at_ms is None:
                 raise ValueError("drained writer result requires completion time")
-            snapshot = await asyncio.to_thread(
-                self._store.mark_attempt_drained,
-                command_id=active.command_id,
-                attempt_number=active.attempt_number,
-                session_id=active.session_id,
-                drained_at_ms=result.drain_completed_at_ms,
+            snapshot = await self._run_mutation_locked(
+                partial(
+                    self._store.mark_attempt_drained,
+                    command_id=active.command_id,
+                    attempt_number=active.attempt_number,
+                    session_id=active.session_id,
+                    drained_at_ms=result.drain_completed_at_ms,
+                ),
+                snapshots=lambda settled: (settled,),
             )
             committed.append(snapshot)
-            self._publish((snapshot,))
             return ActiveLocalAttempt(
                 active.command_id,
                 active.audit_id,
@@ -425,16 +541,18 @@ class TwinCoordinator:
             else self._store.mark_write_unknown
         )
         keyword = "error"
-        snapshot = await asyncio.to_thread(
-            method,
-            command_id=active.command_id,
-            attempt_number=active.attempt_number,
-            session_id=active.session_id,
-            occurred_at_ms=result.started_at_ms,
-            **{keyword: result.error_text},
+        snapshot = await self._run_mutation_locked(
+            partial(
+                method,
+                command_id=active.command_id,
+                attempt_number=active.attempt_number,
+                session_id=active.session_id,
+                occurred_at_ms=result.started_at_ms,
+                **{keyword: result.error_text},
+            ),
+            snapshots=lambda settled: (settled,),
         )
         committed.append(snapshot)
-        self._publish((snapshot,))
         return None
 
     async def handle_local_response(
@@ -477,14 +595,17 @@ class TwinCoordinator:
                 )
             try:
                 if response.result == "NACK":
-                    nack = await asyncio.to_thread(
-                        self._store.mark_nack,
-                        command_id=active.command_id,
-                        attempt_number=active.attempt_number,
-                        session_id=active.session_id,
-                        response=response,
-                        received_at_ms=context.received_at_ms,
-                        evidence_frame=context.raw_frame,
+                    nack = await self._run_mutation_locked(
+                        partial(
+                            self._store.mark_nack,
+                            command_id=active.command_id,
+                            attempt_number=active.attempt_number,
+                            session_id=active.session_id,
+                            response=response,
+                            received_at_ms=context.received_at_ms,
+                            evidence_frame=context.raw_frame,
+                        ),
+                        snapshots=lambda settled: settled.snapshots,
                     )
                     if nack.duplicate:
                         return LocalResponseDecision(
@@ -494,8 +615,6 @@ class TwinCoordinator:
                             False,
                             False,
                         )
-                    self._publish(nack.snapshots)
-                    await self._refresh_status()
                     return LocalResponseDecision(
                         LocalResponseDisposition.NACK_ACCEPTED,
                         nack.accepted_command,
@@ -504,15 +623,18 @@ class TwinCoordinator:
                         False,
                         snapshots=nack.snapshots,
                     )
-                ack = await asyncio.to_thread(
-                    self._store.acknowledge_and_prepare_next,
-                    command_id=active.command_id,
-                    attempt_number=active.attempt_number,
-                    session_id=active.session_id,
-                    response=response,
-                    received_at_ms=context.received_at_ms,
-                    evidence_frame=context.raw_frame,
-                    render=self._renderer,
+                ack = await self._run_mutation_locked(
+                    partial(
+                        self._store.acknowledge_and_prepare_next,
+                        command_id=active.command_id,
+                        attempt_number=active.attempt_number,
+                        session_id=active.session_id,
+                        response=response,
+                        received_at_ms=context.received_at_ms,
+                        evidence_frame=context.raw_frame,
+                        render=self._renderer,
+                    ),
+                    snapshots=lambda settled: settled.snapshots,
                 )
             except (StaleAttemptError, ValueError):
                 return await self._reject_response_locked(
@@ -530,7 +652,6 @@ class TwinCoordinator:
                     False,
                 )
             committed = list(ack.snapshots)
-            self._publish(ack.snapshots)
             next_attempt = None
             close_connection = False
             if ack.next_claim.disposition is ClaimDisposition.PREPARED:
@@ -566,95 +687,263 @@ class TwinCoordinator:
             raise ValueError("setting events must be BOX-to-proxy evidence")
         if context.device_id != event.device_id:
             raise ValueError("setting event device does not match context device")
+        self._bind_event_loop()
         token = RegisteredEventToken(str(uuid.uuid4()), event, context)
-        with self._event_registration_guard:
-            self._registered_events[token.token_id] = token
+        sequence = self._next_event_receipt_sequence
+        self._next_event_receipt_sequence += 1
+        self._event_registration_generation[context.device_id] += 1
+        self._registered_events[token.token_id] = _RegisteredEventEntry(
+            token,
+            sequence,
+        )
         return token
+
+    async def _process_registered_event(
+        self, entry: _RegisteredEventEntry
+    ) -> EventMatchResult:
+        token = entry.token
+
+        def clear_timeout_candidate(settled: EventMatchResult) -> None:
+            if settled.snapshot is not None:
+                self._event_timeout_candidates.pop(
+                    settled.snapshot.command.command_id,
+                    None,
+                )
+
+        try:
+            async with self._device_lock(token.context.device_id):
+                result = await self._run_mutation_locked(
+                    partial(
+                        self._store.record_event,
+                        evidence=token.event,
+                        received_at_ms=token.context.received_at_ms,
+                        evidence_frame=token.context.raw_frame,
+                        active_session_id=token.context.session_id,
+                    ),
+                    snapshots=lambda settled: (
+                        (settled.snapshot,)
+                        if settled.snapshot is not None
+                        else ()
+                    ),
+                    on_success=clear_timeout_candidate,
+                )
+        except BaseException:  # pylint: disable=broad-exception-caught
+            current = self._registered_events.get(token.token_id)
+            if current is entry:
+                entry.owner = None
+                entry.worker = None
+                entry.result = None
+            raise
+        current = self._registered_events.get(token.token_id)
+        if current is entry:
+            entry.result = result
+            entry.worker = None
+        return result
+
+    async def _await_registered_owner(
+        self,
+        entry: _RegisteredEventEntry,
+        owner: asyncio.Task[Any],
+    ) -> EventMatchResult:
+        worker = entry.worker
+        if worker is None:
+            raise RuntimeError("registered event claim omitted its worker")
+        cancellation_latched = False
+        while True:
+            try:
+                result = await asyncio.shield(worker)
+                break
+            except asyncio.CancelledError:
+                cancellation_latched = True
+                current = self._registered_events.get(entry.token.token_id)
+                if current is entry and entry.owner is owner:
+                    entry.owner = None
+                if worker.cancelled():
+                    raise
+            except BaseException as error:  # pylint: disable=broad-exception-caught
+                if cancellation_latched:
+                    raise asyncio.CancelledError() from error
+                raise
+        current = self._registered_events.get(entry.token.token_id)
+        if cancellation_latched:
+            if current is entry and entry.owner is owner:
+                entry.owner = None
+        elif current is entry and entry.owner is owner:
+            self._registered_events.pop(entry.token.token_id)
+        if cancellation_latched:
+            raise asyncio.CancelledError()
+        return result
 
     async def handle_registered_event(
         self, token: RegisteredEventToken
     ) -> EventMatchResult:
         """Commit one reserved event under its exact-device lock."""
-        async with self._device_lock(token.context.device_id):
-            with self._event_registration_guard:
-                registered = self._registered_events.get(token.token_id)
-                if registered != token:
-                    raise _RegisteredEventConsumed(
-                        "setting event token is not registered"
-                    )
-                receipt_index = tuple(self._registered_events).index(
-                    token.token_id
-                )
-                self._registered_events.pop(token.token_id)
-            try:
-                result = await asyncio.to_thread(
-                    self._store.record_event,
-                    evidence=token.event,
-                    received_at_ms=token.context.received_at_ms,
-                    evidence_frame=token.context.raw_frame,
-                    active_session_id=token.context.session_id,
-                )
-            except Exception:
-                with self._event_registration_guard:
-                    if token.token_id not in self._registered_events:
-                        registered_items = list(
-                            self._registered_events.items()
-                        )
-                        registered_items.insert(
-                            min(receipt_index, len(registered_items)),
-                            (token.token_id, token),
-                        )
-                        self._registered_events = dict(registered_items)
-                raise
-            if result.snapshot is not None:
-                self._publish((result.snapshot,))
-                self._event_timeout_candidates.pop(
-                    result.snapshot.command.command_id, None
-                )
-            await self._refresh_status()
+        self._bind_event_loop()
+        owner = asyncio.current_task()
+        if owner is None:
+            raise RuntimeError("registered event handling requires an asyncio task")
+        entry = self._registered_events.get(token.token_id)
+        if entry is None or entry.token != token:
+            raise _RegisteredEventConsumed(
+                "setting event token is not registered"
+            )
+        if (
+            entry.owner is not None
+            or entry.worker is not None
+            or entry.result is not None
+        ):
+            raise _RegisteredEventConsumed(
+                "setting event token is already claimed"
+            )
+        entry.owner = owner
+        entry.worker = asyncio.create_task(
+            self._process_registered_event(entry)
+        )
+        return await self._await_registered_owner(entry, owner)
+
+    async def _flush_registered_entry(
+        self,
+        entry: _RegisteredEventEntry,
+    ) -> EventMatchResult | None:
+        owner = asyncio.current_task()
+        if owner is None:
+            raise RuntimeError("registered event flush requires an asyncio task")
+        current = self._registered_events.get(entry.token.token_id)
+        if current is not entry:
+            return None
+        if entry.result is not None:
+            if entry.owner is not None:
+                return None
+            result = entry.result
+            self._registered_events.pop(entry.token.token_id)
             return result
+        if entry.worker is None:
+            entry.owner = owner
+            entry.worker = asyncio.create_task(
+                self._process_registered_event(entry)
+            )
+            return await self._await_registered_owner(entry, owner)
+        worker = entry.worker
+
+        drained_result, error, cancellation_latched = await self._drain_task(
+            worker
+        )
+        if error is not None:
+            if cancellation_latched:
+                raise asyncio.CancelledError() from error
+            raise error
+        current = self._registered_events.get(entry.token.token_id)
+        if current is entry and entry.owner is None:
+            adopted = (
+                entry.result if entry.result is not None else drained_result
+            )
+            if cancellation_latched:
+                entry.result = adopted
+            else:
+                self._registered_events.pop(entry.token.token_id)
+        else:
+            adopted = None
+        if cancellation_latched:
+            raise asyncio.CancelledError()
+        return adopted
 
     async def flush_registered_events(
         self, *, session_id: str
     ) -> tuple[EventMatchResult, ...]:
         """Commit every reserved session event in synchronous receipt order."""
-        with self._event_registration_guard:
-            tokens = tuple(
-                token
-                for token in self._registered_events.values()
-                if token.context.session_id == session_id
+        self._bind_event_loop()
+        entries = tuple(
+            sorted(
+                (
+                    entry
+                    for entry in self._registered_events.values()
+                    if entry.token.context.session_id == session_id
+                ),
+                key=lambda entry: entry.receipt_sequence,
             )
+        )
         results: list[EventMatchResult] = []
-        for token in tokens:
-            try:
-                results.append(await self.handle_registered_event(token))
-            except _RegisteredEventConsumed:
-                continue
+        for entry in entries:
+            result = await self._flush_registered_entry(entry)
+            if result is not None:
+                results.append(result)
         return tuple(results)
 
     def _has_in_deadline_registered_event(
         self, *, device_id: str, event_deadline_ms: int
     ) -> bool:
-        with self._event_registration_guard:
-            return any(
-                token.context.device_id == device_id
-                and token.context.received_at_ms <= event_deadline_ms
-                for token in self._registered_events.values()
-            )
+        return any(
+            entry.token.context.device_id == device_id
+            and entry.token.context.received_at_ms <= event_deadline_ms
+            for entry in self._registered_events.values()
+        )
 
-    @contextmanager
-    def _event_timeout_authorization(
-        self, *, device_id: str, event_deadline_ms: int
-    ) -> Iterator[bool]:
-        """Linearize final timeout authorization with synchronous receipt."""
-        with self._event_registration_guard:
-            yield not self._has_in_deadline_registered_event(
-                device_id=device_id,
-                event_deadline_ms=event_deadline_ms,
+    def _resolve_event_timeout_authorization(
+        self,
+        decision: Future[bool],
+        reservation: _EventTimeoutReservation,
+    ) -> None:
+        """Resolve one worker request at the loop-owned ordering point."""
+        if decision.done():
+            return
+        generation_unchanged = (
+            self._event_registration_generation[reservation.device_id]
+            == reservation.registration_generation
+        )
+        authorized = (
+            generation_unchanged
+            and reservation.command_id
+            not in self._event_timeout_reservations
+            and not self._has_in_deadline_registered_event(
+                device_id=reservation.device_id,
+                event_deadline_ms=reservation.event_deadline_ms,
             )
+        )
+        if authorized:
+            self._event_timeout_reservations[reservation.command_id] = reservation
+        decision.set_result(authorized)
+
+    def _authorize_event_timeout_from_worker(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop,
+        reservation: _EventTimeoutReservation,
+    ) -> bool:
+        """Ask the owning loop for final ordering without blocking that loop."""
+        decision: Future[bool] = Future()
+        loop.call_soon_threadsafe(
+            self._resolve_event_timeout_authorization,
+            decision,
+            reservation,
+        )
+        return decision.result()
+
+    def _clear_event_timeout_reservation(
+        self, reservation: _EventTimeoutReservation
+    ) -> None:
+        current = self._event_timeout_reservations.get(reservation.command_id)
+        if current == reservation:
+            self._event_timeout_reservations.pop(reservation.command_id)
+
+    def _finish_event_timeout_mutation(
+        self,
+        reservation: _EventTimeoutReservation,
+        command_id: str,
+        _result: Any,
+    ) -> None:
+        self._clear_event_timeout_reservation(reservation)
+        self._event_timeout_candidates.pop(command_id, None)
+
+    def _fail_event_timeout_mutation(
+        self,
+        reservation: _EventTimeoutReservation,
+        _error: BaseException,
+    ) -> None:
+        self._clear_event_timeout_reservation(reservation)
 
     async def sweep_deadlines(self, *, now_ms: int | None = None) -> SweepReport:
         """Run pending/ACK sweep plus two-pass exact event-timeout grace."""
+        event_loop = self._bind_event_loop()
         effective_now = self._clock_ms() if now_ms is None else now_ms
         deadline_devices = await asyncio.to_thread(
             self._store.read_deadline_devices, now_ms=effective_now
@@ -662,15 +951,47 @@ class TwinCoordinator:
 
         async def sweep_device(device_id: str) -> SweepReport:
             async with self._device_lock(device_id):
-                return await asyncio.to_thread(
-                    self._store.sweep_device_deadlines,
-                    device_id=device_id,
-                    now_ms=effective_now,
+                return await self._run_mutation_locked(
+                    partial(
+                        self._store.sweep_device_deadlines,
+                        device_id=device_id,
+                        now_ms=effective_now,
+                    ),
+                    snapshots=lambda _report: (),
                 )
 
-        device_reports = await asyncio.gather(
-            *(sweep_device(device_id) for device_id in deadline_devices)
+        async def settle_device_sweeps() -> tuple[Any, ...]:
+            return tuple(
+                await asyncio.gather(
+                    *(
+                        sweep_device(device_id)
+                        for device_id in deadline_devices
+                    ),
+                    return_exceptions=True,
+                )
+            )
+
+        settlement = asyncio.create_task(settle_device_sweeps())
+        settled, settlement_error, cancellation_latched = (
+            await self._drain_task(settlement)
         )
+        if settlement_error is not None:
+            await self._refresh_status()
+            if cancellation_latched:
+                raise asyncio.CancelledError() from settlement_error
+            raise settlement_error
+        if not isinstance(settled, tuple):
+            raise RuntimeError("deadline sweep settlement returned no outcomes")
+        device_reports: list[SweepReport] = []
+        failures: list[tuple[str, BaseException]] = []
+        for device_id, outcome in zip(deadline_devices, settled, strict=True):
+            if isinstance(outcome, BaseException):
+                if isinstance(outcome, asyncio.CancelledError):
+                    cancellation_latched = True
+                else:
+                    failures.append((device_id, outcome))
+            else:
+                device_reports.append(outcome)
         base_snapshots = tuple(
             sorted(
                 (
@@ -681,7 +1002,20 @@ class TwinCoordinator:
                 key=lambda snapshot: snapshot.transition.transition_id,
             )
         )
-        self._publish(base_snapshots)
+        await self._publish(base_snapshots)
+        await self._refresh_status()
+        base_report = SweepReport(
+            sum(report.expired_pending for report in device_reports),
+            sum(report.retry_pending for report in device_reports),
+            sum(report.failed_attempt_limit for report in device_reports),
+            0,
+            base_snapshots,
+        )
+        if cancellation_latched:
+            cause = failures[0][1] if failures else None
+            raise asyncio.CancelledError() from cause
+        if failures:
+            raise DeadlineSweepError(tuple(failures), base_report)
         candidates = await asyncio.to_thread(
             self._store.read_event_timeout_candidates, now_ms=effective_now
         )
@@ -710,21 +1044,42 @@ class TwinCoordinator:
                     event_deadline_ms=candidate.event_deadline_ms,
                 ):
                     continue
-                snapshot = await asyncio.to_thread(
-                    self._store.mark_event_incomplete,
-                    command_id=candidate.command_id,
-                    expected_event_deadline_ms=candidate.event_deadline_ms,
-                    now_ms=effective_now,
-                    final_guard=partial(
-                        self._event_timeout_authorization,
-                        device_id=candidate.device_id,
-                        event_deadline_ms=candidate.event_deadline_ms,
+                reservation = _EventTimeoutReservation(
+                    candidate.command_id,
+                    candidate.device_id,
+                    candidate.event_deadline_ms,
+                    self._event_registration_generation[candidate.device_id],
+                )
+
+                snapshot = await self._run_mutation_locked(
+                    partial(
+                        self._store.mark_event_incomplete,
+                        command_id=candidate.command_id,
+                        expected_event_deadline_ms=(
+                            candidate.event_deadline_ms
+                        ),
+                        now_ms=effective_now,
+                        final_authorizer=partial(
+                            self._authorize_event_timeout_from_worker,
+                            loop=event_loop,
+                            reservation=reservation,
+                        ),
+                    ),
+                    snapshots=lambda committed: (
+                        (committed,) if committed is not None else ()
+                    ),
+                    on_success=partial(
+                        self._finish_event_timeout_mutation,
+                        reservation,
+                        candidate.command_id,
+                    ),
+                    on_failure=partial(
+                        self._fail_event_timeout_mutation,
+                        reservation,
                     ),
                 )
-                self._event_timeout_candidates.pop(candidate.command_id, None)
                 if snapshot is not None:
                     incomplete.append(snapshot)
-                    self._publish((snapshot,))
         await self._refresh_status()
         snapshots = tuple(
             sorted(
@@ -781,7 +1136,9 @@ class TwinDelivery:
         self._telemetry_collector = telemetry_collector
 
         # Cloud-initiated setting tracking
-        self._cloud_pending: dict[tuple[str, str, str], deque[_CloudPendingSetting]] = defaultdict(deque)
+        self._cloud_pending: dict[
+            tuple[str, str, str], deque[_CloudPendingSetting]
+        ] = defaultdict(deque)
         self._cloud_legacy_inflight: bool = False
 
         # Session-level inflight tracking: session_id -> (table, key, since)

@@ -6,7 +6,6 @@ from __future__ import annotations
 import fcntl
 import hashlib
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 import os
 from pathlib import Path
@@ -31,6 +30,8 @@ from .state import (
     AttemptRenderContext,
     AttemptRenderer,
     AttemptWriteOutcome,
+    AuditDeliveryDecision,
+    AuditDeliveryState,
     ClaimDisposition,
     ClaimResult,
     CommandAttempt,
@@ -59,7 +60,7 @@ from .state import (
 )
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _BUSY_TIMEOUT_MS = 5000
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_WIRE_FRAME_BYTES = 1_048_576
@@ -188,6 +189,15 @@ CREATE TABLE command_transitions (
 )
 """
 
+_CREATE_SETTINGS_AUDIT_DELIVERIES = """
+CREATE TABLE settings_audit_deliveries (
+    transition_id INTEGER PRIMARY KEY REFERENCES command_transitions(transition_id),
+    raw_bytes INTEGER NOT NULL CHECK (raw_bytes BETWEEN 0 AND 16384),
+    payload_capped INTEGER NOT NULL CHECK (payload_capped IN (0, 1)),
+    delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','accepted'))
+)
+"""
+
 _CREATE_EVENT_RECEIPTS = """
 CREATE TABLE event_receipts (
     evidence_id TEXT PRIMARY KEY CHECK (length(evidence_id) = 64),
@@ -221,6 +231,11 @@ _CREATE_INDEX_COMMANDS_PREDECESSOR = """
 CREATE INDEX idx_commands_predecessor ON commands(predecessor_command_id)
 """
 
+_CREATE_INDEX_TRANSITIONS_AUDIT = """
+CREATE INDEX idx_command_transitions_audit
+ON command_transitions(audit_id, transition_id)
+"""
+
 _CREATE_INDEX_ONE_AWAITING_ACK = """
 CREATE UNIQUE INDEX ux_commands_one_awaiting_ack_per_device
 ON commands(device_id) WHERE state = 'awaiting_ack'
@@ -244,16 +259,18 @@ _SCHEMA_STATEMENTS = (
     _CREATE_CONTROL_INGRESS_AUDIT,
     _CREATE_COMMAND_ATTEMPTS,
     _CREATE_COMMAND_TRANSITIONS,
+    _CREATE_SETTINGS_AUDIT_DELIVERIES,
     _CREATE_EVENT_RECEIPTS,
     _CREATE_INDEX_COMMANDS_FIFO,
     _CREATE_INDEX_COMMANDS_EVENT_MATCH,
     _CREATE_INDEX_COMMANDS_PREDECESSOR,
+    _CREATE_INDEX_TRANSITIONS_AUDIT,
     _CREATE_INDEX_ONE_AWAITING_ACK,
     _CREATE_INDEX_ONE_UNSENT_SUCCESSOR,
     _CREATE_INDEX_ONE_CONFIRMATION,
 )
 
-_EXPECTED_SCHEMA_SQL = {
+_EXPECTED_SCHEMA_SQL_V1 = {
     ("table", "schema_meta"): _CREATE_SCHEMA_META,
     ("table", "devices"): _CREATE_DEVICES,
     ("table", "commands"): _CREATE_COMMANDS,
@@ -267,6 +284,18 @@ _EXPECTED_SCHEMA_SQL = {
     ("index", "ux_commands_one_awaiting_ack_per_device"): _CREATE_INDEX_ONE_AWAITING_ACK,
     ("index", "ux_commands_one_unsent_successor_per_target"): _CREATE_INDEX_ONE_UNSENT_SUCCESSOR,
     ("index", "ux_event_receipts_one_confirmation_per_command"): _CREATE_INDEX_ONE_CONFIRMATION,
+}
+
+_EXPECTED_SCHEMA_SQL = {
+    **_EXPECTED_SCHEMA_SQL_V1,
+    (
+        "table",
+        "settings_audit_deliveries",
+    ): _CREATE_SETTINGS_AUDIT_DELIVERIES,
+    (
+        "index",
+        "idx_command_transitions_audit",
+    ): _CREATE_INDEX_TRANSITIONS_AUDIT,
 }
 
 
@@ -338,7 +367,7 @@ class TwinCommandStore:
             return self._connection is not None and self._process_lock is not None
 
     def open(self, *, now_ms: int) -> None:
-        """Acquire the process lock and open or create exact schema v1."""
+        """Acquire the process lock and open, migrate, or create exact schema."""
         _validate_sqlite_integer("now_ms", now_ms)
         with self._mutex:
             if self._connection is not None or self._process_lock is not None:
@@ -348,6 +377,7 @@ class TwinCommandStore:
             try:
                 file_state = self._database_file_state()
                 bootstrap = file_state is None or file_state[1] == 0
+                existing_version: int | None = None
                 if file_state is not None:
                     database_identity = file_state[0]
                     if not bootstrap:
@@ -356,7 +386,9 @@ class TwinCommandStore:
                     self._connection = connection
                     self._verify_database_identity(database_identity)
                     if not bootstrap:
-                        self._validate_open_database(connection)
+                        existing_version, _created_at_ms = (
+                            self._validate_open_database(connection)
+                        )
                 else:
                     connection = sqlite3.connect(
                         self._db_path,
@@ -374,8 +406,13 @@ class TwinCommandStore:
                 self._configure_pragmas(connection)
                 if bootstrap:
                     self._create_schema(connection, now_ms=now_ms)
+                elif existing_version is not None:
+                    self._migrate_schema(
+                        connection,
+                        from_version=existing_version,
+                    )
                 version, created_at_ms = self._read_schema_meta(connection)
-                self._validate_schema_sql(connection)
+                self._validate_schema_sql(connection, version=version)
                 self._store_state = (
                     version,
                     created_at_ms,
@@ -684,6 +721,221 @@ class TwinCommandStore:
             except TwinStoreError as error:
                 self._set_degradation(str(error))
                 raise
+
+    def propose_audit_delivery(
+        self,
+        *,
+        audit_id: str,
+        transition_id: int,
+        requested_raw_bytes: int,
+    ) -> AuditDeliveryDecision:
+        """Reserve one replay-stable aggregate budget decision before sink I/O."""
+        normalized_audit_id = _validate_identifier("audit_id", audit_id)
+        _validate_sqlite_integer("transition_id", transition_id)
+        if transition_id < 1:
+            raise ValueError("transition_id must be positive")
+        _validate_sqlite_integer("requested_raw_bytes", requested_raw_bytes)
+        if requested_raw_bytes > 16 * 1024:
+            raise ValueError("requested_raw_bytes exceeds 16384")
+
+        def operation(connection: sqlite3.Connection) -> AuditDeliveryDecision:
+            self._require_audit_transition_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            existing = self._read_audit_delivery_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            if existing is not None:
+                return existing
+            used_row = connection.execute(
+                """
+                SELECT COALESCE(SUM(delivery.raw_bytes), 0)
+                FROM settings_audit_deliveries AS delivery
+                JOIN command_transitions AS transition
+                  ON transition.transition_id = delivery.transition_id
+                WHERE transition.audit_id = ?
+                """,
+                (normalized_audit_id,),
+            ).fetchone()
+            if used_row is None:
+                raise TwinStoreError("audit delivery budget query returned no row")
+            used_bytes = _persisted_integer(
+                "audit delivery used bytes", used_row[0]
+            )
+            remaining_bytes = max(0, 64 * 1024 - used_bytes)
+            raw_bytes = min(requested_raw_bytes, remaining_bytes)
+            payload_capped = requested_raw_bytes > raw_bytes
+            connection.execute(
+                """
+                INSERT INTO settings_audit_deliveries(
+                    transition_id, raw_bytes, payload_capped, delivery_state
+                ) VALUES (?, ?, ?, 'pending')
+                """,
+                (transition_id, raw_bytes, int(payload_capped)),
+            )
+            return AuditDeliveryDecision(
+                transition_id,
+                normalized_audit_id,
+                raw_bytes,
+                payload_capped,
+                AuditDeliveryState.PENDING,
+            )
+
+        return self._run_mutation("propose audit delivery", operation)
+
+    def accept_audit_delivery(
+        self, *, audit_id: str, transition_id: int
+    ) -> AuditDeliveryDecision:
+        """Finalize one pending decision after the sink returns successfully."""
+        normalized_audit_id = _validate_identifier("audit_id", audit_id)
+        _validate_sqlite_integer("transition_id", transition_id)
+        if transition_id < 1:
+            raise ValueError("transition_id must be positive")
+
+        def operation(connection: sqlite3.Connection) -> AuditDeliveryDecision:
+            self._require_audit_transition_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            decision = self._read_audit_delivery_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            if decision is None:
+                raise StoreRecordNotFound(
+                    f"audit delivery decision not found: {transition_id}"
+                )
+            if decision.state is AuditDeliveryState.PENDING:
+                connection.execute(
+                    """
+                    UPDATE settings_audit_deliveries
+                    SET delivery_state = 'accepted'
+                    WHERE transition_id = ? AND delivery_state = 'pending'
+                    """,
+                    (transition_id,),
+                )
+                decision = AuditDeliveryDecision(
+                    decision.transition_id,
+                    decision.audit_id,
+                    decision.raw_bytes,
+                    decision.payload_capped,
+                    AuditDeliveryState.ACCEPTED,
+                )
+            return decision
+
+        return self._run_mutation("accept audit delivery", operation)
+
+    def reject_audit_delivery(
+        self, *, audit_id: str, transition_id: int
+    ) -> bool:
+        """Delete only a pending proposal after the sink rejects delivery."""
+        normalized_audit_id = _validate_identifier("audit_id", audit_id)
+        _validate_sqlite_integer("transition_id", transition_id)
+        if transition_id < 1:
+            raise ValueError("transition_id must be positive")
+
+        def operation(connection: sqlite3.Connection) -> bool:
+            self._require_audit_transition_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            cursor = connection.execute(
+                """
+                DELETE FROM settings_audit_deliveries
+                WHERE transition_id = ? AND delivery_state = 'pending'
+                """,
+                (transition_id,),
+            )
+            return cursor.rowcount == 1
+
+        return self._run_mutation("reject audit delivery", operation)
+
+    def read_audit_delivery_decision(
+        self, *, audit_id: str, transition_id: int
+    ) -> AuditDeliveryDecision:
+        """Return one compact durable delivery decision."""
+        normalized_audit_id = _validate_identifier("audit_id", audit_id)
+        _validate_sqlite_integer("transition_id", transition_id)
+        if transition_id < 1:
+            raise ValueError("transition_id must be positive")
+        with self._mutex:
+            self.verify_health()
+            connection = self._require_connection()
+            self._require_audit_transition_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            decision = self._read_audit_delivery_locked(
+                connection,
+                audit_id=normalized_audit_id,
+                transition_id=transition_id,
+            )
+            if decision is None:
+                raise StoreRecordNotFound(
+                    f"audit delivery decision not found: {transition_id}"
+                )
+            return decision
+
+    def audit_delivery_decision_count(self) -> int:
+        """Return the compact durable row count for diagnostics and tests."""
+        with self._mutex:
+            self.verify_health()
+            row = self._require_connection().execute(
+                "SELECT COUNT(*) FROM settings_audit_deliveries"
+            ).fetchone()
+            if row is None:
+                raise TwinStoreError("audit delivery count returned no row")
+            return _persisted_integer("audit delivery count", row[0])
+
+    @staticmethod
+    def _require_audit_transition_locked(
+        connection: sqlite3.Connection,
+        *,
+        audit_id: str,
+        transition_id: int,
+    ) -> None:
+        row = connection.execute(
+            "SELECT audit_id FROM command_transitions WHERE transition_id = ?",
+            (transition_id,),
+        ).fetchone()
+        if row is None:
+            raise StoreRecordNotFound(
+                f"command transition not found: {transition_id}"
+            )
+        persisted_audit_id = _persisted_identifier(
+            "transition audit_id", row[0], 256
+        )
+        if persisted_audit_id != audit_id:
+            raise ValueError("audit_id does not own transition_id")
+
+    @staticmethod
+    def _read_audit_delivery_locked(
+        connection: sqlite3.Connection,
+        *,
+        audit_id: str,
+        transition_id: int,
+    ) -> AuditDeliveryDecision | None:
+        row = connection.execute(
+            """
+            SELECT delivery.transition_id, transition.audit_id,
+                   delivery.raw_bytes, delivery.payload_capped,
+                   delivery.delivery_state
+            FROM settings_audit_deliveries AS delivery
+            JOIN command_transitions AS transition
+              ON transition.transition_id = delivery.transition_id
+            WHERE delivery.transition_id = ? AND transition.audit_id = ?
+            """,
+            (transition_id, audit_id),
+        ).fetchone()
+        return None if row is None else _audit_delivery_from_row(row)
 
     def record_ingress_disposition(
         self,
@@ -1966,7 +2218,7 @@ class TwinCommandStore:
         command_id: str,
         expected_event_deadline_ms: int,
         now_ms: int,
-        final_guard: Callable[[], AbstractContextManager[bool]] | None = None,
+        final_authorizer: Callable[[], bool] | None = None,
     ) -> TransitionAuditSnapshot | None:
         """Apply the runtime event-timeout mutation through an exact CAS."""
         normalized_command_id = _validate_identifier("command_id", command_id)
@@ -2003,7 +2255,9 @@ class TwinCommandStore:
             )
 
         return self._run_mutation(
-            "mark event incomplete", operation, commit_guard=final_guard
+            "mark event incomplete",
+            operation,
+            commit_authorizer=final_authorizer,
         )
 
     def recover(self, *, now_ms: int) -> RecoveryReport:
@@ -2685,7 +2939,7 @@ class TwinCommandStore:
             raise TwinStoreError("inserted transition disappeared")
         return _transition_from_row(row)
 
-    def _run_mutation(self, label: str, operation, *, commit_guard=None):
+    def _run_mutation(self, label: str, operation, *, commit_authorizer=None):
         """Run one fail-closed immediate transaction with BaseException rollback."""
         with self._mutex:
             self.verify_health()
@@ -2702,17 +2956,14 @@ class TwinCommandStore:
             committing = False
             try:
                 result = operation(connection)
-                guard = (
-                    commit_guard()
-                    if commit_guard is not None and result is not None
-                    else nullcontext(True)
+                commit_authorized = (
+                    commit_authorizer()
+                    if commit_authorizer is not None and result is not None
+                    else True
                 )
-                commit_authorized = False
-                with guard as authorized:
-                    commit_authorized = authorized
-                    if authorized:
-                        committing = True
-                        connection.execute("COMMIT")
+                if commit_authorized:
+                    committing = True
+                    connection.execute("COMMIT")
                 if not commit_authorized:
                     connection.execute("ROLLBACK")
                     if connection.in_transaction:
@@ -2810,8 +3061,8 @@ class TwinCommandStore:
         try:
             self._verify_database_identity(expected_identity)
             self._run_quick_check(connection)
-            self._read_schema_meta(connection)
-            self._validate_schema_sql(connection)
+            version, _created_at_ms = self._read_schema_meta(connection)
+            self._validate_schema_sql(connection, version=version)
             self._verify_database_identity(expected_identity)
         except TwinStoreError:
             raise
@@ -2853,10 +3104,13 @@ class TwinCommandStore:
         if file_state[0] != expected_identity:
             raise CorruptStoreError("database path inode was replaced")
 
-    def _validate_open_database(self, connection: sqlite3.Connection) -> None:
+    def _validate_open_database(
+        self, connection: sqlite3.Connection
+    ) -> tuple[int, int]:
         self._run_quick_check(connection)
-        self._read_schema_meta(connection)
-        self._validate_schema_sql(connection)
+        metadata = self._read_schema_meta(connection)
+        self._validate_schema_sql(connection, version=metadata[0])
+        return metadata
 
     def _set_degradation(self, reason: str) -> None:
         self._store_state = (
@@ -2887,7 +3141,60 @@ class TwinCommandStore:
         except sqlite3.Error as error:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
-            raise MigrationError(f"schema v1 creation failed: {error}") from error
+            raise MigrationError(
+                f"schema v{_SCHEMA_VERSION} creation failed: {error}"
+            ) from error
+
+    @staticmethod
+    def _migrate_schema(
+        connection: sqlite3.Connection, *, from_version: int
+    ) -> None:
+        if from_version == _SCHEMA_VERSION:
+            return
+        if from_version != 1:
+            raise MigrationError(f"unsupported schema version {from_version}")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            current_version, _created_at_ms = TwinCommandStore._read_schema_meta(
+                connection
+            )
+            if current_version != from_version:
+                raise MigrationError("schema authority changed during migration")
+            TwinCommandStore._validate_schema_sql(
+                connection, version=from_version
+            )
+            connection.execute(_CREATE_SETTINGS_AUDIT_DELIVERIES)
+            connection.execute(_CREATE_INDEX_TRANSITIONS_AUDIT)
+            cursor = connection.execute(
+                "UPDATE schema_meta SET schema_version = ? "
+                "WHERE schema_version = ?",
+                (_SCHEMA_VERSION, from_version),
+            )
+            if cursor.rowcount != 1:
+                raise MigrationError("schema authority changed during migration")
+            TwinCommandStore._validate_schema_sql(
+                connection, version=_SCHEMA_VERSION
+            )
+            connection.execute("COMMIT")
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            rollback_error: BaseException | None = None
+            try:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+            except BaseException as caught:  # pylint: disable=broad-exception-caught
+                rollback_error = caught
+            if rollback_error is not None:
+                raise MigrationError(
+                    f"schema v1 to v2 migration failed: {error}; "
+                    f"rollback failed: {rollback_error}"
+                ) from rollback_error
+            if not isinstance(error, Exception):
+                raise
+            if isinstance(error, MigrationError):
+                raise
+            raise MigrationError(
+                f"schema v1 to v2 migration failed: {error}"
+            ) from error
 
     @staticmethod
     def _read_schema_meta(connection: sqlite3.Connection) -> tuple[int, int]:
@@ -2911,14 +3218,16 @@ class TwinCommandStore:
             raise UnsupportedSchemaError(
                 f"schema version {version} is newer than supported version {_SCHEMA_VERSION}"
             )
-        if version != _SCHEMA_VERSION:
+        if version < 1:
             raise MigrationError(f"unsupported schema version {version}")
         if created_at_ms < 0:
             raise MigrationError("schema creation timestamp is negative")
         return version, created_at_ms
 
     @staticmethod
-    def _validate_schema_sql(connection: sqlite3.Connection) -> None:
+    def _validate_schema_sql(
+        connection: sqlite3.Connection, *, version: int
+    ) -> None:
         rows = connection.execute(
             """
             SELECT type, name, sql FROM sqlite_schema
@@ -2930,12 +3239,17 @@ class TwinCommandStore:
             for object_type, name, sql in rows
             if sql is not None
         }
-        if set(actual) != set(_EXPECTED_SCHEMA_SQL):
-            raise MigrationError("schema v1 objects do not match the required artifact set")
-        for identity, expected_sql in _EXPECTED_SCHEMA_SQL.items():
+        expected = (
+            _EXPECTED_SCHEMA_SQL_V1 if version == 1 else _EXPECTED_SCHEMA_SQL
+        )
+        if set(actual) != set(expected):
+            raise MigrationError(
+                f"schema v{version} objects do not match the required artifact set"
+            )
+        for identity, expected_sql in expected.items():
             if _normalize_sql(actual[identity]) != _normalize_sql(expected_sql):
                 raise MigrationError(
-                    f"schema v1 object differs from contract: {identity[1]}"
+                    f"schema v{version} object differs from contract: {identity[1]}"
                 )
 
     @staticmethod
@@ -3474,6 +3788,29 @@ def _transition_from_row(row: tuple[Any, ...]) -> CommandTransition:
         evidence_frame=_persisted_optional_blob(
             "transition evidence_frame", row[11]
         ),
+    )
+
+
+def _audit_delivery_from_row(
+    row: tuple[Any, ...]
+) -> AuditDeliveryDecision:
+    try:
+        state = AuditDeliveryState(
+            _persisted_text("audit delivery state", row[4])
+        )
+    except ValueError as error:
+        raise TwinStoreError("persisted audit delivery state is invalid") from error
+    capped = _persisted_integer("audit delivery payload_capped", row[3])
+    if capped not in (0, 1):
+        raise TwinStoreError("persisted audit delivery cap flag is invalid")
+    return AuditDeliveryDecision(
+        transition_id=_persisted_integer(
+            "audit delivery transition_id", row[0]
+        ),
+        audit_id=_persisted_identifier("audit delivery audit_id", row[1], 256),
+        raw_bytes=_persisted_integer("audit delivery raw_bytes", row[2]),
+        payload_capped=bool(capped),
+        state=state,
     )
 
 

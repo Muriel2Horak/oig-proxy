@@ -50,6 +50,13 @@ class AttemptWriteOutcome(str, Enum):
     FAILED = "failed"
 
 
+class AuditDeliveryState(str, Enum):
+    """Durable audit sink proposal lifecycle."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+
+
 class ClaimDisposition(str, Enum):
     """Result of trying to claim a transaction for delivery."""
 
@@ -225,6 +232,31 @@ class CommandTransition:  # pylint: disable=too-many-instance-attributes
     error_text: str | None
     wire_frame: bytes | None
     evidence_frame: bytes | None
+
+
+@dataclass(frozen=True, slots=True)
+class AuditDeliveryDecision:
+    """Compact replay-stable raw-text decision for one transition."""
+
+    transition_id: int
+    audit_id: str
+    raw_bytes: int
+    payload_capped: bool
+    state: AuditDeliveryState
+
+    def __post_init__(self) -> None:
+        _require_int("transition_id", self.transition_id)
+        if self.transition_id < 1:
+            raise ValueError("transition_id must be positive")
+        if not self.audit_id or len(self.audit_id) > 256:
+            raise ValueError("audit_id length must be between 1 and 256")
+        _require_int("raw_bytes", self.raw_bytes)
+        if not 0 <= self.raw_bytes <= 16 * 1024:
+            raise ValueError("raw_bytes must be between 0 and 16384")
+        if not isinstance(self.payload_capped, bool):
+            raise TypeError("payload_capped must be a boolean")
+        if not isinstance(self.state, AuditDeliveryState):
+            raise TypeError("state must be an AuditDeliveryState")
 
 
 @dataclass(frozen=True, slots=True)

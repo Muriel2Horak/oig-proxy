@@ -4,21 +4,27 @@
 # pylint: disable=import-error,missing-function-docstring,too-many-lines
 # pylint: disable=too-few-public-methods,too-many-instance-attributes
 # pylint: disable=too-many-arguments,use-implicit-booleaness-not-comparison
+# pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-locals
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import sqlite3
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Literal
+from typing import Any, cast, Literal
 
 import pytest
 
 from protocol.frame import FrameDirection
-from telemetry.settings_audit import SettingsAuditPublisher, SettingsAuditRecord
+from telemetry.settings_audit import (
+    SettingStep,
+    SettingsAuditPublisher,
+    SettingsAuditRecord,
+)
 from twin.ack_parser import SettingEvent, SettingResponse, derive_event_evidence_id
 from twin.delivery import TwinCoordinator
 from twin.state import (
@@ -31,6 +37,7 @@ from twin.state import (
     DeliveryTrigger,
     EvidenceContext,
     EventDisposition,
+    EventMatchResult,
     LocalResponseDisposition,
     RetryReason,
     TwinCommand,
@@ -144,6 +151,40 @@ class ScriptedLocalSettingWriter:
         )
 
 
+class _PausedCommitConnection:  # pylint: disable=too-few-public-methods
+    """Pause one physical COMMIT while preserving the real connection."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        entered: threading.Event,
+        release: threading.Event,
+        failure: BaseException | None = None,
+    ) -> None:
+        self._connection = connection
+        self._entered = entered
+        self._release = release
+        self._failure = failure
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def execute(self, statement: str, parameters: Any = ()) -> Any:
+        if statement.strip().upper() == "COMMIT":
+            self._entered.set()
+            assert self._release.wait(timeout=1)
+            if self._failure is not None:
+                failure = self._failure
+                self._failure = None
+                raise failure
+        return self._connection.execute(statement, parameters)
+
+
+class _InjectedCommitFailure(BaseException):
+    """Recoverable test-only failure raised before a physical COMMIT."""
+
+
 @pytest.fixture
 def coordinator(
     store: TwinCommandStore,
@@ -245,6 +286,53 @@ def _event(
         old_value_text="1",
         new_value_text=new_value,
     )
+
+
+async def _register_during_paused_commit(
+    coordinator: TwinCoordinator,
+    *,
+    session_id: str,
+    deadline_ms: int,
+    commit_release: threading.Event,
+) -> tuple[Any, bool]:
+    """Prove registration plus a later heartbeat run before COMMIT resumes."""
+    loop = asyncio.get_running_loop()
+    registered: asyncio.Future[Any] = loop.create_future()
+    registration_started = threading.Event()
+    heartbeat_progressed = threading.Event()
+    heartbeat_observed: list[bool] = []
+
+    def register() -> None:
+        registration_started.set()
+        try:
+            registered.set_result(
+                coordinator.register_setting_event(
+                    event=_event(),
+                    context=EvidenceContext(
+                        FrameDirection.BOX_TO_PROXY,
+                        session_id,
+                        "123",
+                        deadline_ms,
+                        b"event-during-physical-commit",
+                    ),
+                )
+            )
+        except BaseException as error:  # pylint: disable=broad-exception-caught
+            registered.set_exception(error)
+
+    def release_after_heartbeat() -> None:
+        assert registration_started.wait(timeout=1)
+        heartbeat_observed.append(heartbeat_progressed.wait(timeout=0.25))
+        commit_release.set()
+
+    releaser = threading.Thread(target=release_after_heartbeat)
+    releaser.start()
+    loop.call_soon(register)
+    loop.call_soon(heartbeat_progressed.set)
+    token = await registered
+    await asyncio.to_thread(releaser.join, 1)
+    assert not releaser.is_alive()
+    return token, heartbeat_observed == [True]
 
 
 @pytest.mark.asyncio
@@ -669,9 +757,16 @@ async def test_ack_atomically_writes_already_prepared_successor(
     assert decision.next_attempt.command_id == successor.command_id
     assert writer.frames[-1] == decision.next_attempt.wire_frame
     reasons = tuple(
-        transition.reason for transition in store.read_transitions(successor.command_id)
+        transition.reason
+        for transition in store.read_transitions(successor.command_id)
     )
-    assert reasons == ("accepted_ingress", "selected", "attempt_prepared", "write_started", "attempt_drained")
+    assert reasons == (
+        "accepted_ingress",
+        "selected",
+        "attempt_prepared",
+        "write_started",
+        "attempt_drained",
+    )
 
 
 @pytest.mark.asyncio
@@ -1113,6 +1208,207 @@ async def test_registered_event_wins_after_transition_before_commit(
 
 
 @pytest.mark.asyncio
+async def test_registration_and_heartbeat_progress_during_authorized_commit(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack-before-paused-commit"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    await coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 1)
+    monotonic["value"] = 1.1
+    commit_entered = threading.Event()
+    commit_release = threading.Event()
+    connection = store._connection  # pylint: disable=protected-access
+    assert connection is not None
+    store._connection = cast(  # pylint: disable=protected-access
+        Any,
+        _PausedCommitConnection(
+            connection,
+            entered=commit_entered,
+            release=commit_release,
+        ),
+    )
+
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 2)
+    )
+    assert await asyncio.to_thread(commit_entered.wait, 0.1)
+    token, heartbeat_progressed = await _register_during_paused_commit(
+        coordinator,
+        session_id=active.session_id,
+        deadline_ms=command.event_deadline_ms,
+        commit_release=commit_release,
+    )
+
+    sweep = await sweep_task
+    decision = await coordinator.handle_registered_event(token)
+
+    assert heartbeat_progressed is True
+    assert sweep.incomplete_event_timeout == 1
+    assert decision.disposition is EventDisposition.UNMATCHED
+    assert store.read_command(active.command_id).state is CommandState.INCOMPLETE
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_clears_timeout_reservation_for_registered_event(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack-before-failed-commit"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    await coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 1)
+    monotonic["value"] = 1.1
+    commit_entered = threading.Event()
+    commit_release = threading.Event()
+    connection = store._connection  # pylint: disable=protected-access
+    assert connection is not None
+    store._connection = cast(  # pylint: disable=protected-access
+        Any,
+        _PausedCommitConnection(
+            connection,
+            entered=commit_entered,
+            release=commit_release,
+            failure=_InjectedCommitFailure("injected pre-commit failure"),
+        ),
+    )
+
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 2)
+    )
+    assert await asyncio.to_thread(commit_entered.wait, 0.1)
+    token, heartbeat_progressed = await _register_during_paused_commit(
+        coordinator,
+        session_id=active.session_id,
+        deadline_ms=command.event_deadline_ms,
+        commit_release=commit_release,
+    )
+
+    with pytest.raises(_InjectedCommitFailure, match="pre-commit failure"):
+        await sweep_task
+    decision = await coordinator.handle_registered_event(token)
+    reasons = tuple(
+        transition.reason
+        for transition in store.read_transitions(active.command_id)
+    )
+
+    assert heartbeat_progressed is True
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert "event_timeout" not in reasons
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_timeout_drains_and_protected_event_wins(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    monotonic = {"value": 0.0}
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        clock_ms=_Clock(),
+        monotonic=lambda: monotonic["value"],
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw = b"ack-before-cancelled-timeout"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw),
+        context=_context(active, raw, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    await coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 1)
+    monotonic["value"] = 1.1
+    transition_entered = threading.Event()
+    transition_release = threading.Event()
+    original = store._transition_command_state_locked  # pylint: disable=protected-access
+
+    def blocked_transition(connection, **kwargs):
+        snapshot = original(connection, **kwargs)
+        if kwargs.get("reason") == "event_timeout":
+            transition_entered.set()
+            assert transition_release.wait(timeout=1)
+        return snapshot
+
+    monkeypatch.setattr(
+        store, "_transition_command_state_locked", blocked_transition
+    )
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=command.event_deadline_ms + 2)
+    )
+    assert await asyncio.to_thread(transition_entered.wait, 0.1)
+
+    sweep_task.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    cancellation_waited_for_store = not sweep_task.done()
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"event-protected-from-cancelled-timeout",
+        ),
+    )
+    transition_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep_task
+    decision = await coordinator.handle_registered_event(token)
+    reasons = tuple(
+        transition.reason
+        for transition in store.read_transitions(active.command_id)
+    )
+
+    assert cancellation_waited_for_store is True
+    assert decision.disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert "event_timeout" not in reasons
+
+
+@pytest.mark.asyncio
 async def test_concurrent_event_handlers_claim_one_token_once(
     coordinator: TwinCoordinator,
     store: TwinCommandStore,
@@ -1245,6 +1541,674 @@ async def test_event_token_is_restored_in_receipt_order_after_store_failure(
     ]
     assert store.read_event_receipt(first.event.evidence_id).duplicate_count == 0
     assert store.read_event_receipt(second.event.evidence_id).duplicate_count == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_owner_drains_success_and_cleanup_adopts_once(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw_ack = b"cancel-owner-ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw_ack),
+        context=_context(active, raw_ack, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"cancel-owner-event",
+        ),
+    )
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    worker_finished = threading.Event()
+    call_count = 0
+    original = store.record_event
+
+    def blocked_record(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        worker_entered.set()
+        assert worker_release.wait(timeout=1)
+        try:
+            return original(**kwargs)
+        finally:
+            worker_finished.set()
+
+    monkeypatch.setattr(store, "record_event", blocked_record)
+    owner = asyncio.create_task(coordinator.handle_registered_event(token))
+    assert await asyncio.to_thread(worker_entered.wait, 0.1)
+
+    owner.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    owner_waited_for_worker = not owner.done()
+    worker_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    assert await asyncio.to_thread(worker_finished.wait, 0.1)
+
+    adopted = await coordinator.flush_registered_events(
+        session_id=active.session_id
+    )
+
+    assert owner_waited_for_worker is True
+    assert call_count == 1
+    assert len(adopted) == 1
+    assert adopted[0].disposition is EventDisposition.CONFIRMED
+    assert store.read_command(active.command_id).state is CommandState.CONFIRMED
+    assert [record.step for record in records].count(
+        SettingStep.EVENT_CONFIRMED
+    ) == 1
+    assert await coordinator.flush_registered_events(
+        session_id=active.session_id
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_owner_failure_is_retryable_without_flush_spin(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = coordinator.register_setting_event(
+        event=_event(new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "cancelled-failure-session",
+            "123",
+            220,
+            b"cancelled-failure-event",
+        ),
+    )
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    call_count = 0
+    original = store.record_event
+
+    def fail_once(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            worker_entered.set()
+            assert worker_release.wait(timeout=1)
+            raise RuntimeError("definitive event-store failure")
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", fail_once)
+    owner = asyncio.create_task(coordinator.handle_registered_event(token))
+    assert await asyncio.to_thread(worker_entered.wait, 0.1)
+
+    owner.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    observing_flush = asyncio.create_task(
+        coordinator.flush_registered_events(
+            session_id="cancelled-failure-session"
+        )
+    )
+    observer_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(observer_turn.set)
+    await observer_turn.wait()
+    worker_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    with pytest.raises(RuntimeError, match="definitive event-store failure"):
+        await observing_flush
+    assert call_count == 1
+
+    retried = await coordinator.flush_registered_events(
+        session_id="cancelled-failure-session"
+    )
+
+    assert call_count == 2
+    assert len(retried) == 1
+    assert retried[0].evidence.evidence_id == token.event.evidence_id
+    assert await coordinator.flush_registered_events(
+        session_id="cancelled-failure-session"
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_after_store_completion_drains_reconciliation(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer, now_ms=100)
+    raw_ack = b"cancel-after-store-ack"
+    await coordinator.handle_local_response(
+        active=active,
+        response=_response(raw_ack),
+        context=_context(active, raw_ack, received_at_ms=220),
+        writer=writer,
+    )
+    command = store.read_command(active.command_id)
+    assert command.event_deadline_ms is not None
+    token = coordinator.register_setting_event(
+        event=_event(),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            active.session_id,
+            active.device_id,
+            command.event_deadline_ms,
+            b"cancel-after-store-event",
+        ),
+    )
+    refresh_entered = asyncio.Event()
+    refresh_release = asyncio.Event()
+    original_refresh = coordinator._refresh_status  # pylint: disable=protected-access
+
+    async def blocked_refresh() -> None:
+        refresh_entered.set()
+        await refresh_release.wait()
+        await original_refresh()
+
+    monkeypatch.setattr(coordinator, "_refresh_status", blocked_refresh)
+    owner = asyncio.create_task(coordinator.handle_registered_event(token))
+    await refresh_entered.wait()
+
+    owner.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    waited_for_reconciliation = not owner.done()
+    refresh_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+
+    adopted = await coordinator.flush_registered_events(
+        session_id=active.session_id
+    )
+
+    assert waited_for_reconciliation is True
+    assert len(adopted) == 1
+    assert adopted[0].disposition is EventDisposition.CONFIRMED
+    assert [record.step for record in records].count(
+        SettingStep.EVENT_CONFIRMED
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_event_after_reconciliation_is_adopted_once(
+    coordinator: TwinCoordinator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = coordinator.register_setting_event(
+        event=_event(new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "post-reconciliation-session",
+            "123",
+            220,
+            b"post-reconciliation-event",
+        ),
+    )
+    reconciled = asyncio.Event()
+    result_release = asyncio.Event()
+    original_mutation = coordinator._run_mutation_locked  # pylint: disable=protected-access
+
+    async def block_after_reconciliation(*args, **kwargs):
+        result = await original_mutation(*args, **kwargs)
+        reconciled.set()
+        await result_release.wait()
+        return result
+
+    monkeypatch.setattr(
+        coordinator, "_run_mutation_locked", block_after_reconciliation
+    )
+    owner = asyncio.create_task(coordinator.handle_registered_event(token))
+    await reconciled.wait()
+
+    owner.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    waited_for_result_delivery = not owner.done()
+    result_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+
+    adopted = await coordinator.flush_registered_events(
+        session_id="post-reconciliation-session"
+    )
+
+    assert waited_for_result_delivery is True
+    assert len(adopted) == 1
+    assert adopted[0].evidence.evidence_id == token.event.evidence_id
+    assert await coordinator.flush_registered_events(
+        session_id="post-reconciliation-session"
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_cleanup_adopter_retains_reconciled_result_once(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = coordinator.register_setting_event(
+        event=_event(new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "cancelled-adopter-session",
+            "123",
+            220,
+            b"cancelled-adopter-event",
+        ),
+    )
+    worker_entered = threading.Event()
+    worker_release = threading.Event()
+    original_record = store.record_event
+    adopter: asyncio.Task[tuple[EventMatchResult, ...]] | None = None
+    original_mutation = coordinator._run_mutation_locked  # pylint: disable=protected-access
+
+    def blocked_record(**kwargs):
+        worker_entered.set()
+        assert worker_release.wait(timeout=1)
+        return original_record(**kwargs)
+
+    async def cancel_adopter_after_reconciliation(*args, **kwargs):
+        result = await original_mutation(*args, **kwargs)
+        assert adopter is not None
+        asyncio.get_running_loop().call_soon(adopter.cancel)
+        return result
+
+    monkeypatch.setattr(store, "record_event", blocked_record)
+    monkeypatch.setattr(
+        coordinator,
+        "_run_mutation_locked",
+        cancel_adopter_after_reconciliation,
+    )
+    owner = asyncio.create_task(coordinator.handle_registered_event(token))
+    assert await asyncio.to_thread(worker_entered.wait, 0.1)
+    owner.cancel()
+    owner_relinquished = asyncio.Event()
+    asyncio.get_running_loop().call_soon(owner_relinquished.set)
+    await owner_relinquished.wait()
+    adopter = asyncio.create_task(
+        coordinator.flush_registered_events(
+            session_id="cancelled-adopter-session"
+        )
+    )
+    worker_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    with pytest.raises(asyncio.CancelledError):
+        await adopter
+
+    adopted = await coordinator.flush_registered_events(
+        session_id="cancelled-adopter-session"
+    )
+
+    assert len(adopted) == 1
+    assert adopted[0].evidence.evidence_id == token.event.evidence_id
+    assert await coordinator.flush_registered_events(
+        session_id="cancelled-adopter-session"
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_restored_event_keeps_sequence_across_consumed_and_later_tokens(
+    coordinator: TwinCoordinator,
+    store: TwinCommandStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    consumed = coordinator.register_setting_event(
+        event=_event(device_id="999", event_id_set=1, new_value="1"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "three-token-session",
+            "999",
+            210,
+            b"consumed-first",
+        ),
+    )
+    restored = coordinator.register_setting_event(
+        event=_event(event_id_set=2, new_value="3"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "three-token-session",
+            "123",
+            220,
+            b"restored-second",
+        ),
+    )
+    assert (
+        await coordinator.handle_registered_event(consumed)
+    ).disposition is EventDisposition.UNMATCHED
+    call_count = 0
+    original = store.record_event
+
+    def fail_once(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("restore this exact token")
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "record_event", fail_once)
+    with pytest.raises(RuntimeError, match="restore this exact token"):
+        await coordinator.handle_registered_event(restored)
+    later = coordinator.register_setting_event(
+        event=_event(event_id_set=3, new_value="4"),
+        context=EvidenceContext(
+            FrameDirection.BOX_TO_PROXY,
+            "three-token-session",
+            "123",
+            230,
+            b"registered-later",
+        ),
+    )
+
+    flushed = await coordinator.flush_registered_events(
+        session_id="three-token-session"
+    )
+
+    assert call_count == 3
+    assert [result.evidence.evidence_id for result in flushed] == [
+        restored.event.evidence_id,
+        later.event.evidence_id,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_prepare_keeps_device_lock_until_commit_reconciles(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    second_entered = threading.Event()
+    call_count = 0
+    original = store.prepare_next_attempt
+
+    def blocked_prepare(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            first_entered.set()
+            assert first_release.wait(timeout=1)
+        else:
+            second_entered.set()
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "prepare_next_attempt", blocked_prepare)
+    first = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="first-session",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    assert await asyncio.to_thread(first_entered.wait, 0.1)
+    first.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+
+    second = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="second-session",
+            received_at_ms=201,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    scheduling_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(scheduling_turn.set)
+    await scheduling_turn.wait()
+    second_waited_for_device = not second_entered.is_set()
+    first_waited_for_store = not first.done()
+    first_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second_result = await second
+
+    assert first_waited_for_store is True
+    assert second_waited_for_device is True
+    assert second_result.disposition is DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE
+    assert [record.step for record in records].count(SettingStep.SELECTED) == 1
+    assert [record.step for record in records].count(
+        SettingStep.ATTEMPT_PREPARED
+    ) == 1
+    assert coordinator.cached_status_snapshot.awaiting_ack == 1
+
+
+@pytest.mark.parametrize(
+    ("response_result", "store_method", "expected_state", "expected_step"),
+    [
+        (
+            "ACK",
+            "acknowledge_and_prepare_next",
+            CommandState.AWAITING_EVENT,
+            SettingStep.ACK_OBSERVED,
+        ),
+        (
+            "NACK",
+            "mark_nack",
+            CommandState.FAILED,
+            SettingStep.NACK,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cancelled_response_mutation_reconciles_before_escape(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+    response_result: Literal["ACK", "NACK"],
+    store_method: str,
+    expected_state: CommandState,
+    expected_step: SettingStep,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    writer = ScriptedLocalSettingWriter(store)
+    active = await _deliver(coordinator, writer)
+    entered = threading.Event()
+    release = threading.Event()
+    original = getattr(store, store_method)
+
+    def blocked_response(**kwargs):
+        entered.set()
+        assert release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, store_method, blocked_response)
+    raw = f"cancel-{response_result.lower()}".encode()
+    response_task = asyncio.create_task(
+        coordinator.handle_local_response(
+            active=active,
+            response=_response(raw, result=response_result),
+            context=_context(active, raw),
+            writer=writer,
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 0.1)
+    response_task.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    waited_for_store = not response_task.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await response_task
+
+    assert waited_for_store is True
+    assert store.read_command(active.command_id).state is expected_state
+    assert [record.step for record in records].count(expected_step) == 1
+    assert dict(coordinator.cached_status_snapshot.state_counts)[
+        expected_state
+    ] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_retry_mutation_reconciles_before_escape(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    active = await _deliver(coordinator, ScriptedLocalSettingWriter(store))
+    entered = threading.Event()
+    release = threading.Event()
+    original = store.release_for_retry
+
+    def blocked_retry(**kwargs):
+        entered.set()
+        assert release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "release_for_retry", blocked_retry)
+    retry_task = asyncio.create_task(
+        coordinator.abort_dialogue(
+            active=active,
+            occurred_at_ms=active.ack_deadline_ms,
+            reason=RetryReason.DISCONNECT,
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 0.1)
+    retry_task.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    waited_for_store = not retry_task.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await retry_task
+
+    assert waited_for_store is True
+    assert store.read_command(active.command_id).state is CommandState.RETRY_PENDING
+    assert [record.step for record in records].count(SettingStep.RETRY) == 1
+    assert dict(coordinator.cached_status_snapshot.state_counts)[
+        CommandState.RETRY_PENDING
+    ] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_write_state_mutation_reconciles_before_escape(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _enqueue(store)
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original = store.mark_write_started
+
+    def blocked_write_started(**kwargs):
+        entered.set()
+        assert release.wait(timeout=1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "mark_write_started", blocked_write_started)
+    delivery = asyncio.create_task(
+        coordinator.claim_and_write_next(
+            device_id="123",
+            session_id="write-state-session",
+            received_at_ms=200,
+            trigger=DeliveryTrigger.OFFLINE_ISNEWSET,
+            writer=ScriptedLocalSettingWriter(store),
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 0.1)
+    delivery.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    waited_for_store = not delivery.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await delivery
+
+    attempt = store.read_attempt(command.command_id, 1)
+    assert waited_for_store is True
+    assert attempt.write_outcome is AttemptWriteOutcome.STARTED
+    assert [record.step for record in records].count(
+        SettingStep.WRITE_STARTED
+    ) == 1
+    assert coordinator.cached_status_snapshot.awaiting_ack == 1
 
 
 @pytest.mark.asyncio
@@ -1389,6 +2353,151 @@ async def test_deadline_sweep_progresses_distinct_devices_in_parallel(
     sweep = await sweep_task
     assert second_progressed is True
     assert sweep.expired_pending == 2
+
+
+@pytest.mark.asyncio
+async def test_deadline_sweep_reconciles_success_before_sibling_failure(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    first_finished = threading.Event()
+    second_failed = threading.Event()
+    original = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int):
+        if device_id == "456":
+            assert first_entered.wait(timeout=1)
+            second_failed.set()
+            raise RuntimeError("device B sweep failure")
+        first_entered.set()
+        assert first_release.wait(timeout=1)
+        try:
+            return original(device_id=device_id, now_ms=now_ms)
+        finally:
+            first_finished.set()
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    assert await asyncio.to_thread(second_failed.wait, 0.1)
+    failure_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(failure_turn.set)
+    await failure_turn.wait()
+    waited_for_successful_sibling = not sweep_task.done()
+    first_release.set()
+
+    with pytest.raises(RuntimeError) as caught:
+        await sweep_task
+    assert await asyncio.to_thread(first_finished.wait, 0.1)
+    partial_report = getattr(caught.value, "partial_report", None)
+
+    assert waited_for_successful_sibling is True
+    assert partial_report is not None
+    assert partial_report.expired_pending == 1
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.PENDING
+    assert [record.step for record in records] == [SettingStep.EXPIRED]
+    assert dict(coordinator.cached_status_snapshot.state_counts)[
+        CommandState.EXPIRED
+    ] == 1
+    assert dict(coordinator.cached_status_snapshot.state_counts)[
+        CommandState.PENDING
+    ] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_deadline_sweep_reconciles_all_device_commits(
+    store: TwinCommandStore,
+    deterministic_renderer: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _enqueue(store)
+    second = _enqueue(store, device_id="456")
+    records: list[SettingsAuditRecord] = []
+    coordinator = TwinCoordinator(
+        store,
+        renderer=deterministic_renderer,
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
+        clock_ms=_Clock(),
+    )
+    entered = {device_id: threading.Event() for device_id in ("123", "456")}
+    release = {device_id: threading.Event() for device_id in ("123", "456")}
+    finished = {device_id: threading.Event() for device_id in ("123", "456")}
+    original = store.sweep_device_deadlines
+
+    def controlled_sweep(*, device_id: str, now_ms: int):
+        entered[device_id].set()
+        assert release[device_id].wait(timeout=1)
+        try:
+            return original(device_id=device_id, now_ms=now_ms)
+        finally:
+            finished[device_id].set()
+
+    monkeypatch.setattr(store, "sweep_device_deadlines", controlled_sweep)
+    effective_now = max(
+        first.pending_expires_at_ms,
+        second.pending_expires_at_ms,
+    ) + 1
+    sweep_task = asyncio.create_task(
+        coordinator.sweep_deadlines(now_ms=effective_now)
+    )
+    assert await asyncio.to_thread(entered["123"].wait, 0.1)
+    assert await asyncio.to_thread(entered["456"].wait, 0.1)
+
+    sweep_task.cancel()
+    cancellation_turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(cancellation_turn.set)
+    await cancellation_turn.wait()
+    cancellation_waited_for_workers = not sweep_task.done()
+    release["456"].set()
+    assert await asyncio.to_thread(finished["456"].wait, 0.1)
+    release["123"].set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await sweep_task
+    assert await asyncio.to_thread(finished["123"].wait, 0.1)
+
+    assert cancellation_waited_for_workers is True
+    assert store.read_command(first.command_id).state is CommandState.EXPIRED
+    assert store.read_command(second.command_id).state is CommandState.EXPIRED
+    transition_ids = [
+        record.transition_id
+        for record in records
+        if record.transition_id is not None
+    ]
+    assert len(transition_ids) == len(records)
+    assert transition_ids == sorted(transition_ids)
+    assert [record.step for record in records] == [
+        SettingStep.EXPIRED,
+        SettingStep.EXPIRED,
+    ]
+    assert dict(coordinator.cached_status_snapshot.state_counts)[
+        CommandState.EXPIRED
+    ] == 2
+    assert dict(coordinator.cached_status_snapshot.state_counts)[
+        CommandState.PENDING
+    ] == 0
 
 
 @pytest.mark.asyncio
@@ -1596,7 +2705,9 @@ async def test_coordinator_publishes_only_committed_delivery_snapshots(
     coordinator = TwinCoordinator(
         store,
         renderer=deterministic_renderer,
-        audit_publisher=SettingsAuditPublisher(records.append),
+        audit_publisher=SettingsAuditPublisher(
+            records.append, acceptance_ledger=store
+        ),
         clock_ms=_Clock(),
     )
     writer = ScriptedLocalSettingWriter(store)
