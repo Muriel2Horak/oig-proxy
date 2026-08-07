@@ -1,4 +1,4 @@
-"""Device twin compatibility and durable local-setting interfaces."""
+"""Durable local-setting interfaces."""
 
 from .handler import TwinControlHandler
 from .state import (
@@ -20,8 +20,6 @@ from .state import (
     StoreStatus,
     TERMINAL_STATES,
     TwinCommand,
-    TwinQueue,
-    TwinSetting,
 )
 from .store import (
     CorruptStoreError,
@@ -60,8 +58,6 @@ __all__ = [
     "TwinCommand",
     "TwinCommandStore",
     "TwinControlHandler",
-    "TwinQueue",
-    "TwinSetting",
     "TwinStoreError",
     "UnsupportedSchemaError",
 ]

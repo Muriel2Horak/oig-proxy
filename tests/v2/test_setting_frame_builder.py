@@ -8,7 +8,6 @@ import pytest
 
 
 frames = importlib.import_module("protocol.frames")
-TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
 
 
 class _HostileReplaceText(str):
@@ -198,11 +197,3 @@ def test_xml_text_helpers_match_xml_1_0_and_escape_contract() -> None:
     assert frames.is_xml_1_0_text("\t\n\r \U00010000") is True
     assert frames.is_xml_1_0_text("\x00") is False
     assert frames.escape_xml_text('A&B<"\'') == "A&amp;B&lt;&quot;&#x27;"
-
-
-def test_next_msg_id_continues_after_observed_cloud_id_above_14m() -> None:
-    """next_msg_id continues sequentially from the highest observed cloud msg_id."""
-    delivery = TwinDelivery(twin_queue=object(), mqtt=object())
-    delivery.observe_msg_id(14416650)
-
-    assert delivery.next_msg_id() == 14416651

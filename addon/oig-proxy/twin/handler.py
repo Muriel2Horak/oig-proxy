@@ -78,6 +78,11 @@ class TwinControlHandler:  # pylint: disable=too-many-instance-attributes
         self._tasks: set[asyncio.Task[None]] = set()
         self.store_failure_count = 0
 
+    @property
+    def device_id(self) -> str:
+        """Return the immutable exact device bound to both subscriptions."""
+        return self._device_id
+
     async def start(self) -> bool:
         """Register only exact bound-device topics, with rollback on failure."""
         if self._subscribed:

@@ -1,1364 +1,205 @@
-"""
-Testy pro proxy/server.py — ProxyServer (TCP transparent proxy).
-"""
+"""Unit tests for the sole semantic ProxyServer runtime path."""
 from __future__ import annotations
-
-# pyright: reportMissingImports=false
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# sys.path nastaven v conftest.py
-from proxy.server import ProxyServer
-from config import Config
 from protocol.frame import build_frame
+from proxy.server import ProxyServer
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_config(**overrides) -> Config:
-    """Vrátí Config s přepsanými hodnotami pro testy."""
-    cfg = Config.__new__(Config)
-    cfg.proxy_host = "127.0.0.1"
-    cfg.proxy_port = 0  # OS přidělí volný port
-    cfg.cloud_host = "127.0.0.1"
-    cfg.cloud_port = 9999
-    cfg.cloud_connect_timeout = 1.0
-    cfg.cloud_ack_timeout = 5.0
-    cfg.mqtt_host = "127.0.0.1"
-    cfg.mqtt_port = 1883
-    cfg.mqtt_username = ""
-    cfg.mqtt_password = ""
-    cfg.mqtt_namespace = "oig_local"
-    cfg.mqtt_qos = 1
-    cfg.mqtt_state_retain = True
-    cfg.log_level = "DEBUG"
-    cfg.max_concurrent_connections = 100
-    cfg.dns_upstream = "8.8.8.8"
-    for k, v in overrides.items():
-        setattr(cfg, k, v)
-    return cfg
+def _frame(inner: str) -> bytes:
+    return build_frame(inner).encode("utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Spuštění a zastavení serveru
-# ---------------------------------------------------------------------------
-
-@pytest.mark.enable_socket
 @pytest.mark.asyncio
-async def test_server_starts_and_listens():
-    """Server se spustí a naslouchá na zvoleném portu."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-    await server.start()
-    try:
-        assert server._server is not None
-        assert server._server.sockets
-        addr = server._server.sockets[0].getsockname()
-        assert addr[0] == "127.0.0.1"
-        assert addr[1] > 0  # OS přidělil port
-    finally:
+async def test_server_starts_and_stops_listener(make_config) -> None:
+    config = make_config(proxy_host="127.0.0.1", proxy_port=0)
+    server = ProxyServer(config)
+    listener = MagicMock()
+    socket = MagicMock()
+    socket.getsockname.return_value = ("127.0.0.1", 5710)
+    listener.sockets = [socket]
+    listener.wait_closed = AsyncMock()
+
+    with patch("proxy.server.resolve_a_record", return_value="127.0.0.1"), patch(
+        "proxy.server.asyncio.start_server",
+        new=AsyncMock(return_value=listener),
+    ) as start_server:
+        await server.start()
         await server.stop()
 
-
-@pytest.mark.enable_socket
-@pytest.mark.asyncio
-async def test_server_stop_clears_state():
-    """Po stop() je _server None."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-    await server.start()
-    await server.stop()
+    start_server.assert_awaited_once_with(
+        server._handle_box_connection,
+        "127.0.0.1",
+        0,
+    )
+    listener.close.assert_called_once_with()
+    listener.wait_closed.assert_awaited_once_with()
     assert server._server is None
 
 
-@pytest.mark.enable_socket
 @pytest.mark.asyncio
-async def test_serve_forever_calls_start_if_not_started():
-    """serve_forever() zavolá start() pokud _server je None."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
+async def test_stop_cancels_active_connection_tasks(make_config) -> None:
+    server = ProxyServer(make_config())
+    blocker = asyncio.Event()
+    task = asyncio.create_task(blocker.wait())
+    server._active_connections.add(task)
 
-    started = []
-
-    async def fake_serve_forever(self_inner):
-        pass
-
-    original_start = server.start
-
-    async def patched_start():
-        await original_start()
-        started.append(True)
-
-    server.start = patched_start
-
-    # Patch asyncio.Server.serve_forever, aby se ihned ukončila
-    with patch.object(asyncio.Server, "serve_forever", new=fake_serve_forever):
-        await server.serve_forever()
-
-    assert started, "start() nebylo zavoláno"
     await server.stop()
 
-
-# ---------------------------------------------------------------------------
-# Callback on_frame
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_on_frame_callback_called_for_valid_frame():
-    """Callback on_frame je zavolán pro validní XML frame."""
-    received = []
-
-    async def callback(parsed: dict) -> None:
-        received.append(parsed)
-
-    cfg = make_config()
-    server = ProxyServer(cfg, on_frame=callback)
-
-    # Sestavíme minimální XML frame s CRC
-    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device><P>100</P>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    await server._process_frame(frame_bytes)
-    assert len(received) == 1
-    assert received[0]["_table"] == "tbl_invertor"
-    assert received[0]["_device_id"] == "12345"
-
-
-@pytest.mark.asyncio
-async def test_on_frame_skips_generic_setting_transport_frames() -> None:
-    received = []
-
-    async def callback(parsed: dict) -> None:
-        received.append(parsed)
-
-    cfg = make_config()
-    server = ProxyServer(cfg, on_frame=callback)
-
-    xml = (
-        "<TblName>tbl_invertor_prms</TblName>"
-        "<ID_Device>12345</ID_Device>"
-        "<ID>13809469</ID>"
-        "<NewValue>1</NewValue>"
-        "<Confirm>New</Confirm>"
-        "<TblItem>MODE</TblItem>"
-        "<ID_Server>9</ID_Server>"
-        "<mytimediff>0</mytimediff>"
-        "<TSec>2026-03-17 07:03:04</TSec>"
-    )
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    await server._process_frame(frame_bytes)
-
-    assert received == []
-
-
-@pytest.mark.asyncio
-async def test_on_frame_skips_ack_transport_frames_even_with_table_and_device() -> None:
-    received = []
-
-    async def callback(parsed: dict) -> None:
-        received.append(parsed)
-
-    cfg = make_config()
-    server = ProxyServer(cfg, on_frame=callback)
-
-    xml = (
-        "<Result>ACK</Result>"
-        "<TblName>tbl_actual</TblName>"
-        "<ID_Device>12345</ID_Device>"
-        "<Rdt>2025-12-07 20:46:52</Rdt>"
-        "<Tmr>100</Tmr>"
-    )
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    await server._process_frame(frame_bytes)
-
-    assert received == []
-
-
-@pytest.mark.asyncio
-async def test_on_frame_keeps_isnew_table_payload_with_real_sensor_keys() -> None:
-    received = []
-
-    async def callback(parsed: dict) -> None:
-        received.append(parsed)
-
-    cfg = make_config()
-    server = ProxyServer(cfg, on_frame=callback)
-
-    xml = "<TblName>IsNewFW</TblName><ID_Device>12345</ID_Device><BAT_C>91</BAT_C>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    await server._process_frame(frame_bytes)
-
-    assert len(received) == 1
-    assert received[0]["BAT_C"] == 91
-
-
-@pytest.mark.asyncio
-async def test_on_frame_not_called_when_no_callback():
-    """Bez on_frame callback se _process_frame tiše ignoruje."""
-    cfg = make_config()
-    server = ProxyServer(cfg, on_frame=None)
-
-    xml = "<TblName>t</TblName><ID_Device>1</ID_Device>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    # Nesmí vyhodit výjimku
-    await server._process_frame(frame_bytes)
-
-
-@pytest.mark.asyncio
-async def test_on_frame_bad_bytes_no_crash():
-    """Garbage bytes v _process_frame nevyhodí výjimku."""
-    received = []
-
-    async def callback(parsed: dict) -> None:
-        received.append(parsed)
-
-    cfg = make_config()
-    server = ProxyServer(cfg, on_frame=callback)
-
-    await server._process_frame(b"\x00\x01\x02garbage\xff")
-    # callback nebyl zavolán (neplatný XML)
-    assert received == []
-
-
-@pytest.mark.asyncio
-async def test_frames_received_increments_on_process_frame():
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device><P>100</P>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    await server._process_frame(frame_bytes)
-
-    assert server.frames_received == 1
-
-
-# ---------------------------------------------------------------------------
-# Pipe Box→Cloud: forward + parse
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_pipe_box_to_cloud_forwards_data():
-    """_pipe_box_to_cloud přeposílá surové bajty do cloud_writer."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    sent_data = []
-
-    # Mock StreamReader s jedním chunkem dat a poté EOF
-    box_reader = MagicMock(spec=asyncio.StreamReader)
-    raw_chunk = b"hello cloud"
-    box_reader.read = AsyncMock(side_effect=[raw_chunk, b""])
-
-    # Mock cloud_writer
-    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
-    cloud_writer.write = MagicMock(side_effect=lambda d: sent_data.append(d))
-    cloud_writer.drain = AsyncMock()
-
-    await server._pipe_box_to_cloud(box_reader, cloud_writer)
-
-    assert b"hello cloud" in sent_data
-
-
-@pytest.mark.asyncio
-async def test_pipe_box_to_cloud_stops_on_empty_read():
-    """_pipe_box_to_cloud ukončí smyčku při prázdném čtení (EOF)."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    box_reader = MagicMock(spec=asyncio.StreamReader)
-    box_reader.read = AsyncMock(return_value=b"")
-
-    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
-    cloud_writer.write = MagicMock()
-    cloud_writer.drain = AsyncMock()
-
-    # Nesmí viset — musí skončit
-    await asyncio.wait_for(
-        server._pipe_box_to_cloud(box_reader, cloud_writer),
-        timeout=1.0
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pipe Cloud→Box: forward
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_pipe_cloud_to_box_forwards_data():
-    """_pipe_cloud_to_box přeposílá data od cloudu do box_writer."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    sent_data = []
-
-    cloud_reader = MagicMock(spec=asyncio.StreamReader)
-    cloud_reader.read = AsyncMock(side_effect=[b"cloud response", b""])
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.write = MagicMock(side_effect=lambda d: sent_data.append(d))
-    box_writer.drain = AsyncMock()
-
-    await server._pipe_cloud_to_box(cloud_reader, box_writer)
-
-    assert b"cloud response" in sent_data
-
-
-@pytest.mark.asyncio
-async def test_pipe_cloud_to_box_processes_parsed_frames():
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    frame = build_frame(
-        "<TblName>tbl_boiler_prms</TblName><ID_Device>2206237016</ID_Device><ISON>1</ISON>"
-    ).encode("utf-8")
-    cloud_reader = MagicMock(spec=asyncio.StreamReader)
-    cloud_reader.read = AsyncMock(side_effect=[frame, b""])
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.write = MagicMock()
-    box_writer.drain = AsyncMock()
-
-    server._handle_twin_frames = AsyncMock()
-    server._process_frame = AsyncMock()
-
-    await server._pipe_cloud_to_box(cloud_reader, box_writer)
-
-    server._handle_twin_frames.assert_called_once()
-    server._process_frame.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_handle_twin_frames_publishes_confirmed_tbl_events_value() -> None:
-    cfg = make_config()
-    server = ProxyServer(cfg, on_confirmed_setting=AsyncMock(), twin_delivery=MagicMock())
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-
-    ack_frame = build_frame(
-        "<TblName>tbl_events</TblName>"
-        "<ID_Device>12345</ID_Device>"
-        "<Type>Setting</Type>"
-        "<Content>Remotely : tbl_box_prms / MODE: [3]->[0]</Content>"
-    ).encode("utf-8")
-
-    await server._handle_twin_frames(ack_frame, box_writer)
-
-    server.on_confirmed_setting.assert_awaited_once_with("12345", "tbl_box_prms", "MODE", "0")
-
-
-@pytest.mark.asyncio
-async def test_pipe_cloud_to_box_stops_on_empty_read():
-    """_pipe_cloud_to_box ukončí smyčku při EOF."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    cloud_reader = MagicMock(spec=asyncio.StreamReader)
-    cloud_reader.read = AsyncMock(return_value=b"")
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.write = MagicMock()
-    box_writer.drain = AsyncMock()
-
-    await asyncio.wait_for(
-        server._pipe_cloud_to_box(cloud_reader, box_writer),
-        timeout=1.0
-    )
-
-
-@pytest.mark.asyncio
-async def test_handle_twin_frames_delivers_on_isnewset_only():
-    cfg = make_config()
-    server = ProxyServer(cfg)
-    server.twin_delivery = MagicMock()
-    server._deliver_pending_for_isnewset = AsyncMock()
-
-    frame = build_frame(
-        "<TblName>IsNewSet</TblName><ID_Device>2206237016</ID_Device><DT>1</DT>"
-    ).encode("utf-8")
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-
-    await server._handle_twin_frames(frame, box_writer)
-
-    server._deliver_pending_for_isnewset.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_handle_twin_frames_delivers_when_result_isnewset_overrides_tbl_actual():
-    cfg = make_config()
-    server = ProxyServer(cfg)
-    server.twin_delivery = MagicMock()
-    server._deliver_pending_for_isnewset = AsyncMock()
-
-    frame = build_frame(
-        "<Result>IsNewSet</Result><ID_Device>2206237016</ID_Device><TblName>tbl_actual</TblName><DT>1</DT>"
-    ).encode("utf-8")
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-
-    await server._handle_twin_frames(frame, box_writer)
-
-    server._deliver_pending_for_isnewset.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_handle_twin_frames_skips_delivery_for_other_tables():
-    cfg = make_config()
-    server = ProxyServer(cfg)
-    server.twin_delivery = MagicMock()
-    server._deliver_pending_for_isnewset = AsyncMock()
-
-    frame = build_frame(
-        "<TblName>tbl_dc_in</TblName><ID_Device>2206237016</ID_Device><P1>10</P1>"
-    ).encode("utf-8")
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-
-    await server._handle_twin_frames(frame, box_writer)
-
-    server._deliver_pending_for_isnewset.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_handle_twin_frames_skips_delivery_for_tbl_actual():
-    cfg = make_config()
-    server = ProxyServer(cfg)
-    server.twin_delivery = MagicMock()
-    server._deliver_pending_for_isnewset = AsyncMock()
-
-    frame = build_frame(
-        "<TblName>tbl_actual</TblName><ID_Device>2206237016</ID_Device><P1>10</P1>"
-    ).encode("utf-8")
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-
-    await server._handle_twin_frames(frame, box_writer)
-
-    server._deliver_pending_for_isnewset.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Připojení k cloudu selhá
-# ---------------------------------------------------------------------------
-
-@pytest.mark.enable_socket
-@pytest.mark.asyncio
-async def test_box_connection_closes_on_cloud_failure():
-    """Pokud cloud není dostupný, box_writer se zavře."""
-    cfg = make_config(cloud_host="127.0.0.1", cloud_port=1, cloud_connect_timeout=0.1)
-    server = ProxyServer(cfg)
-    await server.start()
-
-    try:
-        port = server._server.sockets[0].getsockname()[1]
-
-        # Připojíme se jako Box
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        writer.write(b"hello")
-        await writer.drain()
-
-        # Python 3.14 zde na lokálním reset-close path vrací místo EOF ConnectionResetError.
-        try:
-            data = await asyncio.wait_for(reader.read(100), timeout=2.0)
-        except ConnectionResetError:
-            data = b""
-        assert data == b""
-        writer.close()
-        await writer.wait_closed()
-    finally:
-        await server.stop()
-
-
-@pytest.mark.enable_socket
-@pytest.mark.asyncio
-async def test_box_connected_state_reflects_connection():
-    async def cloud_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        try:
-            await reader.read(4096)
-        except Exception:
-            pass
-        finally:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-
-    cloud_server = await asyncio.start_server(cloud_handler, "127.0.0.1", 0)
-    cloud_port = cloud_server.sockets[0].getsockname()[1]
-
-    cfg = make_config(cloud_host="127.0.0.1", cloud_port=cloud_port, cloud_connect_timeout=1.0)
-    server = ProxyServer(cfg)
-    await server.start()
-    proxy_port = server._server.sockets[0].getsockname()[1]
-
-    async def wait_for(predicate, timeout: float = 2.0) -> None:
-        async def _inner() -> None:
-            while not predicate():
-                await asyncio.sleep(0.01)
-        await asyncio.wait_for(_inner(), timeout=timeout)
-
-    try:
-        _, box_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
-        await wait_for(server.is_box_connected)
-        assert server.is_box_connected() is True
-        assert server.box_peer is not None
-
-        box_writer.close()
-        await box_writer.wait_closed()
-        await wait_for(lambda: not server.is_box_connected())
-        assert server.is_box_connected() is False
-        assert server.box_peer is None
-    finally:
-        await server.stop()
-        cloud_server.close()
-        await cloud_server.wait_closed()
-
-
-@pytest.mark.enable_socket
-@pytest.mark.asyncio
-async def test_cloud_connects_counter_increments():
-    async def cloud_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        try:
-            await reader.read(4096)
-        except Exception:
-            pass
-        finally:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-
-    cloud_server = await asyncio.start_server(cloud_handler, "127.0.0.1", 0)
-    cloud_port = cloud_server.sockets[0].getsockname()[1]
-
-    cfg = make_config(cloud_host="127.0.0.1", cloud_port=cloud_port, cloud_connect_timeout=1.0)
-    server = ProxyServer(cfg)
-    await server.start()
-    proxy_port = server._server.sockets[0].getsockname()[1]
-
-    async def wait_for(predicate, timeout: float = 2.0) -> None:
-        async def _inner() -> None:
-            while not predicate():
-                await asyncio.sleep(0.01)
-        await asyncio.wait_for(_inner(), timeout=timeout)
-
-    try:
-        _, box_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
-        await wait_for(lambda: server.cloud_connects == 1)
-        assert server.cloud_connects == 1
-
-        box_writer.close()
-        await box_writer.wait_closed()
-        await wait_for(lambda: server.cloud_disconnects == 1)
-    finally:
-        await server.stop()
-        cloud_server.close()
-        await cloud_server.wait_closed()
-
-
-@pytest.mark.asyncio
-async def test_transactional_coordinator_routes_live_connection_through_context() -> None:
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_coordinator=MagicMock())
-    box_reader = MagicMock(spec=asyncio.StreamReader)
-    cloud_reader = MagicMock(spec=asyncio.StreamReader)
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.get_extra_info.return_value = ("127.0.0.1", 4321)
-    box_writer.is_closing.return_value = False
-    box_writer.wait_closed = AsyncMock()
-    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
-    cloud_writer.is_closing.return_value = False
-    cloud_writer.wait_closed = AsyncMock()
-
-    context = MagicMock()
-    server._create_online_context = MagicMock(return_value=context)
-    server.run_connection_context = AsyncMock()
-
-    with patch(
-        "proxy.server.asyncio.open_connection",
-        new=AsyncMock(return_value=(cloud_reader, cloud_writer)),
-    ):
-        await server._handle_box_connection(box_reader, box_writer)
-
-    server._create_online_context.assert_called_once()
-    server.run_connection_context.assert_awaited_once_with(
-        context,
-        box_reader,
-        cloud_reader,
-    )
-    box_writer.close.assert_called_once()
-    cloud_writer.close.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Telemetry integration — record_request / record_response / record_frame_direction
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_telemetry_record_request_called_on_box_to_cloud():
-    """record_request je volán pro každý frame přijatý od Boxu."""
-    from unittest.mock import MagicMock
-    from protocol.frame import build_frame
-    from protocol.parser import parse_xml_frame
-
-    cfg = make_config()
-    mock_telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
-
-    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device><P>100</P>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-    frame_text = frame_bytes.decode("utf-8", errors="replace")
-    parsed_frame = parse_xml_frame(frame_text)
-    table_name = server._effective_table_name(parsed_frame, frame_text)
-    conn_id = 42
-
-    # Simulujeme volání jako v _pipe_box_to_cloud po parsování frame
-    server.telemetry_collector.record_request(table_name or None, conn_id)
-    server.telemetry_collector.record_frame_direction("box_to_proxy")
-
-    mock_telemetry.record_request.assert_called_once_with("tbl_invertor", 42)
-    mock_telemetry.record_frame_direction.assert_called_once_with("box_to_proxy")
-
-
-@pytest.mark.asyncio
-async def test_telemetry_record_response_called_on_cloud_to_box():
-    """record_response je volán pro každý frame přijatý z cloudu."""
-    from unittest.mock import MagicMock
-    from protocol.frame import build_frame
-
-    cfg = make_config()
-    mock_telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
-
-    xml = "<Result>ACK</Result><ToDo>GetAll</ToDo><ID_Device>12345</ID_Device>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-    frame_text = frame_bytes.decode("utf-8", errors="replace")
-    conn_id = 99
-
-    # Simulujeme volání jako v _pipe_cloud_to_box po parsování frame
-    server.telemetry_collector.record_response(frame_text, source="cloud", conn_id=conn_id)
-    server.telemetry_collector.record_frame_direction("cloud_to_proxy")
-
-    mock_telemetry.record_response.assert_called_once_with(frame_text, source="cloud", conn_id=99)
-    mock_telemetry.record_frame_direction.assert_called_once_with("cloud_to_proxy")
-
-
-@pytest.mark.asyncio
-async def test_telemetry_not_called_when_collector_is_none():
-    """Bez telemetry_collector _process_frame necrashuje."""
-    cfg = make_config()
-    server = ProxyServer(cfg, telemetry_collector=None)
-
-    xml = "<TblName>tbl_invertor</TblName><ID_Device>12345</ID_Device>"
-    frame_bytes = build_frame(xml).encode("utf-8")
-
-    await server._process_frame(frame_bytes)
-    assert server.telemetry_collector is None
-
-
-def test_proxy_server_accepts_telemetry_collector_param():
-    """ProxyServer přijímá telemetry_collector jako parametr."""
-    from unittest.mock import MagicMock
-
-    cfg = make_config()
-    mock_telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
-
-    assert server.telemetry_collector is mock_telemetry
-
-
-def test_proxy_server_telemetry_collector_defaults_to_none():
-    """telemetry_collector je None pokud není předán."""
-    cfg = make_config()
-    server = ProxyServer(cfg)
-
-    assert server.telemetry_collector is None
-
-
-def test_record_telemetry_connection_end_records_box_and_cloud_sessions():
-    cfg = make_config()
-    mock_telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
-
-    server._record_telemetry_connection_end(
-        box_connected_since_epoch=100.0,
-        box_reason="eof",
-        box_peer="1.2.3.4:5678",
-        cloud_connected_since_epoch=120.0,
-        cloud_reason="eof",
-    )
-
-    mock_telemetry.record_box_session_end.assert_called_once_with(
-        connected_since_epoch=100.0,
-        reason="eof",
-        peer="1.2.3.4:5678",
-    )
-    mock_telemetry.record_cloud_session_end.assert_called_once_with(
-        connected_since_epoch=120.0,
-        reason="eof",
-    )
-
-
-def test_record_cloud_connect_failure_records_timeout_and_offline_event():
-    cfg = make_config()
-    mock_telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
-
-    server._record_cloud_connect_failure(
-        conn_id=77,
-        failure_type="timeout",
-        failure_detail="timed out",
-        peer="1.2.3.4:5678",
-        will_go_offline=True,
-    )
-
-    mock_telemetry.record_timeout.assert_called_once_with(conn_id=77)
-    mock_telemetry.record_error_context.assert_called_once()
-    mock_telemetry.record_offline_event.assert_called_once_with(
-        reason="cloud_connect_timeout",
-        local_ack=True,
-        mode="online",
-    )
-
-
-def test_record_cloud_connect_failure_records_error_response_without_offline():
-    cfg = make_config()
-    mock_telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=mock_telemetry)
-
-    server._record_cloud_connect_failure(
-        conn_id=88,
-        failure_type="oserror",
-        failure_detail="connection refused",
-        peer="1.2.3.4:5678",
-        will_go_offline=False,
-    )
-
-    mock_telemetry.record_response.assert_called_once_with("", source="error", conn_id=88)
-    mock_telemetry.record_error_context.assert_called_once()
-    mock_telemetry.record_offline_event.assert_not_called()
-
-
-def _make_collector():
-    from telemetry.settings_audit import record_to_dict
-    collector = MagicMock()
-    collector.settings_audit = []
-    collector.record_setting_audit_step = lambda r: collector.settings_audit.append(record_to_dict(r))
-    return collector
-
-
-@pytest.mark.asyncio
-async def test_setting_audit_success_roundtrip() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-    from telemetry.settings_audit import SettingStep, SettingResult
-
-    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 1)
-    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    assert len(pending) == 1
-    audit_id = pending[0].audit_id
-
-    delivery.record_injected_box(pending[0], "dev_1", session_id="sess_1")
-
-    ack_frame = build_frame(
-        "<Result>ACK</Result>"
-        "<TblName>tbl_box_prms</TblName>"
-        "<ToDo>MODE</ToDo>"
-        "<ID_Device>dev_1</ID_Device>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    tbl_events_frame = build_frame(
-        "<TblName>tbl_events</TblName>"
-        "<ID_Device>dev_1</ID_Device>"
-        "<Type>Setting</Type>"
-        "<Content>Remotely : tbl_box_prms / MODE: [3]->[1]</Content>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    steps = [r["step"] for r in collector.settings_audit]
-    assert SettingStep.DELIVER_SELECTED.value in steps
-    assert SettingStep.INJECTED_BOX.value in steps
-    assert SettingStep.ACK_BOX_OBSERVED.value in steps
-    assert SettingStep.ACK_TBL_EVENTS.value in steps
-    for step in (
-        SettingStep.DELIVER_SELECTED.value,
-        SettingStep.INJECTED_BOX.value,
-        SettingStep.ACK_BOX_OBSERVED.value,
-        SettingStep.ACK_TBL_EVENTS.value,
-    ):
-        assert [r for r in collector.settings_audit if r["step"] == step][0]["raw_text"] == raw_text
-
-    terminal = [r for r in collector.settings_audit if r["result"] == SettingResult.CONFIRMED.value]
-    assert len(terminal) == 1
-    assert terminal[0]["step"] == SettingStep.ACK_TBL_EVENTS.value
-    assert terminal[0]["audit_id"] == audit_id
-    assert terminal[0]["confirmed_value_text"] == "1"
-
-
-@pytest.mark.asyncio
-async def test_duplicate_ack_audit_no_duplicate_terminal() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-    from telemetry.settings_audit import SettingStep, SettingResult
-
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 1)
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    assert len(pending) == 1
-
-    tbl_events_frame = build_frame(
-        "<TblName>tbl_events</TblName>"
-        "<ID_Device>dev_1</ID_Device>"
-        "<Type>Setting</Type>"
-        "<Content>Remotely : tbl_box_prms / MODE: [3]->[1]</Content>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    terminal = [r for r in collector.settings_audit if r["result"] == SettingResult.CONFIRMED.value]
-    assert len(terminal) == 1
-
-    ack_count = [r["step"] for r in collector.settings_audit].count(SettingStep.ACK_TBL_EVENTS.value)
-    assert ack_count == 1
-
-
-@pytest.mark.asyncio
-async def test_mixed_ack_precedence() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-    from telemetry.settings_audit import SettingStep, SettingResult
-
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 1)
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    assert len(pending) == 1
-
-    ack_frame = build_frame(
-        "<Result>ACK</Result>"
-        "<TblName>tbl_box_prms</TblName>"
-        "<ToDo>MODE</ToDo>"
-        "<ID_Device>dev_1</ID_Device>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    tbl_events_frame = build_frame(
-        "<TblName>tbl_events</TblName>"
-        "<ID_Device>dev_1</ID_Device>"
-        "<Type>Setting</Type>"
-        "<Content>Remotely : tbl_box_prms / MODE: [3]->[1]</Content>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    steps = collector.settings_audit
-    ack_observed = [r for r in steps if r["step"] == SettingStep.ACK_BOX_OBSERVED.value]
-    tbl_confirmed = [r for r in steps if r["step"] == SettingStep.ACK_TBL_EVENTS.value]
-
-    assert len(ack_observed) == 1
-    assert ack_observed[0]["result"] == SettingResult.PENDING.value
-
-    assert len(tbl_confirmed) == 1
-    assert tbl_confirmed[0]["result"] == SettingResult.CONFIRMED.value
-
-    terminal = [r for r in steps if r["result"] == SettingResult.CONFIRMED.value]
-    assert len(terminal) == 1
-
-
-@pytest.mark.asyncio
-async def test_non_terminal_box_ack_does_not_publish_confirmed_setting() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 1)
-    delivery = TwinDelivery(queue, MagicMock())
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-    server._publish_confirmed_setting = AsyncMock()  # type: ignore[method-assign]
-
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    assert len(pending) == 1
-
-    ack_frame = build_frame(
-        "<Result>ACK</Result>"
-        "<TblName>tbl_box_prms</TblName>"
-        "<ToDo>MODE</ToDo>"
-        "<ID_Device>dev_1</ID_Device>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    server._publish_confirmed_setting.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_setting_audit_ack_reason_setting_reuses_stored_raw_text() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-    from telemetry.settings_audit import SettingResult, SettingStep
-
-    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 1)
-    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    assert len(pending) == 1
-
-    ack_frame = build_frame(
-        "<Result>ACK</Result>"
-        "<Reason>Setting</Reason>"
-        "<ID_Device>dev_1</ID_Device>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    ack_reason = [
-        record for record in collector.settings_audit if record["step"] == SettingStep.ACK_REASON_SETTING.value
-    ]
-    assert len(ack_reason) == 1
-    assert ack_reason[0]["result"] == SettingResult.CONFIRMED.value
-    assert ack_reason[0]["raw_text"] == raw_text
-
-
-@pytest.mark.asyncio
-async def test_pipe_cloud_to_box_tracks_cloud_setting_for_audit_lifecycle() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-    from telemetry.settings_audit import SettingResult, SettingStep
-
-    collector = _make_collector()
-    delivery = TwinDelivery(TwinQueue(), MagicMock(), telemetry_collector=collector)
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-
-    cloud_setting = build_frame(
-        "<TblName>tbl_box_prms</TblName>"
-        "<ID_Device>12345</ID_Device>"
-        "<ID>13809469</ID>"
-        "<ID_Set>844979473</ID_Set>"
-        "<TblItem>MODE</TblItem>"
-        "<NewValue>1</NewValue>"
-        "<Confirm>New</Confirm>"
-        "<Reason>Setting</Reason>"
-    ).encode("utf-8")
-    cloud_reader = asyncio.StreamReader()
-    cloud_reader.feed_data(cloud_setting)
-    cloud_reader.feed_eof()
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.write = MagicMock()
-    box_writer.drain = AsyncMock()
-
-    await server._pipe_cloud_to_box(cloud_reader, box_writer)
-
-    inflight = delivery.inflight_setting()
-    assert inflight is not None
-    setting, device_id = inflight
-    assert device_id == "12345"
-    assert setting.audit_id
-    assert setting.raw_text == cloud_setting.decode("utf-8", errors="replace")
-
-    ack_frame = build_frame(
-        "<Result>ACK</Result>"
-        "<Reason>Setting</Reason>"
-        "<ID_Device>12345</ID_Device>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(ack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    tbl_events_frame = build_frame(
-        "<TblName>tbl_events</TblName>"
-        "<ID_Device>12345</ID_Device>"
-        "<Type>Setting</Type>"
-        "<Content>Remotely : tbl_box_prms / MODE: [0]->[1]</Content>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(tbl_events_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    audit_records = [record for record in collector.settings_audit if record["audit_id"] == setting.audit_id]
-    assert [record["step"] for record in audit_records] == [
-        SettingStep.INCOMING.value,
-        SettingStep.ACK_REASON_SETTING.value,
-        SettingStep.ACK_TBL_EVENTS.value,
-    ]
-    assert audit_records[0]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
-    assert audit_records[1]["result"] == SettingResult.PENDING.value
-    assert audit_records[1]["raw_text"] == cloud_setting.decode("utf-8", errors="replace")
-    assert audit_records[2]["result"] == SettingResult.CONFIRMED.value
-    assert delivery.inflight_setting() is None
-    assert delivery.is_cloud_inflight() is False
-
-
-@pytest.mark.asyncio
-async def test_setting_audit_nack_reuses_stored_raw_text() -> None:
-    from twin.delivery import TwinDelivery
-    from twin.state import TwinQueue
-    from telemetry.settings_audit import SettingResult, SettingStep
-
-    raw_text = "<Frame><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Frame>"
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 1)
-    queue.get("tbl_box_prms", "MODE").raw_text = raw_text
-    collector = _make_collector()
-    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector)
-    cfg = make_config()
-    server = ProxyServer(cfg, twin_delivery=delivery)
-
-    pending = await delivery.deliver_pending("dev_1", session_id="sess_1")
-    assert len(pending) == 1
-
-    nack_frame = build_frame(
-        "<Result>NACK</Result>"
-        "<TblName>tbl_box_prms</TblName>"
-        "<ToDo>MODE</ToDo>"
-        "<ID_Device>dev_1</ID_Device>"
-    ).encode("utf-8")
-    await server._handle_twin_frames(nack_frame, MagicMock(spec=asyncio.StreamWriter), session_id="sess_1")
-
-    nack_records = [record for record in collector.settings_audit if record["step"] == SettingStep.NACK.value]
-    assert len(nack_records) == 1
-    assert nack_records[0]["result"] == SettingResult.FAILED.value
-    assert nack_records[0]["raw_text"] == raw_text
-
-
-@pytest.mark.asyncio
-async def test_local_getactual_loop_disabled_does_not_write() -> None:
-    cfg = make_config(local_getactual_enabled=False, local_getactual_interval_s=10)
-    server = ProxyServer(cfg)
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.is_closing = MagicMock(
-        side_effect=AssertionError("disabled local GetActual must return before touching writer state")
-    )
-    box_writer.write = MagicMock()
-    box_writer.drain = AsyncMock()
-
-    await server._local_getactual_loop(box_writer, conn_id=123, peer="box:1")
-
-    box_writer.is_closing.assert_not_called()
-    box_writer.write.assert_not_called()
-    box_writer.drain.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_local_getactual_loop_sends_immediate_frame_and_records_direction() -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
-    telemetry = MagicMock()
-    frame_capture = MagicMock()
-    server = ProxyServer(cfg, frame_capture=frame_capture, telemetry_collector=telemetry)
-    sent: list[bytes] = []
-    sleep_calls: list[float] = []
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.is_closing.return_value = False
-    box_writer.write = MagicMock(side_effect=lambda data: sent.append(data))
-    box_writer.drain = AsyncMock()
-
-    async def fake_sleep(delay: float) -> None:
-        sleep_calls.append(delay)
-        box_writer.is_closing.return_value = True
-
-    with patch("proxy.server.asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
-        await server._local_getactual_loop(box_writer, conn_id=456, peer="box:2")
-
-    assert len(sent) == 1
-    assert b"<Result>ACK</Result>" in sent[0]
-    assert b"<ToDo>GetActual</ToDo>" in sent[0]
-    assert sleep_calls == [10]
-    frame_capture.capture.assert_called_once()
-    assert frame_capture.capture.call_args.kwargs["direction"] == "proxy_to_box"
-    telemetry.record_frame_direction.assert_called_once_with("proxy_to_box")
-
-
-@pytest.mark.asyncio
-async def test_local_getactual_loop_uses_minimum_interval() -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=3)
-    server = ProxyServer(cfg)
-    sleep_calls: list[float] = []
-
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.is_closing.return_value = False
-    box_writer.write = MagicMock()
-    box_writer.drain = AsyncMock()
-
-    async def fake_sleep(delay: float) -> None:
-        sleep_calls.append(delay)
-        box_writer.is_closing.return_value = True
-
-    with patch("proxy.server.asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
-        await server._local_getactual_loop(box_writer, conn_id=789, peer="box:3")
-
-    assert sleep_calls == [10]
-
-
-@pytest.mark.asyncio
-async def test_local_getactual_loop_stops_on_writer_error() -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
-    telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=telemetry)
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.is_closing.return_value = False
-    box_writer.write = MagicMock(side_effect=ConnectionResetError("gone"))
-    box_writer.drain = AsyncMock()
-
-    await server._local_getactual_loop(box_writer, conn_id=321, peer="box:4")
-
-    box_writer.write.assert_called_once()
-    box_writer.drain.assert_not_called()
-    telemetry.record_frame_direction.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_stop_local_getactual_task_cancels_running_task() -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
-    server = ProxyServer(cfg)
-
-    async def wait_forever() -> None:
-        await asyncio.Event().wait()
-
-    task = asyncio.create_task(wait_forever())
-
-    await server._stop_local_getactual_task(task)
-
     assert task.cancelled()
+    assert server._active_connections == {task}
 
 
 @pytest.mark.asyncio
-async def test_handle_box_connection_offline_mode_cleans_up_local_getactual_task() -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
-    telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=telemetry)
-    server.mode_manager.should_try_cloud = MagicMock(return_value=False)
-    server.mode_manager.configured_mode = "offline"
-    server.mode_manager.runtime_mode = MagicMock(value="offline")
-
-    loop_started = asyncio.Event()
-    loop_cancelled = asyncio.Event()
-
-    async def fake_local_getactual_loop(
-        writer: asyncio.StreamWriter,
-        *,
-        conn_id: int,
-        peer: str | None,
-    ) -> None:
-        assert writer is box_writer
-        assert isinstance(conn_id, int)
-        assert peer == "127.0.0.1:12345"
-        loop_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            loop_cancelled.set()
-            raise
-
-    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
-
-    async def fake_pipe_box_offline(*args, **kwargs) -> None:
-        await asyncio.wait_for(loop_started.wait(), timeout=1.0)
-
-    server._pipe_box_offline = AsyncMock(side_effect=fake_pipe_box_offline)
-
-    box_reader = MagicMock(spec=asyncio.StreamReader)
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.get_extra_info.return_value = ("127.0.0.1", 12345)
-
-    await server._handle_box_connection(box_reader, box_writer)
-
-    assert loop_started.is_set()
-    assert loop_cancelled.is_set()
-    server._pipe_box_offline.assert_awaited_once()
-    telemetry.record_offline_event.assert_called_once_with(
-        reason="configured_offline_mode",
-        local_ack=True,
-        mode="offline",
+async def test_process_frame_publishes_sensor_payload(make_config) -> None:
+    callback = AsyncMock()
+    server = ProxyServer(make_config(), on_frame=callback)
+    frame = _frame(
+        "<TblName>tbl_actual</TblName><ID_Device>DEV01</ID_Device><P>42</P>"
     )
-    assert server._active_connection_count == 0
-    assert server.is_box_connected() is False
-    assert server.box_peer is None
+
+    await server._process_frame(frame)
+
+    callback.assert_awaited_once()
+    assert callback.await_args.args[0]["P"] == 42
+    assert server.frames_received == 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("open_exc", "expected_reason"),
+    "inner",
     [
-        (asyncio.TimeoutError("cloud timeout"), "offline_fallback_timeout"),
-        (OSError("cloud down"), "offline_fallback_oserror"),
+        "<Result>ACK</Result><Reason>Setting</Reason>",
+        (
+            "<TblName>tbl_box_prms</TblName><ID_Device>DEV01</ID_Device>"
+            "<TblItem>MODE</TblItem><NewValue>2</NewValue><Confirm>New</Confirm>"
+        ),
     ],
 )
-async def test_handle_box_connection_cloud_failure_offline_fallback_manages_local_getactual_lifecycle(
-    open_exc: BaseException,
-    expected_reason: str,
+async def test_process_frame_does_not_publish_transport_evidence(
+    make_config,
+    inner,
 ) -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
-    telemetry = MagicMock()
-    server = ProxyServer(cfg, telemetry_collector=telemetry)
-    server.mode_manager.should_try_cloud = MagicMock(return_value=True)
-    server.mode_manager.is_offline = MagicMock(return_value=True)
-    server.mode_manager.runtime_mode = MagicMock(value="offline")
-    server.mode_manager.record_failure = MagicMock()
+    callback = AsyncMock()
+    server = ProxyServer(make_config(), on_frame=callback)
 
-    local_task_started = asyncio.Event()
-    local_task_cancelled = asyncio.Event()
+    await server._process_frame(_frame(inner))
 
-    async def fake_local_getactual_loop(
-        writer: asyncio.StreamWriter,
-        *,
-        conn_id: int,
-        peer: str | None,
-    ) -> None:
-        assert writer is box_writer
-        assert isinstance(conn_id, int)
-        assert peer == "127.0.0.1:34567"
-        local_task_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            local_task_cancelled.set()
-            raise
+    callback.assert_not_awaited()
 
-    local_task = None
-    original_start = server._start_local_getactual_task
-    original_stop = server._stop_local_getactual_task
-    start_local_getactual_task = MagicMock()
-    stop_local_getactual_task = AsyncMock(side_effect=original_stop)
 
-    def fake_start_local_getactual_task(
-        writer: asyncio.StreamWriter,
-        *,
-        conn_id: int,
-        peer: str | None,
-    ) -> asyncio.Task[None] | None:
-        nonlocal local_task
-        start_local_getactual_task(writer, conn_id=conn_id, peer=peer)
-        local_task = original_start(writer, conn_id=conn_id, peer=peer)
-        return local_task
+def test_constructor_has_no_legacy_delivery_or_confirmation_api(make_config) -> None:
+    with pytest.raises(TypeError):
+        ProxyServer(make_config(), twin_delivery=object())  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        ProxyServer(make_config(), on_confirmed_setting=object())  # type: ignore[call-arg]
 
-    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
 
-    async def fake_pipe_box_offline(*args, **kwargs) -> None:
-        await asyncio.wait_for(local_task_started.wait(), timeout=1.0)
-
-    server._pipe_box_offline = AsyncMock(side_effect=fake_pipe_box_offline)
-    server._start_local_getactual_task = fake_start_local_getactual_task  # type: ignore[method-assign]
-    server._stop_local_getactual_task = stop_local_getactual_task  # type: ignore[method-assign]
-
-    box_reader = MagicMock(spec=asyncio.StreamReader)
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.get_extra_info.return_value = ("127.0.0.1", 34567)
-
-    with patch("proxy.server.asyncio.open_connection", new=AsyncMock(side_effect=open_exc)):
-        await server._handle_box_connection(box_reader, box_writer)
-
-    assert local_task is not None
-    assert local_task_started.is_set()
-    assert local_task_cancelled.is_set()
-    assert local_task.done()
-    start_local_getactual_task.assert_called_once()
-    assert start_local_getactual_task.call_args.args == (box_writer,)
-    assert isinstance(start_local_getactual_task.call_args.kwargs["conn_id"], int)
-    assert start_local_getactual_task.call_args.kwargs["peer"] == "127.0.0.1:34567"
-    stop_local_getactual_task.assert_awaited_once_with(local_task)
-    server._pipe_box_offline.assert_awaited_once()
-    server.mode_manager.record_failure.assert_called_once_with(reason=str(open_exc))
-    assert server._active_connection_count == 0
-    assert server.is_box_connected() is False
-    assert server.box_peer is None
-    telemetry.record_offline_event.assert_called_once_with(
-        reason=f"cloud_connect_{'timeout' if isinstance(open_exc, asyncio.TimeoutError) else 'oserror'}",
-        local_ack=True,
-        mode="offline",
+def test_semantic_context_owns_bounded_queue_and_serialized_writer(
+    make_config,
+    dummy_writer_factory,
+) -> None:
+    server = ProxyServer(make_config())
+    context = server._create_online_context(
+        session_id="session",
+        box_writer=dummy_writer_factory(),
+        cloud_writer=dummy_writer_factory(),
+        conn_id=1,
+        peer="127.0.0.1:1",
     )
-    telemetry.record_box_session_end.assert_called_once()
-    assert telemetry.record_box_session_end.call_args.kwargs["reason"] == expected_reason
+
+    assert context.semantic_events.maxsize == 1
+    assert context.session_id == "session"
+    assert context.cloud_writer is not None
 
 
 @pytest.mark.asyncio
-async def test_handle_box_connection_online_session_cleans_up_local_getactual_task() -> None:
-    cfg = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
-    twin_delivery = MagicMock()
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
-    server.mode_manager.should_try_cloud = MagicMock(return_value=True)
-    server.mode_manager.record_success = MagicMock()
+async def test_online_connection_always_uses_semantic_context_without_coordinator(
+    make_config,
+    dummy_writer_factory,
+) -> None:
+    server = ProxyServer(make_config(proxy_mode="online"))
+    server.run_connection_context = AsyncMock()
+    cloud_reader = asyncio.StreamReader()
+    cloud_reader.feed_eof()
+    cloud_writer = dummy_writer_factory()
+    box_reader = asyncio.StreamReader()
+    box_reader.feed_eof()
+    box_writer = dummy_writer_factory()
 
-    loop_started = asyncio.Event()
-    loop_cancelled = asyncio.Event()
+    async def open_cloud(*_args, **_kwargs):
+        return cloud_reader, cloud_writer
 
-    async def fake_local_getactual_loop(
-        writer: asyncio.StreamWriter,
-        *,
-        conn_id: int,
-        peer: str | None,
-    ) -> None:
-        assert writer is box_writer
-        assert isinstance(conn_id, int)
-        assert peer == "127.0.0.1:23456"
-        loop_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            loop_cancelled.set()
-            raise
-
-    server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
-
-    async def fake_pipe_box_to_cloud(*args, **kwargs) -> None:
-        await asyncio.Event().wait()
-
-    async def fake_pipe_cloud_to_box(*args, **kwargs) -> None:
-        await asyncio.wait_for(loop_started.wait(), timeout=1.0)
-
-    server._pipe_box_to_cloud = AsyncMock(side_effect=fake_pipe_box_to_cloud)
-    server._pipe_cloud_to_box = AsyncMock(side_effect=fake_pipe_cloud_to_box)
-
-    box_reader = MagicMock(spec=asyncio.StreamReader)
-    box_writer = MagicMock(spec=asyncio.StreamWriter)
-    box_writer.get_extra_info.return_value = ("127.0.0.1", 23456)
-    box_writer.is_closing.return_value = False
-    box_writer.close = MagicMock()
-    box_writer.wait_closed = AsyncMock()
-
-    cloud_reader = MagicMock(spec=asyncio.StreamReader)
-    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
-    cloud_writer.is_closing.return_value = False
-    cloud_writer.close = MagicMock()
-    cloud_writer.wait_closed = AsyncMock()
-
-    with patch("proxy.server.asyncio.open_connection", new=AsyncMock(return_value=(cloud_reader, cloud_writer))):
+    with patch("proxy.server.asyncio.open_connection", new=open_cloud):
         await server._handle_box_connection(box_reader, box_writer)
 
-    assert loop_started.is_set()
-    assert loop_cancelled.is_set()
-    server.mode_manager.record_success.assert_called_once_with()
-    server._pipe_box_to_cloud.assert_awaited_once()
-    server._pipe_cloud_to_box.assert_awaited_once()
-    twin_delivery.clear_session.assert_called_once()
-    box_writer.close.assert_called_once()
-    cloud_writer.close.assert_called_once()
-    assert server._active_connection_count == 0
-    assert server.is_box_connected() is False
+    server.run_connection_context.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_offline_connection_always_uses_semantic_context_without_coordinator(
+    make_config,
+    dummy_writer_factory,
+) -> None:
+    server = ProxyServer(make_config(proxy_mode="offline"))
+    server.run_offline_context = AsyncMock()
+    box_reader = asyncio.StreamReader()
+    box_reader.feed_eof()
+    box_writer = dummy_writer_factory()
+
+    await server._handle_box_connection(box_reader, box_writer)
+
+    server.run_offline_context.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_semantic_getactual_uses_serialized_writer(make_config) -> None:
+    config = make_config(local_getactual_enabled=True, local_getactual_interval_s=10)
+    server = ProxyServer(config)
+    context = MagicMock()
+    context.close_requested.is_set.side_effect = [False, True]
+    context.box_writer.write_frame = AsyncMock(
+        return_value=MagicMock(outcome=server_module_box_outcome())
+    )
+
+    with patch("proxy.server.asyncio.sleep", new=AsyncMock()):
+        await server._semantic_getactual_loop(context)
+
+    context.box_writer.write_frame.assert_awaited_once()
+
+
+def server_module_box_outcome():
+    """Import lazily to keep the assertion tied to the public writer enum."""
+    from proxy.writer import BoxWriteOutcome
+
+    return BoxWriteOutcome.DRAINED
+
+
+def test_connection_state_accessors_are_passive(make_config) -> None:
+    server = ProxyServer(make_config())
+    server._box_connected = True
+    server._cloud_connected = True
+
+    assert server.is_box_connected() is True
+    assert server.is_cloud_connected() is True
+    assert server.uptime_s() >= 0
+
+
+def test_telemetry_connection_end_records_both_sessions(make_config) -> None:
+    collector = MagicMock()
+    server = ProxyServer(make_config(), telemetry_collector=collector)
+
+    server._record_telemetry_connection_end(
+        box_connected_since_epoch=1.0,
+        box_reason="eof",
+        box_peer="127.0.0.1:1",
+        cloud_connected_since_epoch=2.0,
+        cloud_reason="closed",
+    )
+
+    collector.record_box_session_end.assert_called_once()
+    collector.record_cloud_session_end.assert_called_once()

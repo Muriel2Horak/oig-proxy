@@ -1,14 +1,12 @@
-"""Immutable durable twin transaction state and temporary queue compatibility."""
+"""Immutable durable twin transaction state."""
 
 from __future__ import annotations
 
 import hashlib
-import secrets
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Protocol, TYPE_CHECKING
 
 from protocol.frame import FrameDirection
 
@@ -652,90 +650,3 @@ class LocalSettingWriter(Protocol):
         before_write: Callable[[], Awaitable[None]],
     ) -> AttemptWriteResult:
         """Commit write-start immediately before invoking the socket writer."""
-
-
-@dataclass
-class TwinSetting:  # pylint: disable=too-many-instance-attributes
-    """Legacy mutable queue record retained until the runtime cutover."""
-
-    table: str
-    key: str
-    value: Any
-    enqueued_at: float
-    raw_text: str = ""
-    audit_id: str = ""
-    msg_id: int = 0
-    id_set: int = 0
-    confirm: str = "New"
-
-
-class TwinQueue:
-    """Legacy in-memory queue retained only for unchanged compatibility users."""
-
-    def __init__(self) -> None:
-        self._queue: dict[tuple[str, str], TwinSetting] = {}
-        self._next_id_set = int(time.time())
-
-    def _generate_msg_id(self) -> int:
-        return secrets.randbelow(1_000_000) + 14_000_000
-
-    def _generate_id_set(self) -> int:
-        id_set = self._next_id_set
-        self._next_id_set += 1
-        if self._next_id_set > 9_999_999_999:
-            self._next_id_set = int(time.time())
-        return id_set
-
-    def _generate_audit_id(self) -> str:
-        now_epoch = int(time.time() * 1000)
-        return f"aud_{now_epoch:014d}_{secrets.randbelow(1_000_000):06d}"
-
-    # pylint: disable-next=too-many-arguments,too-many-positional-arguments
-    def enqueue(
-        self,
-        table: str,
-        key: str,
-        value: Any,
-        confirm: str = "New",
-        audit_id: str = "",
-        raw_text: str = "",
-    ) -> None:
-        """Insert or replace one legacy setting by table and key."""
-        if not audit_id:
-            audit_id = self._generate_audit_id()
-        setting = TwinSetting(
-            table=table,
-            key=key,
-            value=value,
-            enqueued_at=time.time(),
-            raw_text=raw_text,
-            audit_id=audit_id,
-            msg_id=self._generate_msg_id(),
-            id_set=self._generate_id_set(),
-            confirm=confirm,
-        )
-        self._queue[(table, key)] = setting
-
-    def get_pending(self) -> list[TwinSetting]:
-        """Return legacy settings in enqueue-time order."""
-        return sorted(self._queue.values(), key=lambda setting: setting.enqueued_at)
-
-    def acknowledge(self, table: str, key: str) -> bool:
-        """Remove one legacy setting when present."""
-        key_tuple = (table, key)
-        if key_tuple in self._queue:
-            del self._queue[key_tuple]
-            return True
-        return False
-
-    def size(self) -> int:
-        """Return the number of legacy queued settings."""
-        return len(self._queue)
-
-    def clear(self) -> None:
-        """Remove all legacy queued settings."""
-        self._queue.clear()
-
-    def get(self, table: str, key: str) -> TwinSetting | None:
-        """Return one legacy queued setting when present."""
-        return self._queue.get((table, key))

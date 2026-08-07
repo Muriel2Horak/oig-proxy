@@ -82,7 +82,9 @@ def test_record_frame_overwrites():
 
     assert pub._last_frame_device_id == "DEV02"
     assert pub._last_frame_table == "tbl_batt"
-    assert pub._last_frame_timestamp > first_timestamp
+    # Two consecutive wall-clock reads may legitimately have identical float
+    # resolution; identity/table overwrite is the behavior under test.
+    assert pub._last_frame_timestamp >= first_timestamp
     assert pub._frame_count == 2
 
 

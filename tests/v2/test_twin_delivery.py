@@ -7213,12 +7213,6 @@ async def test_status_refresh_failure_does_not_change_delivery_decision(
     assert coordinator.cached_status_snapshot == before
 
 
-def test_legacy_delivery_remains_importable() -> None:
-    from twin.delivery import TwinDelivery  # pylint: disable=import-outside-toplevel
-
-    assert TwinDelivery.__name__ == "TwinDelivery"
-
-
 @pytest.mark.asyncio
 async def test_production_renderer_bounds_random_collisions_and_uses_serializer(
     store_factory: Callable[[int], TwinCommandStore],

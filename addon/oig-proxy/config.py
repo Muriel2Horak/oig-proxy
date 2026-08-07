@@ -99,6 +99,7 @@ class Config:
     control_command_ttl_s: float = 900.0
     control_max_attempts: int = 8
     twin_db_path: str = "/data/twin_queue.db"
+    device_id_path: str = "/data/device_id.json"
     cloud_dialog_timeout_s: float = 30.0
     startup_warnings: tuple[str, ...] = ()
     local_getactual_enabled: bool = False
@@ -152,7 +153,8 @@ class Config:
             _addon_config = {}
         self.version: str = str(_addon_config.get("version", "unknown"))
 
-        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")  # nosec: intentional default bind for HA proxy service
+        # nosec: intentional default bind for the Home Assistant proxy service.
+        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
         self.cloud_host = os.environ.get("TARGET_SERVER", "bridge.oigpower.cz")
@@ -169,6 +171,9 @@ class Config:
         )
         self.control_max_attempts = _control_max_attempts()
         self.twin_db_path = os.environ.get("TWIN_DB_PATH", "/data/twin_queue.db")
+        self.device_id_path = os.environ.get(
+            "DEVICE_ID_PATH", "/data/device_id.json"
+        )
         self.cloud_dialog_timeout_s = _bounded_float(
             "CLOUD_DIALOG_TIMEOUT_S", 30.0, 1.0, warnings
         )

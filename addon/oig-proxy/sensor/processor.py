@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sensor.loader import SensorMapLoader
 from sensor.warnings import decode_warning_details, decode_warnings
 from mqtt.client import MQTTClient
+from twin.state import ConfirmedSetting
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,42 @@ class FrameProcessor:
                 is_binary=is_binary,
                 enum_map=enum_map,
             )
+
+    def publish_confirmed_setting(self, confirmation: ConfirmedSetting) -> bool:
+        """Publish one durable confirmation without exposing failed state in cache."""
+        try:
+            decimal_value = Decimal(confirmation.value_text)
+            value: int | float | str
+            if decimal_value.is_finite():
+                value = (
+                    int(decimal_value)
+                    if decimal_value == decimal_value.to_integral_value()
+                    else float(decimal_value)
+                )
+            else:
+                value = confirmation.value_text
+        except (InvalidOperation, ValueError):
+            value = confirmation.value_text
+
+        cache_key = (confirmation.device_id, confirmation.table_name)
+        previous = self._last_table_values.get(cache_key, {})
+        merged = {**previous, confirmation.item_name: value}
+        target_device_id = self._target_device_id(
+            confirmation.device_id,
+            confirmation.table_name,
+        )
+        if not self._mqtt.publish_state(
+            target_device_id,
+            confirmation.table_name,
+            merged,
+        ):
+            return False
+        self._last_table_values[cache_key] = merged
+        return True
+
+    def state_snapshot(self, device_id: str, table: str) -> dict[str, Any]:
+        """Return a detached test/diagnostic view of confirmed cached values."""
+        return dict(self._last_table_values.get((device_id, table), {}))
 
     async def process(self, device_id: str, table: str, data: dict[str, Any]) -> None:
         """Process frame data and publish to MQTT.

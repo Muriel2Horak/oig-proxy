@@ -77,6 +77,7 @@ class MQTTClient:
         namespace: str = "oig_local",
         qos: int = 1,
         state_retain: bool = True,
+        control_enabled: bool = False,
     ) -> None:
         self.host = host
         self.port = port
@@ -85,6 +86,7 @@ class MQTTClient:
         self.namespace = namespace
         self.qos = qos
         self.state_retain = state_retain
+        self.control_enabled = control_enabled
 
         self._client: Any | None = None
         self.connected = False
@@ -190,7 +192,12 @@ class MQTTClient:
             self._discovery_sent.clear()
             self._availability_online_sent.clear()
             connect_id = getattr(client, "_oig_device_id", self._connect_device_id)
-            for device_id in ({connect_id} | self._all_known_device_ids):
+            known_device_ids = {
+                device_id
+                for device_id in ({connect_id} | self._all_known_device_ids)
+                if self._is_safe_device_id(device_id)
+            }
+            for device_id in sorted(known_device_ids):
                 avail_topic = f"{self.namespace}/{device_id}/availability"
                 client.publish(avail_topic, "online", retain=True, qos=1)
                 self._availability_online_sent.add(device_id)
@@ -202,6 +209,8 @@ class MQTTClient:
                         topic,
                         result,
                     )
+            if not self.control_enabled:
+                self.publish_control_discovery_tombstones(known_device_ids)
             logger.info("MQTT: Připojeno (rc=0)")
         else:
             self.connected = False
@@ -293,8 +302,6 @@ class MQTTClient:
         safe_key = sensor_key.lower()
         unique_id = f"{self.namespace}_{device_id}_{table}_{safe_key}".lower()
         object_id = self._build_object_id(device_id, table, safe_key)
-        if unique_id in self._discovery_sent:
-            return True  # Už odesláno
 
         state_topic = f"{self.namespace}/{device_id}/{table}/state"
         availability_topic = f"{self.namespace}/{device_id}/availability"
@@ -303,6 +310,11 @@ class MQTTClient:
         device_label = DEVICE_NAMES.get(mapped_device, DEVICE_NAMES["inverter"])
         is_setting = table in CONTROL_WRITE_WHITELIST and sensor_key in CONTROL_WRITE_WHITELIST[table]
         component = "binary_sensor" if is_binary else "sensor"
+        control_unique_id = f"{unique_id}_cfg"
+        if unique_id in self._discovery_sent and (
+            not is_setting or control_unique_id in self._discovery_sent
+        ):
+            return True
 
         value_template = f"{{{{ value_json.get('{sensor_key}') }}}}"
         if enum_map:
@@ -352,27 +364,32 @@ class MQTTClient:
             client = self._client
             if client is None:
                 return False
-            if is_setting:
-                control_unique_id = f"{unique_id}_cfg"
-                dual_publish_sensor = table == "tbl_box_prms" and sensor_key == "MODE"
+            if unique_id not in self._discovery_sent:
+                sensor_result = client.publish(
+                    discovery_topic,
+                    json.dumps(payload),
+                    retain=True,
+                    qos=1,
+                )
+                if sensor_result.rc != 0:
+                    return False
+                self._discovery_sent.add(unique_id)
+                logger.debug("MQTT: Discovery → %s", discovery_topic)
 
-                if control_unique_id in self._discovery_sent and (
-                    not dual_publish_sensor or unique_id in self._discovery_sent
-                ):
+            if is_setting:
+                if control_unique_id in self._discovery_sent:
                     return True
 
-                if dual_publish_sensor and unique_id not in self._discovery_sent:
-                    sensor_result = client.publish(
-                        discovery_topic,
-                        json.dumps(payload),
-                        retain=True,
-                        qos=1,
-                    )
-                    if sensor_result.rc == 0:
-                        self._discovery_sent.add(unique_id)
-                        logger.debug("MQTT: Discovery → %s", discovery_topic)
-                    else:
+                if not self.control_enabled:
+                    if not self._publish_control_components(
+                        control_unique_id=control_unique_id,
+                        active_component=None,
+                        active_payload=None,
+                    ):
                         return False
+                    self._discovery_sent.add(control_unique_id)
+                    self._remember_device_id(device_id)
+                    return True
 
                 constraint = SETTING_CONSTRAINTS.get((table, sensor_key))
                 binary_control = is_binary or self._is_binary_control_constraint(constraint)
@@ -432,30 +449,109 @@ class MQTTClient:
                         f"{{{{ ({json.dumps(command_map, ensure_ascii=False)}).get(value, value) }}}}"
                     )
 
-                control_topic = f"homeassistant/{control_component}/{control_unique_id}/config"
-                control_result = client.publish(
-                    control_topic,
-                    json.dumps(control_payload),
-                    retain=True,
-                    qos=1,
-                )
-                if control_result.rc == 0:
-                    self._discovery_sent.add(control_unique_id)
-                    logger.debug("MQTT: Discovery → %s", control_topic)
-                    return True
-                return False
-
-            result = client.publish(
-                discovery_topic, json.dumps(payload), retain=True, qos=1
-            )
-            if result.rc == 0:
-                self._discovery_sent.add(unique_id)
-                logger.debug("MQTT: Discovery → %s", discovery_topic)
-                return True
-            return False
+                if not self._publish_control_components(
+                    control_unique_id=control_unique_id,
+                    active_component=control_component,
+                    active_payload=control_payload,
+                ):
+                    return False
+                self._discovery_sent.add(control_unique_id)
+            self._remember_device_id(device_id)
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.error("MQTT: discovery exception: %s", exc)
             return False
+
+    def _publish_control_components(
+        self,
+        *,
+        control_unique_id: str,
+        active_component: str | None,
+        active_payload: dict[str, Any] | None,
+    ) -> bool:
+        """Publish one active command entity and tombstone every inactive shape."""
+        client = self._client
+        if client is None or not self.connected:
+            return False
+        success = True
+        for component in ("number", "select", "switch"):
+            topic = f"homeassistant/{component}/{control_unique_id}/config"
+            payload: str | bytes
+            if component == active_component and active_payload is not None:
+                payload = json.dumps(active_payload)
+            else:
+                payload = b""
+            try:
+                result = client.publish(topic, payload, retain=True, qos=1)
+                if getattr(result, "rc", 1) != 0:
+                    success = False
+            except Exception as exc:  # noqa: BLE001
+                logger.error("MQTT: control discovery cleanup failed for %s: %s", topic, exc)
+                success = False
+        return success
+
+    def publish_control_discovery_tombstones(
+        self,
+        device_ids: str | set[str] | frozenset[str],
+    ) -> bool:
+        """Remove every allowlisted HA command entity for exact safe devices."""
+        if not self.is_ready():
+            return False
+        client = self._client
+        if client is None:
+            return False
+        success = True
+        normalized_ids = {device_ids} if isinstance(device_ids, str) else device_ids
+        tombstones: list[tuple[str, str]] = []
+        for device_id in sorted(normalized_ids):
+            if not self._is_safe_device_id(device_id):
+                continue
+            for table in sorted(CONTROL_WRITE_WHITELIST):
+                for sensor_key in sorted(CONTROL_WRITE_WHITELIST[table]):
+                    unique_id = (
+                        f"{self.namespace}_{device_id}_{table}_{sensor_key}_cfg".lower()
+                    )
+                    for component in ("number", "select", "switch"):
+                        tombstones.append(
+                            (
+                                f"homeassistant/{component}/{unique_id}/config",
+                                unique_id,
+                            )
+                        )
+            self._remember_device_id(device_id)
+        successful_ids: set[str] = set()
+        failed_ids: set[str] = set()
+        for topic, unique_id in sorted(tombstones):
+            try:
+                result = client.publish(topic, b"", retain=True, qos=1)
+                if getattr(result, "rc", 1) == 0:
+                    successful_ids.add(unique_id)
+                else:
+                    failed_ids.add(unique_id)
+                    success = False
+            except Exception as exc:  # noqa: BLE001
+                logger.error("MQTT: control discovery cleanup failed for %s: %s", topic, exc)
+                failed_ids.add(unique_id)
+                success = False
+        self._discovery_sent.update(successful_ids - failed_ids)
+        return success
+
+    def control_unique_id(self, device_id: str, table: str, sensor_key: str) -> str:
+        """Return the stable discovery identity shared by all command shapes."""
+        return f"{self.namespace}_{device_id}_{table}_{sensor_key}_cfg".lower()
+
+    @staticmethod
+    def _is_safe_device_id(device_id: object) -> bool:
+        return (
+            type(device_id) is str
+            and device_id.casefold() != "unknown"
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", device_id)
+            is not None
+        )
+
+    def _remember_device_id(self, device_id: str) -> None:
+        if self._is_safe_device_id(device_id):
+            self._all_known_device_ids.add(device_id)
 
     @staticmethod
     def _build_object_id(device_id: str, table: str, safe_key: str, is_control: bool = False) -> str:

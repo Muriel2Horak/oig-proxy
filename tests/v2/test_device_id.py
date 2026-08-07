@@ -58,7 +58,7 @@ class TestDeviceIdManager:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "device_id.json")
             manager = DeviceIdManager(path)
-            manager.save("12345")
+            assert manager.save("12345") is True
             assert os.path.exists(path)
             with open(path) as f:
                 data = json.load(f)
@@ -125,3 +125,32 @@ class TestDeviceIdManager:
             manager.load()
             assert manager.validate("any-string-is-valid") is True
             assert manager.validate("different-string") is False
+
+    @pytest.mark.parametrize("unsafe", ["", "unknown", "../device", "a/b", "white space", "x" * 129])
+    def test_unsafe_device_id_is_rejected(self, tmp_path, unsafe):
+        manager = DeviceIdManager(str(tmp_path / "device_id.json"))
+
+        assert manager.save(unsafe) is False
+        assert manager.device_id is None
+        assert not (tmp_path / "device_id.json").exists()
+
+    def test_invalid_persisted_device_id_is_rejected(self, tmp_path):
+        path = tmp_path / "device_id.json"
+        path.write_text(json.dumps({"device_id": "../unsafe"}), encoding="utf-8")
+
+        manager = DeviceIdManager(str(path))
+
+        assert manager.load() is None
+        assert manager.device_id is None
+
+    def test_atomic_save_failure_preserves_existing_identity_and_file(self, tmp_path):
+        path = tmp_path / "device_id.json"
+        manager = DeviceIdManager(str(path))
+        assert manager.save("DEV01")
+        original = path.read_bytes()
+
+        with patch("device_id.os.replace", side_effect=OSError("disk failed")):
+            assert manager.save("DEV02") is False
+
+        assert path.read_bytes() == original
+        assert manager.device_id == "DEV01"

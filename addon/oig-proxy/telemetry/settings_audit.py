@@ -1,7 +1,7 @@
 """Settings Audit Schema and Record Helper.
 
 This module is the SINGLE SCHEMA AUTHORITY for all settings-audit records
-emitted by the repo. All emitters (TwinControlHandler, TwinDelivery,
+emitted by the repo. All emitters (TwinControlHandler, TwinCoordinator,
 ProxyServer) must use the helpers defined here.
 
 Schema Design:
@@ -157,8 +157,7 @@ class SettingStep(str, Enum):
     TIMEOUT = "timeout"  # No response within timeout window
     SESSION_CLEARED = "session_cleared"  # Session ended without ACK
 
-    # Durable Task 8 projection steps. Legacy values above remain importable
-    # until the runtime cutover removes TwinDelivery and TwinQueue.
+    # Durable transaction projection steps.
     SELECTED = "selected"
     ATTEMPT_PREPARED = "attempt_prepared"
     WRITE_STARTED = "write_started"

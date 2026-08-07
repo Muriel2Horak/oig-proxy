@@ -13,6 +13,7 @@ import pytest
 from sensor.processor import FrameProcessor
 from sensor.loader import SensorMapLoader
 from mqtt.client import MQTTClient
+from twin.state import ConfirmedSetting
 
 
 # -----------------------------------------------------------------------------
@@ -256,6 +257,59 @@ async def test_process_publishes_state(processor: FrameProcessor, mock_mqtt: Mag
     pub_data = call_args[2]
     assert pub_data["Temp"] == 25.5
     assert pub_data["Humid"] == 60
+
+
+def test_publish_confirmed_setting_merges_cache_only_after_publish_success(
+    processor: FrameProcessor,
+    mock_mqtt: MagicMock,
+) -> None:
+    confirmation = ConfirmedSetting(
+        command_id="cmd-1",
+        audit_id="audit-1",
+        evidence_id="evidence-1",
+        device_id="DEV01",
+        table_name="tbl_box_prms",
+        item_name="SA",
+        value_text="1",
+        confirmed_at_ms=1_700_000_000_000,
+    )
+
+    assert processor.publish_confirmed_setting(confirmation) is True
+    mock_mqtt.publish_state.assert_called_once_with(
+        "DEV01", "tbl_box_prms", {"SA": 1}
+    )
+    assert processor.state_snapshot("DEV01", "tbl_box_prms") == {"SA": 1}
+
+
+def test_publish_confirmed_setting_does_not_poison_cache_on_publish_failure(
+    processor: FrameProcessor,
+    mock_mqtt: MagicMock,
+) -> None:
+    first = ConfirmedSetting(
+        command_id="cmd-1",
+        audit_id="audit-1",
+        evidence_id="evidence-1",
+        device_id="DEV01",
+        table_name="tbl_box_prms",
+        item_name="SA",
+        value_text="1",
+        confirmed_at_ms=1,
+    )
+    second = ConfirmedSetting(
+        command_id="cmd-2",
+        audit_id="audit-2",
+        evidence_id="evidence-2",
+        device_id="DEV01",
+        table_name="tbl_box_prms",
+        item_name="SA",
+        value_text="0",
+        confirmed_at_ms=2,
+    )
+    assert processor.publish_confirmed_setting(first)
+    mock_mqtt.publish_state.return_value = False
+
+    assert processor.publish_confirmed_setting(second) is False
+    assert processor.state_snapshot("DEV01", "tbl_box_prms") == {"SA": 1}
 
 
 @pytest.mark.asyncio

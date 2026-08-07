@@ -39,10 +39,8 @@ from twin.state import (
     SweepReport,
     TERMINAL_STATES,
     TwinCommand,
-    TwinQueue,
     TransitionAuditSnapshot,
 )
-import twin.state as state_module
 
 
 def test_audit_delivery_decision_rejects_accounting_integrity_drift() -> None:
@@ -519,23 +517,3 @@ def test_store_status_rejects_negative_or_inconsistent_counts() -> None:
     status = StoreStatus(counts, 0, True, None)
     with pytest.raises(ValueError):
         status.count("pending")  # type: ignore[arg-type]
-
-
-def test_legacy_id_set_rollover_remains_compatible(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    queue = TwinQueue()
-    queue._next_id_set = 9_999_999_999  # pylint: disable=protected-access
-    monkeypatch.setattr(state_module.time, "time", lambda: 1234.0)
-
-    assert queue._generate_id_set() == 9_999_999_999  # pylint: disable=protected-access
-    assert queue._next_id_set == 1234  # pylint: disable=protected-access
-
-
-def test_legacy_queue_clear_remains_compatible() -> None:
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-
-    queue.clear()
-
-    assert queue.size() == 0

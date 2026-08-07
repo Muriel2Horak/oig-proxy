@@ -32,6 +32,7 @@ def make_client(**kwargs) -> MQTTClient:
         namespace="oig_local",
         qos=1,
         state_retain=True,
+        control_enabled=True,
     )
     defaults.update(kwargs)
     return MQTTClient(**defaults)
@@ -44,6 +45,14 @@ def inject_mock_paho(client: MQTTClient, connected: bool = True) -> MagicMock:
     client._client = mock_paho
     client.connected = connected
     return mock_paho
+
+
+def published_payload(mock_paho: MagicMock, topic: str) -> object:
+    """Return the payload published to one exact topic."""
+    for published in mock_paho.publish.call_args_list:
+        if published.args[0] == topic:
+            return published.args[1]
+    raise AssertionError(f"topic was not published: {topic}")
 
 
 def test_on_message_passes_immutable_payload_and_retain_metadata():
@@ -312,9 +321,9 @@ def test_send_discovery_creates_number_command_entity_for_whitelisted_setting():
         device_mapping="battery",
     )
 
-    assert mock_paho.publish.call_count == 1
-    control_topic = mock_paho.publish.call_args_list[0][0][0]
-    control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
+    assert mock_paho.publish.call_count == 4
+    control_topic = "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config"
+    control_payload = json.loads(published_payload(mock_paho, control_topic))
     assert control_topic == "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config"
     assert control_payload["object_id"] == "oig_local_dev01_tbl_batt_prms_bat_min_cfg"
     assert control_payload["default_entity_id"] == "number.oig_local_dev01_tbl_batt_prms_bat_min_cfg"
@@ -354,7 +363,12 @@ def test_send_discovery_projects_fractional_decimal_constraint_as_json_numbers(m
         sensor_name="Decimal target",
     ) is True
 
-    control_payload = json.loads(mock_paho.publish.call_args[0][1])
+    control_payload = json.loads(
+        published_payload(
+            mock_paho,
+            "homeassistant/number/oig_local_dev01_tbl_decimal_test_target_cfg/config",
+        )
+    )
     assert control_payload["min"] == 0.1
     assert control_payload["max"] == 1.5
     assert control_payload["step"] == 0.05
@@ -374,9 +388,9 @@ def test_send_discovery_creates_switch_for_zero_one_setting_constraint():
         sensor_name="Systém - Okamžité odeslání dat",
     )
 
-    assert mock_paho.publish.call_count == 1
-    control_topic = mock_paho.publish.call_args_list[0][0][0]
-    control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
+    assert mock_paho.publish.call_count == 4
+    control_topic = "homeassistant/switch/oig_local_dev01_tbl_box_prms_sa_cfg/config"
+    control_payload = json.loads(published_payload(mock_paho, control_topic))
     assert control_topic == "homeassistant/switch/oig_local_dev01_tbl_box_prms_sa_cfg/config"
     assert control_payload["default_entity_id"] == "switch.oig_local_dev01_tbl_box_prms_sa_cfg"
     assert control_payload["command_topic"] == "oig_local/DEV01/set/tbl_box_prms/SA"
@@ -417,11 +431,11 @@ def test_send_discovery_creates_sensor_and_select_for_box_mode():
         enum_map={"0": "Home 1", "1": "Home 2"},
     )
 
-    assert mock_paho.publish.call_count == 2
-    sensor_topic = mock_paho.publish.call_args_list[0][0][0]
-    sensor_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
-    control_topic = mock_paho.publish.call_args_list[1][0][0]
-    control_payload = json.loads(mock_paho.publish.call_args_list[1][0][1])
+    assert mock_paho.publish.call_count == 4
+    sensor_topic = "homeassistant/sensor/oig_local_dev01_tbl_box_prms_mode/config"
+    sensor_payload = json.loads(published_payload(mock_paho, sensor_topic))
+    control_topic = "homeassistant/select/oig_local_dev01_tbl_box_prms_mode_cfg/config"
+    control_payload = json.loads(published_payload(mock_paho, control_topic))
 
     assert sensor_topic == "homeassistant/sensor/oig_local_dev01_tbl_box_prms_mode/config"
     assert sensor_payload["object_id"] == "oig_local_dev01_tbl_box_prms_mode"
@@ -449,9 +463,9 @@ def test_send_discovery_creates_select_for_proxy_mode_enum_setting():
         enum_map={"0": "online", "1": "hybrid", "2": "offline"},
     )
 
-    assert mock_paho.publish.call_count == 1
-    control_topic = mock_paho.publish.call_args_list[0][0][0]
-    control_payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
+    assert mock_paho.publish.call_count == 4
+    control_topic = "homeassistant/select/oig_local_dev01_proxy_control_proxy_mode_cfg/config"
+    control_payload = json.loads(published_payload(mock_paho, control_topic))
     assert control_topic == "homeassistant/select/oig_local_dev01_proxy_control_proxy_mode_cfg/config"
     assert control_payload["object_id"] == "oig_local_dev01_proxy_control_proxy_mode_cfg"
     assert control_payload["default_entity_id"] == "select.oig_local_dev01_proxy_control_proxy_mode_cfg"
@@ -504,9 +518,9 @@ def test_send_discovery_creates_switch_entity_for_binary_setting():
         device_mapping="inverter",
     )
 
-    assert mock_paho.publish.call_count == 1
-    topic = mock_paho.publish.call_args_list[0][0][0]
-    payload = json.loads(mock_paho.publish.call_args_list[0][0][1])
+    assert mock_paho.publish.call_count == 4
+    topic = "homeassistant/switch/oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg/config"
+    payload = json.loads(published_payload(mock_paho, topic))
     assert topic == "homeassistant/switch/oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg/config"
     assert payload["object_id"] == "oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg"
     assert payload["default_entity_id"] == "switch.oig_local_dev01_tbl_invertor_prm1_buz_mut_cfg"
@@ -514,6 +528,115 @@ def test_send_discovery_creates_switch_entity_for_binary_setting():
     assert payload["payload_off"] == 0
     assert payload["state_on"] == 1
     assert payload["state_off"] == 0
+
+
+def test_setting_discovery_keeps_sensor_and_tombstones_unused_control_components():
+    c = make_client(namespace="oig_local", control_enabled=True)
+    mock_paho = inject_mock_paho(c)
+
+    assert c.send_discovery(
+        device_id="DEV01",
+        table="tbl_batt_prms",
+        sensor_key="BAT_MIN",
+        sensor_name="Minimum",
+    )
+
+    assert [item.args[0] for item in mock_paho.publish.call_args_list] == [
+        "homeassistant/sensor/oig_local_dev01_tbl_batt_prms_bat_min/config",
+        "homeassistant/number/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config",
+        "homeassistant/select/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config",
+        "homeassistant/switch/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config",
+    ]
+    assert published_payload(
+        mock_paho,
+        "homeassistant/select/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config",
+    ) == b""
+    assert published_payload(
+        mock_paho,
+        "homeassistant/switch/oig_local_dev01_tbl_batt_prms_bat_min_cfg/config",
+    ) == b""
+
+
+def test_disabled_setting_discovery_keeps_sensor_and_tombstones_all_control_components():
+    c = make_client(namespace="oig_local", control_enabled=False)
+    mock_paho = inject_mock_paho(c)
+
+    assert c.send_discovery(
+        device_id="DEV01",
+        table="tbl_box_prms",
+        sensor_key="SA",
+        sensor_name="Send now",
+    )
+
+    assert [item.args[0] for item in mock_paho.publish.call_args_list] == [
+        "homeassistant/sensor/oig_local_dev01_tbl_box_prms_sa/config",
+        "homeassistant/number/oig_local_dev01_tbl_box_prms_sa_cfg/config",
+        "homeassistant/select/oig_local_dev01_tbl_box_prms_sa_cfg/config",
+        "homeassistant/switch/oig_local_dev01_tbl_box_prms_sa_cfg/config",
+    ]
+    assert all(
+        item.args[1] == b"" for item in mock_paho.publish.call_args_list[1:]
+    )
+
+
+def test_disabled_reconnect_cleans_every_allowlisted_control_for_known_safe_devices():
+    c = make_client(namespace="oig_local", control_enabled=False)
+    c._all_known_device_ids.update({"DEV02", "", "unknown"})
+    mock_paho = inject_mock_paho(c)
+    mock_paho._oig_device_id = "DEV01"
+
+    c._on_connect(mock_paho, None, None, 0)
+
+    tombstone_topics = [
+        item.args[0]
+        for item in mock_paho.publish.call_args_list
+        if item.args[0].startswith("homeassistant/")
+    ]
+    expected_per_device = sum(len(keys) for keys in mqtt_client.CONTROL_WRITE_WHITELIST.values()) * 3
+    assert len(tombstone_topics) == expected_per_device * 2
+    assert tombstone_topics == sorted(tombstone_topics)
+    assert all(item.args[1] == b"" for item in mock_paho.publish.call_args_list if item.args[0].startswith("homeassistant/"))
+
+
+def test_control_discovery_continues_after_component_failures_and_aggregates_false():
+    c = make_client(namespace="oig_local", control_enabled=True)
+    mock_paho = inject_mock_paho(c)
+    mock_paho.publish.side_effect = [
+        MagicMock(rc=0),
+        MagicMock(rc=4),
+        RuntimeError("select unavailable"),
+        MagicMock(rc=0),
+    ]
+
+    assert c.send_discovery(
+        device_id="DEV01",
+        table="tbl_box_prms",
+        sensor_key="SA",
+        sensor_name="Send now",
+    ) is False
+
+    assert mock_paho.publish.call_count == 4
+    assert [item.args[0].split("/")[1] for item in mock_paho.publish.call_args_list[1:]] == [
+        "number",
+        "select",
+        "switch",
+    ]
+
+
+def test_control_tombstone_cleanup_accepts_one_device_and_matches_unique_id():
+    c = make_client(namespace="oig_local", control_enabled=False)
+    mock_paho = inject_mock_paho(c)
+
+    assert c.publish_control_discovery_tombstones("DEV01") is True
+
+    expected = {
+        f"homeassistant/{component}/{c.control_unique_id('DEV01', table, key)}/config"
+        for table, keys in mqtt_client.CONTROL_WRITE_WHITELIST.items()
+        for key in keys
+        for component in ("number", "select", "switch")
+    }
+    actual = {item.args[0] for item in mock_paho.publish.call_args_list}
+    assert actual == expected
 
 
 def test_send_discovery_creates_binary_sensor_default_entity_id():
