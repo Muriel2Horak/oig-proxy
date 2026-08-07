@@ -2850,15 +2850,16 @@ def test_reopened_accounting_drift_fails_before_sync_replay_sink(
         acceptance_ledger=store,
     ).publish_committed(snapshot)
     store.close()
-    with closing(sqlite3.connect(path)) as connection, connection:
-        if drift == "raw_bytes":
-            connection.execute(
-                "UPDATE settings_audit_deliveries SET raw_bytes = 1"
-            )
-        else:
-            connection.execute(
-                "UPDATE settings_audit_deliveries SET payload_capped = 1"
-            )
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            if drift == "raw_bytes":
+                connection.execute(
+                    "UPDATE settings_audit_deliveries SET raw_bytes = 1"
+                )
+            else:
+                connection.execute(
+                    "UPDATE settings_audit_deliveries SET payload_capped = 1"
+                )
 
     reopened = TwinCommandStore(path, policy=control_policy)
     reopened.open(now_ms=2)
@@ -2897,10 +2898,11 @@ async def test_reopened_accounting_drift_fails_before_async_replay_sink(
         acceptance_ledger=store,
     ).publish_committed_async(snapshot)
     store.close()
-    with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute(
-            "UPDATE settings_audit_deliveries SET raw_bytes = 0"
-        )
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            connection.execute(
+                "UPDATE settings_audit_deliveries SET raw_bytes = 0"
+            )
 
     reopened = TwinCommandStore(path, policy=control_policy)
     reopened.open(now_ms=2)
@@ -2938,10 +2940,11 @@ def test_direct_audit_decision_read_rejects_accounting_integrity_drift(
         acceptance_ledger=store,
     ).publish_committed(snapshot)
     store.close()
-    with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute(
-            "UPDATE settings_audit_deliveries SET raw_bytes = 2"
-        )
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            connection.execute(
+                "UPDATE settings_audit_deliveries SET raw_bytes = 2"
+            )
 
     reopened = TwinCommandStore(path, policy=control_policy)
     reopened.open(now_ms=2)
@@ -2977,21 +2980,22 @@ def test_pending_enumerator_rejects_decision_integrity_digest_corruption(
         acceptance_ledger=store,
     ).publish_committed(snapshot)
     store.close()
-    with closing(sqlite3.connect(path)) as connection, connection:
-        columns = {
-            str(row[1])
-            for row in connection.execute(
-                "PRAGMA table_info(settings_audit_deliveries)"
-            ).fetchall()
-        }
-        assert "decision_integrity_sha256" in columns
-        connection.execute(
-            """
-            UPDATE settings_audit_deliveries
-            SET decision_integrity_sha256 = ?
-            """,
-            (b"\x00" * 32,),
-        )
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(settings_audit_deliveries)"
+                ).fetchall()
+            }
+            assert "decision_integrity_sha256" in columns
+            connection.execute(
+                """
+                UPDATE settings_audit_deliveries
+                SET decision_integrity_sha256 = ?
+                """,
+                (b"\x00" * 32,),
+            )
 
     reopened = TwinCommandStore(path, policy=control_policy)
     reopened.open(now_ms=2)
@@ -3020,20 +3024,22 @@ def test_accepted_delivery_integrity_drift_blocks_later_proposal_and_sink(
             acceptance_ledger=store,
         )
         publisher.publish_committed(snapshots[0])
-        with closing(sqlite3.connect(path)) as connection, connection:
-            connection.execute(
-                "UPDATE settings_audit_deliveries SET raw_bytes = 1"
-            )
+        with closing(sqlite3.connect(path)) as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE settings_audit_deliveries SET raw_bytes = 1"
+                )
 
         publisher.publish_committed(snapshots[1])
 
         assert [record.transition_id for record in delivered] == [
             snapshots[0].transition.transition_id
         ]
-        with closing(sqlite3.connect(path)) as connection, connection:
-            assert connection.execute(
-                "SELECT COUNT(*) FROM settings_audit_deliveries"
-            ).fetchone() == (1,)
+        with closing(sqlite3.connect(path)) as connection:
+            with connection:
+                assert connection.execute(
+                    "SELECT COUNT(*) FROM settings_audit_deliveries"
+                ).fetchone() == (1,)
         with pytest.raises(TwinStoreError, match="integrity"):
             store.verify_health()
     finally:
@@ -3165,16 +3171,17 @@ def test_corrupt_canonical_digest_never_reaches_sink(
         acceptance_ledger=store,
     )
     publisher.publish_committed(snapshot)
-    with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute("PRAGMA ignore_check_constraints=ON")
-        connection.execute(
-            """
-            UPDATE settings_audit_deliveries
-            SET canonical_payload_sha256 = ?
-            WHERE transition_id = ?
-            """,
-            (corrupt_digest, snapshot.transition.transition_id),
-        )
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+            connection.execute(
+                """
+                UPDATE settings_audit_deliveries
+                SET canonical_payload_sha256 = ?
+                WHERE transition_id = ?
+                """,
+                (corrupt_digest, snapshot.transition.transition_id),
+            )
 
     publisher.publish_committed(snapshot)
 
