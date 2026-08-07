@@ -34,7 +34,10 @@ def _create_frames_table(conn: sqlite3.Connection) -> None:
             direction TEXT,
             conn_id INTEGER,
             peer TEXT,
-            length INTEGER
+            length INTEGER,
+            command_id TEXT,
+            audit_id TEXT,
+            attempt_number INTEGER
         )
         """
     )
@@ -99,24 +102,109 @@ def test_frame_capture_start_capture_stop_and_schema_upgrade(tmp_path: Path) -> 
     upgraded = sqlite3.connect(legacy_db)
     columns = {row[1] for row in upgraded.execute("PRAGMA table_info(frames)")}
     upgraded.close()
-    assert {"raw_b64", "direction", "conn_id", "peer", "length"}.issubset(columns)
+    assert {
+        "raw_b64",
+        "direction",
+        "conn_id",
+        "peer",
+        "length",
+        "command_id",
+        "audit_id",
+        "attempt_number",
+    }.issubset(columns)
 
 
-def test_frame_capture_capture_error_paths_and_writer_open_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_frame_capture_persists_command_attempt_link(tmp_path: Path) -> None:
+    db_path = tmp_path / "attempt-link.db"
+    capture = frame_capture.FrameCapture(db_path=str(db_path))
+    capture.start()
+    link = frame_capture.AttemptCaptureLink("command-1", "audit-1", 2)
+
+    capture.capture(
+        "device-1",
+        "tbl_box_prms",
+        "frame",
+        b"frame",
+        {},
+        "proxy_to_box",
+        attempt_link=link,
+    )
+    capture.stop()
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT command_id, audit_id, attempt_number FROM frames"
+    ).fetchone()
+    indexes = {
+        index[1]
+        for index in conn.execute("PRAGMA index_list(frames)").fetchall()
+    }
+    conn.close()
+
+    assert row == ("command-1", "audit-1", 2)
+    assert "idx_frames_command_attempt" in indexes
+
+
+def test_frame_capture_schema_migration_preserves_existing_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "existing-frames.db"
+    conn = sqlite3.connect(db_path)
+    _create_frames_table(conn)
+    conn.execute(
+        "INSERT INTO frames (ts, raw, parsed) VALUES (?, ?, ?)",
+        ("2026-08-07T00:00:00+00:00", "existing", "{}"),
+    )
+    conn.commit()
+    conn.close()
+
+    capture = frame_capture.FrameCapture(db_path=str(db_path))
+    capture._ensure_schema()
+    capture._ensure_schema()
+
+    upgraded = sqlite3.connect(db_path)
+    row = upgraded.execute(
+        "SELECT raw, command_id, audit_id, attempt_number FROM frames"
+    ).fetchone()
+    index_columns = tuple(
+        column[2]
+        for column in upgraded.execute(
+            "PRAGMA index_info(idx_frames_command_attempt)"
+        ).fetchall()
+    )
+    upgraded.close()
+
+    assert row == ("existing", None, None, None)
+    assert index_columns == ("command_id", "attempt_number")
+
+
+def test_frame_capture_capture_error_paths_and_writer_open_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     capture = frame_capture.FrameCapture(db_path=str(tmp_path / "queue.db"))
     capture._queue = queue.Queue(maxsize=1)
     capture._queue.put_nowait(("filled",))
     capture.capture("dev", "tbl", "raw", None, {})
 
-    monkeypatch.setattr(frame_capture, "_iso_now", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        frame_capture,
+        "_iso_now",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
     capture.capture("dev", "tbl", "raw", None, {})
 
     broken_capture = frame_capture.FrameCapture(db_path=str(tmp_path / "broken.db"))
-    monkeypatch.setattr(frame_capture.sqlite3, "connect", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db down")))
+    monkeypatch.setattr(
+        frame_capture.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db down")),
+    )
     broken_capture._writer_loop()
 
 
-def test_frame_capture_helper_functions_and_timed_out_writer_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_frame_capture_helper_functions_and_timed_out_writer_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "helpers.db"
     conn = sqlite3.connect(db_path)
     _create_frames_table(conn)
@@ -124,8 +212,36 @@ def test_frame_capture_helper_functions_and_timed_out_writer_loop(monkeypatch: p
     frame_capture._commit_batch(
         conn,
         [
-            ("2000-01-01T00:00:00+00:00", "old", "tbl", "raw", None, "{}", None, None, None, None),
-            (frame_capture._iso_now(), "new", "tbl", "raw", None, "{}", None, None, None, None),
+            (
+                "2000-01-01T00:00:00+00:00",
+                "old",
+                "tbl",
+                "raw",
+                None,
+                "{}",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            (
+                frame_capture._iso_now(),
+                "new",
+                "tbl",
+                "raw",
+                None,
+                "{}",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
         ],
     )
     frame_capture._prune_db(conn, retention_days=1)
@@ -238,7 +354,11 @@ def test_find_tcpdump_build_cmd_start_and_stop_paths(monkeypatch: pytest.MonkeyP
     assert capture._process is None
 
     monkeypatch.setattr(pcap_capture, "_find_tcpdump", lambda: "/usr/bin/tcpdump")
-    monkeypatch.setattr(pcap_capture.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")))
+    monkeypatch.setattr(
+        pcap_capture.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")),
+    )
     capture.start()
     assert capture._process is None
 

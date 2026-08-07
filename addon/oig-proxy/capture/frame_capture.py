@@ -23,15 +23,26 @@ import sqlite3
 import threading
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _INSERT_SQL = (
     "INSERT INTO frames "
-    "(ts, device_id, table_name, raw, raw_b64, parsed, direction, conn_id, peer, length) "
-    "VALUES (?,?,?,?,?,?,?,?,?,?)"
+    "(ts, device_id, table_name, raw, raw_b64, parsed, direction, conn_id, peer, "
+    "length, command_id, audit_id, attempt_number) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptCaptureLink:
+    """Nullable capture-side link to one durable command attempt."""
+
+    command_id: str
+    audit_id: str
+    attempt_number: int
 
 
 class _Empty:
@@ -97,6 +108,8 @@ class FrameCapture:
         conn_id: int | None = None,
         peer: str | None = None,
         length: int | None = None,
+        *,
+        attempt_link: AttemptCaptureLink | None = None,
     ) -> None:
         try:
             ts = _iso_now()
@@ -114,6 +127,9 @@ class FrameCapture:
                 conn_id,
                 peer,
                 length,
+                attempt_link.command_id if attempt_link is not None else None,
+                attempt_link.audit_id if attempt_link is not None else None,
+                attempt_link.attempt_number if attempt_link is not None else None,
             )
             self._queue.put_nowait(values)
         except queue.Full:
@@ -142,7 +158,10 @@ class FrameCapture:
                     direction TEXT,
                     conn_id   INTEGER,
                     peer      TEXT,
-                    length    INTEGER
+                    length    INTEGER,
+                    command_id TEXT,
+                    audit_id TEXT,
+                    attempt_number INTEGER
                 )
             """)
             # Backward compat: přidat chybějící sloupce
@@ -153,10 +172,17 @@ class FrameCapture:
                 ("conn_id", "INTEGER"),
                 ("peer", "TEXT"),
                 ("length", "INTEGER"),
+                ("command_id", "TEXT"),
+                ("audit_id", "TEXT"),
+                ("attempt_number", "INTEGER"),
             ]:
                 if col_name not in existing_cols:
                     with suppress(sqlite3.Error):
                         conn.execute(f"ALTER TABLE frames ADD COLUMN {col_name} {col_type}")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_frames_command_attempt "
+                "ON frames(command_id, attempt_number)"
+            )
             conn.commit()
             conn.close()
         except (sqlite3.Error, OSError) as exc:

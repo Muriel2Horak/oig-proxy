@@ -27,7 +27,9 @@ if V1_ADDON_DIR not in sys.path:
     sys.path.append(V1_ADDON_DIR)
 
 from twin.state import (  # noqa: E402
+    ActiveLocalAttempt,
     AttemptRenderContext,
+    AttemptWriteOutcome,
     CommandState,
     ControlPolicy,
     RenderedAttempt,
@@ -77,6 +79,21 @@ def command() -> TwinCommand:
         predecessor_command_id=None,
         last_wire_frame=None,
         last_error=None,
+    )
+
+
+@pytest.fixture
+def active_local_attempt() -> ActiveLocalAttempt:
+    """Return one complete prepared socket-facing attempt."""
+    return ActiveLocalAttempt(
+        command_id="command-1",
+        audit_id="audit-1",
+        device_id="device-1",
+        attempt_number=1,
+        session_id="session-1",
+        ack_deadline_ms=30_000,
+        wire_frame=b"local-setting-frame",
+        write_outcome=AttemptWriteOutcome.PREPARED,
     )
 
 
