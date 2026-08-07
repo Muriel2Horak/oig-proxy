@@ -112,6 +112,26 @@ def test_local_delivery_trigger_accepts_only_isnewset_fifo_head() -> None:
     assert dialog.expectation_count == 2
 
 
+def test_close_current_expectation_removes_only_fifo_head() -> None:
+    dialog = SettingDialog(session_id="session-1", route=SessionRoute.ONLINE)
+    first = dialog.open_forwarded_request(
+        kind=RequestKind.SINGLE_RESPONSE,
+        request_raw=b"weather",
+        opened_at_monotonic=1.0,
+        cloud_timeout_s=None,
+    )
+    second = dialog.open_forwarded_request(
+        kind=RequestKind.IS_NEW_SET,
+        request_raw=b"poll",
+        opened_at_monotonic=2.0,
+        cloud_timeout_s=30.0,
+    )
+
+    assert dialog.close_current_expectation() is first
+    assert dialog.current_expectation() is second
+    assert dialog.expectation_count == 1
+
+
 def test_tainted_cycle_cannot_trigger_local_delivery() -> None:
     dialog = _cloud_waiting_dialog()
     dialog.taint_current_cycle()

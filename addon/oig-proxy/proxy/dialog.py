@@ -175,6 +175,15 @@ class SettingDialog:
         """Return only the FIFO head eligible for response correlation."""
         return self._expectations[0] if self._expectations else None
 
+    def close_current_expectation(self) -> ResponseExpectation:
+        """Close and return only the FIFO-head non-local response token."""
+        self._require_head()
+        if self.active_attempt is not None:
+            raise DialogStateError("cannot close an active local attempt")
+        if self.deferred_end is not None:
+            raise DialogStateError("deferred END requires explicit cycle closure")
+        return self._expectations.popleft()
+
     def mark_cloud_setting(self, raw: bytes) -> None:
         """Mark one cloud Setting in the current cloud-owned batch."""
         _require_bytes(raw, "raw")

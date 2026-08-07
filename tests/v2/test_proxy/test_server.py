@@ -563,6 +563,41 @@ async def test_cloud_connects_counter_increments():
         await cloud_server.wait_closed()
 
 
+@pytest.mark.asyncio
+async def test_transactional_coordinator_routes_live_connection_through_context() -> None:
+    cfg = make_config()
+    server = ProxyServer(cfg, twin_coordinator=MagicMock())
+    box_reader = MagicMock(spec=asyncio.StreamReader)
+    cloud_reader = MagicMock(spec=asyncio.StreamReader)
+
+    box_writer = MagicMock(spec=asyncio.StreamWriter)
+    box_writer.get_extra_info.return_value = ("127.0.0.1", 4321)
+    box_writer.is_closing.return_value = False
+    box_writer.wait_closed = AsyncMock()
+    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
+    cloud_writer.is_closing.return_value = False
+    cloud_writer.wait_closed = AsyncMock()
+
+    context = MagicMock()
+    server._create_online_context = MagicMock(return_value=context)
+    server.run_connection_context = AsyncMock()
+
+    with patch(
+        "proxy.server.asyncio.open_connection",
+        new=AsyncMock(return_value=(cloud_reader, cloud_writer)),
+    ):
+        await server._handle_box_connection(box_reader, box_writer)
+
+    server._create_online_context.assert_called_once()
+    server.run_connection_context.assert_awaited_once_with(
+        context,
+        box_reader,
+        cloud_reader,
+    )
+    box_writer.close.assert_called_once()
+    cloud_writer.close.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Telemetry integration — record_request / record_response / record_frame_direction
 # ---------------------------------------------------------------------------
@@ -710,8 +745,6 @@ def test_record_cloud_connect_failure_records_error_response_without_offline():
     mock_telemetry.record_response.assert_called_once_with("", source="error", conn_id=88)
     mock_telemetry.record_error_context.assert_called_once()
     mock_telemetry.record_offline_event.assert_not_called()
-
-
 
 
 def _make_collector():
@@ -1293,6 +1326,7 @@ async def test_handle_box_connection_online_session_cleans_up_local_getactual_ta
             raise
 
     server._local_getactual_loop = AsyncMock(side_effect=fake_local_getactual_loop)  # type: ignore[method-assign]
+
     async def fake_pipe_box_to_cloud(*args, **kwargs) -> None:
         await asyncio.Event().wait()
 

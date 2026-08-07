@@ -15,42 +15,114 @@ import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from typing import TYPE_CHECKING
 
 try:
-    from ..capture.frame_capture import FrameCapture
+    from ..capture.frame_capture import AttemptCaptureLink, FrameCapture
     from ..config import Config
-    from ..protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name
+    from ..protocol.frame import (
+        AssembledFrame,
+        FrameDirection,
+        FrameStreamAssembler,
+        FrameStreamError,
+        StreamErrorCode,
+        build_frame,
+        extract_frame_from_buffer,
+        infer_table_name,
+        validate_frame,
+    )
     from ..protocol.frames import (
         build_getactual_frame,
         build_setting_frame,
         czech_local_datetime_from_epoch,
     )
-    from ..protocol.parser import parse_xml_frame
-    from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
-    from ..twin.delivery import TwinDelivery
+    from ..protocol.parser import parse_frame_metadata, parse_xml_frame
+    from ..telemetry.settings_audit import CloudSettingAuditObserver
+    from ..twin.ack_parser import (
+        parse_box_ack,
+        parse_setting_event,
+        parse_setting_response,
+        parse_tbl_events_ack,
+    )
+    from ..twin.delivery import TwinCoordinator, TwinDelivery
+    from ..twin.state import (
+        ActiveLocalAttempt,
+        ConfirmedSetting,
+        DeliveryDisposition,
+        EvidenceContext,
+        LocalResponseDisposition,
+        RegisteredEventToken,
+        RetryReason,
+    )
+    from .dialog import (
+        CyclePhase,
+        DialogStateError,
+        RequestKind,
+        SessionRoute,
+        SettingDialog,
+    )
     from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
-    from .mode import ConnectionMode, ModeManager
+    from .mode import ModeManager
     from .local_ack import build_local_ack
+    from .writer import BoxWriteOutcome, BoxWritePurpose, SerializedBoxWriter
 except ImportError:
-    from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
+    from capture.frame_capture import AttemptCaptureLink, FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
-    from protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
+    from protocol.frame import (  # type: ignore[no-redef]
+        AssembledFrame,
+        FrameDirection,
+        FrameStreamAssembler,
+        FrameStreamError,
+        StreamErrorCode,
+        build_frame,
+        extract_frame_from_buffer,
+        infer_table_name,
+        validate_frame,
+    )
     from protocol.frames import (  # type: ignore[no-redef]
         build_getactual_frame,
         build_setting_frame,
         czech_local_datetime_from_epoch,
     )
-    from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
-    from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
-    from twin.delivery import TwinDelivery  # type: ignore[no-redef]
+    from protocol.parser import parse_frame_metadata, parse_xml_frame  # type: ignore[no-redef]
+    from telemetry.settings_audit import CloudSettingAuditObserver  # type: ignore[no-redef]
+    from twin.ack_parser import (  # type: ignore[no-redef]
+        parse_box_ack,
+        parse_setting_event,
+        parse_setting_response,
+        parse_tbl_events_ack,
+    )
+    from twin.delivery import TwinCoordinator, TwinDelivery  # type: ignore[no-redef]
+    from twin.state import (  # type: ignore[no-redef]
+        ActiveLocalAttempt,
+        ConfirmedSetting,
+        DeliveryDisposition,
+        EvidenceContext,
+        LocalResponseDisposition,
+        RegisteredEventToken,
+        RetryReason,
+    )
+    from proxy.dialog import (  # type: ignore[no-redef]
+        CyclePhase,
+        DialogStateError,
+        RequestKind,
+        SessionRoute,
+        SettingDialog,
+    )
     from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
-    from proxy.mode import ConnectionMode, ModeManager  # type: ignore[no-redef]
+    from proxy.mode import ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
+    from proxy.writer import (  # type: ignore[no-redef]
+        BoxWriteOutcome,
+        BoxWritePurpose,
+        SerializedBoxWriter,
+    )
 
 if TYPE_CHECKING:
     try:
@@ -139,6 +211,71 @@ TRANSPORT_METADATA_KEYS = frozenset(
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
 ConfirmedSettingCallback = Callable[[str, str, str, Any], Awaitable[None]]
+CommittedConfirmationCallback = Callable[[ConfirmedSetting], Awaitable[None]]
+ValidDeviceCallback = Callable[
+    [str, int | None, int | None], Awaitable[bool]
+]
+
+
+@dataclass(frozen=True, slots=True)
+class StreamFrameEvent:
+    """One exact assembled frame queued for the semantic router."""
+
+    direction: FrameDirection
+    frame: AssembledFrame
+    registered_event: RegisteredEventToken | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StreamClosedEvent:
+    """One clean or bounded-error EOF observed by a read pump."""
+
+    direction: FrameDirection
+    error_code: StreamErrorCode | None
+
+
+class StreamTimeoutKind(str, Enum):
+    """Semantic deadline whose immutable identity must still be current."""
+
+    CLOUD_RESPONSE = "cloud_response"
+    LOCAL_ACK = "local_ack"
+
+
+@dataclass(frozen=True, slots=True)
+class StreamTimeoutEvent:
+    """One absolute deadline callback routed through the sole mutator."""
+
+    kind: StreamTimeoutKind
+    expectation_sequence: int | None = None
+    command_id: str | None = None
+    attempt_number: int | None = None
+    session_id: str | None = None
+    deadline_ms: int | None = None
+
+
+StreamEvent = StreamFrameEvent | StreamClosedEvent | StreamTimeoutEvent
+
+
+@dataclass(slots=True)
+class ProxyConnectionContext:
+    """All mutable semantic state owned by one BOX/cloud connection pair."""
+
+    session_id: str
+    route: SessionRoute
+    dialog: SettingDialog
+    box_assembler: FrameStreamAssembler
+    cloud_assembler: FrameStreamAssembler
+    box_writer: SerializedBoxWriter
+    cloud_audit: CloudSettingAuditObserver
+    semantic_events: asyncio.Queue[StreamEvent]
+    cloud_writer: asyncio.StreamWriter | None
+    close_requested: asyncio.Event
+    cloud_timer: asyncio.TimerHandle | None = None
+    ack_timer: asyncio.TimerHandle | None = None
+    timer_tasks: set[asyncio.Task[None]] = field(default_factory=set)
+    local_eligible_sequences: set[int] = field(default_factory=set)
+    conn_id: int | None = None
+    peer: str | None = None
 
 
 class ProxyServer:
@@ -158,6 +295,11 @@ class ProxyServer:
         twin_delivery: TwinDelivery | None = None,
         frame_capture: FrameCapture | None = None,
         telemetry_collector: "TelemetryCollector | None" = None,
+        twin_coordinator: TwinCoordinator | None = None,
+        on_valid_device: ValidDeviceCallback | None = None,
+        on_committed_confirmation: CommittedConfirmationCallback | None = None,
+        clock_ms: Callable[[], int] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self.config = config
         self.on_frame = on_frame
@@ -165,6 +307,11 @@ class ProxyServer:
         self.twin_delivery = twin_delivery
         self.frame_capture = frame_capture
         self.telemetry_collector = telemetry_collector
+        self.twin_coordinator = twin_coordinator
+        self.on_valid_device = on_valid_device
+        self.on_committed_confirmation = on_committed_confirmation
+        self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
+        self._monotonic = monotonic or time.monotonic
         self._server: asyncio.Server | None = None
         self._active_connections: set[asyncio.Task[None]] = set()
         self.mode_manager = ModeManager(config)
@@ -237,6 +384,763 @@ class ProxyServer:
 
     def uptime_s(self) -> float:
         return time.time() - self._start_time
+
+    async def route_stream_event(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamEvent,
+    ) -> None:
+        """Mutate one connection dialogue from the sole semantic router."""
+        if isinstance(event, StreamClosedEvent):
+            context.close_requested.set()
+            return
+        if isinstance(event, StreamTimeoutEvent):
+            await self._route_timeout(context, event)
+            return
+        if event.direction is FrameDirection.BOX_TO_PROXY:
+            await self._route_box_frame(context, event)
+            return
+        await self._route_cloud_frame(context, event)
+
+    async def pump_stream_events(
+        self,
+        context: ProxyConnectionContext,
+        reader: asyncio.StreamReader,
+        *,
+        direction: FrameDirection,
+    ) -> None:
+        """Assemble one bounded stream and backpressure its semantic queue."""
+        assembler = (
+            context.box_assembler
+            if direction is FrameDirection.BOX_TO_PROXY
+            else context.cloud_assembler
+        )
+        try:
+            while True:
+                chunk = await reader.read(65_536)
+                if not chunk:
+                    error_code: StreamErrorCode | None = None
+                    try:
+                        assembler.finish()
+                    except FrameStreamError as error:
+                        error_code = error.code
+                    await context.semantic_events.put(
+                        StreamClosedEvent(direction, error_code)
+                    )
+                    return
+                received_at_ms = self._clock_ms()
+                frames = assembler.feed(
+                    chunk, received_at_ms=received_at_ms
+                )
+                for frame in frames:
+                    token = self._register_event_before_await(
+                        context, direction, frame
+                    )
+                    await context.semantic_events.put(
+                        StreamFrameEvent(direction, frame, token)
+                    )
+        except FrameStreamError as error:
+            await context.semantic_events.put(
+                StreamClosedEvent(direction, error.code)
+            )
+        except (asyncio.IncompleteReadError, ConnectionResetError, OSError):
+            assembler.reset()
+            await context.semantic_events.put(
+                StreamClosedEvent(direction, None)
+            )
+
+    def _register_event_before_await(
+        self,
+        context: ProxyConnectionContext,
+        direction: FrameDirection,
+        frame: AssembledFrame,
+    ) -> RegisteredEventToken | None:
+        coordinator = self.twin_coordinator
+        if coordinator is None or direction is not FrameDirection.BOX_TO_PROXY:
+            return None
+        validation = validate_frame(frame)
+        if validation.validated is None:
+            return None
+        event = parse_setting_event(
+            validation.validated, direction=direction
+        )
+        if event is None:
+            return None
+        return coordinator.register_setting_event(
+            event=event,
+            context=EvidenceContext(
+                direction,
+                context.session_id,
+                event.device_id,
+                frame.received_at_ms,
+                frame.raw,
+            ),
+        )
+
+    async def _route_box_frame(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamFrameEvent,
+    ) -> None:
+        frame = event.frame
+        self._capture_frame(
+            frame.raw,
+            "box_to_cloud",
+            conn_id=context.conn_id,
+            peer=context.peer,
+        )
+        validation = validate_frame(frame)
+        validated = validation.validated
+        if validated is None:
+            if context.dialog.active_attempt is not None:
+                await self._abort_active_dialogue(
+                    context, RetryReason.STREAM_ERROR, frame.received_at_ms
+                )
+                context.close_requested.set()
+                return
+            await self._write_cloud(context, frame.raw)
+            return
+
+        metadata = parse_frame_metadata(validated)
+        if metadata is None:
+            if context.dialog.active_attempt is not None:
+                await self._abort_active_dialogue(
+                    context, RetryReason.UNEXPECTED_RESPONSE, frame.received_at_ms
+                )
+                context.close_requested.set()
+                return
+            await self._write_cloud(context, frame.raw)
+            return
+
+        registered_event = event.registered_event
+        if registered_event is None and self.twin_coordinator is not None:
+            setting_event = parse_setting_event(
+                validated, direction=FrameDirection.BOX_TO_PROXY
+            )
+            if setting_event is not None:
+                registered_event = self.twin_coordinator.register_setting_event(
+                    event=setting_event,
+                    context=EvidenceContext(
+                        FrameDirection.BOX_TO_PROXY,
+                        context.session_id,
+                        setting_event.device_id,
+                        frame.received_at_ms,
+                        frame.raw,
+                    ),
+                )
+
+        identity_accepted = False
+        if metadata.device_id:
+            try:
+                context.dialog.bind_device(metadata.device_id)
+            except DialogStateError:
+                identity_accepted = False
+            else:
+                if self.on_valid_device is not None:
+                    identity_accepted = await self.on_valid_device(
+                        metadata.device_id,
+                        metadata.message_id,
+                        metadata.id_set,
+                    )
+
+        if registered_event is not None:
+            await self._route_registered_event(
+                context, event, registered_event
+            )
+            return
+
+        if context.dialog.active_attempt is not None:
+            response = parse_setting_response(
+                validated, direction=FrameDirection.BOX_TO_PROXY
+            )
+            if response is None:
+                context.dialog.hold_box_frame(frame)
+                return
+            await self._route_local_response(context, frame, response)
+            return
+
+        expectation = context.dialog.current_expectation()
+        if (
+            expectation is not None
+            and expectation.phase is CyclePhase.WAITING_BOX_CLOUD_ACK
+        ):
+            response = parse_setting_response(
+                validated, direction=FrameDirection.BOX_TO_PROXY
+            )
+            if response is None:
+                context.dialog.taint_current_cycle()
+                context.close_requested.set()
+                return
+            if not await self._write_cloud(context, frame.raw):
+                return
+            context.dialog.mark_cloud_setting_ack_forwarded(frame.raw)
+            context.cloud_audit.box_response_forwarded(
+                session_id=context.session_id,
+                response=response,
+                observed_at_ms=frame.received_at_ms,
+            )
+            await self._process_frame(frame.raw)
+            return
+
+        if metadata.result == "IsNewSet":
+            expectation = context.dialog.open_forwarded_request(
+                kind=RequestKind.IS_NEW_SET,
+                request_raw=frame.raw,
+                opened_at_monotonic=self._monotonic(),
+                cloud_timeout_s=float(
+                    getattr(self.config, "cloud_dialog_timeout_s", 30.0)
+                ),
+            )
+            if (
+                identity_accepted
+                and metadata.message_id is not None
+                and metadata.message_id >= 0
+                and metadata.id_set is not None
+                and metadata.id_set >= 0
+            ):
+                context.local_eligible_sequences.add(expectation.sequence)
+            self._sync_cloud_timer(context)
+        else:
+            context.dialog.open_forwarded_request(
+                kind=RequestKind.SINGLE_RESPONSE,
+                request_raw=frame.raw,
+                opened_at_monotonic=self._monotonic(),
+                cloud_timeout_s=None,
+            )
+        if await self._write_cloud(context, frame.raw):
+            await self._process_frame(frame.raw)
+
+    async def _route_cloud_frame(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamFrameEvent,
+    ) -> None:
+        frame = event.frame
+        self._capture_frame(
+            frame.raw,
+            "cloud_to_box",
+            conn_id=context.conn_id,
+            peer=context.peer,
+        )
+        expectation = context.dialog.current_expectation()
+        validation = validate_frame(frame)
+        validated = validation.validated
+        if validated is None:
+            if context.dialog.active_attempt is not None:
+                await self._abort_active_dialogue(
+                    context,
+                    RetryReason.STREAM_ERROR,
+                    frame.received_at_ms,
+                )
+                await context.box_writer.write_frame(
+                    frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+                )
+                context.close_requested.set()
+                return
+            await context.box_writer.write_frame(
+                frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+            )
+            if expectation is not None:
+                context.dialog.close_current_expectation()
+                self._sync_cloud_timer(context)
+            context.close_requested.set()
+            return
+        metadata = parse_frame_metadata(validated)
+        if metadata is None and context.dialog.active_attempt is not None:
+            await self._abort_active_dialogue(
+                context,
+                RetryReason.UNEXPECTED_RESPONSE,
+                frame.received_at_ms,
+            )
+            await context.box_writer.write_frame(
+                frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+            )
+            context.close_requested.set()
+            return
+        if expectation is None or metadata is None:
+            await context.box_writer.write_frame(
+                frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+            )
+            if expectation is not None:
+                context.dialog.close_current_expectation()
+                self._sync_cloud_timer(context)
+                context.close_requested.set()
+            return
+        if context.dialog.active_attempt is not None:
+            context.dialog.hold_cloud_frame(frame)
+            return
+        if expectation.kind is RequestKind.SINGLE_RESPONSE:
+            await context.box_writer.write_frame(
+                frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+            )
+            context.local_eligible_sequences.discard(expectation.sequence)
+            context.dialog.close_current_expectation()
+            self._sync_cloud_timer(context)
+            await self._process_frame(frame.raw)
+            return
+        if expectation.phase is CyclePhase.WAITING_BOX_CLOUD_ACK:
+            context.dialog.hold_cloud_frame(frame)
+            return
+        if metadata.result == "Setting":
+            result = await context.box_writer.write_frame(
+                frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+            )
+            if result.outcome is not BoxWriteOutcome.DRAINED:
+                context.close_requested.set()
+                return
+            context.dialog.mark_cloud_setting(frame.raw)
+            try:
+                context.cloud_audit.setting_forwarded(
+                    session_id=context.session_id,
+                    frame=validated,
+                    metadata=metadata,
+                    observed_at_ms=frame.received_at_ms,
+                )
+            except ValueError:
+                context.dialog.taint_current_cycle()
+                context.close_requested.set()
+            await self._process_frame(frame.raw)
+            return
+        if metadata.result == "END":
+            self._cancel_cloud_timer(context)
+            if (
+                expectation.sequence not in context.local_eligible_sequences
+                or self.twin_coordinator is None
+                or context.dialog.bound_device_id is None
+            ):
+                await context.box_writer.write_frame(
+                    frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+                )
+                context.local_eligible_sequences.discard(expectation.sequence)
+                context.dialog.close_current_expectation()
+                self._sync_cloud_timer(context)
+                return
+            trigger = context.dialog.defer_correlated_terminal_end(frame.raw)
+            await context.box_writer.acquire_dialogue(context.session_id)
+            decision = await self.twin_coordinator.claim_and_write_next(
+                device_id=context.dialog.bound_device_id,
+                session_id=context.session_id,
+                received_at_ms=frame.received_at_ms,
+                trigger=trigger,
+                writer=context.box_writer,
+            )
+            if decision.disposition is DeliveryDisposition.SENT:
+                if decision.active_attempt is None:
+                    raise RuntimeError("sent delivery omitted its active attempt")
+                context.dialog.begin_local_attempt(decision.active_attempt)
+                self._arm_ack_timer(context, decision.active_attempt)
+                return
+            if decision.disposition in {
+                DeliveryDisposition.NO_ELIGIBLE,
+                DeliveryDisposition.CONTROL_DISABLED,
+                DeliveryDisposition.ACTIVE_DELIVERY_ELSEWHERE,
+                DeliveryDisposition.RENDER_FAILED,
+            }:
+                raw_end = context.dialog.take_deferred_end_and_close_cycle()
+                context.local_eligible_sequences.discard(expectation.sequence)
+                await context.box_writer.release_dialogue(context.session_id)
+                await context.box_writer.write_frame(
+                    raw_end, purpose=BoxWritePurpose.CLOUD_FORWARD
+                )
+                self._sync_cloud_timer(context)
+                return
+            context.dialog.clear_socket_state()
+            await context.box_writer.release_dialogue(context.session_id)
+            context.close_requested.set()
+            return
+
+        await context.box_writer.write_frame(
+            frame.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+        )
+        context.local_eligible_sequences.discard(expectation.sequence)
+        context.dialog.close_current_expectation()
+        self._sync_cloud_timer(context)
+        if metadata.result != "NACK":
+            context.close_requested.set()
+
+    async def _route_local_response(
+        self,
+        context: ProxyConnectionContext,
+        frame: AssembledFrame,
+        response: Any,
+    ) -> None:
+        active = context.dialog.active_attempt
+        coordinator = self.twin_coordinator
+        if active is None or coordinator is None:
+            raise RuntimeError("local response lost its active coordinator")
+        decision = await coordinator.handle_local_response(
+            active=active,
+            response=response,
+            context=EvidenceContext(
+                FrameDirection.BOX_TO_PROXY,
+                context.session_id,
+                context.dialog.bound_device_id or active.device_id,
+                frame.received_at_ms,
+                frame.raw,
+            ),
+            writer=context.box_writer,
+        )
+        if decision.next_attempt is not None:
+            context.dialog.replace_local_attempt(decision.next_attempt)
+            self._arm_ack_timer(context, decision.next_attempt)
+            return
+        if decision.send_final_end:
+            self._cancel_ack_timer(context)
+            raw_end = context.dialog.deferred_end
+            if raw_end is None:
+                raise RuntimeError("local completion lost its deferred END")
+            result = await context.box_writer.write_frame(
+                raw_end,
+                purpose=BoxWritePurpose.DEFERRED_END,
+                owner_session_id=context.session_id,
+            )
+            if result.outcome is not BoxWriteOutcome.DRAINED:
+                context.dialog.clear_socket_state()
+                await context.box_writer.release_dialogue(context.session_id)
+                context.close_requested.set()
+                return
+            expectation = context.dialog.current_expectation()
+            context.dialog.take_deferred_end_and_close_cycle()
+            self._sync_cloud_timer(context)
+            if expectation is not None:
+                context.local_eligible_sequences.discard(expectation.sequence)
+            await context.box_writer.release_dialogue(context.session_id)
+            for held in context.dialog.drain_held_cloud():
+                await context.box_writer.write_frame(
+                    held.raw, purpose=BoxWritePurpose.CLOUD_FORWARD
+                )
+            for held in context.dialog.drain_held_box():
+                if not await self._write_cloud(context, held.raw):
+                    break
+            return
+        if decision.close_connection:
+            self._cancel_ack_timer(context)
+            context.dialog.clear_socket_state()
+            await context.box_writer.release_dialogue(context.session_id)
+            context.close_requested.set()
+            return
+        if decision.disposition in {
+            LocalResponseDisposition.DUPLICATE,
+            LocalResponseDisposition.REJECTED,
+            LocalResponseDisposition.TIMED_OUT,
+        }:
+            context.close_requested.set()
+
+    async def _route_registered_event(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamFrameEvent,
+        token: RegisteredEventToken,
+    ) -> None:
+        coordinator = self.twin_coordinator
+        if coordinator is None:
+            await self._write_cloud(context, event.frame.raw)
+            return
+        result = await coordinator.handle_registered_event(token)
+        if result.confirmation is not None and self.on_committed_confirmation is not None:
+            await self.on_committed_confirmation(result.confirmation)
+        if context.dialog.active_attempt is None:
+            await self._write_cloud(context, event.frame.raw)
+            await self._process_frame(event.frame.raw)
+            return
+        active = context.dialog.active_attempt
+        if result.command is not None and result.command.command_id == active.command_id:
+            self._cancel_ack_timer(context)
+            raw_end = context.dialog.deferred_end
+            if raw_end is not None:
+                await context.box_writer.write_frame(
+                    raw_end,
+                    purpose=BoxWritePurpose.DEFERRED_END,
+                    owner_session_id=context.session_id,
+                )
+            context.dialog.clear_socket_state()
+            await context.box_writer.release_dialogue(context.session_id)
+            context.close_requested.set()
+            return
+        await self._abort_active_dialogue(
+            context,
+            RetryReason.UNEXPECTED_RESPONSE,
+            event.frame.received_at_ms,
+        )
+        context.close_requested.set()
+
+    async def _abort_active_dialogue(
+        self,
+        context: ProxyConnectionContext,
+        reason: RetryReason,
+        occurred_at_ms: int,
+    ) -> None:
+        self._cancel_ack_timer(context)
+        active = context.dialog.active_attempt
+        if active is not None and self.twin_coordinator is not None:
+            await self.twin_coordinator.abort_dialogue(
+                active=active,
+                occurred_at_ms=occurred_at_ms,
+                reason=reason,
+            )
+        context.dialog.clear_socket_state()
+        await context.box_writer.release_dialogue(context.session_id)
+
+    async def _route_timeout(
+        self,
+        context: ProxyConnectionContext,
+        event: StreamTimeoutEvent,
+    ) -> None:
+        if event.kind is StreamTimeoutKind.CLOUD_RESPONSE:
+            expectation = context.dialog.current_expectation()
+            if (
+                expectation is None
+                or expectation.sequence != event.expectation_sequence
+                or expectation.deadline_monotonic is None
+                or self._monotonic() < expectation.deadline_monotonic
+            ):
+                return
+            context.cloud_timer = None
+            context.dialog.taint_current_cycle()
+            context.close_requested.set()
+            return
+
+        active = context.dialog.active_attempt
+        if (
+            active is None
+            or active.command_id != event.command_id
+            or active.attempt_number != event.attempt_number
+            or active.session_id != event.session_id
+            or active.ack_deadline_ms != event.deadline_ms
+            or self._clock_ms() < active.ack_deadline_ms
+        ):
+            return
+        context.ack_timer = None
+        await self._abort_active_dialogue(
+            context,
+            RetryReason.ACK_TIMEOUT,
+            self._clock_ms(),
+        )
+        context.close_requested.set()
+
+    def _sync_cloud_timer(self, context: ProxyConnectionContext) -> None:
+        self._cancel_cloud_timer(context)
+        expectation = context.dialog.current_expectation()
+        if expectation is None or expectation.deadline_monotonic is None:
+            return
+        event = StreamTimeoutEvent(
+            StreamTimeoutKind.CLOUD_RESPONSE,
+            expectation_sequence=expectation.sequence,
+        )
+        delay = max(0.0, expectation.deadline_monotonic - self._monotonic())
+        context.cloud_timer = asyncio.get_running_loop().call_later(
+            delay,
+            self._enqueue_timeout,
+            context,
+            event,
+        )
+
+    def _arm_ack_timer(
+        self,
+        context: ProxyConnectionContext,
+        active: ActiveLocalAttempt,
+    ) -> None:
+        self._cancel_ack_timer(context)
+        event = StreamTimeoutEvent(
+            StreamTimeoutKind.LOCAL_ACK,
+            command_id=active.command_id,
+            attempt_number=active.attempt_number,
+            session_id=active.session_id,
+            deadline_ms=active.ack_deadline_ms,
+        )
+        delay = max(0.0, (active.ack_deadline_ms - self._clock_ms()) / 1000)
+        context.ack_timer = asyncio.get_running_loop().call_later(
+            delay,
+            self._enqueue_timeout,
+            context,
+            event,
+        )
+
+    @staticmethod
+    def _enqueue_timeout(
+        context: ProxyConnectionContext,
+        event: StreamTimeoutEvent,
+    ) -> None:
+        if context.close_requested.is_set():
+            return
+        task = asyncio.create_task(context.semantic_events.put(event))
+        context.timer_tasks.add(task)
+        task.add_done_callback(context.timer_tasks.discard)
+
+    @staticmethod
+    def _cancel_cloud_timer(context: ProxyConnectionContext) -> None:
+        if context.cloud_timer is not None:
+            context.cloud_timer.cancel()
+            context.cloud_timer = None
+
+    @staticmethod
+    def _cancel_ack_timer(context: ProxyConnectionContext) -> None:
+        if context.ack_timer is not None:
+            context.ack_timer.cancel()
+            context.ack_timer = None
+
+    async def _write_cloud(
+        self, context: ProxyConnectionContext, raw: bytes
+    ) -> bool:
+        writer = context.cloud_writer
+        if writer is None:
+            context.close_requested.set()
+            return False
+        try:
+            writer.write(raw)
+            await writer.drain()
+        except (OSError, ConnectionResetError):
+            context.close_requested.set()
+            return False
+        self.frames_forwarded += 1
+        return True
+
+    def _create_online_context(
+        self,
+        *,
+        session_id: str,
+        box_writer: asyncio.StreamWriter,
+        cloud_writer: asyncio.StreamWriter,
+        conn_id: int,
+        peer: str,
+    ) -> ProxyConnectionContext:
+        def capture_invocation(
+            raw: bytes,
+            _purpose: BoxWritePurpose,
+            attempt_link: AttemptCaptureLink | None,
+        ) -> None:
+            self._capture_frame(
+                raw,
+                "proxy_to_box",
+                conn_id=conn_id,
+                peer=peer,
+                attempt_link=attempt_link,
+            )
+
+        semantic_writer = SerializedBoxWriter(
+            box_writer,
+            clock_ms=self._clock_ms,
+            on_invoked=capture_invocation,
+        )
+        return ProxyConnectionContext(
+            session_id=session_id,
+            route=SessionRoute.ONLINE,
+            dialog=SettingDialog(session_id, SessionRoute.ONLINE),
+            box_assembler=FrameStreamAssembler(),
+            cloud_assembler=FrameStreamAssembler(),
+            box_writer=semantic_writer,
+            cloud_audit=CloudSettingAuditObserver(None),
+            semantic_events=asyncio.Queue(maxsize=1),
+            cloud_writer=cloud_writer,
+            close_requested=asyncio.Event(),
+            conn_id=conn_id,
+            peer=peer,
+        )
+
+    async def run_connection_context(
+        self,
+        context: ProxyConnectionContext,
+        box_reader: asyncio.StreamReader,
+        cloud_reader: asyncio.StreamReader,
+    ) -> None:
+        """Run two bounded read pumps and one sole semantic router."""
+        pumps = (
+            asyncio.create_task(
+                self.pump_stream_events(
+                    context,
+                    box_reader,
+                    direction=FrameDirection.BOX_TO_PROXY,
+                ),
+                name=f"box-pump-{context.session_id}",
+            ),
+            asyncio.create_task(
+                self.pump_stream_events(
+                    context,
+                    cloud_reader,
+                    direction=FrameDirection.CLOUD_TO_PROXY,
+                ),
+                name=f"cloud-pump-{context.session_id}",
+            ),
+        )
+        getactual = self._start_semantic_getactual_task(context)
+        try:
+            while not context.close_requested.is_set():
+                event = await context.semantic_events.get()
+                await self.route_stream_event(context, event)
+        finally:
+            for pump in pumps:
+                if not pump.done():
+                    pump.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
+            await self._stop_local_getactual_task(getactual)
+            await self._cleanup_connection_context(context)
+
+    def _start_semantic_getactual_task(
+        self, context: ProxyConnectionContext
+    ) -> asyncio.Task[None] | None:
+        if not bool(getattr(self.config, "local_getactual_enabled", False)):
+            return None
+        return asyncio.create_task(
+            self._semantic_getactual_loop(context),
+            name=f"local-getactual-{context.session_id}",
+        )
+
+    async def _semantic_getactual_loop(
+        self, context: ProxyConnectionContext
+    ) -> None:
+        interval_s = self._local_getactual_interval_s()
+        while not context.close_requested.is_set():
+            result = await context.box_writer.write_frame(
+                build_getactual_frame(),
+                purpose=BoxWritePurpose.LOCAL_GETACTUAL,
+            )
+            if result.outcome is not BoxWriteOutcome.DRAINED:
+                context.close_requested.set()
+                return
+            await asyncio.sleep(interval_s)
+
+    async def _cleanup_connection_context(
+        self, context: ProxyConnectionContext
+    ) -> None:
+        for timer in (context.cloud_timer, context.ack_timer):
+            if timer is not None:
+                timer.cancel()
+        for task in context.timer_tasks:
+            task.cancel()
+        if context.timer_tasks:
+            await asyncio.gather(
+                *context.timer_tasks, return_exceptions=True
+            )
+        coordinator = self.twin_coordinator
+        if coordinator is not None:
+            results = await coordinator.flush_registered_events(
+                session_id=context.session_id
+            )
+            if self.on_committed_confirmation is not None:
+                for result in results:
+                    if result.confirmation is not None:
+                        await self.on_committed_confirmation(
+                            result.confirmation
+                        )
+            active = context.dialog.active_attempt
+            if active is not None:
+                try:
+                    command = await coordinator.read_command(active.command_id)
+                except Exception:  # noqa: BLE001
+                    command = None
+                if (
+                    command is not None
+                    and command.state.value == "awaiting_ack"
+                    and command.active_session_id == context.session_id
+                ):
+                    await coordinator.abort_dialogue(
+                        active=active,
+                        occurred_at_ms=self._clock_ms(),
+                        reason=RetryReason.DISCONNECT,
+                    )
+        context.cloud_audit.close_session(session_id=context.session_id)
+        context.dialog.clear_socket_state()
+        await context.box_writer.release_dialogue(context.session_id)
 
     def _record_telemetry_connection_end(
         self,
@@ -402,7 +1306,7 @@ class ProxyServer:
         box_writer: asyncio.StreamWriter,
     ) -> None:
         """Handler pro nové připojení od Boxu.
-        
+
         Generates unique session ID for tracking twin delivery per TCP session.
         Cloud-initiated settings take priority over local queue.
         """
@@ -588,39 +1492,35 @@ class ProxyServer:
                 self._active_connections.discard(current)
             return
 
-        local_getactual_task = self._start_local_getactual_task(
-            box_writer,
-            conn_id=session_conn_id,
-            peer=peer_str,
-        )
-
-        # Spustíme obousměrný forward.
-        # Používáme FIRST_COMPLETED + cancel, aby po odpojení jedné strany
-        # byl okamžitě uvolněn i druhý socket (jinak hrozí FD leak – každých
-        # ~15 s přibude jeden "stuck" cloud socket dokud systém nevyčerpá FDs).
-        pipe_tasks = [
-            asyncio.ensure_future(
-                self._pipe_box_to_cloud(box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id)
-            ),
-            asyncio.ensure_future(
-                self._pipe_cloud_to_box(cloud_reader, box_writer, peer=peer, session_id=session_id)
-            ),
-        ]
+        local_getactual_task: asyncio.Task[None] | None = None
         try:
-            _done, _pending = await asyncio.wait(
-                pipe_tasks,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for _t in _pending:
-                _t.cancel()
-            if _pending:
-                await asyncio.gather(*_pending, return_exceptions=True)
-        except asyncio.CancelledError:
-            for _t in pipe_tasks:
-                if not _t.done():
-                    _t.cancel()
-            await asyncio.gather(*pipe_tasks, return_exceptions=True)
-            raise
+            if self.twin_coordinator is not None:
+                context = self._create_online_context(
+                    session_id=session_id,
+                    box_writer=box_writer,
+                    cloud_writer=cloud_writer,
+                    conn_id=session_conn_id,
+                    peer=peer_str,
+                )
+                await self.run_connection_context(
+                    context,
+                    box_reader,
+                    cloud_reader,
+                )
+            else:
+                local_getactual_task = self._start_local_getactual_task(
+                    box_writer,
+                    conn_id=session_conn_id,
+                    peer=peer_str,
+                )
+                await self._run_legacy_online_pipes(
+                    box_reader,
+                    box_writer,
+                    cloud_reader,
+                    cloud_writer,
+                    peer=peer,
+                    session_id=session_id,
+                )
         finally:
             await self._stop_local_getactual_task(local_getactual_task)
             if self.twin_delivery is not None:
@@ -647,6 +1547,52 @@ class ProxyServer:
             if current is not None:
                 self._active_connections.discard(current)
             logger.info("🔌 BOX odpojen: %s:%s (session=%s)", *peer[:2], session_id)
+
+    async def _run_legacy_online_pipes(
+        self,
+        box_reader: asyncio.StreamReader,
+        box_writer: asyncio.StreamWriter,
+        cloud_reader: asyncio.StreamReader,
+        cloud_writer: asyncio.StreamWriter,
+        *,
+        peer: tuple[Any, ...],
+        session_id: str,
+    ) -> None:
+        """Run the compatibility forwarding path without semantic control."""
+        pipe_tasks = (
+            asyncio.create_task(
+                self._pipe_box_to_cloud(
+                    box_reader,
+                    cloud_writer,
+                    box_writer,
+                    peer=peer,
+                    session_id=session_id,
+                )
+            ),
+            asyncio.create_task(
+                self._pipe_cloud_to_box(
+                    cloud_reader,
+                    box_writer,
+                    peer=peer,
+                    session_id=session_id,
+                )
+            ),
+        )
+        try:
+            _done, pending = await asyncio.wait(
+                pipe_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        except asyncio.CancelledError:
+            for task in pipe_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pipe_tasks, return_exceptions=True)
+            raise
 
     async def _pipe_box_to_cloud(
         self,
@@ -850,7 +1796,7 @@ class ProxyServer:
                 if frame_bytes is None:
                     break
                 self._capture_frame(frame_bytes, "cloud_to_box", conn_id=conn_id, peer=peer_str)
-                
+
                 frame_text = frame_bytes.decode("utf-8", errors="replace")
                 parsed_frame = parse_xml_frame(frame_text)
                 table_name = self._effective_table_name(parsed_frame, frame_text)
@@ -863,7 +1809,7 @@ class ProxyServer:
                 if self.telemetry_collector is not None:
                     self.telemetry_collector.record_response(frame_text, source="cloud", conn_id=conn_id)
                     self.telemetry_collector.record_frame_direction("cloud_to_proxy")
-                
+
                 if self.twin_delivery is not None:
                     if (
                         table_name == "Setting"
@@ -900,7 +1846,7 @@ class ProxyServer:
                     elif table_name == "END":
                         self.twin_delivery.clear_cloud_inflight()
                         logger.debug("☁️ Cloud END received, clearing cloud inflight")
-                
+
                 await self._handle_twin_frames(frame_bytes, box_writer, session_id=session_id)
                 await self._process_frame(frame_bytes)
 
@@ -1133,6 +2079,7 @@ class ProxyServer:
         direction: str,
         conn_id: int | None = None,
         peer: str | None = None,
+        attempt_link: AttemptCaptureLink | None = None,
     ) -> None:
         if self.frame_capture is None:
             self._log_frame_payload(frame_bytes, direction, conn_id=conn_id, peer=peer)
@@ -1153,6 +2100,7 @@ class ProxyServer:
                 conn_id=conn_id,
                 peer=peer,
                 length=len(frame_bytes),
+                attempt_link=attempt_link,
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("_capture_frame error: %s", exc)
