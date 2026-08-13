@@ -41,6 +41,7 @@ LEGACY_DISCOVERY_TOMBSTONES: tuple[tuple[str, str, str, str], ...] = (
     ("number", "tbl_invertor_prm1", "v_min_ac", "_cfg"),
     ("number", "tbl_invertor_prm1", "a_max_dis_hyb", "_cfg"),
     ("binary_sensor", "tbl_batt_prms", "bat_di", ""),
+    ("sensor", "proxy_control", "proxy_mode", ""),
 )
 
 try:

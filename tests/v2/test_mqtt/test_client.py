@@ -508,6 +508,7 @@ def test_on_connect_removes_legacy_unvalidated_number_discovery():
         "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_v_min_ac_cfg/config",
         "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_a_max_dis_hyb_cfg/config",
         "homeassistant/binary_sensor/oig_local_2206237016_tbl_batt_prms_bat_di/config",
+        "homeassistant/sensor/oig_local_2206237016_proxy_control_proxy_mode/config",
     }
     for publish_call in mock_paho.publish.call_args_list:
         if publish_call.args[0] in tombstones:

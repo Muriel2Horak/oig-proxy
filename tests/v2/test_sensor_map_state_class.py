@@ -40,6 +40,22 @@ class TestSensorMapStateClass:
 
         assert bat_di.get("is_binary") is False
 
+    def test_parameter_energy_values_are_not_cumulative_energy_sensors(self):
+        """Static/configured energy values must not advertise energy device class."""
+        sensor_map_path = Path(__file__).parent.parent.parent / "addon" / "oig-proxy" / "sensor_map.json"
+
+        with open(sensor_map_path) as f:
+            sensors = json.load(f).get("sensors", {})
+
+        parameter_keys = {
+            "tbl_boiler_prms:WD",
+            "tbl_box_prms:P_BAT",
+            "tbl_car_charge_prms:CONSUM_EL",
+            "tbl_car_charge_prms:CARACUSIZE",
+        }
+        for sensor_key in parameter_keys:
+            assert sensors[sensor_key].get("device_class") is None, sensor_key
+
     def test_measurable_non_binary_sensors_have_state_class(self):
         """Test that measurable non-binary sensors have a non-null state_class."""
         sensor_map_path = Path(__file__).parent.parent.parent / "addon" / "oig-proxy" / "sensor_map.json"
