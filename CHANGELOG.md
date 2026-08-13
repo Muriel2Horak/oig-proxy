@@ -2,6 +2,15 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.1.2] - 2026-08-13
+
+### Fixed
+- Proxy status now publishes the four cloud connection counters advertised to Home Assistant and republishes their missing-key-safe MQTT discovery definitions, preventing recurring template warnings from older retained discovery payloads.
+- Proxy mode discovery now has a retained `proxy_control` state payload, so the Home Assistant mode select restores its state after reconnects.
+- Removed retained discovery for three legacy writable inverter limits whose safe bounds are not validated and the obsolete binary `BAT_DI` entity, and expanded the validated boiler HDO energy range to include the live 500,000 Wh value.
+- Removed the rejected legacy proxy-mode sensor discovery and corrected four static energy parameters so Home Assistant no longer treats them as cumulative energy sensors.
+- Made the status timestamp overwrite test deterministic instead of relying on two adjacent wall-clock reads being distinct.
+
 ## [2.1.0] - 2026-06-09
 
 ### Changed

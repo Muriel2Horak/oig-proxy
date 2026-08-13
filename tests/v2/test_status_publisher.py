@@ -7,10 +7,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false
 
 import asyncio
-import json
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from mqtt.status import ProxyStatusPublisher
 
@@ -75,10 +72,10 @@ def test_record_frame_overwrites():
     mqtt = MagicMock()
     pub = ProxyStatusPublisher(mqtt, 60, "oig_proxy")
 
-    pub.record_frame("DEV01", "tbl_invertor")
-    first_timestamp = pub._last_frame_timestamp
-
-    pub.record_frame("DEV02", "tbl_batt")
+    with patch("mqtt.status.time.time", side_effect=[100.0, 101.0]):
+        pub.record_frame("DEV01", "tbl_invertor")
+        first_timestamp = pub._last_frame_timestamp
+        pub.record_frame("DEV02", "tbl_batt")
 
     assert pub._last_frame_device_id == "DEV02"
     assert pub._last_frame_table == "tbl_batt"
@@ -121,6 +118,53 @@ def test_publish_when_mqtt_ready():
     assert payload["last_data"].endswith("Z")
     assert payload["last_data_update"] == payload["last_data"]
     assert isinstance(payload["last_data_age_s"], int)
+
+
+def test_publish_includes_cloud_counters_and_refreshes_discovery():
+    """Status payload republishes cloud counters using missing-key-safe discovery."""
+    mqtt = make_mqtt_client(connected=True)
+    loader = MagicMock()
+    loader.lookup.side_effect = lambda table, key: (
+        {
+            "name": key,
+            "device_mapping": "proxy",
+            "entity_category": "diagnostic",
+        }
+        if table == "proxy_status"
+        else None
+    )
+    loader.iter_sensors.return_value = []
+    pub = ProxyStatusPublisher(
+        mqtt,
+        60,
+        "oig_proxy",
+        sensor_loader=loader,
+        get_cloud_connects=lambda: 7,
+        get_cloud_disconnects=lambda: 3,
+        get_cloud_timeouts=lambda: 2,
+        get_cloud_errors=lambda: 1,
+    )
+
+    pub._publish()
+
+    payload = next(
+        call.args[2]
+        for call in mqtt.publish_state.call_args_list
+        if call.args[1] == "proxy_status"
+    )
+    assert payload["cloud_connects"] == 7
+    assert payload["cloud_disconnects"] == 3
+    assert payload["cloud_timeouts"] == 2
+    assert payload["cloud_errors"] == 1
+    discovered_keys = {
+        call.kwargs["sensor_key"] for call in mqtt.send_discovery.call_args_list
+    }
+    assert {
+        "cloud_connects",
+        "cloud_disconnects",
+        "cloud_timeouts",
+        "cloud_errors",
+    } <= discovered_keys
 
 
 def test_publish_disconnected_status():
@@ -273,3 +317,26 @@ def test_publish_sends_discovery_for_proxy_controls_when_loader_present():
     pub._publish()
 
     assert any(call.kwargs.get("table") == "proxy_control" for call in mqtt.send_discovery.call_args_list)
+
+
+def test_publish_retains_proxy_control_state_when_discovery_is_enabled():
+    """The mode select receives a retained state on its configured state topic."""
+    mqtt = make_mqtt_client(connected=True)
+    loader = MagicMock()
+    loader.lookup.return_value = None
+    loader.iter_sensors.return_value = []
+    pub = ProxyStatusPublisher(
+        mqtt,
+        60,
+        "oig_proxy",
+        sensor_loader=loader,
+        get_configured_mode=lambda: "hybrid",
+    )
+
+    pub._publish()
+
+    assert mqtt.publish_state.call_args_list[-1].args == (
+        "oig_proxy",
+        "proxy_control",
+        {"PROXY_MODE": "hybrid"},
+    )

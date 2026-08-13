@@ -36,6 +36,14 @@ DEVICE_NAMES: dict[str, str] = {
     "proxy": "Diagnostika OIG",
 }
 
+LEGACY_DISCOVERY_TOMBSTONES: tuple[tuple[str, str, str, str], ...] = (
+    ("number", "tbl_invertor_prm1", "v_max_ac", "_cfg"),
+    ("number", "tbl_invertor_prm1", "v_min_ac", "_cfg"),
+    ("number", "tbl_invertor_prm1", "a_max_dis_hyb", "_cfg"),
+    ("binary_sensor", "tbl_batt_prms", "bat_di", ""),
+    ("sensor", "proxy_control", "proxy_mode", ""),
+)
+
 try:
     import paho.mqtt.client as _paho_mqtt  # pyright: ignore[reportMissingImports]
     PAHO_AVAILABLE = True
@@ -183,6 +191,7 @@ class MQTTClient:
                 avail_topic = f"{self.namespace}/{device_id}/availability"
                 client.publish(avail_topic, "online", retain=True, qos=1)
                 self._availability_online_sent.add(device_id)
+            self._remove_legacy_discovery(client, connect_id)
             logger.info("MQTT: Připojeno (rc=0)")
         else:
             self.connected = False
@@ -196,6 +205,13 @@ class MQTTClient:
     # ------------------------------------------------------------------
     # Publish
     # ------------------------------------------------------------------
+
+    def _remove_legacy_discovery(self, client: Any, device_id: str) -> None:
+        """Remove retained discovery for obsolete or incorrectly typed entities."""
+        for component, table, key, suffix in LEGACY_DISCOVERY_TOMBSTONES:
+            unique_id = f"{self.namespace}_{device_id}_{table}_{key}{suffix}".lower()
+            topic = f"homeassistant/{component}/{unique_id}/config"
+            client.publish(topic, "", retain=True, qos=1)
 
     def is_ready(self) -> bool:
         return self._client is not None and self.connected

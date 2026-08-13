@@ -483,9 +483,53 @@ def test_on_connect_publishes_availability_online():
 
     c._on_connect(mock_paho, None, None, rc=0)
 
-    mock_paho.publish.assert_called_once_with(
+    mock_paho.publish.assert_any_call(
         "oig_local/DEV01/availability", "online", retain=True, qos=1
     )
+
+
+def test_on_connect_removes_legacy_unvalidated_number_discovery():
+    """Reconnect removes retained number entities that are no longer writable."""
+    c = make_client(namespace="oig_local")
+    mock_paho = MagicMock()
+    mock_paho._oig_device_id = "2206237016"
+    mock_paho.publish.return_value = MagicMock(rc=0)
+    c._client = mock_paho
+
+    c._on_connect(mock_paho, None, None, rc=0)
+
+    tombstones = {
+        publish_call.args[0]
+        for publish_call in mock_paho.publish.call_args_list
+        if len(publish_call.args) >= 2 and publish_call.args[1] == ""
+    }
+    assert tombstones == {
+        "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_v_max_ac_cfg/config",
+        "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_v_min_ac_cfg/config",
+        "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_a_max_dis_hyb_cfg/config",
+        "homeassistant/binary_sensor/oig_local_2206237016_tbl_batt_prms_bat_di/config",
+        "homeassistant/sensor/oig_local_2206237016_proxy_control_proxy_mode/config",
+    }
+    for publish_call in mock_paho.publish.call_args_list:
+        if publish_call.args[0] in tombstones:
+            assert publish_call.kwargs == {"retain": True, "qos": 1}
+
+
+def test_boiler_hdo_energy_number_range_accepts_live_value():
+    """WD discovery range includes the 500 kWh value reported by the box."""
+    c = make_client(namespace="oig_local")
+    mock_paho = inject_mock_paho(c)
+
+    c.send_discovery(
+        device_id="2206237016",
+        table="tbl_boiler_prms",
+        sensor_key="WD",
+        sensor_name="Bojler - Energie pro HDO",
+        unit="Wh",
+    )
+
+    payload = json.loads(mock_paho.publish.call_args.args[1])
+    assert payload["max"] >= 500_000
 
 
 def test_on_connect_rc_nonzero_sets_connected_false():
