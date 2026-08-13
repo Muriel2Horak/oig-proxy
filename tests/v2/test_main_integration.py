@@ -11,7 +11,7 @@ Tests the full integration of:
 - TelemetryCollector
 """
 
-# pylint: disable=protected-access,unspecified-encoding,too-few-public-methods,missing-class-docstring,missing-function-docstring,unnecessary-lambda,broad-exception-caught,unused-variable
+# pylint: disable=protected-access,unspecified-encoding,too-few-public-methods,missing-class-docstring,missing-function-docstring,unnecessary-lambda,broad-exception-caught,unused-variable,too-many-lines
 # pyright: reportMissingImports=false
 
 from __future__ import annotations
@@ -181,6 +181,49 @@ class TestStartupSequence:
 
         assert app.device_id_manager is not None
         mock_instance.load.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_startup_wires_proxy_cloud_counters_into_status_publisher(
+        self, mock_config
+    ):
+        """Status callbacks read live counters after ProxyServer starts."""
+        mock_config.proxy_status_interval = 60
+        app = ProxyApp(mock_config)
+
+        with patch("main.DeviceIdManager") as mock_device_manager, patch(
+            "main.MQTTClient"
+        ) as mock_mqtt_class, patch(
+            "main.ProxyStatusPublisher"
+        ) as mock_status_class, patch("main.ProxyServer") as mock_proxy_class:
+            device_manager = Mock()
+            device_manager.load.return_value = "2206237016"
+            device_manager.device_id = "2206237016"
+            mock_device_manager.return_value = device_manager
+
+            mqtt = Mock()
+            mqtt.is_ready.return_value = False
+            mqtt.health_check_loop = AsyncMock()
+            mock_mqtt_class.return_value = mqtt
+
+            status = Mock()
+            status.run = AsyncMock()
+            mock_status_class.return_value = status
+
+            proxy = AsyncMock()
+            proxy.cloud_connects = 7
+            proxy.cloud_disconnects = 3
+            proxy.cloud_timeouts = 2
+            proxy.cloud_errors = 1
+            proxy.mode_manager.configured_mode = "hybrid"
+            mock_proxy_class.return_value = proxy
+
+            await app.startup()
+
+        callbacks = mock_status_class.call_args.kwargs
+        assert callbacks["get_cloud_connects"]() == 7
+        assert callbacks["get_cloud_disconnects"]() == 3
+        assert callbacks["get_cloud_timeouts"]() == 2
+        assert callbacks["get_cloud_errors"]() == 1
 
     @pytest.mark.asyncio
     async def test_startup_loads_sensor_map(self, mock_config, temp_dir, sensor_map_content):

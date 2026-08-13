@@ -194,6 +194,12 @@ class ProxyApp:
                 get_configured_mode=(
                     lambda: self.proxy.mode_manager.configured_mode if self.proxy else "online"
                 ),
+                get_cloud_connects=lambda: self.proxy.cloud_connects if self.proxy else 0,
+                get_cloud_disconnects=(
+                    lambda: self.proxy.cloud_disconnects if self.proxy else 0
+                ),
+                get_cloud_timeouts=lambda: self.proxy.cloud_timeouts if self.proxy else 0,
+                get_cloud_errors=lambda: self.proxy.cloud_errors if self.proxy else 0,
                 initial_device_id=device_id,
             )
             status_task = asyncio.create_task(

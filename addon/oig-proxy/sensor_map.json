@@ -739,6 +739,50 @@
       "entity_category": "diagnostic",
       "is_binary": true
     },
+    "proxy_status:cloud_connects": {
+      "name": "Cloud connections",
+      "name_cs": "Cloud připojení (počet)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "total_increasing",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:cloud_disconnects": {
+      "name": "Cloud disconnects",
+      "name_cs": "Cloud odpojení (počet)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "total_increasing",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:cloud_timeouts": {
+      "name": "Cloud timeouts",
+      "name_cs": "Cloud timeouty (počet)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "total_increasing",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
+    "proxy_status:cloud_errors": {
+      "name": "Cloud errors",
+      "name_cs": "Cloud chyby (počet)",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": "total_increasing",
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "proxy_status:cloud_queue": {
       "name": "Cloud fronta",
       "name_cs": "Cloud fronta",

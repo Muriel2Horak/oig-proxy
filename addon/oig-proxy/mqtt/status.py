@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
@@ -26,6 +25,10 @@ class ProxyStatusPublisher:
         proxy_device_id: str,
         sensor_loader: SensorMapLoader | None = None,
         get_configured_mode: Callable[[], str] | None = None,
+        get_cloud_connects: Callable[[], int] | None = None,
+        get_cloud_disconnects: Callable[[], int] | None = None,
+        get_cloud_timeouts: Callable[[], int] | None = None,
+        get_cloud_errors: Callable[[], int] | None = None,
         initial_device_id: str | None = None,
     ) -> None:
         self._mqtt = mqtt
@@ -33,6 +36,10 @@ class ProxyStatusPublisher:
         self._proxy_device_id = proxy_device_id
         self._sensor_loader = sensor_loader
         self._get_configured_mode = get_configured_mode
+        self._get_cloud_connects = get_cloud_connects
+        self._get_cloud_disconnects = get_cloud_disconnects
+        self._get_cloud_timeouts = get_cloud_timeouts
+        self._get_cloud_errors = get_cloud_errors
 
         self._frame_count = 0
         self._last_frame_table = ""
@@ -67,18 +74,35 @@ class ProxyStatusPublisher:
             ).isoformat().replace("+00:00", "Z")
             last_data_age_s = int(max(0, now - self._last_frame_timestamp))
 
+        configured_mode = (
+            self._get_configured_mode()
+            if self._get_configured_mode is not None
+            else "online"
+        )
         payload: dict[str, Any] = {
             "status": "online" if box_connected else "offline",
             "mode": "online" if box_connected else "offline",
-            "configured_mode": (
-                self._get_configured_mode() if self._get_configured_mode is not None else "online"
-            ),
+            "configured_mode": configured_mode,
             "connection_status": connection_status,
             "last_data_age_s": last_data_age_s if last_data_age_s is not None else 0,
             "box_connected": int(box_connected),
             "box_data_recent": int(box_connected),
             "cloud_online": int(self._mqtt.connected),
             "cloud_session_connected": int(self._mqtt.connected),
+            "cloud_connects": (
+                int(self._get_cloud_connects()) if self._get_cloud_connects else 0
+            ),
+            "cloud_disconnects": (
+                int(self._get_cloud_disconnects())
+                if self._get_cloud_disconnects
+                else 0
+            ),
+            "cloud_timeouts": (
+                int(self._get_cloud_timeouts()) if self._get_cloud_timeouts else 0
+            ),
+            "cloud_errors": (
+                int(self._get_cloud_errors()) if self._get_cloud_errors else 0
+            ),
             "mqtt_connected": int(self._mqtt.connected),
             "frame_count": self._frame_count,
             "last_frame_table": self._last_frame_table,
@@ -143,6 +167,12 @@ class ProxyStatusPublisher:
             "proxy_status",
             payload,
         )
+        if self._sensor_loader is not None:
+            self._mqtt.publish_state(
+                self._proxy_device_id,
+                "proxy_control",
+                {"PROXY_MODE": configured_mode},
+            )
         logger.debug(
             "Published proxy status: %s frames, last: %s from %s",
             self._frame_count,

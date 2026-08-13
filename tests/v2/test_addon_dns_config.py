@@ -69,7 +69,7 @@ def test_config_clamps_local_getactual_interval(monkeypatch) -> None:
 def test_addon_config_exposes_local_getactual_options() -> None:
     addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
 
-    assert addon_config["version"] == "2.1.1"
+    assert addon_config["version"] == "2.1.2"
     assert addon_config["options"]["local_getactual_enabled"] is False
     assert addon_config["options"]["local_getactual_interval_s"] == 10
     assert addon_config["schema"]["local_getactual_enabled"] == "bool?"

@@ -60,7 +60,7 @@ SETTING_CONSTRAINTS: dict[tuple[str, str], SettingConstraint] = {
     ("tbl_boiler_prms", "SSR2"): SettingConstraint(min_value=0, max_value=1, step=1, integer_only=True),
     ("tbl_boiler_prms", "PRRTY"): SettingConstraint(min_value=0, max_value=2, step=1, integer_only=True),
     ("tbl_boiler_prms", "P_SET"): SettingConstraint(min_value=0, max_value=10000, step=100, integer_only=True),
-    ("tbl_boiler_prms", "WD"): SettingConstraint(min_value=0, max_value=100000, step=100, integer_only=True),
+    ("tbl_boiler_prms", "WD"): SettingConstraint(min_value=0, max_value=500000, step=100, integer_only=True),
     ("tbl_boiler_prms", "ZONE1_S"): SettingConstraint(min_value=0, max_value=86399, step=60, integer_only=True),
     ("tbl_boiler_prms", "ZONE1_E"): SettingConstraint(min_value=0, max_value=86399, step=60, integer_only=True),
     ("tbl_boiler_prms", "ZONE2_S"): SettingConstraint(min_value=0, max_value=86399, step=60, integer_only=True),
