@@ -69,11 +69,28 @@ def test_config_clamps_local_getactual_interval(monkeypatch) -> None:
 def test_addon_config_exposes_local_getactual_options() -> None:
     addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
 
-    assert addon_config["version"] == "2.1.2"
+    assert addon_config["version"] == "2.2.0"
     assert addon_config["options"]["local_getactual_enabled"] is False
     assert addon_config["options"]["local_getactual_interval_s"] == 10
     assert addon_config["schema"]["local_getactual_enabled"] == "bool?"
     assert addon_config["schema"]["local_getactual_interval_s"] == "int?"
+
+
+def test_addon_config_exposes_builtin_dns_option() -> None:
+    addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
+
+    assert addon_config["options"]["builtin_dns_enabled"] is True
+    assert addon_config["schema"]["builtin_dns_enabled"] == "bool?"
+
+
+def test_run_gates_dnsmasq_on_builtin_dns_enabled() -> None:
+    run_script = (ADDON_DIR / "run").read_text(encoding="utf-8")
+
+    assert "if bashio::config.true 'builtin_dns_enabled'; then" in run_script
+    # dnsmasq must only be started inside that guard
+    guard_index = run_script.index("if bashio::config.true 'builtin_dns_enabled'; then")
+    dnsmasq_index = run_script.index("/usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &")
+    assert guard_index < dnsmasq_index
 
 
 def test_configuration_docs_parameter_table_matches_addon_config() -> None:
