@@ -24,6 +24,7 @@ The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). T
 | `mqtt_username` | `MQTT_USERNAME` | str | `` | MQTT username (empty = no auth) |
 | `mqtt_password` | `MQTT_PASSWORD` | str | `` | MQTT password |
 | `ha_ip` | `HA_IP` | str? | `` | HA LAN IP for dnsmasq override (empty = auto-detect) |
+| `builtin_dns_enabled` | — | bool? | `true` | Start the built-in dnsmasq on port 53. Set `false` to free port 53 for an external resolver (e.g. AdGuard Home / Pi-hole) that handles the `target_server` rewrite instead |
 | `dns_override_ip` | `DNS_OVERRIDE_IP` | str? | `` | Explicit DNS target IP for the configured `target_server` override (takes priority over `ha_ip`) |
 | `dns_upstream` | `DNS_UPSTREAM` | str? | `8.8.8.8` | Upstream DNS server for dnsmasq |
 | `log_level` | `LOG_LEVEL` | enum | `INFO` | Log verbosity: `INFO`, `DEBUG`, or `TRACE` |
@@ -37,7 +38,7 @@ The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). T
 | `telemetry_enabled` | `TELEMETRY_ENABLED` | bool? | `true` | Enable anonymous operational telemetry |
 | `max_concurrent_connections` | `MAX_CONCURRENT_CONNECTIONS` | int? | `5` | Maximum number of concurrent Box connections the proxy will keep open |
 
-**26 parameters total.**
+**27 parameters total.**
 
 ---
 
@@ -104,6 +105,14 @@ Credentials for MQTT broker authentication. In HA, create a dedicated MQTT user 
 The LAN IP address of your Home Assistant instance. Used by the built-in dnsmasq server (port 53) to override the configured `target_server` DNS record. If left empty, the proxy attempts to auto-detect it. Set this explicitly if auto-detection picks the wrong interface.
 
 Only relevant if you're using the proxy's DNS feature. If your router already handles the DNS override, leave this empty and don't worry about dnsmasq.
+
+### `builtin_dns_enabled`
+
+Controls whether the add-on starts its built-in dnsmasq server on TCP/UDP port 53. Default `true` (backwards compatible).
+
+Set it to `false` when another resolver on the **same host** should own port 53 — typically AdGuard Home or Pi-hole running as a separate add-on. Because the add-on uses `host_network: true`, the built-in dnsmasq and such a resolver would otherwise both try to bind port 53 and only one (depending on start order) would win. With `builtin_dns_enabled: false`, dnsmasq is not started and the external resolver must provide the `target_server` → HA-IP rewrite itself.
+
+This does not affect the proxy↔cloud connection: the proxy resolves `target_server` via `dns_upstream` independently of the built-in dnsmasq.
 
 ### `dns_override_ip`
 

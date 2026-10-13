@@ -34,17 +34,24 @@ if ! echo "$UPSTREAM" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
   UPSTREAM="8.8.8.8"
 fi
 
-# Vytvořit adresář pro dnsmasq
-mkdir -p /etc/dnsmasq.d
+# Built-in DNS (dnsmasq): rewrites target_server -> DNS_TARGET_IP and forwards the rest.
+# Optional: disable it to free port 53 for an external resolver (e.g. AdGuard Home)
+# that handles the target_server rewrite itself. The proxy resolves the cloud via
+# dns_upstream directly, so disabling the built-in DNS does not affect proxy<->cloud.
+if bashio::config.true 'builtin_dns_enabled'; then
+    mkdir -p /etc/dnsmasq.d
 
-echo "server=$UPSTREAM" > /etc/dnsmasq.d/upstream.conf
-echo "address=/$TARGET_SERVER_RAW/$DNS_TARGET_IP" > /etc/dnsmasq.d/oig.conf
-if [ "$TARGET_SERVER_RAW" = "bridge.oigpower.cz" ]; then
-    echo "address=/oigservis.cz/$DNS_TARGET_IP" >> /etc/dnsmasq.d/oig.conf
+    echo "server=$UPSTREAM" > /etc/dnsmasq.d/upstream.conf
+    echo "address=/$TARGET_SERVER_RAW/$DNS_TARGET_IP" > /etc/dnsmasq.d/oig.conf
+    if [ "$TARGET_SERVER_RAW" = "bridge.oigpower.cz" ]; then
+        echo "address=/oigservis.cz/$DNS_TARGET_IP" >> /etc/dnsmasq.d/oig.conf
+    fi
+
+    # spustit dnsmasq (foreground &)
+    /usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &
+else
+    bashio::log.info "builtin_dns_enabled=false: dnsmasq not started; an external resolver must rewrite ${TARGET_SERVER_RAW} -> ${DNS_TARGET_IP}"
 fi
-
-# spustit dnsmasq (foreground &)
-/usr/sbin/dnsmasq -k --conf-dir=/etc/dnsmasq.d &
 
 # Připravit JSON mapu: použij novou verzi z image pouze pokud je větší
 if [ -f /app/sensor_map.json ]; then
