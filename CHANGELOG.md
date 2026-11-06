@@ -2,6 +2,13 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.1.3] - 2026-11-06
+
+### Fixed
+- Corrected inverter `tbl_invertor_prms.PRRTY` solar-priority labels: `0` = battery, load, grid; `1` = load, battery, grid; `2` = load, grid, battery. Numeric values, entity IDs and MQTT topics are unchanged.
+- Documented that mode changes reapply inverter SEP priority and can replace a manual priority selection. Experimental status and public write permissions are unchanged. The private development select requires the same metadata correction; its controls are not part of this release.
+- Added [PRRTY reference and capture limitations](docs/v2/prrty-priority.md). Captures support `PRRTY=1` with preceding `SEP01`; complete three-value table/SEP equivalence remains unconfirmed.
+
 ## [2.1.2] - 2026-08-13
 
 ### Fixed

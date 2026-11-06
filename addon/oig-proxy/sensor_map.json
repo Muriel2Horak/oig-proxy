@@ -4046,8 +4046,10 @@
       "is_binary": true
     },
     "tbl_invertor_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
+      "name": "Solar energy distribution priority",
       "name_cs": "Střídač - Priorita toku",
+      "description_cs": "Experimentální parametr. Box při každém přepnutí režimu pošle do střídače příkaz SEP podle režimu. Ruční změna priority proto nejspíš vydrží jen do další změny režimu.",
+      "experimental": true,
       "unit_of_measurement": "",
       "device_class": null,
       "state_class": null,
@@ -4056,9 +4058,9 @@
       "todo": false,
       "entity_category": "diagnostic",
       "enum_map": {
-        "0": "Baterie -> Síť",
-        "1": "Baterie -> Zátěž -> Síť",
-        "2": "Zátěž -> Síť -> Baterie"
+        "0": "Baterie, zátěž, síť",
+        "1": "Zátěž, baterie, síť",
+        "2": "Zátěž, síť, baterie"
       }
     },
     "tbl_invertor_prms:P_ADJ_ENBL": {
