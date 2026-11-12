@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # sys.path nastaven v conftest.py
 from mqtt.client import MQTTClient
+from sensor.loader import SensorMapLoader
+from settings_constraints import is_setting_allowed, validate_setting_value
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +44,15 @@ def inject_mock_paho(client: MQTTClient, connected: bool = True) -> MagicMock:
     client._client = mock_paho
     client.connected = connected
     return mock_paho
+
+
+def load_released_sensor_map() -> SensorMapLoader:
+    """Load the same metadata packaged with the add-on."""
+    loader = SensorMapLoader(str(
+        Path(__file__).resolve().parents[3] / "addon" / "oig-proxy" / "sensor_map.json"
+    ))
+    loader.load()
+    return loader
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +330,93 @@ def test_send_discovery_creates_sensor_and_select_for_box_mode():
     assert '"Home 2": "1"' in control_payload["command_template"]
 
 
+def test_released_box_mode_keeps_its_entity_ids_topics_and_six_options():
+    """Use shipped metadata to verify the two MODE entities and the released domain."""
+    loader = load_released_sensor_map()
+    mode = loader.lookup("tbl_box_prms", "MODE")
+    assert mode is not None
+    client = make_client(namespace="custom")
+    broker = inject_mock_paho(client)
+
+    assert client.send_discovery(
+        device_id="BOX01", table="tbl_box_prms", sensor_key="MODE",
+        sensor_name="Režim", enum_map=mode["enum_map"],
+    )
+
+    publications = {
+        args[0]: json.loads(args[1]) for args, _kwargs in broker.publish.call_args_list
+    }
+    state_id = "custom_box01_tbl_box_prms_mode"
+    control_id = state_id + "_cfg"
+    assert set(publications) == {
+        f"homeassistant/sensor/{state_id}/config", f"homeassistant/select/{control_id}/config",
+    }
+    control = publications[f"homeassistant/select/{control_id}/config"]
+    assert control["unique_id"] == control_id
+    assert control["default_entity_id"] == "select.oig_local_box01_tbl_box_prms_mode_cfg"
+    assert control["state_topic"] == "custom/BOX01/tbl_box_prms/state"
+    assert control["command_topic"] == "custom/BOX01/set/tbl_box_prms/MODE"
+    assert control["options"] == ["Home 1", "Home 2", "Home 3", "Home UPS", "Home 5", "Home 6"]
+    assert control["optimistic"] is False
+    assert control["retain"] is False
+    for value in range(6):
+        assert validate_setting_value("tbl_box_prms", "MODE", str(value)) == (True, value, "")
+    for value in (-1, 6, 1.5, "5.0000000000000001", "NaN", "Infinity", ""):
+        assert validate_setting_value("tbl_box_prms", "MODE", value)[0] is False
+
+
+def test_inverter_priority_preserves_reviewed_read_only_labels():
+    """The reviewed PRRTY labels accompany observations without enabling commands."""
+    metadata = load_released_sensor_map().lookup("tbl_invertor_prms", "PRRTY")
+    assert metadata is not None
+    assert metadata["enum_map"] == {
+        "0": "Baterie, zátěž, síť",
+        "1": "Zátěž, baterie, síť",
+        "2": "Riziko nabíjení ze sítě a vypnutí přetoků",
+    }
+    assert is_setting_allowed("tbl_invertor_prms", "PRRTY") is False
+
+
+@pytest.mark.parametrize(
+    ("table", "key", "value"),
+    [("tbl_invertor_prm1", "AAC_MAX_CHRG", 100),
+     ("tbl_invertor_prms", "PRRTY", 1),
+     ("tbl_invertor_prm1", "P_MAX_FEED_GRID", 1000)],
+)
+def test_unreleased_setting_is_observable_without_command_discovery(table, key, value):
+    """Observed AAC, PRRTY and export settings cannot acquire a control."""
+    client = make_client()
+    broker = inject_mock_paho(client)
+
+    assert client.send_discovery(device_id="BOX01", table=table, sensor_key=key, sensor_name=key)
+
+    broker.publish.assert_called_once()
+    topic, raw = broker.publish.call_args.args
+    assert topic == f"homeassistant/sensor/oig_local_box01_{table}_{key.lower()}/config"
+    assert "command_topic" not in json.loads(raw)
+    assert is_setting_allowed(table, key) is False
+    assert validate_setting_value(table, key, value)[0] is False
+
+
+def test_box_mode_discovery_retries_failed_select_without_republishing_sensor():
+    """Retry the command entity after the matching state entity was accepted."""
+    client = make_client()
+    broker = inject_mock_paho(client)
+    broker.publish.side_effect = [
+        SimpleNamespace(rc=0), SimpleNamespace(rc=4), SimpleNamespace(rc=0),
+    ]
+    arguments = {
+        "device_id": "BOX01", "table": "tbl_box_prms", "sensor_key": "MODE",
+        "sensor_name": "Režim", "enum_map": {"0": "Home 1", "1": "Home 2"},
+    }
+
+    assert client.send_discovery(**arguments) is False
+    assert client.send_discovery(**arguments) is True
+    assert [args[0].split("/")[1] for args, _kwargs in broker.publish.call_args_list] == [
+        "sensor", "select", "select",
+    ]
+
+
 def test_send_discovery_creates_select_for_proxy_mode_enum_setting():
     c = make_client(namespace="oig_local")
     mock_paho = inject_mock_paho(c)
@@ -439,22 +539,22 @@ def test_send_discovery_clears_dedup_on_reconnect():
     c.send_discovery(device_id="DEV01", table="t", sensor_key="k", sensor_name="K")
     assert mock_paho.publish.call_count == 1
 
-    # Simulujeme reconnect — on_connect vymaže cache
-    mock_paho2 = MagicMock()
+    # Reconnect callbacks must belong to the newly active client.
+    mock_paho2 = inject_mock_paho(c)
     mock_paho2._oig_device_id = "DEV01"
-    mock_paho2.publish.return_value = MagicMock(rc=0)
-    c._on_connect(mock_paho2, None, None, 0)
-
-    # Znovu injektujeme mock do c._client
-    inject_mock_paho(c)
+    c._on_connect(mock_paho2, None, {"session present": 0}, 0)
+    mock_paho2.publish.reset_mock()
 
     c.send_discovery(device_id="DEV01", table="t", sensor_key="k", sensor_name="K")
-    assert c._client.publish.call_count == 1  # Opět posláno
+    mock_paho2.publish.assert_called_once()
 
 
 def test_build_object_id_normalizes_non_alnum():
     assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B") == "oig_local_dev_01_tbl_box_a_b"
-    assert MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B", is_control=True) == "oig_local_dev_01_tbl_box_a_b_cfg"
+    assert (
+        MQTTClient._build_object_id("DEV-01", "tbl.box", "A+B", is_control=True)
+        == "oig_local_dev_01_tbl_box_a_b_cfg"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -473,8 +573,8 @@ def test_on_connect_sets_connected_true():
     assert c.connected is True
 
 
-def test_on_connect_publishes_availability_online():
-    """on_connect publikuje availability=online."""
+def test_reconnect_and_confirmed_replay_do_not_announce_box_availability():
+    """Reconnect and historical state replay cannot establish current BOX liveness."""
     c = make_client(namespace="oig_local")
     mock_paho = MagicMock()
     mock_paho._oig_device_id = "DEV01"
@@ -483,16 +583,125 @@ def test_on_connect_publishes_availability_online():
 
     c._on_connect(mock_paho, None, None, rc=0)
 
-    mock_paho.publish.assert_any_call(
-        "oig_local/DEV01/availability", "online", retain=True, qos=1
-    )
+    assert c.publish_confirmed_state("DEV01", "tbl_box_prms", {"IP": ""})
+    assert not any(args[0].endswith("/availability") for args, _ in mock_paho.publish.call_args_list)
+    topic, payload = mock_paho.publish.call_args.args
+    assert topic == "oig_local/DEV01/tbl_box_prms/state"
+    assert json.loads(payload) == {"IP": ""}
+
+
+def test_home_assistant_birth_reopens_discovery_without_issuing_control():
+    """HA can rebuild discovery after birth without generating a setting request."""
+    client = make_client()
+    broker = inject_mock_paho(client)
+    recovery = MagicMock()
+    control = MagicMock()
+    broker.subscribe.return_value = (0, 1)
+    client._on_connect(broker, None, {"session present": 0}, 0)
+    broker.publish.reset_mock()
+    client.set_recovery_callback(recovery)
+    assert client.subscribe("oig/+/control/set", control)
+    discovery = {"device_id": "BOX01", "table": "tbl_actual", "sensor_key": "P", "sensor_name": "Power"}
+    assert client.send_discovery(**discovery)
+    generation = client.discovery_generation
+
+    client._on_message(broker, None, SimpleNamespace(topic="homeassistant/status", payload=b"online", dup=True))
+
+    recovery.assert_called_once_with()
+    control.assert_not_called()
+    assert client.discovery_generation == generation + 1
+    assert client.send_discovery(**discovery)
+    assert broker.publish.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("subscription", "topic"),
+    [
+        ("oig/+/control/set", "oig/BOX01/control/set"),
+        ("oig_local/+/set/#", "oig_local/BOX01/set/tbl_box_prms/MODE"),
+        ("oig_local/oig_proxy/set/proxy_control/PROXY_MODE", "oig_local/oig_proxy/set/proxy_control/PROXY_MODE"),
+    ],
+)
+def test_retained_and_duplicate_control_messages_never_reach_callback(subscription, topic):
+    """Only a fresh command can invoke the control callback on either supported route."""
+    client = make_client()
+    broker = inject_mock_paho(client)
+    broker.subscribe.return_value = (0, 1)
+    callback = MagicMock()
+    client._on_connect(broker, None, {"session present": 0}, 0)
+    assert client.subscribe(subscription, callback)
+    broker.subscribe.assert_called_once_with(subscription, qos=0)
+    client._on_subscribe(broker, None, 1, (0,))
+
+    for retain, dup in [(True, False), (False, True), (True, True)]:
+        client._on_message(broker, None, SimpleNamespace(topic=topic, payload=b"1", retain=retain, dup=dup, qos=0))
+    callback.assert_not_called()
+    client._on_message(broker, None, SimpleNamespace(topic=topic, payload=b"1", retain=False, dup=False, qos=0))
+    callback.assert_called_once_with(topic, b"1")
+
+
+def test_mqtt_client_requests_clean_session():
+    """Paho uses MQTT 3.1.1 without a persistent command backlog."""
+    client = make_client()
+    broker = MagicMock()
+    with patch("mqtt.client._paho_mqtt.Client", return_value=broker) as create:
+        assert client._create_client("BOX01") is broker
+    assert create.call_args.kwargs["clean_session"] is True
+    assert broker.on_subscribe == client._on_subscribe
+
+
+def test_control_dispatch_requires_clean_active_connection_and_matching_suback():
+    """Old clients, resumed sessions and ungranted subscriptions cannot deliver a command."""
+    client = make_client(qos=2)
+    old_broker = inject_mock_paho(client)
+    old_broker.subscribe.return_value = (0, 1)
+    callback = MagicMock()
+    status = MagicMock()
+    topic_filter = "oig/+/control/set"
+    message = SimpleNamespace(topic="oig/BOX01/control/set", payload=b"1", retain=False, dup=False, qos=0)
+    client._on_connect(old_broker, None, {"session present": 0}, 0)
+    assert client.subscribe(topic_filter, callback)
+    old_broker.subscribe.assert_called_once_with(topic_filter, qos=0)
+    client._on_message(old_broker, None, message)
+    callback.assert_not_called()
+    client._on_subscribe(old_broker, None, 1, (1,))
+    client._on_message(old_broker, None, message)
+    callback.assert_not_called()
+    client._on_disconnect(old_broker, None, 0)
+
+    active_broker = inject_mock_paho(client)
+    active_broker.subscribe.return_value = (0, 2)
+    assert client.subscribe("read/status", status)
+    client._on_connect(active_broker, None, {"session present": 1}, 0)
+    assert all(args[0] == "read/status" for args, _kwargs in active_broker.subscribe.call_args_list)
+    assert all(kwargs == {"qos": 2} for _args, kwargs in active_broker.subscribe.call_args_list)
+    client._on_message(active_broker, None, message)
+    callback.assert_not_called()
+
+    active_broker.subscribe.reset_mock()
+    active_broker.subscribe.side_effect = [(0, 3), (0, 4)]
+    client._on_connect(active_broker, None, {"session present": 0}, 0)
+    assert [(args[0], kwargs["qos"]) for args, kwargs in active_broker.subscribe.call_args_list] == [
+        (topic_filter, 0), ("read/status", 2),
+    ]
+    client._on_subscribe(old_broker, None, 3, (0,))
+    client._on_subscribe(active_broker, None, 4, (0,))
+    client._on_message(active_broker, None, message)
+    callback.assert_not_called()
+
+    client._on_subscribe(active_broker, None, 3, (0,))
+    client._on_message(old_broker, None, message)
+    client._on_message(active_broker, None, SimpleNamespace(**(vars(message) | {"qos": 1})))
+    callback.assert_not_called()
+    client._on_message(active_broker, None, message)
+    callback.assert_called_once_with(message.topic, message.payload)
 
 
 def test_on_connect_removes_legacy_unvalidated_number_discovery():
     """Reconnect removes retained number entities that are no longer writable."""
     c = make_client(namespace="oig_local")
     mock_paho = MagicMock()
-    mock_paho._oig_device_id = "2206237016"
+    mock_paho._oig_device_id = "DEV01"
     mock_paho.publish.return_value = MagicMock(rc=0)
     c._client = mock_paho
 
@@ -504,11 +713,11 @@ def test_on_connect_removes_legacy_unvalidated_number_discovery():
         if len(publish_call.args) >= 2 and publish_call.args[1] == ""
     }
     assert tombstones == {
-        "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_v_max_ac_cfg/config",
-        "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_v_min_ac_cfg/config",
-        "homeassistant/number/oig_local_2206237016_tbl_invertor_prm1_a_max_dis_hyb_cfg/config",
-        "homeassistant/binary_sensor/oig_local_2206237016_tbl_batt_prms_bat_di/config",
-        "homeassistant/sensor/oig_local_2206237016_proxy_control_proxy_mode/config",
+        "homeassistant/number/oig_local_dev01_tbl_invertor_prm1_v_max_ac_cfg/config",
+        "homeassistant/number/oig_local_dev01_tbl_invertor_prm1_v_min_ac_cfg/config",
+        "homeassistant/number/oig_local_dev01_tbl_invertor_prm1_a_max_dis_hyb_cfg/config",
+        "homeassistant/binary_sensor/oig_local_dev01_tbl_batt_prms_bat_di/config",
+        "homeassistant/sensor/oig_local_dev01_proxy_control_proxy_mode/config",
     }
     for publish_call in mock_paho.publish.call_args_list:
         if publish_call.args[0] in tombstones:
@@ -521,7 +730,7 @@ def test_boiler_hdo_energy_number_range_accepts_live_value():
     mock_paho = inject_mock_paho(c)
 
     c.send_discovery(
-        device_id="2206237016",
+        device_id="DEV01",
         table="tbl_boiler_prms",
         sensor_key="WD",
         sensor_name="Bojler - Energie pro HDO",
@@ -544,9 +753,9 @@ def test_on_connect_rc_nonzero_sets_connected_false():
 
 def test_on_disconnect_sets_connected_false():
     c = make_client()
-    inject_mock_paho(c, connected=True)
+    broker = inject_mock_paho(c, connected=True)
 
-    c._on_disconnect(None, None, rc=0)
+    c._on_disconnect(broker, None, rc=0)
 
     assert c.connected is False
 
@@ -594,7 +803,6 @@ async def test_health_check_loop_does_not_reconnect_when_connected():
     inject_mock_paho(c, connected=True)
 
     reconnect_calls = []
-    original_connect = c.connect
 
     def fake_connect(device_id: str) -> bool:
         reconnect_calls.append(device_id)

@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from sensor.processor import FrameProcessor
+from sensor.confirmed_store import ConfirmedStateStore
 from sensor.loader import SensorMapLoader
 from mqtt.client import MQTTClient
 
@@ -98,6 +100,45 @@ def test_publish_all_discovery_skips_batt_prm2_for_single_bank(processor: FrameP
 
     assert mock_mqtt.send_discovery.call_count == 1
     assert mock_mqtt.send_discovery.call_args.kwargs["table"] == "tbl_batt_prm1"
+
+
+@pytest.mark.asyncio
+async def test_restart_replays_direct_box_observations_with_original_ordering(
+    tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    """Restart restores confirmed empty values and ordering without announcing liveness."""
+    path = tmp_path / "confirmed.json"
+    device = "BOX01"
+    stamp = "2026-11-12 14:00:00"
+    store = ConfirmedStateStore(path, device)
+    assert store.record(
+        "tbl_box_prms", {"MODE": 3, "IP": ""}, source_dt=stamp,
+        priority=0, origin="direct", baseline=True,
+    )
+    assert store.record(
+        "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 1234}, source_dt=stamp,
+        priority=0, origin="actual_mirror",
+    )
+    restored = FrameProcessor(
+        mock_mqtt, mock_loader, state_store=ConfirmedStateStore(path, device),
+    )
+
+    mock_mqtt.publish_confirmed_state.return_value = False
+    assert restored.replay_confirmed_states() is False
+    mock_mqtt.publish_confirmed_state.reset_mock()
+    mock_mqtt.publish_confirmed_state.return_value = True
+    assert restored.replay_confirmed_states() is True
+    mock_mqtt.publish_confirmed_state.assert_called_once_with(
+        device, "tbl_box_prms", {"MODE": 3, "IP": ""},
+    )
+    mock_mqtt.publish_state.assert_not_called()
+
+    await restored.process(
+        device, "tbl_box_prms", {"MODE": 0, "_dt": "2026-11-12 13:00:00"},
+        confirmed_event=True,
+    )
+    mock_mqtt.publish_state.assert_not_called()
+    assert ConfirmedStateStore(path, device).snapshot()["tables"]["tbl_box_prms"]["fields"]["MODE"]["value"] == 3
 
 
 @pytest.mark.asyncio

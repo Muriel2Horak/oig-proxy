@@ -1,6 +1,10 @@
+"""Released control domains used by MQTT admission and Home Assistant discovery."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+import math
 from typing import Any
 
 
@@ -36,6 +40,8 @@ CONTROL_WRITE_WHITELIST: dict[str, set[str]] = {
 
 @dataclass(frozen=True)
 class SettingConstraint:
+    """Describe the released numeric bounds and discovery step."""
+
     min_value: float | None = None
     max_value: float | None = None
     step: float | None = None
@@ -75,48 +81,57 @@ SETTING_CONSTRAINTS: dict[tuple[str, str], SettingConstraint] = {
 
 
 def is_setting_allowed(table: str, key: str) -> bool:
-    return key in CONTROL_WRITE_WHITELIST.get(table, set())
+    """Require both a released control identity and a validation domain."""
+    return key in CONTROL_WRITE_WHITELIST.get(table, ()) and (table, key) in SETTING_CONSTRAINTS
+
+
+def _parse_number(value: Any) -> Decimal | None:
+    if isinstance(value, bool):
+        return Decimal(int(value))
+    if isinstance(value, str):
+        value = value.strip()
+        if not value or len(value) > 64:
+            return None
+        lowered = value.lower()
+        if lowered in {"on", "true"}:
+            return Decimal(1)
+        if lowered in {"off", "false"}:
+            return Decimal(0)
+    elif not isinstance(value, (int, float, Decimal)):
+        return None
+
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
 
 
 def parse_numeric(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return float(int(value))
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        lowered = raw.lower()
-        if lowered in {"on", "true"}:
-            return 1.0
-        if lowered in {"off", "false"}:
-            return 0.0
-        try:
-            return float(raw)
-        except ValueError:
-            return None
+    """Normalize legacy scalar inputs to a finite float."""
+    parsed = _parse_number(value)
+    if parsed is not None:
+        result = float(parsed)
+        if math.isfinite(result):
+            return result
     return None
 
 
 def validate_setting_value(table: str, key: str, value: Any) -> tuple[bool, float | int | None, str]:
-    parsed = parse_numeric(value)
+    """Validate a released command without rounding before the range check."""
+    if not is_setting_allowed(table, key):
+        return False, None, "unknown or unconstrained control"
+    parsed = _parse_number(value)
     if parsed is None:
         return False, None, "value is not numeric"
-
-    c = SETTING_CONSTRAINTS.get((table, key))
-    if c is None:
-        if float(parsed).is_integer():
-            return True, int(parsed), ""
-        return True, parsed, ""
-
-    if c.integer_only and not float(parsed).is_integer():
+    constraint = SETTING_CONSTRAINTS[(table, key)]
+    integral = parsed == parsed.to_integral_value()
+    if constraint.integer_only and not integral:
         return False, None, "value must be integer"
 
-    if c.min_value is not None and parsed < c.min_value:
-        return False, None, f"value below min ({c.min_value})"
-    if c.max_value is not None and parsed > c.max_value:
-        return False, None, f"value above max ({c.max_value})"
+    if constraint.min_value is not None and parsed < constraint.min_value:
+        return False, None, f"value below min ({constraint.min_value})"
+    if constraint.max_value is not None and parsed > constraint.max_value:
+        return False, None, f"value above max ({constraint.max_value})"
 
-    out: float | int = int(parsed) if c.integer_only or float(parsed).is_integer() else parsed
-    return True, out, ""
+    return True, int(parsed) if integral else float(parsed), ""

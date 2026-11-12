@@ -2,6 +2,14 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.1] - Unreleased
+
+### Changed
+- Local MQTT control learns and verifies the Setting checksum for each Box and firmware context before sending a write. Fresh evidence is required after a profile changes or the proxy restarts.
+- Offline writes use the Box's setting poll, followed by the Box ACK and the proxy's timed END. Returning to hybrid closes the old offline connection so the Box can reconnect to the cloud.
+- The proxy restores confirmed MQTT states after a restart and reports the result of individual settings. Review the supported controls and check that automations wait for a confirmed state when they depend on a setting being applied.
+- Box writes require the existing `control_mqtt_enabled` option and a ready profile. Check both after upgrading if local automations depend on Box writes.
+
 ## [2.1.2] - 2026-08-13
 
 ### Fixed

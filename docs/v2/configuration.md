@@ -153,7 +153,7 @@ Automatic pruning of capture database entries older than this many days. Prevent
 
 ### `control_mqtt_enabled`
 
-When enabled, the proxy subscribes to `oig/{device_id}/control/set` and accepts JSON settings payloads. These are queued and delivered to the Box on the next `IsNewSet` frame. See `twin.md` for the full flow.
+When enabled, the proxy accepts supported settings via `oig/{device_id}/control/set` and Home Assistant discovery command topics. Local delivery requires a qualified Box wire profile. See [Twin control](twin.md) for command results, offline behavior, and upgrade checks.
 
 ### `telemetry_enabled`
 

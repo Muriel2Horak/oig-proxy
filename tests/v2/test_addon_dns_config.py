@@ -69,11 +69,19 @@ def test_config_clamps_local_getactual_interval(monkeypatch) -> None:
 def test_addon_config_exposes_local_getactual_options() -> None:
     addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
 
-    assert addon_config["version"] == "2.1.2"
     assert addon_config["options"]["local_getactual_enabled"] is False
     assert addon_config["options"]["local_getactual_interval_s"] == 10
     assert addon_config["schema"]["local_getactual_enabled"] == "bool?"
     assert addon_config["schema"]["local_getactual_interval_s"] == "int?"
+
+
+def test_manual_deploy_includes_release_runtime_modules() -> None:
+    deploy_script = (ROOT / "deploy_to_haos.sh").read_text(encoding="utf-8")
+    deploy_files = deploy_script.split("DEPLOY_FILES=(", 1)[1].split(")", 1)[0].split()
+
+    assert {"parameter_refresh.py", "protocol/ver_profile.py", "sensor/confirmed_store.py"}.issubset(
+        deploy_files
+    )
 
 
 def test_configuration_docs_parameter_table_matches_addon_config() -> None:

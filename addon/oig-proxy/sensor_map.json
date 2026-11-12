@@ -851,6 +851,29 @@
       "entity_category": "diagnostic",
       "json_attributes_topic": "oig_local/oig_proxy/proxy_status/attrs"
     },
+    "proxy_status:control_ver_ready": {
+      "name": "Lokální zápis – ověřený profil ver",
+      "name_cs": "Lokální zápis – ověřený profil ver",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic",
+      "is_binary": true
+    },
+    "proxy_status:control_ver_reason": {
+      "name": "Lokální zápis – důvod stavu profilu ver",
+      "name_cs": "Lokální zápis – důvod stavu profilu ver",
+      "unit_of_measurement": "",
+      "device_class": null,
+      "state_class": null,
+      "sensor_type_category": "diagnostic",
+      "device_mapping": "proxy",
+      "todo": false,
+      "entity_category": "diagnostic"
+    },
     "proxy_status:isnewset_last_poll": {
       "name": "IsNewSet - poslední dotaz",
       "name_cs": "IsNewSet - poslední dotaz",
@@ -4046,7 +4069,7 @@
       "is_binary": true
     },
     "tbl_invertor_prms:PRRTY": {
-      "name": "Priorita toku(přepínač GRID-TIE: 0 (baterie-síť), 1 (baterie-zátěž-síť), 2)",
+      "name": "Solar energy distribution priority",
       "name_cs": "Střídač - Priorita toku",
       "unit_of_measurement": "",
       "device_class": null,
@@ -4056,9 +4079,9 @@
       "todo": false,
       "entity_category": "diagnostic",
       "enum_map": {
-        "0": "Baterie -> Síť",
-        "1": "Baterie -> Zátěž -> Síť",
-        "2": "Zátěž -> Síť -> Baterie"
+        "0": "Baterie, zátěž, síť",
+        "1": "Zátěž, baterie, síť",
+        "2": "Riziko nabíjení ze sítě a vypnutí přetoků"
       }
     },
     "tbl_invertor_prms:P_ADJ_ENBL": {

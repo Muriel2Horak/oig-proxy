@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from copy import deepcopy
 from datetime import datetime, timezone
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from mqtt.client import MQTTClient
+    from protocol.ver_profile import ProfileStatus
     from sensor.loader import SensorMapLoader
 
 logger = logging.getLogger(__name__)
@@ -30,6 +34,9 @@ class ProxyStatusPublisher:
         get_cloud_timeouts: Callable[[], int] | None = None,
         get_cloud_errors: Callable[[], int] | None = None,
         initial_device_id: str | None = None,
+        get_control_inflight: Callable[[], Any] | None = None,
+        get_control_queue_len: Callable[[], int] | None = None,
+        get_ver_profile_status: Callable[[], ProfileStatus] | None = None,
     ) -> None:
         self._mqtt = mqtt
         self._interval = interval
@@ -40,6 +47,12 @@ class ProxyStatusPublisher:
         self._get_cloud_disconnects = get_cloud_disconnects
         self._get_cloud_timeouts = get_cloud_timeouts
         self._get_cloud_errors = get_cloud_errors
+        self._get_control_inflight = get_control_inflight
+        self._get_control_queue_len = get_control_queue_len
+        self._get_ver_profile_status = get_ver_profile_status
+        self._published_ver_profile_status: ProfileStatus | None = None
+        self._last_setting_result: dict[str, Any] | None = None
+        self._pending_setting_results: deque[dict[str, Any]] = deque()
 
         self._frame_count = 0
         self._last_frame_table = ""
@@ -55,11 +68,41 @@ class ProxyStatusPublisher:
         self._last_frame_device_id = device_id
         self._last_frame_timestamp = time.time()
 
-    def _publish(self) -> None:
+    def _publish(self) -> bool:
         """Publish proxy status to MQTT."""
         if not self._mqtt.is_ready():
             logger.debug("MQTT not ready, skipping status publish")
-            return
+            return False
+        if self._pending_setting_results:
+            self.flush_setting_results()
+            return not self._pending_setting_results
+        return self._publish_status(self._last_setting_result)
+
+    def publish_ver_profile_change(self) -> None:
+        """Refresh profile freshness and publish transitions on the owner loop."""
+        getter = self._get_ver_profile_status
+        if getter is not None and getter() != self._published_ver_profile_status:
+            self._publish()
+
+    def record_setting_result(self, event: dict[str, Any]) -> None:
+        """Snapshot a terminal result on the asyncio owner and publish without coalescing."""
+        result = deepcopy(event)
+        result.setdefault("event_id", str(uuid4()))
+        result.setdefault("at", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+        self._last_setting_result = result
+        self._pending_setting_results.append(result)
+        self.flush_setting_results()
+
+    def flush_setting_results(self) -> None:
+        """Retry the in-memory FIFO on the owner loop after status/recovery callbacks."""
+        while self._pending_setting_results and self._mqtt.is_ready():
+            result = self._pending_setting_results[0]
+            if not self._publish_status(result, result_only=True):
+                return
+            self._pending_setting_results.popleft()
+
+    def _publish_status(self, result: dict[str, Any] | None, *, result_only: bool = False) -> bool:
+        """Publish one coherent status snapshot; result retries never announce availability."""
 
         connection_status = "connected" if self._mqtt.connected else "disconnected"
         now = time.time()
@@ -107,7 +150,22 @@ class ProxyStatusPublisher:
             "frame_count": self._frame_count,
             "last_frame_table": self._last_frame_table,
             "box_device_id": self._last_frame_device_id,
+            "control_last_result": (
+                f"{result['result']} {result['table']}:{result['key']}={result['value']}"
+                if result is not None else "unknown"
+            ),
+            "control_result": deepcopy(result) if result is not None else {},
         }
+        if self._get_control_inflight is not None:
+            payload["control_inflight"] = self._get_control_inflight()
+        if self._get_control_queue_len is not None:
+            payload["control_queue_len"] = int(self._get_control_queue_len())
+        profile_status = (
+            self._get_ver_profile_status() if self._get_ver_profile_status is not None else None
+        )
+        if profile_status is not None:
+            payload["control_ver_ready"] = int(profile_status.profile is not None)
+            payload["control_ver_reason"] = profile_status.reason
         if last_data_iso:
             payload["last_data"] = last_data_iso
             payload["last_data_update"] = last_data_iso
@@ -162,12 +220,15 @@ class ProxyStatusPublisher:
                     enum_map=enum_map,
                 )
 
-        self._mqtt.publish_state(
+        publish = self._mqtt.publish_confirmed_state if result_only else self._mqtt.publish_state
+        published = publish(
             self._proxy_device_id,
             "proxy_status",
             payload,
         )
-        if self._sensor_loader is not None:
+        if published:
+            self._published_ver_profile_status = profile_status
+        if self._sensor_loader is not None and not result_only:
             self._mqtt.publish_state(
                 self._proxy_device_id,
                 "proxy_control",
@@ -179,6 +240,7 @@ class ProxyStatusPublisher:
             self._last_frame_table,
             self._last_frame_device_id,
         )
+        return published
 
     async def run(self) -> None:
         """Run periodic status publishing loop."""

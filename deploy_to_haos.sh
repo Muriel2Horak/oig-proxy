@@ -31,6 +31,7 @@ DEPLOY_FILES=(
     settings_constraints.py
     logging_config.py
     main.py
+    parameter_refresh.py
     run
     sensor_map.json
     config.json
@@ -50,10 +51,12 @@ DEPLOY_FILES=(
     protocol/frame.py
     protocol/crc.py
     protocol/frames.py
+    protocol/ver_profile.py
     sensor/__init__.py
     sensor/loader.py
     sensor/warnings.py
     sensor/processor.py
+    sensor/confirmed_store.py
     twin/__init__.py
     twin/state.py
     twin/handler.py

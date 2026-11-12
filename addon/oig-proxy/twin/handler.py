@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
 
 from settings_constraints import is_setting_allowed, validate_setting_value
@@ -48,6 +49,9 @@ class TwinControlHandler:
         namespace: str = "oig_local",
         proxy_control_handler: Callable[[str, str, Any], bool] | None = None,
         telemetry_collector: TelemetryCollector | None = None,
+        proxy_device_id: str = "oig_proxy",
+        require_profile: bool = False,
+        box_writes_enabled: bool = True,
     ) -> None:
         """Initialize the control handler.
 
@@ -59,9 +63,16 @@ class TwinControlHandler:
         self._mqtt = mqtt
         self._twin_queue = twin_queue
         self._device_id = device_id
+        self._proxy_device_id = proxy_device_id
+        self._require_profile = require_profile
         self._namespace = namespace
-        self._topic: str = "oig/+/control/set"
-        self._topic_compat: str = f"{self._namespace}/+/set/#"
+        self._box_writes_enabled = box_writes_enabled
+        if box_writes_enabled:
+            self._topic = "oig/+/control/set"
+            self._topic_compat = f"{namespace}/+/set/#"
+        else:
+            self._topic = f"oig/{proxy_device_id}/control/set"
+            self._topic_compat = f"{namespace}/{proxy_device_id}/set/proxy_control/PROXY_MODE"
         self._subscribed = False
         self._proxy_control_handler = proxy_control_handler
         self._telemetry_collector = telemetry_collector
@@ -116,201 +127,97 @@ class TwinControlHandler:
                 self._topic_compat,
             )
 
+    def set_device_id(self, device_id: str) -> None:
+        """Bind fresh BOX controls after the first validated device observation."""
+        if device_id and device_id != "unknown":
+            self._device_id = device_id
+
     def _on_message(self, topic: str, payload: bytes) -> None:
-        """Handle incoming MQTT message.
-
-        Parses JSON payload and enqueues the setting.
-
-        Args:
-            topic: The MQTT topic
-            payload: The raw message payload
-        """
+        """Validate exact target/path and delegate the value to the shared policy."""
         try:
-            raw_payload = payload.decode("utf-8", errors="replace")
-            logger.info("📥 Twin MQTT message: topic=%s payload=%s", topic, raw_payload)
-
-            if topic.startswith(f"{self._namespace}/") and "/set/" in topic:
-                path = topic.split("/")
-                if len(path) >= 5:
-                    table = path[3]
-                    key = path[4]
-                    value_raw = raw_payload
-                    incoming_record = make_incoming_record(
-                        device_id=self._device_id,
-                        table=table,
-                        key=key,
-                        raw_text=raw_payload,
-                        value=value_raw,
-                    )
-                    self._record_setting_audit(incoming_record)
-                    if not is_setting_allowed(table, key):
-                        self._record_setting_audit(
-                            make_step_record(
-                                incoming_record,
-                                SettingStep.REJECTED_NOT_ALLOWED,
-                                SettingResult.REJECTED,
-                                raw_text=raw_payload,
-                            )
-                        )
-                        logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
-                        return
-                    ok, normalized, reason = validate_setting_value(table, key, value_raw)
-                    if not ok:
-                        self._record_setting_audit(
-                            make_step_record(
-                                incoming_record,
-                                SettingStep.REJECTED_VALIDATION,
-                                SettingResult.REJECTED,
-                                raw_text=raw_payload,
-                            )
-                        )
-                        logger.warning(
-                            "Twin setting rejected: %s:%s=%s (%s)",
-                            table,
-                            key,
-                            value_raw,
-                            reason,
-                        )
-                        return
-                    if table == "proxy_control" and self._proxy_control_handler is not None:
-                        handled = self._proxy_control_handler(table, key, normalized)
-                        if handled:
-                            logger.info("Proxy control applied: %s:%s=%s", table, key, normalized)
-                            return
-                    pending_setting = self._twin_queue.get(table, key)
-                    if pending_setting is not None and pending_setting.audit_id:
-                        self._record_setting_audit(
-                            make_step_record(
-                                self._make_pending_setting_record(pending_setting),
-                                SettingStep.SUPERSEDED,
-                                SettingResult.SUPERSEDED,
-                            )
-                        )
-                    self._twin_queue.enqueue(
-                        table,
-                        key,
-                        normalized,
-                        audit_id=incoming_record.audit_id,
-                        raw_text=incoming_record.raw_text,
-                    )
-                    enqueued_setting = self._twin_queue.get(table, key)
-                    self._record_setting_audit(
-                        make_step_record(
-                            incoming_record,
-                            SettingStep.ENQUEUED,
-                            msg_id=enqueued_setting.msg_id if enqueued_setting is not None else None,
-                            id_set=enqueued_setting.id_set if enqueued_setting is not None else None,
-                        )
-                    )
-                    logger.info("Twin setting enqueued: %s:%s=%s", table, key, normalized)
+            raw_payload = payload.decode("utf-8")
+            parts = topic.split("/")
+            compatibility = len(parts) == 5 and parts[0] == self._namespace and parts[2] == "set"
+            envelope = len(parts) == 4 and parts[0] == "oig" and parts[2:] == ["control", "set"]
+            if not compatibility and not envelope:
+                logger.warning("Twin request rejected: invalid command topic: %s", topic)
+                return
+            table: Any
+            key: Any
+            value: Any
+            if compatibility:
+                table, key, value = parts[3], parts[4], raw_payload
+            else:
+                data = json.loads(raw_payload, parse_float=Decimal)
+                if not isinstance(data, dict):
+                    logger.warning("TwinControlHandler: Invalid message format: expected JSON object")
                     return
-
-            # Parse JSON payload
-            data = json.loads(raw_payload)
-            if not isinstance(data, dict):
-                logger.warning(
-                    "TwinControlHandler: Invalid message format on %s: expected JSON object",
-                    topic,
-                )
+                table, key, value = data.get("table"), data.get("key"), data.get("value")
+            if not isinstance(table, str) or not isinstance(key, str) or not table or not key or value is None:
+                logger.warning("TwinControlHandler: Invalid message format: missing table/key/value")
                 return
-
-            # Extract required fields
-            table_raw = data.get("table")
-            key_raw = data.get("key")
-            value = data.get("value")
-
-            if not isinstance(table_raw, str) or not isinstance(key_raw, str) or value is None:
-                logger.warning(
-                    "TwinControlHandler: Invalid message format on %s: missing table/key/value",
-                    topic,
-                )
+            if not self._box_writes_enabled and table != "proxy_control":
+                logger.warning("Twin request rejected: BOX writes are disabled")
                 return
-
-            table = table_raw
-            key = key_raw
+            expected = self._proxy_device_id if table == "proxy_control" else self._device_id
+            allowed_targets = {expected}
+            if (table == "proxy_control" and self._box_writes_enabled
+                    and self._device_id and self._device_id != "unknown"):
+                allowed_targets.add(self._device_id)  # Preserve own-BOX JSON control compatibility.
+            if not expected or expected == "unknown" or parts[1] not in allowed_targets:
+                logger.warning("Twin request rejected: command target %s does not match configured device", parts[1])
+                return
+            logger.info("Twin MQTT message: topic=%s", topic)
             incoming_record = make_incoming_record(
-                device_id=self._device_id,
-                table=table,
-                key=key,
-                raw_text=raw_payload,
-                value=value,
+                device_id=expected, table=table, key=key, raw_text=raw_payload, value=value,
             )
             self._record_setting_audit(incoming_record)
-
             if not is_setting_allowed(table, key):
-                self._record_setting_audit(
-                    make_step_record(
-                        incoming_record,
-                        SettingStep.REJECTED_NOT_ALLOWED,
-                        SettingResult.REJECTED,
-                        raw_text=raw_payload,
-                    )
-                )
+                self._record_setting_audit(make_step_record(
+                    incoming_record, SettingStep.REJECTED_NOT_ALLOWED,
+                    SettingResult.REJECTED, raw_text=raw_payload,
+                ))
                 logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
                 return
-
             ok, normalized, reason = validate_setting_value(table, key, value)
             if not ok:
-                self._record_setting_audit(
-                    make_step_record(
-                        incoming_record,
-                        SettingStep.REJECTED_VALIDATION,
-                        SettingResult.REJECTED,
-                        raw_text=raw_payload,
-                    )
-                )
-                logger.warning(
-                    "Twin setting rejected: %s:%s=%s (%s)",
-                    table,
-                    key,
-                    value,
-                    reason,
-                )
+                self._record_setting_audit(make_step_record(
+                    incoming_record, SettingStep.REJECTED_VALIDATION,
+                    SettingResult.REJECTED, raw_text=raw_payload,
+                ))
+                logger.warning("Twin setting rejected: %s:%s=%s (%s)", table, key, value, reason)
                 return
-
-            if table == "proxy_control" and self._proxy_control_handler is not None:
-                handled = self._proxy_control_handler(table, key, normalized)
-                if handled:
+            if table == "proxy_control":
+                if self._proxy_control_handler is not None and self._proxy_control_handler(table, key, normalized):
                     logger.info("Proxy control applied: %s:%s=%s", table, key, normalized)
-                    return
-
-            # Enqueue the setting
-            pending_setting = self._twin_queue.get(table, key)
-            if pending_setting is not None and pending_setting.audit_id:
-                self._record_setting_audit(
-                    make_step_record(
-                        self._make_pending_setting_record(pending_setting),
-                        SettingStep.SUPERSEDED,
-                        SettingResult.SUPERSEDED,
-                    )
-                )
-            self._twin_queue.enqueue(
-                table,
-                key,
-                normalized,
-                audit_id=incoming_record.audit_id,
-                raw_text=incoming_record.raw_text,
+                else:
+                    logger.warning("Proxy control rejected: local handler unavailable or refused")
+                return  # Proxy-local controls never enter the BOX queue.
+            previous = self._twin_queue.get(table, key, device_id=expected)
+            if (previous is not None and previous.audit_id
+                    and not self._twin_queue.is_sent(previous)):
+                self._record_setting_audit(make_step_record(
+                    self._make_pending_setting_record(previous),
+                    SettingStep.SUPERSEDED, SettingResult.SUPERSEDED,
+                ))
+            setting = self._twin_queue.enqueue(
+                table, key, normalized, audit_id=incoming_record.audit_id,
+                raw_text=incoming_record.raw_text, device_id=expected,
+                require_profile=self._require_profile,
             )
-            enqueued_setting = self._twin_queue.get(table, key)
-            self._record_setting_audit(
-                make_step_record(
-                    incoming_record,
-                    SettingStep.ENQUEUED,
-                    msg_id=enqueued_setting.msg_id if enqueued_setting is not None else None,
-                    id_set=enqueued_setting.id_set if enqueued_setting is not None else None,
-                )
-            )
+            if setting is None:
+                self._record_setting_audit(make_step_record(
+                    incoming_record, SettingStep.REJECTED_VALIDATION, SettingResult.REJECTED,
+                ))
+                logger.warning("Twin setting rejected: no qualified profile for %s", expected)
+                return
+            self._record_setting_audit(make_step_record(
+                incoming_record, SettingStep.ENQUEUED,
+                msg_id=setting.msg_id,
+                id_set=setting.id_set,
+            ))
             logger.info("Twin setting enqueued: %s:%s=%s", table, key, normalized)
-
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "TwinControlHandler: Failed to parse JSON on %s: %s",
-                topic,
-                exc,
-            )
-        except Exception as exc:  # noqa: BLE001  # NOSONAR
-            logger.error(
-                "TwinControlHandler: Error processing message on %s: %s",
-                topic,
-                exc,
-            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            logger.warning("TwinControlHandler: Failed to parse JSON or UTF-8 on %s: %s", topic, exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("TwinControlHandler: error processing %s: %s", topic, exc)

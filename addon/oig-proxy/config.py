@@ -8,6 +8,7 @@ Zadne feature flagy.
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 
@@ -35,6 +36,15 @@ class Config:
     mqtt_namespace: str = "oig_local"
     mqtt_qos: int = 1
     mqtt_state_retain: bool = True
+    control_mqtt_enabled: bool = False
+    confirmed_state_path: str = "/data/confirmed_state.json"
+    control_ver_profile_state_path: str = "/data/control_ver_profile.json"
+    control_counter_state_path: str = "/data/control_counters.json"
+    ha_mqtt_birth_topic: str = "homeassistant/status"
+    ha_mqtt_birth_payload: str = "online"
+    parameter_refresh_interval_s: float = 86400
+    parameter_refresh_state_path: str = "/data/parameter_refresh.json"
+    parameter_refresh_after_operations: frozenset[tuple[str, str]] = frozenset()
 
     # Proxy mode (online / hybrid)
     proxy_mode: str = "online"
@@ -74,7 +84,7 @@ class Config:
             _addon_config = {}
         self.version: str = str(_addon_config.get("version", "unknown"))
 
-        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")  # nosec: intentional default bind for HA proxy service
+        self.proxy_host = os.environ.get("PROXY_HOST", "0.0.0.0")  # nosec: intentional HA service bind
         self.proxy_port = int(os.environ.get("PROXY_PORT", "5710"))
 
         self.cloud_host = os.environ.get("TARGET_SERVER", "bridge.oigpower.cz")
@@ -103,6 +113,26 @@ class Config:
         self.mqtt_qos = int(os.environ.get("MQTT_QOS", "1"))
         self.mqtt_state_retain = os.environ.get(
             "MQTT_STATE_RETAIN", "true").lower() == "true"
+        self.control_mqtt_enabled = (
+            os.environ.get("CONTROL_MQTT_ENABLED", "false").strip().lower() in {"true", "1"}
+        )
+        self.confirmed_state_path = os.environ.get(
+            "CONFIRMED_STATE_PATH", "/data/confirmed_state.json")
+        self.control_ver_profile_state_path = os.environ.get(
+            "CONTROL_VER_PROFILE_STATE_PATH", "/data/control_ver_profile.json")
+        self.control_counter_state_path = os.environ.get(
+            "CONTROL_COUNTER_STATE_PATH", "/data/control_counters.json")
+        self.ha_mqtt_birth_topic = os.environ.get(
+            "HA_MQTT_BIRTH_TOPIC", "homeassistant/status")
+        self.ha_mqtt_birth_payload = os.environ.get(
+            "HA_MQTT_BIRTH_PAYLOAD", "online")
+        try:
+            interval = float(os.environ.get("PARAMETER_REFRESH_INTERVAL_S", "86400"))
+        except ValueError:
+            interval = 86400
+        self.parameter_refresh_interval_s = interval if math.isfinite(interval) and interval >= 0 else 86400
+        self.parameter_refresh_state_path = os.environ.get(
+            "PARAMETER_REFRESH_STATE_PATH", "/data/parameter_refresh.json")
 
         self.log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 

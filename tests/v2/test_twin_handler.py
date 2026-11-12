@@ -560,3 +560,20 @@ class TestTwinControlHandlerSettingsAudit:
         assert setting.value == 1
         assert setting.audit_id == replacement_enqueued["audit_id"]
         assert getattr(setting, "raw_text", "") == payload2
+
+
+def test_device_profile_is_required_before_command_admission():
+    queue = TwinQueue()
+    handler = TwinControlHandler(MagicMock(), queue, "10001", require_profile=True)
+    topic = "oig/10001/control/set"
+    request = b'{"table":"tbl_box_prms","key":"MODE","value":1}'
+    queue.set_profile_epoch(9, device_id="20002")
+
+    handler._on_message(topic, request)
+    assert queue.size() == 0
+
+    queue.set_profile_epoch(10, device_id="10001")
+    handler._on_message(topic, request)
+    setting = queue.get("tbl_box_prms", "MODE", device_id="10001")
+    assert setting is not None
+    assert setting.profile_epoch == 10

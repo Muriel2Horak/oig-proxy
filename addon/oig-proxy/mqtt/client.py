@@ -14,10 +14,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+from threading import RLock
 import time
 from typing import Any, Callable
 
-from settings_constraints import CONTROL_WRITE_WHITELIST, SETTING_CONSTRAINTS, SettingConstraint
+from settings_constraints import SETTING_CONSTRAINTS, SettingConstraint, is_setting_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ class MQTTClient:
         self._client: Any | None = None
         self.connected = False
         self._discovery_sent: set[str] = set()
+        self.discovery_generation = 0
         self._availability_online_sent: set[str] = set()
         self._all_known_device_ids: set[str] = set()
 
@@ -96,7 +98,45 @@ class MQTTClient:
 
         # Subscriptions
         self._subscriptions: dict[str, Callable[[str, bytes], None]] = {}
+        self._subscription_lock = RLock()
+        self._clean_control_session = False
+        self._pending_control_subacks: dict[str, int] = {}
+        self._active_control_subscriptions: set[str] = set()
         self._connect_device_id: str = "unknown"
+        self._recovery_callback: Callable[[], None] | None = None
+        self._birth_topic = "homeassistant/status"
+        self._birth_payload = b"online"
+
+    def set_recovery_callback(
+        self,
+        callback: Callable[[], None],
+        *,
+        birth_topic: str = "homeassistant/status",
+        birth_payload: str = "online",
+    ) -> None:
+        """Register an owner callback that only schedules event-loop recovery work."""
+        self._birth_topic = birth_topic
+        self._birth_payload = birth_payload.encode("utf-8")
+        self._recovery_callback = callback
+        if self.is_ready():
+            self._subscribe_recovery(self._client)
+
+    def _subscribe_recovery(self, client: Any) -> None:
+        if self._recovery_callback is None:
+            return
+        try:
+            result = client.subscribe(self._birth_topic, qos=self.qos)
+            if isinstance(result, tuple) and result[0] != 0:
+                logger.warning("MQTT: birth subscription refused: %s", self._birth_topic)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MQTT: birth subscription failed for %s: %s", self._birth_topic, exc)
+
+    def _request_recovery(self) -> None:
+        if self._recovery_callback is not None:
+            try:
+                self._recovery_callback()
+            except Exception as exc:  # noqa: BLE001
+                logger.error("MQTT: recovery callback failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Připojení
@@ -109,6 +149,7 @@ class MQTTClient:
             return False
 
         timeout = timeout or self.CONNECT_TIMEOUT
+        self._cleanup()
         self._connect_device_id = device_id
         client = self._create_client(device_id)
         if client is None:
@@ -120,6 +161,7 @@ class MQTTClient:
             client.loop_start()
         except OSError as exc:
             logger.error("MQTT: Připojení selhalo: %s", exc)
+            self._cleanup()
             return False
 
         # Čekáme na on_connect callback
@@ -146,6 +188,7 @@ class MQTTClient:
         client_id = f"{self.namespace}_{device_id}_v2"
         kwargs: dict[str, Any] = {
             "client_id": client_id,
+            "clean_session": True,
             "protocol": getattr(_paho_mqtt, "MQTTv311", 4),
         }
         callback_api = getattr(_paho_mqtt, "CallbackAPIVersion", None)
@@ -164,43 +207,83 @@ class MQTTClient:
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
+        client.on_subscribe = self._on_subscribe
 
         return client
 
     def _cleanup(self) -> None:
-        if self._client:
+        with self._subscription_lock:
+            client = self._client
+            self._client = None
+            self.connected = False
+            self._clear_control_session()
+        if client is not None:
             try:
-                self._client.loop_stop()
-                self._client.disconnect()
+                client.loop_stop()
+                client.disconnect()
             except Exception as exc:  # noqa: BLE001
                 logger.debug("MQTT cleanup error: %s", exc)
-            self._client = None
-        self.connected = False
 
     # ------------------------------------------------------------------
     # Callbacks
     # ------------------------------------------------------------------
 
-    def _on_connect(self, client: Any, _userdata: Any, _flags: Any, rc: int) -> None:
+    def _clear_control_session(self) -> None:
+        self._clean_control_session = False
+        self._pending_control_subacks.clear()
+        self._active_control_subscriptions.clear()
+
+    def _on_connect(self, client: Any, _userdata: Any, flags: Any, rc: int) -> None:
+        with self._subscription_lock:
+            if client is not self._client:
+                return
+            self._clear_control_session()
+            self.connected = rc == 0
+            if self.connected:
+                self._clean_control_session = (
+                    isinstance(flags, dict) and flags.get("session present") == 0
+                )
+                if not self._clean_control_session:
+                    logger.warning("MQTT: control disabled because the broker did not prove a clean session")
+                for topic in self._subscriptions:
+                    self._subscribe_topic(client, topic)
         if rc == 0:
-            self.connected = True
             self._discovery_sent.clear()
+            self.discovery_generation += 1
             self._availability_online_sent.clear()
             connect_id = getattr(client, "_oig_device_id", self._connect_device_id)
-            for device_id in ({connect_id} | self._all_known_device_ids):
-                avail_topic = f"{self.namespace}/{device_id}/availability"
-                client.publish(avail_topic, "online", retain=True, qos=1)
-                self._availability_online_sent.add(device_id)
-            self._remove_legacy_discovery(client, connect_id)
+            try:
+                self._remove_legacy_discovery(client, connect_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MQTT: legacy discovery cleanup failed for %s: %s", connect_id, exc)
+            self._subscribe_recovery(client)
+            self._request_recovery()
             logger.info("MQTT: Připojeno (rc=0)")
         else:
-            self.connected = False
             logger.error("MQTT: Odmítnuto (rc=%s)", rc)
 
-    def _on_disconnect(self, _client: Any, _userdata: Any, rc: int) -> None:
-        self.connected = False
+    def _on_disconnect(self, client: Any, _userdata: Any, rc: int) -> None:
+        with self._subscription_lock:
+            if client is not self._client:
+                return
+            self.connected = False
+            self._clear_control_session()
         if rc != 0:
             logger.warning("MQTT: Neočekávané odpojení (rc=%s)", rc)
+
+    def _on_subscribe(self, client: Any, _userdata: Any, mid: int, granted_qos: Any) -> None:
+        with self._subscription_lock:
+            if client is not self._client or not self.connected or not self._clean_control_session:
+                return
+            topic = next((topic for topic, pending in self._pending_control_subacks.items()
+                          if pending == mid), None)
+            if topic is None:
+                return
+            self._pending_control_subacks.pop(topic)
+            if granted_qos in ([0], (0,)):
+                self._active_control_subscriptions.add(topic)
+            else:
+                logger.warning("MQTT: control subscription did not receive a QoS 0 grant: %s", topic)
 
     # ------------------------------------------------------------------
     # Publish
@@ -222,6 +305,15 @@ class MQTTClient:
 
         Topic: {namespace}/{device_id}/{table}/state
         """
+        return self._publish_state(device_id, table, data, announce_availability=True)
+
+    def publish_confirmed_state(self, device_id: str, table: str, data: dict[str, Any]) -> bool:
+        """Replay confirmed values without treating old observations as BOX liveness."""
+        return self._publish_state(device_id, table, data, announce_availability=False)
+
+    def _publish_state(
+        self, device_id: str, table: str, data: dict[str, Any], *, announce_availability: bool,
+    ) -> bool:
         if not self.is_ready():
             self.publish_failed += 1
             return False
@@ -235,7 +327,7 @@ class MQTTClient:
             if client is None:
                 self.publish_failed += 1
                 return False
-            if device_id not in self._availability_online_sent:
+            if announce_availability and device_id not in self._availability_online_sent:
                 avail_topic = f"{self.namespace}/{device_id}/availability"
                 try:
                     avail_result = client.publish(avail_topic, "online", retain=True, qos=1)
@@ -290,15 +382,14 @@ class MQTTClient:
         safe_key = sensor_key.lower()
         unique_id = f"{self.namespace}_{device_id}_{table}_{safe_key}".lower()
         object_id = self._build_object_id(device_id, table, safe_key)
-        if unique_id in self._discovery_sent:
-            return True  # Už odesláno
-
         state_topic = f"{self.namespace}/{device_id}/{table}/state"
         availability_topic = f"{self.namespace}/{device_id}/availability"
         mapped_device = device_mapping or "inverter"
         device_identifier = f"{self.namespace}_{device_id}_{mapped_device}"
         device_label = DEVICE_NAMES.get(mapped_device, DEVICE_NAMES["inverter"])
-        is_setting = table in CONTROL_WRITE_WHITELIST and sensor_key in CONTROL_WRITE_WHITELIST[table]
+        is_setting = is_setting_allowed(table, sensor_key)
+        if not is_setting and unique_id in self._discovery_sent:
+            return True
         component = "binary_sensor" if is_binary else "sensor"
 
         value_template = f"{{{{ value_json.get('{sensor_key}') }}}}"
@@ -342,6 +433,9 @@ class MQTTClient:
         if is_binary:
             payload["payload_on"] = 1
             payload["payload_off"] = 0
+        if (table, sensor_key) == ("proxy_status", "control_last_result"):
+            payload["json_attributes_topic"] = state_topic
+            payload["json_attributes_template"] = "{{ value_json.get('control_result', {}) | tojson }}"
 
         discovery_topic = f"homeassistant/{component}/{unique_id}/config"
 
@@ -389,6 +483,8 @@ class MQTTClient:
                     "availability": [{"topic": availability_topic}],
                     "device": payload["device"],
                     "entity_category": "config",
+                    "retain": False,
+                    "optimistic": False,
                 }
 
                 if control_component == "number":
@@ -415,7 +511,8 @@ class MQTTClient:
                     command_map = {label: raw for raw, label in ordered_items}
                     control_payload["options"] = [label for _raw, label in ordered_items]
                     control_payload["value_template"] = (
-                        f"{{{{ ({json.dumps(state_map, ensure_ascii=False)}).get((value_json.get('{sensor_key}') | string), "
+                        f"{{{{ ({json.dumps(state_map, ensure_ascii=False)})"
+                        f".get((value_json.get('{sensor_key}') | string), "
                         f"value_json.get('{sensor_key}') | string) }}}}"
                     )
                     control_payload["command_template"] = (
@@ -511,6 +608,31 @@ class MQTTClient:
     # Subscribe / Unsubscribe
     # ------------------------------------------------------------------
 
+    def _is_control_topic(self, topic: str) -> bool:
+        return (topic.startswith("oig/") and topic.endswith("/control/set")) or (
+            topic.startswith(f"{self.namespace}/") and "/set/" in topic
+        )
+
+    def _subscribe_topic(self, client: Any, topic: str) -> bool:
+        """Send SUBSCRIBE while the caller holds the subscription lock."""
+        control = self._is_control_topic(topic)
+        if control:
+            self._active_control_subscriptions.discard(topic)
+            self._pending_control_subacks.pop(topic, None)
+            if not self._clean_control_session:
+                return False
+        try:
+            result, mid = client.subscribe(topic, qos=0 if control else self.qos)
+            if result == 0:
+                if control:
+                    self._pending_control_subacks[topic] = mid
+                logger.debug("MQTT: Subscription requested: %s", topic)
+                return True
+            logger.error("MQTT: Subscribe failed for %s (rc=%s)", topic, result)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("MQTT: Subscribe exception for %s: %s", topic, exc)
+        return False
+
     def subscribe(self, topic: str, callback: Callable[[str, bytes], None]) -> bool:
         """Subscribe to an MQTT topic.
 
@@ -519,27 +641,16 @@ class MQTTClient:
             callback: Function to call when message received (topic: str, payload: bytes)
 
         Returns:
-            True if subscription was successful
+            True if the subscription request was accepted by the MQTT client.
+            Command dispatch still waits for a successful broker SUBACK.
         """
-        if not self.is_ready():
-            logger.error("MQTT: Cannot subscribe, not connected")
-            return False
-
-        self._subscriptions[topic] = callback
-
-        try:
+        with self._subscription_lock:
             client = self._client
-            if client is None:
+            if client is None or not self.connected:
+                logger.error("MQTT: Cannot subscribe, not connected")
                 return False
-            result, _mid = client.subscribe(topic, qos=self.qos)
-            if result == 0:
-                logger.debug("MQTT: Subscribed to %s", topic)
-                return True
-            logger.error("MQTT: Subscribe failed for %s (rc=%s)", topic, result)
-            return False
-        except Exception as exc:  # noqa: BLE001
-            logger.error("MQTT: Subscribe exception for %s: %s", topic, exc)
-            return False
+            self._subscriptions[topic] = callback
+            return self._subscribe_topic(client, topic)
 
     def unsubscribe(self, topic: str) -> bool:
         """Unsubscribe from an MQTT topic.
@@ -550,24 +661,21 @@ class MQTTClient:
         Returns:
             True if unsubscription was successful
         """
-        if not self.is_ready():
-            return False
-
-        if topic in self._subscriptions:
-            del self._subscriptions[topic]
-
-        try:
+        with self._subscription_lock:
+            self._subscriptions.pop(topic, None)
+            self._active_control_subscriptions.discard(topic)
+            self._pending_control_subacks.pop(topic, None)
             client = self._client
-            if client is None:
+            if client is None or not self.connected:
                 return False
-            result, _mid = client.unsubscribe(topic)
-            if result == 0:
-                logger.debug("MQTT: Unsubscribed from %s", topic)
-                return True
-            logger.error("MQTT: Unsubscribe failed for %s (rc=%s)", topic, result)
-            return False
-        except Exception as exc:  # noqa: BLE001
-            logger.error("MQTT: Unsubscribe exception for %s: %s", topic, exc)
+            try:
+                result, _mid = client.unsubscribe(topic)
+                if result == 0:
+                    logger.debug("MQTT: Unsubscribed from %s", topic)
+                    return True
+                logger.error("MQTT: Unsubscribe failed for %s (rc=%s)", topic, result)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("MQTT: Unsubscribe exception for %s: %s", topic, exc)
             return False
 
     def _on_message(self, client: Any, _userdata: Any, msg: Any) -> None:
@@ -577,15 +685,32 @@ class MQTTClient:
         """
         topic = msg.topic
         payload = msg.payload
-
-        # Find matching callback
-        for sub_topic, callback in self._subscriptions.items():
-            if self._topic_matches(sub_topic, topic):
-                try:
-                    callback(topic, payload)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("MQTT: Callback error for %s: %s", topic, exc)
+        control = self._is_control_topic(topic)
+        with self._subscription_lock:
+            if client is not self._client or not self.connected:
                 return
+            if control and (
+                getattr(msg, "retain", False)
+                or getattr(msg, "dup", False)
+                or getattr(msg, "qos", None) != 0
+            ):
+                logger.warning("MQTT: control requires a fresh QoS 0 message: %s", topic)
+                return
+            if self._recovery_callback is not None and topic == self._birth_topic:
+                if payload == self._birth_payload:
+                    self._discovery_sent.clear()
+                    self.discovery_generation += 1
+                    self._request_recovery()
+                return
+            for sub_topic, callback in self._subscriptions.items():
+                if control and sub_topic not in self._active_control_subscriptions:
+                    continue
+                if self._topic_matches(sub_topic, topic):
+                    try:
+                        callback(topic, payload)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("MQTT: Callback error for %s: %s", topic, exc)
+                    return
 
     @staticmethod
     def _topic_matches(subscription: str, topic: str) -> bool:

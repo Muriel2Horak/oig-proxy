@@ -12,12 +12,12 @@ class TestBuildObjectId:
     def test_namespace_prefix_included(self):
         """Namespace should be included in object_id for V1 compatibility."""
         result = MQTTClient._build_object_id(
-            device_id="2206237016",
+            device_id="1234567890",
             table="tbl_actual",
             safe_key="aci_wr",
         )
-        # V1 format: oig_local_2206237016_tbl_actual_aci_wr
-        assert result == "oig_local_2206237016_tbl_actual_aci_wr"
+        # V1 format: oig_local_1234567890_tbl_actual_aci_wr
+        assert result == "oig_local_1234567890_tbl_actual_aci_wr"
 
     def test_special_characters_normalized(self):
         """Special characters should be normalized to underscore."""
@@ -53,22 +53,22 @@ class TestBuildObjectId:
     def test_control_object_id_ends_with_cfg(self):
         """Control entities should end with _cfg suffix."""
         result = MQTTClient._build_object_id(
-            device_id="2206237016",
+            device_id="1234567890",
             table="tbl_box_prms",
             safe_key="mode",
             is_control=True,
         )
-        assert result == "oig_local_2206237016_tbl_box_prms_mode_cfg"
+        assert result == "oig_local_1234567890_tbl_box_prms_mode_cfg"
 
     def test_non_control_no_cfg_suffix(self):
         """Non-control entities should not have _cfg suffix."""
         result = MQTTClient._build_object_id(
-            device_id="2206237016",
+            device_id="1234567890",
             table="tbl_actual",
             safe_key="temp",
             is_control=False,
         )
-        assert result == "oig_local_2206237016_tbl_actual_temp"
+        assert result == "oig_local_1234567890_tbl_actual_temp"
         assert not result.endswith("_cfg")
 
     def test_case_normalized_to_lowercase(self):
@@ -81,10 +81,10 @@ class TestBuildObjectId:
         assert result == "oig_local_deviceid_tbl_table_keyname"
 
     def test_v1_example_format(self):
-        """Test V1-compatible format example: oig_local_2206237016_tbl_actual_aci_wr."""
+        """Test V1-compatible format example: oig_local_1234567890_tbl_actual_aci_wr."""
         result = MQTTClient._build_object_id(
-            device_id="2206237016",
+            device_id="1234567890",
             table="tbl_actual",
             safe_key="aci_wr",
         )
-        assert result == "oig_local_2206237016_tbl_actual_aci_wr"
+        assert result == "oig_local_1234567890_tbl_actual_aci_wr"
