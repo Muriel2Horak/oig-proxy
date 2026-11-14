@@ -30,18 +30,17 @@ jobs:
           PYTHONPATH: addon/oig-proxy
         run: |
           mkdir -p reports
-          pytest --junitxml=reports/junit.xml --cov=addon/oig-proxy --cov-report=xml:reports/coverage.xml --cov-fail-under=69
+          pytest --junitxml=reports/junit.xml --cov=addon/oig-proxy --cov-branch \
+            --cov-report=xml:reports/coverage.xml --cov-report=json:reports/coverage.json
+      - name: Enforce runtime statement coverage above 80%
+        run: |
+          jq -e '.totals | (.num_statements > 0) and
+            (.covered_lines * 100 > .num_statements * 80)' reports/coverage.json
       - name: Type checking (mypy)
         env:
           PYTHONPATH: addon/oig-proxy
-        run: |
-          # mypy requires workaround for hyphenated addon path with __init__.py
-          # Due to PEP 420 namespace package handling of hyphenated names in mypy 1.x
-          mv addon/oig-proxy/__init__.py addon/oig-proxy/__init__.py.bak
-          mypy addon/oig-proxy --ignore-missing-imports
-          MYPY_EXIT=$?
-          mv addon/oig-proxy/__init__.py.bak addon/oig-proxy/__init__.py
-          exit $MYPY_EXIT
+          MYPYPATH: addon/oig-proxy
+        run: mypy --explicit-package-bases addon/oig-proxy --ignore-missing-imports
       - name: Lint Dockerfile (hadolint)
         uses: hadolint/hadolint-action@v3.1.0
         with:

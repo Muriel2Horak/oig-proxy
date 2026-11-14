@@ -23,25 +23,24 @@ class SensorMapLoader:
         self._data: dict[str, Any] = {"sensors": {}}
 
     def load(self) -> None:
-        """Load sensor map from JSON file.
-
-        If file doesn't exist, logs a warning and uses empty sensor map.
-        """
+        """Load the configured sensor map without injecting additional identities."""
+        self._data = {"sensors": {}}
         file_path = Path(self._path)
         if not file_path.exists():
             logger.warning("Sensor map file not found: %s", self._path)
-            self._data = {"sensors": {}}
-            return
-
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                self._data = json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse sensor map JSON: %s", e)
-            self._data = {"sensors": {}}
-        except OSError as e:
-            logger.error("Failed to read sensor map file: %s", e)
-            self._data = {"sensors": {}}
+        else:
+            try:
+                with file_path.open("r", encoding="utf-8") as source:
+                    loaded = json.load(source)
+                if isinstance(loaded, dict):
+                    self._data = loaded
+                else:
+                    logger.warning("Sensor map root must be an object: %s", self._path)
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.error("Failed to load sensor map %s: %s", self._path, exc)
+        sensors = self._data.get("sensors")
+        if not isinstance(sensors, dict):
+            self._data["sensors"] = {}
 
     def lookup(self, table: str, key: str) -> dict | None:
         """Look up sensor config by table:key.
@@ -55,7 +54,8 @@ class SensorMapLoader:
         """
         lookup_key = f"{table}:{key}"
         sensors = self._data.get("sensors", {})
-        return sensors.get(lookup_key)
+        metadata = sensors.get(lookup_key)
+        return metadata if isinstance(metadata, dict) else None
 
     def sensor_count(self) -> int:
         """Return number of sensors in the map.

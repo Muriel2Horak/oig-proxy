@@ -1,5 +1,7 @@
 # Passive Guardrails Runbook
 
+> Historical runbook for the named passive-analysis task. See [configuration](../v2/configuration.md) for current capture and telemetry options.
+
 ## Purpose
 
 This runbook documents the non-interference preflight guardrails for OIG Protocol 3-Day Passive Analysis. These guardrails ensure **zero active interference** with live OIG Box communication during data collection.

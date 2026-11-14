@@ -1,174 +1,21 @@
 # Security Policy
 
-## Supported Versions
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
-
 ## Reporting a Vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Use the repository's [private vulnerability reporting form](https://github.com/Muriel2Horak/oig-proxy/security/advisories/new). Include the OIG Proxy version or commit, deployment type, affected behavior, and minimal reproduction steps. Redact credentials, tokens, device identifiers, and any payload or capture data unrelated to the report.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+## Local MQTT Control
 
----
+OIG Proxy v2 receives local controls through MQTT. The proxy has no HTTP Control API or bearer-token file. The main broker authenticates clients and controls which topics each account may publish or subscribe to. The proxy uses `mqtt_username` and `mqtt_password` when a username is configured. Its MQTT connection does not enable TLS by setting a port, so keep it within a trusted network or protected transport.
 
-## Control API Authentication
+Require authentication on the broker and give OIG Proxy a dedicated account. Limit command publication to trusted HA or automation accounts and the specific device topics they need. The current command paths are `oig/<device_id>/control/set` and `oig_local/<device_id>/set/<table>/<key>` with the default namespace. Grant the proxy the access it needs to receive those commands and publish state, availability, and discovery. Prevent other clients from spoofing those topics. [Application configuration](docs/v2/configuration.md) · [MQTT control behavior](docs/v2/twin.md)
 
-The Control API uses token-based authentication for every request. No request succeeds without a valid token.
+Box writes are off by default. When enabled, the proxy checks the target, supported parameter, value constraints, and current device profile. It rejects retained and duplicate control deliveries and requires delivery at QoS 0. Broker access remains an independent control, since a client allowed to publish commands can request permitted changes. [Current parameter constraints](addon/oig-proxy/settings_constraints.py)
 
-### How the token is generated
+## Network and Diagnostic Data
 
-On first startup, the add-on generates a cryptographically random token using Python's `secrets.token_urlsafe(32)`. The token is written to `/data/control_api_token` inside the add-on's data directory and persists across restarts.
+Keep the TCP proxy and built-in DNS listener on the required local network. The Box TCP port defaults to 5710 and DNS uses port 53. Avoid exposing these services or the MQTT broker to the public internet. [Deployment](DEPLOYMENT.md)
 
-If the file already exists and contains a non-empty value, that token is reused. To rotate the token, delete the file and restart the add-on.
+Protect configuration, backups, logs, SQLite captures, and PCAP files. Configuration can contain broker credentials. Captures and detailed logs can contain device identifiers and operational data. External telemetry uses a separate broker and can be disabled with `telemetry_enabled`. Review the [telemetry and capture options](docs/v2/configuration.md) before collecting or sharing evidence.
 
-### How to read the token
-
-From a Home Assistant terminal (Terminal & SSH add-on):
-
-```bash
-cat /addon_configs/<addon-slug>/data/control_api_token
-```
-
-Or, if you have shell access inside the container:
-
-```bash
-cat /data/control_api_token
-```
-
-### Authorization header format
-
-Every request must include an `Authorization` header with a `Bearer` token:
-
-```
-Authorization: Bearer <your-token>
-```
-
-Requests without this header, or with a wrong token, receive `401 Unauthorized`:
-
-```json
-{"error": "unauthorized"}
-```
-
----
-
-## Whitelist Validation
-
-The Control API uses a deny-by-default whitelist. Only the tables and items listed below can be written. Any attempt to write outside the whitelist is rejected with `400 Bad Request` and logged as a warning.
-
-### Allowed tables and items
-
-| Table | Allowed items |
-|-------|--------------|
-| `tbl_batt_prms` | `FMT_ON`, `BAT_MIN` |
-| `tbl_boiler_prms` | `ISON`, `MANUAL`, `SSR0`, `SSR1`, `SSR2`, `OFFSET` |
-| `tbl_box_prms` | `MODE`, `BAT_AC`, `BAT_FORMAT`, `SA`, `RQRESET` |
-| `tbl_invertor_prms` | `GRID_PV_ON`, `GRID_PV_OFF`, `TO_GRID` |
-| `tbl_invertor_prm1` | `AAC_MAX_CHRG`, `A_MAX_CHRG` |
-
-Rejection responses:
-
-```json
-{"error": "tbl_name not in whitelist"}
-{"error": "tbl_item not in whitelist"}
-```
-
----
-
-## curl Examples
-
-Replace `<TOKEN>` with the value read from `/data/control_api_token`, and `<HA_IP>` with the IP address of your Home Assistant instance.
-
-### Health check
-
-```bash
-curl -s \
-  -H "Authorization: Bearer <TOKEN>" \
-  http://<HA_IP>:8099/api/health
-```
-
-Expected response (example):
-
-```json
-{"status": "ok", "mode": "ONLINE", "box_connected": true}
-```
-
-### Write a setting (JSON body)
-
-```bash
-curl -s -X POST \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"tbl_name": "tbl_box_prms", "tbl_item": "MODE", "new_value": "1"}' \
-  http://<HA_IP>:8099/api/setting
-```
-
-Expected success response:
-
-```json
-{"ok": true}
-```
-
-### Write a setting (XML body)
-
-The endpoint also accepts a minimal XML snippet:
-
-```bash
-curl -s -X POST \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/xml" \
-  -d '<Setting><TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue></Setting>' \
-  http://<HA_IP>:8099/api/setting
-```
-
----
-
-## Troubleshooting
-
-### 401 Unauthorized
-
-The token is missing, malformed, or wrong.
-
-- Check the header is exactly `Authorization: Bearer <token>` with no extra spaces.
-- Read the stored token again: `cat /data/control_api_token`.
-- If the file is empty or missing, restart the add-on to regenerate it.
-
-### 400 tbl_name not in whitelist
-
-The table you're trying to write is not in `CONTROL_WRITE_WHITELIST`.
-
-- Check the table name for typos (it's case-sensitive).
-- Refer to the whitelist table above for the full list of allowed tables.
-
-### 400 tbl_item not in whitelist
-
-The item exists in the table, but isn't permitted.
-
-- Check the item name for typos.
-- Only the items listed in the whitelist table above are writable.
-
-### 400 missing_fields
-
-The request body is missing at least one required field.
-
-- All three fields are required: `tbl_name`, `tbl_item`, `new_value`.
-
-### 409 Conflict
-
-The setting was accepted by the API but the BOX returned an error or wasn't ready.
-
-- Make sure the BOX is connected and actively sending data.
-- Check the add-on logs for details.
-
-### Connection refused / no response
-
-- Confirm the Control API port (default `8099`) is listed in the add-on's network config.
-- Confirm the add-on is running.
-- If you're calling from outside HA, make sure the port is reachable from your network.
+See [security testing](docs/SECURITY_TESTING.md) for the current automated checks and local test commands.

@@ -5,6 +5,8 @@ import json
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON_DIR = ROOT / "addon" / "oig-proxy"
@@ -69,11 +71,46 @@ def test_config_clamps_local_getactual_interval(monkeypatch) -> None:
 def test_addon_config_exposes_local_getactual_options() -> None:
     addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
 
-    assert addon_config["version"] == "2.1.2"
     assert addon_config["options"]["local_getactual_enabled"] is False
     assert addon_config["options"]["local_getactual_interval_s"] == 10
     assert addon_config["schema"]["local_getactual_enabled"] == "bool?"
     assert addon_config["schema"]["local_getactual_interval_s"] == "int?"
+
+
+@pytest.mark.parametrize(
+    ("ac_limit", "export_limit", "expected"),
+    [("125", "5400", (125, 5400)), ("126", "-1", (0, 0)), ("null", "4294967296", (0, 0))],
+)
+def test_config_validates_installation_power_limits(monkeypatch, ac_limit, export_limit, expected) -> None:
+    monkeypatch.setenv("AC_CHARGE_MAX_A", ac_limit)
+    monkeypatch.setenv("GRID_EXPORT_MAX_W", export_limit)
+    monkeypatch.setenv("MAXFG_AS_EXPORT_LIMIT_READBACK", "true")
+
+    config = Config()
+
+    assert (config.power_limits.ac_charge_max_a, config.power_limits.grid_export_max_w) == expected
+    assert config.maxfg_as_export_limit_readback is True
+
+
+@pytest.mark.parametrize(("value", "enabled"), [("true", True), ("false", False), ("null", False)])
+def test_config_requires_explicit_phase_calibration_opt_in(monkeypatch, value, enabled) -> None:
+    monkeypatch.setenv("PHASE_CALIBRATION_ENABLED", value)
+    addon_config = json.loads((ADDON_DIR / "config.json").read_text(encoding="utf-8"))
+    run_script = (ADDON_DIR / "run").read_text(encoding="utf-8")
+
+    assert Config().power_limits.phase_calibration_enabled is enabled
+    assert addon_config["options"]["phase_calibration_enabled"] is False
+    assert addon_config["schema"]["phase_calibration_enabled"] == "bool?"
+    assert "PHASE_CALIBRATION_ENABLED=$(bashio::config 'phase_calibration_enabled')" in run_script
+
+
+def test_manual_deploy_includes_release_runtime_modules() -> None:
+    deploy_script = (ROOT / "deploy_to_haos.sh").read_text(encoding="utf-8")
+    deploy_files = deploy_script.split("DEPLOY_FILES=(", 1)[1].split(")", 1)[0].split()
+
+    assert {"parameter_refresh.py", "protocol/ver_profile.py", "sensor/confirmed_store.py"}.issubset(
+        deploy_files
+    )
 
 
 def test_configuration_docs_parameter_table_matches_addon_config() -> None:

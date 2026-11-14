@@ -13,7 +13,7 @@ tags = ["api", "key"]
 [[rules]]
 description = "AWS Access Key"
 id = "aws-access-key"
-regex = '''(AKIA|A3T[A-Z0-9]|ABIA|ACCA)[A-Z0-9]{16}'''
+regex = '''(?:AKIA|A3T[A-Z0-9]|ABIA|ACCA)[A-Z0-9]{16}'''
 entropy = 3.7
 tags = ["aws", "key"]
 

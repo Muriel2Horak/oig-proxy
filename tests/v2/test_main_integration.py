@@ -11,27 +11,28 @@ Tests the full integration of:
 - TelemetryCollector
 """
 
-# pylint: disable=protected-access,unspecified-encoding,too-few-public-methods,missing-class-docstring,missing-function-docstring,unnecessary-lambda,broad-exception-caught,unused-variable,too-many-lines
+# pylint: disable=protected-access,unspecified-encoding,too-few-public-methods,missing-class-docstring
+# pylint: disable=missing-function-docstring,unnecessary-lambda,broad-exception-caught,too-many-lines
 # pyright: reportMissingImports=false
 
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
-import os
-import signal
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 # Add addon path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy"))
 
-from main import ProxyApp, main  # pylint: disable=wrong-import-position
+from main import Config, ProxyApp, main  # noqa: E402  # pylint: disable=wrong-import-position
+from settings_constraints import PowerControlLimits  # noqa: E402  # pylint: disable=wrong-import-position
 
 
 @pytest.fixture
@@ -58,6 +59,7 @@ def mock_config(temp_dir):
     config.mqtt_namespace = "oig_local"
     config.mqtt_qos = 1
     config.mqtt_state_retain = True
+    config.control_mqtt_enabled = True
     config.log_level = "INFO"
     config.proxy_status_interval = 0  # Disable for tests
     config.proxy_device_id = "oig_proxy"
@@ -117,11 +119,37 @@ class TestProxyAppInitialization:
         assert app.telemetry_collector is None
         assert app.proxy is None
 
+    def test_control_evidence_storage_defaults_and_env_overrides(self, monkeypatch):
+        monkeypatch.delenv("CONTROL_VER_PROFILE_STATE_PATH", raising=False)
+        monkeypatch.delenv("CONTROL_COUNTER_STATE_PATH", raising=False)
+        defaults = Config()
+        assert defaults.control_ver_profile_state_path == "/data/control_ver_profile.json"
+        assert defaults.control_counter_state_path == "/data/control_counters.json"
+
+        monkeypatch.setenv("CONTROL_VER_PROFILE_STATE_PATH", "/custom/profile.json")
+        monkeypatch.setenv("CONTROL_COUNTER_STATE_PATH", "")
+        overridden = Config()
+        assert overridden.control_ver_profile_state_path == "/custom/profile.json"
+        assert overridden.control_counter_state_path == ""
+
+    @pytest.mark.parametrize(
+        ("configured", "enabled"),
+        [(None, False), ("false", False), ("unexpected", False), ("true", True), ("1", True)],
+    )
+    def test_box_mqtt_control_requires_explicit_enablement(self, monkeypatch, configured, enabled):
+        if configured is None:
+            monkeypatch.delenv("CONTROL_MQTT_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("CONTROL_MQTT_ENABLED", configured)
+        assert Config().control_mqtt_enabled is enabled
+
 
 class TestConfirmedSettingHandling:
     @pytest.mark.asyncio
     async def test_on_confirmed_setting_routes_through_frame_processor(self, mock_config) -> None:
         app = ProxyApp(mock_config)
+        app.device_id_manager = Mock(device_id="DEV01")
+        app.device_id_manager.validate.side_effect = lambda device: device == "DEV01"
         app.frame_processor = AsyncMock()
 
         await app._on_confirmed_setting("DEV01", "tbl_box_prms", "MODE", "3")
@@ -130,6 +158,21 @@ class TestConfirmedSettingHandling:
             "DEV01",
             "tbl_box_prms",
             {"MODE": 3},
+            confirmed_event=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_confirmation_retains_empty_value_for_loaded_box(self, mock_config) -> None:
+        app = ProxyApp(mock_config)
+        app.device_id_manager = Mock(device_id="DEV01")
+        app.device_id_manager.validate.side_effect = lambda device: device == "DEV01"
+        app.frame_processor = AsyncMock()
+
+        await app._on_confirmed_setting("OTHER", "tbl_box_prms", "IP", "wrong")
+        await app._on_confirmed_setting("DEV01", "tbl_box_prms", "IP", "", "2026-11-12 13:00:00")
+
+        app.frame_processor.process.assert_awaited_once_with(
+            "DEV01", "tbl_box_prms", {"IP": "", "_dt": "2026-11-12 13:00:00"}, confirmed_event=True,
         )
 
     @pytest.mark.asyncio
@@ -145,6 +188,70 @@ class TestConfirmedSettingHandling:
         assert app._coerce_confirmed_value("3") == 3
         assert app._coerce_confirmed_value("3.5") == 3.5
         assert app._coerce_confirmed_value("MODE") == "MODE"
+
+
+class TestControlLifecycle:
+    @pytest.mark.asyncio
+    async def test_broker_recovery_enables_proxy_controls_without_a_box_frame(self, mock_config):
+        """An initial broker outage cannot leave controls unsubscribed until BOX traffic."""
+        app = ProxyApp(mock_config)
+        app.device_id_manager = Mock(device_id=None)
+        app.mqtt = Mock()
+        app.mqtt.is_ready.return_value = True
+        app.mqtt.subscribe.return_value = True
+        app.twin_queue = importlib.import_module("twin.state").TwinQueue()
+
+        assert await app._recover_confirmed_state() is True
+
+        assert app.twin_handler is not None
+        assert {args[0] for args, _kwargs in app.mqtt.subscribe.call_args_list} == {
+            "oig/+/control/set", "oig_local/+/set/#",
+        }
+
+    @pytest.mark.asyncio
+    async def test_disabled_box_writes_keep_only_proxy_mode_topics(self, mock_config):
+        mock_config.control_mqtt_enabled = False
+        app = ProxyApp(mock_config)
+        app.mqtt = Mock()
+        app.mqtt.is_ready.return_value = True
+        app.mqtt.subscribe.return_value = True
+        app.twin_queue = importlib.import_module("twin.state").TwinQueue()
+        app._handle_proxy_control = Mock(return_value=True)
+
+        await app._ensure_control_handler("BOX01")
+
+        callbacks = dict(args for args, _kwargs in app.mqtt.subscribe.call_args_list)
+        proxy_topic = "oig_local/oig_proxy/set/proxy_control/PROXY_MODE"
+        assert set(callbacks) == {proxy_topic, "oig/oig_proxy/control/set"}
+        callbacks[proxy_topic](proxy_topic, b"1")
+        app._handle_proxy_control.assert_called_once_with("proxy_control", "PROXY_MODE", 1)
+        assert app.twin_queue.size() == 0
+
+    def test_parameter_refresh_waits_for_device_profile(self, mock_config):
+        app = ProxyApp(mock_config)
+        app.device_id_manager = Mock(device_id="BOX01")
+        app.proxy = Mock()
+        app.proxy.is_box_connected.return_value = True
+        app.twin_handler = Mock()
+        app.twin_queue = Mock()
+        app.twin_delivery = Mock()
+        app.twin_delivery.has_pending_or_inflight.return_value = False
+        app.twin_delivery.profile_status.return_value = SimpleNamespace(profile=None)
+
+        assert app._queue_parameter_refresh("daily") is False
+        app.twin_handler._on_message.assert_not_called()
+
+        app.twin_delivery.profile_status.return_value = SimpleNamespace(profile=object())
+        app.twin_queue.get.return_value = object()
+        mock_config.control_mqtt_enabled = False
+        assert app._queue_parameter_refresh("daily") is False
+        app.twin_handler._on_message.assert_not_called()
+        mock_config.control_mqtt_enabled = True
+        assert app._queue_parameter_refresh("daily") is True
+        app.twin_handler._on_message.assert_called_once_with(
+            "oig_local/BOX01/set/tbl_box_prms/SA", b"1",
+        )
+        app.twin_queue.get.assert_called_once_with("tbl_box_prms", "SA", device_id="BOX01")
 
 
 class TestStartupSequence:
@@ -196,8 +303,8 @@ class TestStartupSequence:
             "main.ProxyStatusPublisher"
         ) as mock_status_class, patch("main.ProxyServer") as mock_proxy_class:
             device_manager = Mock()
-            device_manager.load.return_value = "2206237016"
-            device_manager.device_id = "2206237016"
+            device_manager.load.return_value = "BOX01"
+            device_manager.device_id = "BOX01"
             mock_device_manager.return_value = device_manager
 
             mqtt = Mock()
@@ -258,8 +365,12 @@ class TestStartupSequence:
         assert app.sensor_loader.sensor_count() == 2
 
     @pytest.mark.asyncio
-    async def test_startup_creates_mqtt_client(self, mock_config):
+    @pytest.mark.parametrize("enable_writes", [False, True])
+    async def test_startup_creates_mqtt_client(self, mock_config, enable_writes):
         """Test that startup creates MQTT client with correct config."""
+        limits = PowerControlLimits(ac_charge_max_a=125, grid_export_max_w=5400)
+        mock_config.control_mqtt_enabled = enable_writes
+        mock_config.power_limits = limits
         app = ProxyApp(mock_config)
 
         with patch("main.DeviceIdManager") as mock_device_manager:
@@ -287,6 +398,7 @@ class TestStartupSequence:
             namespace=mock_config.mqtt_namespace,
             qos=mock_config.mqtt_qos,
             state_retain=mock_config.mqtt_state_retain,
+            power_limits=limits if enable_writes else PowerControlLimits(),
         )
 
     @pytest.mark.asyncio
@@ -345,9 +457,15 @@ class TestStartupSequence:
         assert app.twin_delivery is not None
 
     @pytest.mark.asyncio
-    async def test_startup_passes_telemetry_collector_to_twin_delivery(self, mock_config):
-        """Test that TwinDelivery receives the live telemetry collector instance."""
+    async def test_startup_passes_telemetry_and_evidence_paths_to_twin_delivery(self, mock_config, temp_dir):
+        """TwinDelivery receives the live telemetry collector and durable evidence paths."""
         mock_config.telemetry_enabled = True
+        profile_path = temp_dir / "profile.json"
+        counter_path = temp_dir / "counters.json"
+        limits = PowerControlLimits(ac_charge_max_a=125, grid_export_max_w=5400)
+        mock_config.power_limits = limits
+        mock_config.control_ver_profile_state_path = str(profile_path)
+        mock_config.control_counter_state_path = str(counter_path)
         app = ProxyApp(mock_config)
 
         collector = Mock()
@@ -380,6 +498,12 @@ class TestStartupSequence:
             app.twin_queue,
             mock_mqtt,
             telemetry_collector=collector,
+            on_result=app._on_setting_result,
+            on_profile_change=app._on_ver_profile_change,
+            profile_state_path=profile_path,
+            counter_state_path=counter_path,
+            box_writes_enabled=True,
+            power_limits=limits,
         )
 
     @pytest.mark.asyncio
@@ -519,7 +643,8 @@ class TestFrameProcessing:
         app.frame_processor.process.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_on_frame_records_in_status_publisher(self, mock_config):
+    @pytest.mark.parametrize("source_table", ["tbl_actual", "IsNewSet"])
+    async def test_on_frame_records_in_status_publisher(self, mock_config, source_table):
         """Test that _on_frame records frames in status publisher."""
         app = ProxyApp(mock_config)
 
@@ -537,11 +662,12 @@ class TestFrameProcessing:
         # Call with valid frame
         await app._on_frame({
             "_device_id": "test_device",
-            "_table": "tbl_actual",
+            "_table": source_table,
             "Temp": 25.5,
         })
 
         app.status_publisher.record_frame.assert_called_once_with("test_device", "tbl_actual")
+        assert app.frame_processor.process.await_args.args[:2] == ("test_device", source_table)
 
     @pytest.mark.asyncio
     async def test_on_frame_skips_empty_data(self, mock_config):
@@ -607,6 +733,7 @@ class TestShutdownSequence:
         app.proxy = AsyncMock()
         app.telemetry_collector = Mock()
         # Create a real asyncio task that can be awaited
+
         async def dummy_coro():
             await asyncio.sleep(10)
         real_task = asyncio.create_task(dummy_coro())
@@ -839,7 +966,7 @@ class TestErrorHandling:
                     result = await app.startup()
 
         assert result is True
-        assert app.frame_processor is not None
+        assert app.frame_processor is None
 
     @pytest.mark.asyncio
     async def test_on_frame_handles_processor_error(self, mock_config):
@@ -926,9 +1053,6 @@ class TestSignalHandling:
         app.mqtt = Mock()
         app._health_task = None
 
-        # Set up signal handler
-        loop = asyncio.get_running_loop()
-
         # Simulate signal by setting stop event
         app._stop_event.set()
 
@@ -981,8 +1105,7 @@ class TestProxyControlScheduling:
         app = ProxyApp(mock_config)
         app._loop = asyncio.get_running_loop()
         app.proxy = Mock()
-        app.proxy.mode_manager = Mock()
-        app.proxy.mode_manager.apply_configured_mode = AsyncMock(return_value=True)
+        app.proxy.apply_configured_mode = AsyncMock(return_value=True)
         app.status_publisher = Mock()
 
         handled = app._handle_proxy_control("proxy_control", "PROXY_MODE", 1)
@@ -990,7 +1113,7 @@ class TestProxyControlScheduling:
         assert handled is True
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        app.proxy.mode_manager.apply_configured_mode.assert_called_once_with("hybrid")
+        app.proxy.apply_configured_mode.assert_awaited_once_with("hybrid")
         app.status_publisher._publish.assert_called_once()
 
     @pytest.mark.asyncio
@@ -998,8 +1121,7 @@ class TestProxyControlScheduling:
         app = ProxyApp(mock_config)
         app._loop = asyncio.get_running_loop()
         app.proxy = Mock()
-        app.proxy.mode_manager = Mock()
-        app.proxy.mode_manager.apply_configured_mode = AsyncMock(return_value=True)
+        app.proxy.apply_configured_mode = AsyncMock(return_value=True)
         app.status_publisher = Mock()
 
         handled = app._handle_proxy_control("proxy_control", "PROXY_MODE", "offline")
@@ -1007,7 +1129,7 @@ class TestProxyControlScheduling:
         assert handled is True
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        app.proxy.mode_manager.apply_configured_mode.assert_called_once_with("offline")
+        app.proxy.apply_configured_mode.assert_awaited_once_with("offline")
         app.status_publisher._publish.assert_called_once()
 
     def test_handle_proxy_control_rejects_closed_loop(self, mock_config):

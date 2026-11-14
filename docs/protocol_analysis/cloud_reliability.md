@@ -1,5 +1,7 @@
 # Cloud Reliability Documentation
 
+> Historical reliability sample. See [configuration](../v2/configuration.md) for active timeout settings and [proxy modes](../v2/proxy_modes.md) for current cloud diagnostics.
+
 ## Overview
 
 This document describes cloud response ratio metrics and reliability monitoring for the OIG Proxy.

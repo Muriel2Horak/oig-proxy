@@ -14,7 +14,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 from typing import TYPE_CHECKING
@@ -22,24 +21,26 @@ from typing import TYPE_CHECKING
 try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
-    from ..protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name
-    from ..protocol.frames import build_getactual_frame, build_setting_frame
+    from ..protocol.frame import extract_frame_from_buffer, infer_table_name
+    from ..protocol.frames import build_end_time_frame, build_getactual_frame
     from ..protocol.parser import parse_xml_frame
-    from ..twin.ack_parser import parse_box_ack, parse_tbl_events_ack
+    from ..protocol.ver_profile import native_frame_fields, native_receipt_fields
+    from ..twin.ack_parser import parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
     from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
-    from .mode import ConnectionMode, ModeManager
+    from .mode import ModeManager
     from .local_ack import build_local_ack
 except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
-    from protocol.frame import build_frame, extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
-    from protocol.frames import build_getactual_frame, build_setting_frame  # type: ignore[no-redef]
+    from protocol.frame import extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
+    from protocol.frames import build_end_time_frame, build_getactual_frame  # type: ignore[no-redef]
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
-    from twin.ack_parser import parse_box_ack, parse_tbl_events_ack  # type: ignore[no-redef]
+    from protocol.ver_profile import native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
+    from twin.ack_parser import parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
     from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
-    from proxy.mode import ConnectionMode, ModeManager  # type: ignore[no-redef]
+    from proxy.mode import ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
 
 if TYPE_CHECKING:
@@ -49,59 +50,6 @@ if TYPE_CHECKING:
         from telemetry.collector import TelemetryCollector  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_id_set(frame_text: str) -> int | None:
-    marker_open = "<ID_Set>"
-    marker_close = "</ID_Set>"
-    start = frame_text.find(marker_open)
-    if start == -1:
-        return None
-    start += len(marker_open)
-    end = frame_text.find(marker_close, start)
-    if end == -1:
-        return None
-    try:
-        return int(frame_text[start:end])
-    except ValueError:
-        return None
-
-
-def _extract_msg_id(frame_text: str) -> int | None:
-    marker_open = "<ID>"
-    marker_close = "</ID>"
-    start = frame_text.find(marker_open)
-    if start == -1:
-        return None
-    start += len(marker_open)
-    end = frame_text.find(marker_close, start)
-    if end == -1:
-        return None
-    try:
-        return int(frame_text[start:end])
-    except ValueError:
-        return None
-
-
-def _read_replay_frame_once(path: str) -> bytes | None:
-    replay_path = Path(path)
-    if not replay_path.exists():
-        return None
-    try:
-        payload = replay_path.read_bytes()
-    except OSError:
-        return None
-    if not payload:
-        try:
-            replay_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return None
-    try:
-        replay_path.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return payload
 
 
 TRACE_LEVEL = 5
@@ -128,7 +76,7 @@ TRANSPORT_METADATA_KEYS = frozenset(
 
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
-ConfirmedSettingCallback = Callable[[str, str, str, Any], Awaitable[None]]
+ConfirmedSettingCallback = Callable[..., Awaitable[None]]
 
 
 class ProxyServer:
@@ -148,6 +96,8 @@ class ProxyServer:
         twin_delivery: TwinDelivery | None = None,
         frame_capture: FrameCapture | None = None,
         telemetry_collector: "TelemetryCollector | None" = None,
+        *,
+        device_id_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self.config = config
         self.on_frame = on_frame
@@ -155,8 +105,13 @@ class ProxyServer:
         self.twin_delivery = twin_delivery
         self.frame_capture = frame_capture
         self.telemetry_collector = telemetry_collector
+        self._device_id_provider = device_id_provider
         self._server: asyncio.Server | None = None
         self._active_connections: set[asyncio.Task[None]] = set()
+        self._cloud_partial_sessions: set[str | None] = set()
+        self._box_devices: dict[str, str | None] = {}
+        self._offline_writers: set[asyncio.StreamWriter] = set()
+        self._offline_reply_deadlines: dict[int, float] = {}
         self.mode_manager = ModeManager(config)
 
         self._start_time: float = time.time()
@@ -221,6 +176,16 @@ class ProxyServer:
 
     def is_box_connected(self) -> bool:
         return self._box_connected
+
+    async def apply_configured_mode(self, configured_mode: str) -> bool:
+        """Apply the mode and reconnect idle offline BOX sockets to cloud."""
+        if not await self.mode_manager.apply_configured_mode(configured_mode):
+            return False
+        if not self.mode_manager.is_offline():
+            for writer in self._offline_writers:
+                if id(writer) not in self._offline_reply_deadlines:
+                    writer.close()
+        return True
 
     def is_cloud_connected(self) -> bool:
         return self._cloud_connected
@@ -326,6 +291,9 @@ class ProxyServer:
 
         interval_s = self._local_getactual_interval_s()
         while not box_writer.is_closing():
+            if id(box_writer) in self._offline_reply_deadlines:
+                await asyncio.sleep(interval_s)
+                continue
             frame = build_getactual_frame()
             try:
                 box_writer.write(frame)
@@ -359,6 +327,7 @@ class ProxyServer:
         cloud_disconnect_reason: str,
         current: asyncio.Task[Any] | None,
     ) -> None:
+        self._offline_writers.add(box_writer)
         local_getactual_task = self._start_local_getactual_task(
             box_writer,
             conn_id=conn_id,
@@ -372,7 +341,11 @@ class ProxyServer:
                 session_id=session_id,
             )
         finally:
+            self._offline_writers.discard(box_writer)
+            self._box_devices.pop(session_id, None)
             await self._stop_local_getactual_task(local_getactual_task)
+            if self.twin_delivery is not None:
+                self.twin_delivery.clear_session(session_id)
             self._record_telemetry_connection_end(
                 box_connected_since_epoch=box_connected_since_epoch,
                 box_reason=box_disconnect_reason,
@@ -392,7 +365,7 @@ class ProxyServer:
         box_writer: asyncio.StreamWriter,
     ) -> None:
         """Handler pro nové připojení od Boxu.
-        
+
         Generates unique session ID for tracking twin delivery per TCP session.
         Cloud-initiated settings take priority over local queue.
         """
@@ -615,6 +588,8 @@ class ProxyServer:
             await self._stop_local_getactual_task(local_getactual_task)
             if self.twin_delivery is not None:
                 self.twin_delivery.clear_session(session_id)
+            self._box_devices.pop(session_id, None)
+            self._cloud_partial_sessions.discard(session_id)
             for writer in (box_writer, cloud_writer):
                 if writer and not writer.is_closing():
                     writer.close()
@@ -646,146 +621,74 @@ class ProxyServer:
         peer: tuple | None = None,
         session_id: str | None = None,
     ) -> None:
-        """Čte data od Boxu, parsuje framy a forwarduje do cloudu."""
+        """Forward original reads once and inspect complete frames separately."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
         conn_id = id(asyncio.current_task())
         buf = bytearray()
         while True:
             try:
                 data = await box_reader.read(4096)
-            except (asyncio.IncompleteReadError, ConnectionResetError, OSError):
+            except (asyncio.IncompleteReadError, OSError):
                 break
             if not data:
-                try:
-                    can_write_eof = getattr(cloud_writer, "can_write_eof", None)
-                    if callable(can_write_eof) and can_write_eof():
-                        cloud_writer.write_eof()
-                except (OSError, ConnectionResetError):
-                    pass
+                self._write_eof(cloud_writer)
                 break
 
+            standalone = not buf
             buf.extend(data)
-            forward_chunks: list[bytes] = []
-            withheld_chunks = False
+            frames: list[bytes] = []
             while True:
-                frame_bytes = extract_frame_from_buffer(buf)
-                if frame_bytes is None:
+                buf[:] = buf.lstrip(b"\r\n")
+                frame = extract_frame_from_buffer(buf)
+                if frame is None:
                     break
-                self._capture_frame(frame_bytes, "box_to_cloud", conn_id=conn_id, peer=peer_str)
-                await self._handle_twin_frames(frame_bytes, box_writer, run_isnewset_hook=False)
-                await self._process_frame(frame_bytes)
+                frames.append(frame)
+                await self._observe_box_stream_frame(frame, session_id, conn_id, peer_str)
 
-                parsed_frame = parse_xml_frame(frame_bytes.decode("utf-8", errors="replace"))
-                table_name = self._effective_table_name(parsed_frame, frame_bytes.decode("utf-8", errors="replace"))
-                device_id = str(parsed_frame.get("_device_id") or "")
-                observed_id_set = _extract_id_set(frame_bytes.decode("utf-8", errors="replace"))
-                observed_msg_id = _extract_msg_id(frame_bytes.decode("utf-8", errors="replace"))
-                if self.twin_delivery is not None:
-                    self.twin_delivery.observe_id_set(observed_id_set)
-                    self.twin_delivery.observe_msg_id(observed_msg_id)
-
-                if self.telemetry_collector is not None:
-                    self.telemetry_collector.record_request(table_name or None, conn_id)
-                    self.telemetry_collector.record_frame_direction("box_to_proxy")
-
-                if table_name in {"IsNewSet", "IsNewFW", "IsNewWeather"}:
-                    pending = self.twin_delivery.has_pending() if self.twin_delivery else False
-                    cloud_inf = self.twin_delivery.is_cloud_inflight() if self.twin_delivery else False
-                    logger.debug(
-                        "IsNew* poll: table=%s twin_delivery=%s has_pending=%s cloud_inflight=%s box_writer=%s",
-                        table_name,
-                        self.twin_delivery is not None,
-                        pending,
-                        cloud_inf,
-                        box_writer is not None,
-                    )
-                if (
-                    self.twin_delivery is not None
-                    and self.twin_delivery.has_pending()
-                    and not self.twin_delivery.is_cloud_inflight()
-                    and table_name in {"IsNewSet", "IsNewFW", "IsNewWeather"}
-                    and box_writer is not None
-                ):
-                    replay_frame = _read_replay_frame_once("/data/replay_setting_frame.xml")
-                    if replay_frame is not None:
-                        try:
-                            box_writer.write(replay_frame)
-                            await box_writer.drain()
-                            self._capture_frame(replay_frame, "proxy_to_box", conn_id=conn_id, peer=peer_str)
-                            logger.info("📤 Replayed raw Setting frame to BOX from /data/replay_setting_frame.xml")
-                            withheld_chunks = True
-                            continue
-                        except (OSError, ConnectionResetError) as exc:
-                            logger.error("Failed to replay raw Setting frame to BOX: %s", exc)
-
-                    pending_settings = await self.twin_delivery.deliver_pending(
-                        device_id,
-                        session_id=session_id,
-                    )
-                    setting = pending_settings[0] if pending_settings else None
-                    logger.debug("deliver_pending returned: %s", setting)
-                    if setting is not None:
-                        audit_session_id = session_id or ""
-                        next_id_set = self.twin_delivery.next_id_set()
-                        next_msg_id = self.twin_delivery.next_msg_id()
-                        setting_frame = build_setting_frame(
-                            device_id=device_id,
-                            table=setting.table,
-                            key=setting.key,
-                            value=setting.value,
-                            id_set=next_id_set,
-                            msg_id=next_msg_id,
-                        )
-                        logger.debug("Setting frame to BOX: %s", setting_frame.decode("utf-8", errors="replace"))
-                        try:
-                            box_writer.write(setting_frame)
-                            await box_writer.drain()
-                            self._capture_frame(setting_frame, "proxy_to_box", conn_id=conn_id, peer=peer_str)
-                            logger.info(
-                                "📤 Injected local Setting to BOX: %s:%s=%s",
-                                setting.table,
-                                setting.key,
-                                setting.value,
-                            )
-                            self.twin_delivery.record_injected_box(
-                                setting,
-                                device_id,
-                                session_id=audit_session_id,
-                            )
-                            withheld_chunks = True
-                            continue
-                        except (OSError, ConnectionResetError) as exc:
-                            logger.error("Failed to inject Setting to BOX: %s", exc)
-
-                forward_chunks.append(frame_bytes)
-
-            if withheld_chunks:
-                continue
-
-            if forward_chunks:
-                payload = b"".join(forward_chunks)
+            # A fragmented or coalesced poll is already part of transparent traffic.
+            # Only an isolated frame can be replaced without withholding adjacent bytes.
+            if standalone and frames == [data] and box_writer is not None:
                 try:
-                    cloud_writer.write(payload)
-                    await cloud_writer.drain()
-                    self.frames_forwarded += len(forward_chunks)
-                except (OSError, ConnectionResetError) as exc:
-                    self.mode_manager.record_failure(reason=str(exc))
-                    if self.mode_manager.is_offline():
-                        if box_writer is not None:
-                            offline_buf = bytearray(payload)
-                            await self._handle_offline_frames(offline_buf, box_writer)
+                    if await self._deliver_pending_for_isnewset(
+                        data, box_writer, session_id, conn_id=conn_id, peer=peer_str,
+                    ):
+                        continue
+                except OSError:
                     break
-            elif data:
-                try:
-                    cloud_writer.write(data)
-                    await cloud_writer.drain()
-                except (OSError, ConnectionResetError) as exc:
-                    self.mode_manager.record_failure(reason=str(exc))
-                    if self.mode_manager.is_offline():
-                        if box_writer is not None:
-                            offline_buf = bytearray(data)
-                            await self._handle_offline_frames(offline_buf, box_writer)
-                    break
+
+            try:
+                cloud_writer.write(data)
+                await cloud_writer.drain()
+                self.frames_forwarded += len(frames)
+            except OSError as exc:
+                self.mode_manager.record_failure(reason=str(exc))
+                if self.mode_manager.is_offline() and box_writer is not None and frames:
+                    await self._handle_offline_frames(
+                        bytearray(b"".join(frames)), box_writer, session_id, allow_settings=False,
+                    )
+                break
+
+    async def _observe_box_stream_frame(
+        self, frame: bytes, session_id: str | None, conn_id: int, peer: str | None,
+    ) -> None:
+        self._capture_frame(frame, "box_to_cloud", conn_id=conn_id, peer=peer)
+        await self._process_frame(frame)
+        await self._handle_twin_frames(frame, session_id)
+        if self.telemetry_collector is not None:
+            text = frame.decode("utf-8", errors="replace")
+            table = self._effective_table_name(parse_xml_frame(text), text)
+            self.telemetry_collector.record_request(table or None, conn_id)
+            self.telemetry_collector.record_frame_direction("box_to_proxy")
+
+    @staticmethod
+    def _write_eof(writer: asyncio.StreamWriter) -> None:
+        """Forward a peer half-close when the transport supports it."""
+        try:
+            can_write_eof = getattr(writer, "can_write_eof", None)
+            if callable(can_write_eof) and can_write_eof():
+                writer.write_eof()
+        except OSError as exc:
+            logger.debug("EOF forwarding failed: %s", type(exc).__name__)
 
     async def _pipe_cloud_to_box(
         self,
@@ -794,11 +697,8 @@ class ProxyServer:
         peer: tuple | None = None,
         session_id: str | None = None,
     ) -> None:
-        """
-        Čte data z cloudu a forwarduje do Boxu.
-        """
+        """Forward unchanged cloud bytes; no private transform or injection path."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
-        conn_id = id(asyncio.current_task())
         buf = bytearray()
         while True:
             try:
@@ -806,242 +706,181 @@ class ProxyServer:
             except (asyncio.IncompleteReadError, ConnectionResetError, OSError):
                 break
             if not data:
-                try:
-                    can_write_eof = getattr(box_writer, "can_write_eof", None)
-                    if callable(can_write_eof) and can_write_eof():
-                        box_writer.write_eof()
-                except (OSError, ConnectionResetError):
-                    pass
+                self._write_eof(box_writer)
                 break
-
             try:
                 box_writer.write(data)
+                buf.extend(data)
+                self._cloud_partial_sessions.add(session_id)
+                await self._observe_cloud_buffer(buf, peer_str, session_id)
+                if not buf:
+                    self._cloud_partial_sessions.discard(session_id)
                 await box_writer.drain()
             except (OSError, ConnectionResetError):
                 break
 
-            buf.extend(data)
-            while True:
-                frame_bytes = extract_frame_from_buffer(buf)
-                if frame_bytes is None:
-                    break
-                self._capture_frame(frame_bytes, "cloud_to_box", conn_id=conn_id, peer=peer_str)
-                
-                frame_text = frame_bytes.decode("utf-8", errors="replace")
-                parsed_frame = parse_xml_frame(frame_text)
-                table_name = self._effective_table_name(parsed_frame, frame_text)
-                observed_id_set = _extract_id_set(frame_text)
-                observed_msg_id = _extract_msg_id(frame_text)
-                if self.twin_delivery is not None:
-                    self.twin_delivery.observe_id_set(observed_id_set)
-                    self.twin_delivery.observe_msg_id(observed_msg_id)
-
-                if self.telemetry_collector is not None:
-                    self.telemetry_collector.record_response(frame_text, source="cloud", conn_id=conn_id)
-                    self.telemetry_collector.record_frame_direction("cloud_to_proxy")
-                
-                if self.twin_delivery is not None:
-                    if (
-                        table_name == "Setting"
-                        or (
-                            "<Reason>Setting</Reason>" in frame_text
-                            and "<TblName>" in frame_text
-                            and "<TblItem>" in frame_text
-                            and "<NewValue>" in frame_text
-                        )
-                    ):
-                        setting_table = str(parsed_frame.get("_table") or "")
-                        setting_key = str(parsed_frame.get("TblItem") or "")
-                        setting_value = parsed_frame.get("NewValue")
-                        setting_device_id = str(parsed_frame.get("_device_id") or "")
-                        if setting_table and setting_key and setting_value is not None and setting_device_id:
-                            self.twin_delivery.begin_cloud_setting(
-                                device_id=setting_device_id,
-                                table=setting_table,
-                                key=setting_key,
-                                value=setting_value,
-                                raw_text=frame_text,
-                                msg_id=observed_msg_id or 0,
-                                id_set=observed_id_set or 0,
-                                confirm=str(parsed_frame.get("Confirm") or "New"),
-                            )
-                            logger.info(
-                                "☁️ Cloud Setting detected, tracking inflight audit for %s:%s",
-                                setting_table,
-                                setting_key,
-                            )
-                        else:
-                            self.twin_delivery.set_cloud_inflight()
-                            logger.info("☁️ Cloud Setting detected, marking cloud inflight")
-                    elif table_name == "END":
-                        self.twin_delivery.clear_cloud_inflight()
-                        logger.debug("☁️ Cloud END received, clearing cloud inflight")
-                
-                await self._handle_twin_frames(frame_bytes, box_writer, session_id=session_id)
-                await self._process_frame(frame_bytes)
-
-    async def _handle_twin_frames(
-        self,
-        frame_bytes: bytes,
-        box_writer: asyncio.StreamWriter | None,
-        session_id: str | None = None,
-        run_isnewset_hook: bool = True,
+    async def _observe_cloud_buffer(
+        self, buf: bytearray,
+        peer: str | None, session_id: str | None,
     ) -> None:
-        if not self.twin_delivery:
-            return
+        """Parse only complete output frames without changing their byte order."""
+        while True:
+            # A TCP read can split the delimiter after a complete XML frame.
+            buf[:] = buf.lstrip(b"\r\n")
+            frame = extract_frame_from_buffer(buf)
+            if frame is None:
+                return
+            await self._observe_cloud_frame(frame, peer, session_id)
 
-        audit_session_id = session_id or ""
+    def _bound_box_device(self, session_id: str | None) -> str | None:
+        if session_id is None or self._device_id_provider is None:
+            return None
+        bound = self._box_devices.get(session_id)
+        return bound if bound == self._device_id_provider() else None
+
+    def _observe_box_identity(self, fields: dict[str, str], session_id: str) -> str | None:
+        """Bind matching BOX identity from native evidence on this connection."""
+        device_id = fields.get("ID_Device")
+        bound = self._bound_box_device(session_id)
+        if device_id is None:
+            return bound if fields.get("Result") in {"ACK", "NACK"} else None
+        expected = self._device_id_provider() if self._device_id_provider is not None else None
+        if expected is None:
+            return None
+        if device_id != expected:
+            self._box_devices[session_id] = None
+            return None
+        if session_id not in self._box_devices and fields.get("Result") not in {"ACK", "NACK", "END"}:
+            self._box_devices[session_id] = device_id
+            return device_id
+        return bound
+
+    async def _observe_cloud_frame(
+        self, frame_bytes: bytes, peer: str | None, session_id: str | None,
+    ) -> None:
+        """Observe the exact complete frame submitted to the BOX socket."""
+        conn_id = id(asyncio.current_task())
+        self._capture_frame(frame_bytes, "cloud_to_box", conn_id=conn_id, peer=peer)
         frame_text = frame_bytes.decode("utf-8", errors="replace")
-        parsed_frame = parse_xml_frame(frame_text)
-        table_name = self._effective_table_name(parsed_frame, frame_text)
+        self.frames_received += 1
+        if self.telemetry_collector is not None:
+            self.telemetry_collector.record_response(frame_text, source="cloud", conn_id=conn_id)
+            self.telemetry_collector.record_frame_direction("cloud_to_proxy")
 
-        if run_isnewset_hook and table_name == "IsNewSet" and box_writer is not None:
-            await self._deliver_pending_for_isnewset(frame_text, box_writer)
+        delivery = self.twin_delivery
+        device_id = self._bound_box_device(session_id)
+        if delivery is None or session_id is None or device_id is None:
+            return
+        fields = native_frame_fields(frame_bytes, allow_repeated_identity=False)
+        if fields is not None and fields.get("ID_Device", device_id) != device_id:
+            return
+        delivery.observe_cloud_profile(frame_bytes, session_id, device_id)
+        if fields is None:
+            return
+        if fields.get("Reason") == "Setting":
+            self._track_cloud_setting(delivery, fields, frame_text, device_id, session_id)
+        elif fields.get("Result") == "END":
+            delivery.clear_cloud_inflight(session_id)
 
-        inflight_setting = self.twin_delivery.inflight_setting() if self.twin_delivery else None
-        confirmed_published = False
+    @staticmethod
+    def _track_cloud_setting(
+        delivery: TwinDelivery, fields: dict[str, str], frame_text: str,
+        device_id: str, session_id: str,
+    ) -> None:
+        table, key, value = fields.get("TblName"), fields.get("TblItem"), fields.get("NewValue")
+        if not table or not key or value is None or fields.get("ID_Device") != device_id:
+            delivery.set_cloud_inflight(session_id)
+            return
+        delivery.begin_cloud_setting(
+            device_id=device_id, table=table, key=key, value=value, raw_text=frame_text,
+            msg_id=ProxyServer._wire_counter(fields.get("ID", "")),
+            id_set=ProxyServer._wire_counter(fields.get("ID_Set", "")),
+            confirm=fields.get("Confirm", "New"), session_id=session_id,
+        )
 
-        def _unpack_inflight():
-            if inflight_setting is None:
+    @staticmethod
+    def _wire_counter(value: str) -> int:
+        return int(value) if len(value) <= 10 and value.isascii() and value.isdecimal() else 0
+
+    async def _handle_twin_frames(self, frame_bytes: bytes, session_id: str | None) -> str | None:
+        delivery = self.twin_delivery
+        if delivery is None or session_id is None:
+            return None
+        fields = native_frame_fields(frame_bytes)
+        if fields is None:
+            return None
+        device_id = self._observe_box_identity(fields, session_id)
+        if device_id is None:
+            return None
+
+        counter = delivery.observe_box_profile(frame_bytes, session_id, device_id)
+        if counter is not None:
+            await self._observe_box_event(delivery, fields, device_id, session_id, counter)
+        result = fields.get("Result")
+        if result not in {"ACK", "NACK"}:
+            return None
+        receipt = native_receipt_fields(frame_bytes)
+        if receipt is None:
+            return None
+        if result == "ACK" and receipt.get("Reason") == "Setting":
+            if delivery.mark_cloud_reason_setting(
+                device_id, session_id=session_id, reply_fields=receipt,
+            ) is not None:
                 return None
-            try:
-                setting, device_id = inflight_setting
-                return setting, device_id
-            except Exception:
-                return None
-
-        parsed_ack = parse_box_ack(frame_bytes)
-        if (
-            parsed_ack
-            and parsed_ack.get("result") == "ACK"
-            and parsed_ack.get("table")
-            and parsed_ack.get("todo")
+        elif result == "NACK" and delivery.acknowledge_cloud(
+            device_id, session_id=session_id, result="nack", evidence="protocol_nack", reply_fields=receipt,
         ):
-            matched_inflight = False
-            pair = _unpack_inflight()
-            if pair is not None:
-                setting, inflight_device_id = pair
-                if (setting.table, setting.key) == (parsed_ack["table"], parsed_ack["todo"]):
-                    matched_inflight = True
-                    self.twin_delivery.record_ack_box_observed(
-                        setting,
-                        inflight_device_id,
-                        session_id=audit_session_id,
-                    )
-            logger.info(
-                "✅ BOX ACK received: %s:%s payload=%s",
-                parsed_ack["table"],
-                parsed_ack["todo"],
-                frame_text,
-            )
-            if not matched_inflight:
-                self.twin_delivery.acknowledge(
-                    parsed_ack["table"],
-                    parsed_ack["todo"],
-                    session_id=session_id,
-                )
+            return None
+        return self._accept_local_reply(delivery, frame_bytes, device_id, session_id)
 
-        event_ack = parse_tbl_events_ack(parsed_frame)
-        if event_ack and event_ack.get("table") and event_ack.get("key"):
-            await self._publish_confirmed_setting(
-                str(parsed_frame.get("_device_id") or ""),
-                event_ack["table"],
-                event_ack["key"],
-                event_ack.get("value"),
+    async def _observe_box_event(
+        self, delivery: TwinDelivery, fields: dict[str, str], device_id: str, session_id: str,
+        counter: int,
+    ) -> None:
+        event = parse_tbl_events_ack({**fields, "_table": fields.get("TblName")})
+        source_dt = fields.get("DT")
+        if event is not None:
+            table, key, value = event["table"], event["key"], event["value"]
+            delivery.match_cloud_tbl_events(
+                device_id, table, key, value, session_id=session_id,
+                source_dt=source_dt, event_id_set=counter,
             )
-            confirmed_published = True
-            logger.info(
-                "✅ BOX ACK received (tbl_events): %s:%s payload=%s",
-                event_ack["table"],
-                event_ack["key"],
-                frame_text,
+            delivery.acknowledge_local_event(
+                device_id, table, key, value, session_id=session_id,
+                source_dt=source_dt, event_id_set=counter,
             )
-            cloud_pair = self.twin_delivery.match_cloud_tbl_events(
-                str(parsed_frame.get("_device_id") or ""),
-                event_ack["table"],
-                event_ack["key"],
-                event_ack.get("value"),
-                session_id=audit_session_id,
-            )
-            if cloud_pair is None:
-                pair = _unpack_inflight()
+        # A matching event cannot supply its own pre-wire counter baseline.
+        delivery.observe_box_frame(device_id, counter, source_dt, session_id=session_id)
+        if event is not None:
+            await self._publish_confirmed_setting(device_id, table, key, value, source_dt=source_dt)
+
+    @staticmethod
+    def _accept_local_reply(
+        delivery: TwinDelivery, frame_bytes: bytes, device_id: str, session_id: str,
+    ) -> str | None:
+        reply = delivery.local_protocol_reply(frame_bytes, session_id)
+        if reply is None:
+            return None
+        if reply.get("event_confirmed") == "true":
+            return "ack"
+        pair = delivery.local_inflight_setting()
+        if pair is None or pair[1] != device_id:
+            return None
+        setting, _ = pair
+        if reply["result"] == "NACK":
+            if delivery.acknowledge(
+                setting.table, setting.key, session_id=session_id,
+                result="nack", evidence="protocol_nack",
+            ):
+                delivery.record_nack(setting, device_id, session_id=session_id)
+                return "nack"
+        elif delivery.acknowledge(setting.table, setting.key, session_id=session_id):
+            if reply.get("todo"):
+                delivery.record_ack_box_observed(setting, device_id, session_id=session_id)
             else:
-                pair = None
-            if pair is not None:
-                setting, inflight_device_id = pair
-                if (setting.table, setting.key) == (event_ack["table"], event_ack["key"]):
-                    self.twin_delivery.record_ack_tbl_events(
-                        setting,
-                        inflight_device_id,
-                        confirmed_value=event_ack.get("value"),
-                        session_id=audit_session_id,
-                    )
-            if cloud_pair is None:
-                self.twin_delivery.acknowledge(
-                    event_ack["table"],
-                    event_ack["key"],
-                    session_id=session_id,
-                )
-
-        if parsed_ack and parsed_ack.get("result") == "ACK" and parsed_ack.get("reason") == "Setting":
-            cloud_pair = self.twin_delivery.mark_cloud_reason_setting(
-                str(parsed_frame.get("_device_id") or ""),
-                session_id=audit_session_id,
-            )
-            pair = None
-            if cloud_pair is not None:
-                setting, inflight_device_id = cloud_pair
-                logger.info(
-                    "✅ BOX ACK received (Reason=Setting), provisional inflight %s:%s payload=%s",
-                    setting.table,
-                    setting.key,
-                    frame_text,
-                )
-            else:
-                pair = _unpack_inflight()
-            if cloud_pair is None and pair is not None:
-                setting, inflight_device_id = pair
-                if not confirmed_published:
-                    await self._publish_confirmed_setting(
-                        inflight_device_id,
-                        setting.table,
-                        setting.key,
-                        setting.value,
-                    )
-                self.twin_delivery.record_ack_reason_setting(
-                    setting,
-                    inflight_device_id,
-                    session_id=audit_session_id,
-                )
-                table, key = setting.table, setting.key
-                logger.info(
-                    "✅ BOX ACK received (Reason=Setting), acknowledging inflight %s:%s payload=%s",
-                    table,
-                    key,
-                    frame_text,
-                )
-                self.twin_delivery.acknowledge(table, key, session_id=session_id)
-
-        if parsed_ack and parsed_ack.get("result") == "NACK":
-            pair = _unpack_inflight()
-            if pair is not None:
-                setting, inflight_device_id = pair
-                self.twin_delivery.record_nack(
-                    setting,
-                    inflight_device_id,
-                    session_id=audit_session_id,
-                )
-                logger.info(
-                    "❌ BOX NACK received for inflight %s:%s payload=%s",
-                    setting.table,
-                    setting.key,
-                    frame_text,
-                )
-                self.twin_delivery.acknowledge(
-                    setting.table,
-                    setting.key,
-                    session_id=session_id,
-                )
+                delivery.record_ack_reason_setting(setting, device_id, session_id=session_id, terminal=False)
+            return "ack"
+        return None
 
     async def _publish_confirmed_setting(
         self,
@@ -1049,11 +888,15 @@ class ProxyServer:
         table: str,
         key: str,
         value: Any,
+        source_dt: str | None = None,
     ) -> None:
         if self.on_confirmed_setting is None or not device_id:
             return
         try:
-            await self.on_confirmed_setting(device_id, table, key, value)
+            if source_dt is None:
+                await self.on_confirmed_setting(device_id, table, key, value)
+            else:
+                await self.on_confirmed_setting(device_id, table, key, value, source_dt=source_dt)
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Confirmed setting publish failed for %s:%s=%s: %s",
@@ -1065,39 +908,67 @@ class ProxyServer:
 
     async def _deliver_pending_for_isnewset(
         self,
-        frame_text: str,
+        poll: bytes,
         box_writer: asyncio.StreamWriter,
-    ) -> None:
-        if self.twin_delivery is None:
-            return
-        parsed_frame = parse_xml_frame(frame_text)
-        device_id = str(parsed_frame.get("_device_id") or "")
-        pending = await self.twin_delivery.deliver_pending(device_id)
-        for setting in pending:
-            id_set = self.twin_delivery.next_id_set()
-            payload = self.twin_delivery.build_setting_xml(
-                setting.table,
-                setting.key,
-                setting.value,
-                device_id=device_id,
-                id_set=id_set,
-            )
-            try:
-                frame = build_frame(payload).encode("utf-8", errors="replace")
-                box_writer.write(frame)
-                await box_writer.drain()
-                self.twin_delivery.record_injected_box(setting, device_id)
-            except (OSError, ConnectionResetError):
-                break
+        session_id: str | None,
+        *,
+        conn_id: int | None = None,
+        peer: str | None = None,
+        offline: bool = False,
+    ) -> bool:
+        """Use an isolated, qualified BOX poll slot for exactly one local Setting."""
+        delivery = self.twin_delivery
+        device_id = self._bound_box_device(session_id)
+        writer_id = id(box_writer)
+        if delivery is None or device_id is None or box_writer.is_closing():
+            return False
+        if offline and (writer_id in self._offline_reply_deadlines or not self.mode_manager.is_offline()):
+            return False
+        if not delivery.has_pending(device_id) or delivery.is_cloud_inflight(device_id):
+            return False
+        if (any(self._bound_box_device(flow) == device_id for flow in self._cloud_partial_sessions)
+                or not delivery.valid_local_poll(poll, device_id)):
+            return False
+        pending = await delivery.deliver_pending(device_id, session_id=session_id)
+        if not pending:
+            return False
+        setting = pending[0]
+        try:
+            frame = delivery.build_local_frame(setting, session_id)
+            delivery.bind_local_wire(setting, frame, session_id=session_id, retain_receipt=offline)
+        except ValueError:
+            return False
+        deadline = delivery.local_wire_deadline(session_id) if offline else None
+        if offline and deadline is None:
+            return False
+        if deadline is not None:
+            self._offline_reply_deadlines[writer_id] = deadline
+        box_writer.write(frame)
+        self._capture_frame(frame, "proxy_to_box", conn_id=conn_id, peer=peer)
+        delivery.record_injected_box(setting, device_id, session_id=session_id or "")
+        if deadline is None:
+            await box_writer.drain()
+        else:
+            await asyncio.wait_for(box_writer.drain(), max(0, deadline - time.monotonic()))
+        return True
 
     async def _process_frame(self, frame_bytes: bytes) -> None:
-        """Parsuje frame a volá callback."""
+        """Publish only native BOX frames whose outer checksum validates."""
         self.frames_received += 1
         if not self.on_frame:
+            return
+        fields = native_frame_fields(frame_bytes)
+        if fields is None:
             return
         try:
             text = frame_bytes.decode("utf-8", errors="replace")
             parsed = parse_xml_frame(text)
+            if fields.get("Result") == "ACK" and fields.get("Reason") == "Table":
+                receipt = native_receipt_fields(frame_bytes)
+                if receipt is not None and receipt.get("Reason") == "Setting":
+                    # A qualified combined envelope carries an independent actual table.
+                    parsed.pop("Result", None)
+                    parsed.pop("Rdt", None)
             if parsed and not self._is_transport_frame(parsed):
                 await self.on_frame(parsed)
         except Exception as exc:  # noqa: BLE001
@@ -1208,51 +1079,97 @@ class ProxyServer:
         peer: tuple,
         session_id: str | None = None,
     ) -> None:
-        """Handle Box connection in offline mode - send local ACKs."""
-        logger.info("📴 OFFLINE mode: handling Box connection from %s:%s (session=%s)", *peer[:2], session_id)
+        """Read one offline BOX socket until EOF or its Setting exchange ends."""
+        logger.info("OFFLINE mode: handling Box connection from %s:%s (session=%s)", *peer[:2], session_id)
+        conn_id = id(asyncio.current_task())
+        peer_str = f"{peer[0]}:{peer[1]}"
         buf = bytearray()
         try:
             while True:
-                data = await box_reader.read(4096)
+                deadline = self._offline_reply_deadlines.get(id(box_writer))
+                if deadline is None:
+                    data = await box_reader.read(4096)
+                else:
+                    data = await asyncio.wait_for(box_reader.read(4096), max(0, deadline - time.monotonic()))
                 if not data:
                     break
                 buf.extend(data)
-                await self._handle_offline_frames(buf, box_writer)
+                if await self._handle_offline_frames(buf, box_writer, session_id, conn_id=conn_id, peer=peer_str):
+                    break
+        except asyncio.TimeoutError:
+            logger.warning("Offline Setting reply timed out (session=%s)", session_id)
+            if self.twin_delivery is not None:
+                self.twin_delivery.poll_timeouts()
         except (asyncio.IncompleteReadError, ConnectionResetError, OSError):
             pass
         finally:
+            deadline = self._offline_reply_deadlines.pop(id(box_writer), None)
             box_writer.close()
+            close_timeout = None if deadline is None else max(0, deadline - time.monotonic())
             try:
-                await box_writer.wait_closed()
+                await asyncio.wait_for(box_writer.wait_closed(), close_timeout)
+            except asyncio.TimeoutError:
+                box_writer.transport.abort()
             except Exception as exc:  # noqa: BLE001
                 logger.debug("wait_closed error in offline pipe: %s", exc)
-            logger.info("🔌 BOX odpojen (offline): %s:%s", *peer[:2])
+            logger.info("BOX disconnected (offline): %s:%s", *peer[:2])
 
     async def _handle_offline_frames(
         self,
         buf: bytearray,
         box_writer: asyncio.StreamWriter,
         session_id: str | None = None,
-    ) -> None:
-        """Process frames from buffer and send local ACKs."""
+        *,
+        conn_id: int | None = None,
+        peer: str | None = None,
+        allow_settings: bool = True,
+    ) -> bool:
+        """Process offline frames and close the socket after a terminal Setting response."""
         while True:
+            buf[:] = buf.lstrip(b"\r\n")
             frame_bytes = extract_frame_from_buffer(buf)
             if frame_bytes is None:
-                break
-            # Parse frame to get table name
-            try:
-                text = frame_bytes.decode("utf-8", errors="replace")
-                table_name = infer_table_name(text) or ""
-            except Exception:  # noqa: BLE001
-                table_name = ""
-            # Build and send local ACK
-            ack_frame = build_local_ack(table_name)
-            try:
-                box_writer.write(ack_frame)
-                await box_writer.drain()
-                logger.debug("📤 Sent local ACK for %s", table_name or "unknown")
-            except (OSError, ConnectionResetError):
-                break
-            await self._handle_twin_frames(frame_bytes, box_writer, session_id=session_id)
-            # Process frame for MQTT publishing
-            await self._process_frame(frame_bytes)
+                return False
+            text = frame_bytes.decode("utf-8", errors="replace")
+            parsed = parse_xml_frame(text)
+            table = self._effective_table_name(parsed, text)
+            if not allow_settings:
+                # Hybrid fallback has no reader left for a Setting acknowledgment.
+                try:
+                    box_writer.write(build_local_ack(table))
+                    await box_writer.drain()
+                except OSError:
+                    return True
+                continue
+            self._capture_frame(frame_bytes, "box_to_proxy", conn_id=conn_id, peer=peer)
+            if box_writer.is_closing():
+                return True
+            deadline = self._offline_reply_deadlines.get(id(box_writer))
+            if deadline is None:
+                await self._process_frame(frame_bytes)
+                await self._handle_twin_frames(frame_bytes, session_id)
+                # A reply buffered before the Setting cannot acknowledge it.
+                sent = (table == "IsNewSet" and not buf.strip()
+                        and await self._deliver_pending_for_isnewset(
+                            frame_bytes, box_writer, session_id, conn_id=conn_id, peer=peer, offline=True,
+                        ))
+                if not sent and not box_writer.is_closing():
+                    ack = build_local_ack(table)
+                    box_writer.write(ack)
+                    self._capture_frame(ack, "proxy_to_box", conn_id=conn_id, peer=peer)
+                    await box_writer.drain()
+                continue
+
+            # Keep the existing terminal deadline through receipt processing and END drain.
+            remaining = max(0, deadline - time.monotonic())
+            reply = await asyncio.wait_for(self._handle_twin_frames(frame_bytes, session_id), remaining)
+            if reply == "ack":
+                end = build_end_time_frame(getactual=False)
+                box_writer.write(end)
+                self._capture_frame(end, "proxy_to_box", conn_id=conn_id, peer=peer)
+                await asyncio.wait_for(box_writer.drain(), max(0, deadline - time.monotonic()))
+                await asyncio.wait_for(self._process_frame(frame_bytes), max(0, deadline - time.monotonic()))
+                return True
+            if reply == "nack":
+                return True
+            await asyncio.wait_for(self._process_frame(frame_bytes), max(0, deadline - time.monotonic()))

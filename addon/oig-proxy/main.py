@@ -23,10 +23,14 @@ Graceful shutdown (reverse order):
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from copy import deepcopy
 import logging
+import math
 import signal
 import sys
 import time
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -37,9 +41,13 @@ from device_id import DeviceIdManager
 from logging_config import configure_logging
 from mqtt.client import MQTTClient
 from mqtt.status import ProxyStatusPublisher
+from protocol.ver_profile import ProfileStatus
 from proxy.server import ProxyServer
 from sensor.loader import SensorMapLoader
 from sensor.processor import FrameProcessor
+from sensor.confirmed_store import ConfirmedStateStore
+from parameter_refresh import ParameterRefreshScheduler
+from settings_constraints import PowerControlLimits
 from telemetry.collector import TelemetryCollector
 from twin import TwinControlHandler, TwinQueue
 from twin.delivery import TwinDelivery
@@ -55,6 +63,8 @@ class ProxyApp:
         self.config = config
         self._stop_event = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._setting_results_pending: deque[dict[str, Any]] = deque()
+        self._setting_results_closed = False
 
         # Components (initialized in startup sequence)
         self.device_id_manager: DeviceIdManager | None = None
@@ -73,6 +83,25 @@ class ProxyApp:
         # Background tasks
         self._tasks: set[asyncio.Task[Any]] = set()
         self._health_task: asyncio.Task[Any] | None = None
+        self._controls_discovery_marker: tuple[str, int] | None = None
+        self.confirmed_store: ConfirmedStateStore | None = None
+        self._recovery_task: asyncio.Task[Any] | None = None
+        self._recovery_requested = False
+        cache_path = getattr(config, "confirmed_state_path", "")
+        self._confirmed_state_path = str(cache_path) if isinstance(cache_path, (str, Path)) else ""
+        self.parameter_refresh: ParameterRefreshScheduler | None = None
+        power_limits = getattr(config, "power_limits", None)
+        self._power_limits = (
+            power_limits if self._box_control_enabled() and isinstance(power_limits, PowerControlLimits)
+            else PowerControlLimits()
+        )
+
+    def _configured_state_path(self, name: str) -> Path | None:
+        value = getattr(self.config, name, "")
+        return Path(value) if isinstance(value, (str, Path)) and value else None
+
+    def _box_control_enabled(self) -> bool:
+        return getattr(self.config, "control_mqtt_enabled", False) is True
 
     async def startup(self) -> bool:
         """Execute startup sequence. Returns True if successful."""
@@ -84,8 +113,9 @@ class ProxyApp:
         logger.info("Logging configured (level=%s)", self.config.log_level)
 
         # 2. Load device_id
-        self.device_id_manager = DeviceIdManager()
-        device_id = self.device_id_manager.load()
+        device_id_manager = DeviceIdManager()
+        self.device_id_manager = device_id_manager
+        device_id = device_id_manager.load()
         logger.info("Device ID loaded: %s", device_id or "not set (will learn from frames)")
 
         # 3. Load sensor_map
@@ -103,7 +133,17 @@ class ProxyApp:
             namespace=self.config.mqtt_namespace,
             qos=self.config.mqtt_qos,
             state_retain=self.config.mqtt_state_retain,
+            power_limits=self._power_limits,
         )
+
+        # Restore observations before a reconnect callback or first BOX frame can publish.
+        if self.mqtt is not None:
+            self._create_frame_processor(device_id)
+            self.mqtt.set_recovery_callback(
+                self._request_state_recovery,
+                birth_topic=getattr(self.config, "ha_mqtt_birth_topic", "homeassistant/status"),
+                birth_payload=getattr(self.config, "ha_mqtt_birth_payload", "online"),
+            )
 
         mqtt_device_id = device_id or "unknown"
         mqtt_ok = False
@@ -117,16 +157,11 @@ class ProxyApp:
         else:
             logger.warning("MQTT connection failed – proxy will run without MQTT")
 
-        # Create frame processor (needs MQTT and sensor_loader)
-        self.frame_processor = FrameProcessor(
-            self.mqtt,
-            self.sensor_loader,
-            proxy_device_id=self.config.proxy_device_id,
-        )
         if mqtt_client is not None and mqtt_client.is_ready() and self.frame_processor is not None:
             logger.info("FrameProcessor ready for lazy discovery from live frames")
             if device_id:
-                self.frame_processor.publish_all_discovery(device_id)
+                if self.frame_processor.publish_all_discovery(device_id):
+                    self._controls_discovery_marker = (device_id, getattr(mqtt_client, "discovery_generation", 0))
                 logger.info("Published full discovery for known device_id=%s", device_id)
 
         # Create twin components
@@ -163,29 +198,24 @@ class ProxyApp:
             )
             self.telemetry_collector.init()
 
-        self.twin_delivery = TwinDelivery(
+        twin_delivery = TwinDelivery(
             self.twin_queue,
             self.mqtt,
             telemetry_collector=self.telemetry_collector,
+            on_result=self._on_setting_result,
+            on_profile_change=self._on_ver_profile_change,
+            profile_state_path=self._configured_state_path("control_ver_profile_state_path"),
+            counter_state_path=self._configured_state_path("control_counter_state_path"),
+            box_writes_enabled=self._box_control_enabled(),
+            power_limits=self._power_limits,
         )
+        self.twin_delivery = twin_delivery
 
-        # 5. Start TwinControlHandler (if MQTT ready)
-        if mqtt_client is not None and mqtt_client.is_ready():
-            self.twin_handler = TwinControlHandler(
-                mqtt=self.mqtt,
-                twin_queue=self.twin_queue,
-                device_id=mqtt_device_id,
-                namespace=self.config.mqtt_namespace,
-                proxy_control_handler=self._handle_proxy_control,
-                telemetry_collector=self.telemetry_collector,
-            )
-            await self.twin_handler.start()
-            logger.info("TwinControlHandler started")
-        else:
-            logger.warning("TwinControlHandler not started (MQTT not ready)")
+        # 5. Start TwinControlHandler (also restored lazily after a broker outage).
+        await self._ensure_control_handler(mqtt_device_id)
 
         # 6. Start ProxyStatusPublisher
-        if self.config.proxy_status_interval > 0:
+        if self.mqtt is not None:
             self.status_publisher = ProxyStatusPublisher(
                 mqtt=self.mqtt,
                 interval=self.config.proxy_status_interval,
@@ -201,7 +231,14 @@ class ProxyApp:
                 get_cloud_timeouts=lambda: self.proxy.cloud_timeouts if self.proxy else 0,
                 get_cloud_errors=lambda: self.proxy.cloud_errors if self.proxy else 0,
                 initial_device_id=device_id,
+                get_control_inflight=self._control_inflight_snapshot,
+                get_control_queue_len=lambda: self.twin_queue.size() if self.twin_queue else 0,
+                get_ver_profile_status=lambda: (
+                    twin_delivery.profile_status(device_id_manager.device_id or "")
+                    if self._box_control_enabled() else ProfileStatus(None, "control_disabled", 0)
+                ),
             )
+            self._drain_setting_results()
             status_task = asyncio.create_task(
                 self.status_publisher.run(),
                 name="status_publisher",
@@ -279,6 +316,7 @@ class ProxyApp:
             twin_delivery=self.twin_delivery,
             frame_capture=self.frame_capture,
             telemetry_collector=self.telemetry_collector,
+            device_id_provider=lambda: device_id_manager.device_id,
         )
         if self.telemetry_collector is not None:
             self.proxy.mode_manager.on_hybrid_transition = self._on_hybrid_transition
@@ -294,7 +332,239 @@ class ProxyApp:
 
         elapsed = time.time() - start_time
         logger.info("OIG Proxy v2 startup complete in %.2fs", elapsed)
+        self._start_parameter_refresh()
+        result_task = asyncio.create_task(
+            self._setting_result_maintenance(), name="setting_result_maintenance")
+        self._tasks.add(result_task)
+        result_task.add_done_callback(self._tasks.discard)
+        if mqtt_ok:
+            self._request_state_recovery()
         return True
+
+    async def _setting_result_maintenance(self) -> None:
+        """Resolve result deadlines and profile expiry even without BOX traffic."""
+        while not self._stop_event.is_set():
+            await asyncio.sleep(1)
+            if self._stop_event.is_set():
+                return
+            try:
+                poll = getattr(self.twin_delivery, "poll_timeouts", None)
+                if callable(poll):
+                    poll()  # pylint: disable=not-callable
+                self._drain_setting_results()
+                if self.status_publisher is not None:
+                    self.status_publisher.flush_setting_results()
+                    self.status_publisher.publish_ver_profile_change()
+            except Exception:
+                logger.exception("Local control housekeeping deferred")
+
+    def _on_ver_profile_change(self) -> None:
+        """Schedule publication outside the learner callback."""
+        loop = self._loop
+        publisher = self.status_publisher
+        if loop is None or loop.is_closed() or publisher is None or self._stop_event.is_set():
+            return
+        try:
+            loop.call_soon_threadsafe(publisher.publish_ver_profile_change)
+        except RuntimeError:
+            logger.debug("Ignoring ver profile change after event-loop shutdown")
+
+    def _on_setting_result(self, event: dict[str, Any]) -> None:
+        """Freeze terminal evidence and marshal Paho callbacks to the app owner."""
+        loop = self._loop
+        if self._setting_results_closed or loop is None or loop.is_closed():
+            return
+        snapshot = deepcopy(event)
+        try:
+            owner = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            owner = False
+        if owner:
+            self._deliver_setting_result(snapshot)
+        else:
+            try:
+                loop.call_soon_threadsafe(self._deliver_setting_result, snapshot)
+            except RuntimeError:
+                logger.debug("Ignoring result after event-loop shutdown")
+
+    def _deliver_setting_result(self, event: dict[str, Any]) -> None:
+        if self._setting_results_closed:
+            return
+        self._setting_results_pending.append(event)
+        self._drain_setting_results()
+
+    def _drain_setting_results(self) -> None:
+        if self.status_publisher is None:
+            return
+        while self._setting_results_pending:
+            event = self._setting_results_pending[0]
+            try:
+                self.status_publisher.record_setting_result(event)
+            except Exception:
+                logger.exception("Setting result publication deferred")
+                return
+            self._setting_results_pending.popleft()
+
+    def _control_inflight_snapshot(self) -> str:
+        if self.twin_delivery is None:
+            return ""
+        getter = getattr(self.twin_delivery, "control_inflight_snapshot", None)
+        value = getter() if callable(getter) else ""  # pylint: disable=not-callable
+        return value if isinstance(value, str) else ""
+
+    def _create_frame_processor(self, device_id: str | None) -> None:
+        """Load an identity-bound observation cache without learning identity from it."""
+        if self.mqtt is None or self.sensor_loader is None:
+            return
+        path = self._confirmed_state_path
+        if device_id and device_id != "unknown" and path:
+            self.confirmed_store = ConfirmedStateStore(
+                Path(path), device_id=device_id, namespace=self.config.mqtt_namespace)
+        self.frame_processor = FrameProcessor(
+            self.mqtt, self.sensor_loader,
+            proxy_device_id=self.config.proxy_device_id,
+            state_store=self.confirmed_store,
+            maxfg_as_export_limit_readback=getattr(self.config, "maxfg_as_export_limit_readback", False) is True,
+        )
+
+    def _request_state_recovery(self) -> None:
+        """Marshal Paho callbacks onto the application event-loop owner."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or self._stop_event.is_set():
+            return
+        try:
+            loop.call_soon_threadsafe(self._schedule_state_recovery)
+        except RuntimeError:
+            logger.debug("Ignoring state recovery after event-loop shutdown")
+
+    def _schedule_state_recovery(self) -> None:
+        if self._stop_event.is_set():
+            return
+        self._recovery_requested = True
+        if self._recovery_task is None or self._recovery_task.done():
+            self._recovery_task = asyncio.create_task(
+                self._run_state_recovery(), name="confirmed_state_recovery")
+            self._tasks.add(self._recovery_task)
+            self._recovery_task.add_done_callback(self._tasks.discard)
+
+    async def _run_state_recovery(self) -> None:
+        delay = 0.25
+        while self._recovery_requested and not self._stop_event.is_set():
+            self._recovery_requested = False
+            try:
+                recovered = await self._recover_confirmed_state()
+            except Exception:  # Recovery must not terminate BOX/cloud transport.
+                logger.exception("Confirmed state recovery failed")
+                recovered = False
+            if not recovered and not self._stop_event.is_set():
+                self._recovery_requested = True
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30.0)
+            else:
+                delay = 0.25
+
+    async def _recover_confirmed_state(self) -> bool:
+        """Replay confirmed data without a frame callback, device online or a command."""
+        if self.mqtt is None or not self.mqtt.is_ready():
+            return False
+        manager = self.device_id_manager
+        device_id = manager.device_id if manager is not None else None
+        await self._ensure_control_handler(device_id or "unknown")
+        self._start_parameter_refresh()
+        status_ok = True
+        if self.status_publisher is not None:
+            self._drain_setting_results()
+            self.status_publisher.flush_setting_results()
+            status_ok = self.status_publisher._publish()
+        if not device_id:
+            return status_ok  # BOX identity must come from the manager or a live frame.
+        if self.frame_processor is None:
+            return False
+        discovery_ok = self.frame_processor.publish_all_discovery(device_id)
+        state_ok = self.frame_processor.replay_confirmed_states()
+        if discovery_ok:
+            self._controls_discovery_marker = (device_id, self.mqtt.discovery_generation)
+        if discovery_ok and state_ok:
+            logger.info("Restored confirmed MQTT states for device_id=%s", device_id)
+        return bool(discovery_ok and state_ok and status_ok)
+
+    def _parameter_refresh_idle(self) -> bool:
+        """Daily reads yield to local/cloud writes and require a connected BOX."""
+        device_id = self.device_id_manager.device_id if self.device_id_manager else None
+        return bool(
+            self._box_control_enabled()
+            and device_id
+            and self.proxy is not None
+            and self.proxy.is_box_connected()
+            and self.twin_handler is not None
+            and self.twin_queue is not None
+            and self.twin_delivery is not None
+            and not self.twin_delivery.has_pending_or_inflight()
+            and self.twin_delivery.profile_status(device_id).profile is not None
+        )
+
+    def _queue_parameter_refresh(self, reason: str) -> bool:
+        """Admit only the diagnostic SA request through the ordinary validator/audit."""
+        if not self._parameter_refresh_idle():
+            return False
+        manager = self.device_id_manager
+        if manager is None or not manager.device_id or self.twin_handler is None or self.twin_queue is None:
+            return False
+        topic = f"{self.config.mqtt_namespace}/{manager.device_id}/set/tbl_box_prms/SA"
+        self.twin_handler._on_message(topic, b"1")
+        queued = self.twin_queue.get("tbl_box_prms", "SA", device_id=manager.device_id)
+        if queued is not None:
+            logger.info("Parameter refresh queued (%s); waiting for BOX confirmation", reason)
+            return True
+        return False
+
+    def _start_parameter_refresh(self) -> None:
+        """Start the separate daily timer; construction/recovery never requests SA."""
+        manager = self.device_id_manager
+        interval = getattr(self.config, "parameter_refresh_interval_s", 0)
+        path = getattr(self.config, "parameter_refresh_state_path", "")
+        if (not self._box_control_enabled()
+                or self.parameter_refresh is not None or self.twin_handler is None
+                or manager is None or not manager.device_id
+                or type(interval) not in (int, float) or interval <= 0
+                or not isinstance(path, (str, Path)) or not str(path)):
+            return
+        self.parameter_refresh = ParameterRefreshScheduler(
+            Path(path), manager.device_id,
+            request=self._queue_parameter_refresh, idle=self._parameter_refresh_idle,
+            interval_s=interval,
+            after_operations=getattr(self.config, "parameter_refresh_after_operations", frozenset()),
+        )
+        task = asyncio.create_task(self._parameter_refresh_loop(), name="parameter_refresh")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _parameter_refresh_loop(self) -> None:
+        while not self._stop_event.is_set():
+            await asyncio.sleep(30)
+            if self.parameter_refresh is not None and not self._stop_event.is_set():
+                try:
+                    self.parameter_refresh.poll()
+                except Exception:
+                    logger.exception("Parameter refresh deferred after scheduler error")
+
+    def _notify_parameter_confirmation(self, table: str, key: str, value: Any,
+                                       source_dt: str | None, previous: dict[str, Any] | None) -> None:
+        """Notify timer only from an accepted observation, never from cache replay."""
+        scheduler = self.parameter_refresh
+        if scheduler is None or source_dt is None or self.confirmed_store is None:
+            return
+        current = self.confirmed_store.snapshot()["tables"].get(table, {}).get("fields", {}).get(key)
+        if current is None or current["sourceDT"] != source_dt or current["value"] != value:
+            return
+        if (table, key) == ("tbl_box_prms", "SA") and value == 1:
+            stamp = FrameProcessor._parse_device_time(source_dt)
+            if stamp is not None:
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=ZoneInfo("Europe/Prague"))
+                scheduler.note_sa_confirmed(stamp.timestamp())
+        elif previous is not None and previous.get("value") != value:
+            scheduler.note_operation(table, key)
 
     def _handle_proxy_control(self, table: str, key: str, value: Any) -> bool:
         if table != "proxy_control":
@@ -343,7 +613,7 @@ class ProxyApp:
     async def _apply_proxy_mode(self, mode_name: str) -> None:
         if self.proxy is None:
             return
-        applied = await self.proxy.mode_manager.apply_configured_mode(mode_name)
+        applied = await self.proxy.apply_configured_mode(mode_name)
         if applied:
             logger.info("Proxy mode set from HA control: %s", mode_name)
             if self.status_publisher is not None:
@@ -372,6 +642,22 @@ class ProxyApp:
             reason=reason,
         )
 
+    async def _ensure_control_handler(self, device_id: str) -> None:
+        if self.mqtt is None or not self.mqtt.is_ready() or self.twin_queue is None:
+            return
+        if self.twin_handler is None:
+            self.twin_handler = TwinControlHandler(
+                mqtt=self.mqtt, twin_queue=self.twin_queue, device_id=device_id,
+                namespace=self.config.mqtt_namespace, proxy_control_handler=self._handle_proxy_control,
+                telemetry_collector=self.telemetry_collector, proxy_device_id=self.config.proxy_device_id,
+                require_profile=True,
+                box_writes_enabled=self._box_control_enabled(),
+                power_limits=self._power_limits,
+            )
+            await self.twin_handler.start()
+        else:
+            self.twin_handler.set_device_id(device_id)
+
     async def _on_frame(self, data: dict[str, Any]) -> None:
         """Handle parsed frame from proxy server.
 
@@ -387,6 +673,7 @@ class ProxyApp:
         if not table or not frame_device_id:
             return
 
+        source_table = table
         if table in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             table = "tbl_actual"
             data["_table"] = "tbl_actual"
@@ -414,10 +701,24 @@ class ProxyApp:
         if self.status_publisher and not status_recorded:
             self.status_publisher.record_frame(frame_device_id, table)
 
+        await self._ensure_control_handler(frame_device_id)
+        self._start_parameter_refresh()
+        if (self.confirmed_store is None
+                and self._confirmed_state_path
+                and self.device_id_manager is not None
+                and self.device_id_manager.device_id):
+            self._create_frame_processor(self.device_id_manager.device_id)
+            self._request_state_recovery()
+        if self.frame_processor and self.mqtt is not None and self.mqtt.is_ready():
+            marker = (frame_device_id, getattr(self.mqtt, "discovery_generation", 0))
+            if self._controls_discovery_marker != marker:
+                if self.frame_processor.publish_all_discovery(frame_device_id):
+                    self._controls_discovery_marker = marker
+
         # Process frame through FrameProcessor (publishes to MQTT)
         if self.frame_processor:
             try:
-                await self.frame_processor.process(frame_device_id, table, data)
+                await self.frame_processor.process(frame_device_id, source_table, data)
             except Exception as exc:
                 logger.error("Frame processing error: %s", exc)
 
@@ -430,14 +731,24 @@ class ProxyApp:
         table: str,
         key: str,
         value: Any,
+        source_dt: str | None = None,
     ) -> None:
+        manager = self.device_id_manager
+        if (manager is None or not manager.device_id or not device_id
+                or not manager.validate(device_id)):
+            logger.warning("Confirmed setting ignored: missing or mismatched loaded BOX identity")
+            return
         if self.frame_processor is None:
             return
-        await self.frame_processor.process(
-            device_id,
-            table,
-            {key: self._coerce_confirmed_value(value)},
-        )
+        actual = self._coerce_confirmed_value(value)
+        data = {key: actual}
+        previous = None
+        if self.confirmed_store is not None:
+            previous = self.confirmed_store.snapshot()["tables"].get(table, {}).get("fields", {}).get(key)
+        if source_dt is not None:
+            data["_dt"] = source_dt
+        await self.frame_processor.process(device_id, table, data, confirmed_event=True)
+        self._notify_parameter_confirmation(table, key, actual, source_dt, previous)
 
     @staticmethod
     def _coerce_confirmed_value(value: Any) -> Any:
@@ -451,13 +762,15 @@ class ProxyApp:
         except ValueError:
             pass
         try:
-            return float(normalized)
+            numeric = float(normalized)
+            return numeric if math.isfinite(numeric) else value
         except ValueError:
             return value
 
     async def shutdown(self) -> None:
         """Execute graceful shutdown sequence (reverse of startup)."""
         logger.info("OIG Proxy v2 shutting down...")
+        self._stop_event.set()
 
         # Cancel MQTT health check
         if self._health_task and not self._health_task.done():
@@ -494,6 +807,13 @@ class ProxyApp:
             await self.twin_handler.stop()
             logger.info("TwinControlHandler stopped")
 
+        shutdown_delivery = getattr(self.twin_delivery, "shutdown", None)
+        if callable(shutdown_delivery):
+            shutdown_delivery()  # pylint: disable=not-callable
+        self._drain_setting_results()
+        if self.status_publisher is not None:
+            self.status_publisher.flush_setting_results()
+
         # 5. Stop capture
         if self.pcap_capture:
             self.pcap_capture.stop()
@@ -502,6 +822,11 @@ class ProxyApp:
         if self.frame_capture:
             self.frame_capture.stop()
             logger.info("FrameCapture stopped")
+
+        if self.confirmed_store is not None and not self.confirmed_store.flush():
+            logger.warning("Confirmed observation cache could not be flushed at shutdown")
+
+        self._setting_results_closed = True
 
         # 6. Disconnect MQTT
         if self.mqtt:

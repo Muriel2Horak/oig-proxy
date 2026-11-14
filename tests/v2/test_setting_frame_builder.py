@@ -5,9 +5,14 @@ from datetime import datetime, timezone
 import importlib
 import xml.etree.ElementTree as ET
 
+import pytest
+
+from protocol.ver_profile import VerProfile
 
 frames = importlib.import_module("protocol.frames")
 TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
+DEVICE = "TEST-BOX-A"
+PROFILE = VerProfile(39, 0xB759)
 
 
 class _FrozenDateTime(datetime):
@@ -29,12 +34,13 @@ def test_build_setting_frame_derives_czech_dt_from_id_set_in_summer(monkeypatch)
     monkeypatch.setattr(frames, "datetime", _FrozenDateTime)
 
     frame = frames.build_setting_frame(
-        device_id="2111232079",
+        device_id=DEVICE,
         table="tbl_box_prms",
         key="MODE",
         value=1,
         id_set=1779013060,
         msg_id=14409605,
+        profile=PROFILE,
     )
 
     tags = _frame_tags(frame)
@@ -46,17 +52,18 @@ def test_build_setting_frame_derives_czech_dt_from_id_set_in_summer(monkeypatch)
 
 
 def test_build_setting_frame_keeps_tsec_at_or_after_id_set(monkeypatch) -> None:
-    """TSec is clamped to id_set when the local clock is behind it."""
+    """TSec equals ID_Set when both are assigned within the same second."""
     monkeypatch.setattr(frames, "datetime", _FrozenDateTime)
-    id_set = int(datetime(2026, 5, 17, 10, 17, 45, tzinfo=timezone.utc).timestamp()) + 1
+    id_set = int(datetime(2026, 5, 17, 10, 17, 45, tzinfo=timezone.utc).timestamp())
 
     frame = frames.build_setting_frame(
-        device_id="2111232079",
+        device_id=DEVICE,
         table="tbl_box_prms",
         key="MODE",
         value=1,
         id_set=id_set,
         msg_id=14409605,
+        profile=PROFILE,
     )
 
     tags = _frame_tags(frame)
@@ -65,12 +72,24 @@ def test_build_setting_frame_keeps_tsec_at_or_after_id_set(monkeypatch) -> None:
         .replace(tzinfo=timezone.utc)
         .timestamp()
     )
-    assert tsec_epoch >= id_set
+    assert tsec_epoch == id_set
+
+
+def test_build_setting_frame_rejects_future_id_set(monkeypatch) -> None:
+    """Do not serialize a synthetic future device timestamp."""
+    monkeypatch.setattr(frames, "datetime", _FrozenDateTime)
+    id_set = int(datetime(2026, 5, 17, 10, 17, 45, tzinfo=timezone.utc).timestamp()) + 1
+
+    with pytest.raises(ValueError, match="ID_Set must not be in the future"):
+        frames.build_setting_frame(
+            device_id=DEVICE, table="tbl_box_prms", key="MODE", value=1,
+            id_set=id_set, msg_id=14409605, profile=PROFILE,
+        )
 
 
 def test_next_msg_id_continues_after_observed_cloud_id_above_14m() -> None:
     """next_msg_id continues sequentially from the highest observed cloud msg_id."""
     delivery = TwinDelivery(twin_queue=object(), mqtt=object())
-    delivery.observe_msg_id(14416650)
+    delivery.observe_msg_id(14416650, DEVICE)
 
-    assert delivery.next_msg_id() == 14416651
+    assert delivery.next_msg_id(DEVICE) == 14416651

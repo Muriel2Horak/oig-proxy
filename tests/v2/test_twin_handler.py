@@ -25,6 +25,9 @@ from twin.handler import TwinControlHandler
 from twin.state import TwinQueue
 
 
+PHASE_ENABLED = {"phase_calibration_enabled": True}
+
+
 class TestTwinControlHandler:
     """Tests for TwinControlHandler class."""
 
@@ -339,15 +342,66 @@ class TestTwinControlHandlerEdgeCases:
         assert twin_queue.size() == 0
         assert "below min" in caplog.text
 
-    def test_on_message_accepts_compat_topic_value_with_validation(self, handler, twin_queue):
-        handler._on_message(
-            "oig_local/test_device_123/set/tbl_batt_prms/BAT_MIN",
-            b"22",
-        )
+    @pytest.mark.parametrize(
+        "case",
+        [
+            ("tbl_batt_prms", "BAT_MIN", b"22", {}, 22),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"100", {}, None),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"100", {"grid_export_max_w": 5400}, None),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"0", {"ac_charge_max_a": 125}, 0),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"125", {"ac_charge_max_a": 125}, 125),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"126", {"ac_charge_max_a": 125}, None),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"100", {"ac_charge_max_a": 80}, None),
+            ("tbl_invertor_prm1", "AAC_MAX_CHRG", b"100.5", {"ac_charge_max_a": 125}, None),
+            ("tbl_invertor_prm1", "P_MAX_FEED_GRID", b"1000", {}, None),
+            ("tbl_invertor_prm1", "P_MAX_FEED_GRID", b"1", {"grid_export_max_w": 5400}, 1),
+            ("tbl_invertor_prm1", "P_MAX_FEED_GRID", b"5400", {"grid_export_max_w": 5400}, 5400),
+            ("tbl_invertor_prm1", "P_MAX_FEED_GRID", b"0", {"grid_export_max_w": 5400}, None),
+            ("tbl_invertor_prm1", "P_MAX_FEED_GRID", b"5001", {"grid_export_max_w": 5000}, None),
+            ("tbl_invertor_prms", "GRID_PV_OFF", b"1", {"ac_charge_max_a": 125}, None),
+            ("tbl_invertor_prms", "GRID_PV_OFF", b"1", {"grid_export_max_w": 5400}, 1),
+            ("tbl_invertor_prms", "GRID_PV_ON", b"0", {"grid_export_max_w": 5400}, 0),
+            ("tbl_invertor_prms", "TO_GRID", b"1", {"grid_export_max_w": 5400}, 1),
+            ("tbl_invertor_prms", "TO_GRID", b"2", {"grid_export_max_w": 5400}, None),
+            ("tbl_invertor_prm1", "GRID_PV_ON", b"1", {"grid_export_max_w": 5400}, None),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"90", {}, None), id="phase-disabled"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"0", PHASE_ENABLED, 0), id="phase-r-zero"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"50", PHASE_ENABLED, 50), id="phase-r-fifty"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"75", PHASE_ENABLED, 75), id="phase-r-seventy-five"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"90.0", PHASE_ENABLED, 90), id="phase-r-normalized"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_S", b"90", PHASE_ENABLED, 90), id="phase-s-ninety"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_T", b"90", PHASE_ENABLED, 90), id="phase-t-ninety"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"85", PHASE_ENABLED, None), id="phase-r-unlisted"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_S", b"75", PHASE_ENABLED, None), id="phase-s-unqualified"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_T", b"75", PHASE_ENABLED, None), id="phase-t-unqualified"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"89.5", PHASE_ENABLED, None), id="phase-fraction"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"NaN", PHASE_ENABLED, None), id="phase-nonfinite"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"off", PHASE_ENABLED, None), id="phase-boolean"),
+            pytest.param(("tbl_invertor_prms", "P_CAL_R", b"90", PHASE_ENABLED, None), id="phase-wrong-table"),
+        ],
+    )
+    def test_on_message_accepts_compat_topic_value_with_validation(self, mock_mqtt, twin_queue, case):
+        table, key, payload, limit_options, expected = case
+        device_id = "test_device_123"
+        options = {}
+        if limit_options:
+            from settings_constraints import PowerControlLimits
 
-        setting = twin_queue.get("tbl_batt_prms", "BAT_MIN")
-        assert setting is not None
-        assert setting.value == 22
+            options["power_limits"] = PowerControlLimits(**limit_options)
+        handler = TwinControlHandler(mock_mqtt, twin_queue, device_id, require_profile=True, **options)
+        twin_queue.set_profile_epoch(7, device_id=device_id)
+
+        handler._on_message(f"oig_local/{device_id}/set/{table}/{key}", payload)
+
+        setting = twin_queue.get(table, key, device_id=device_id)
+        if expected is None:
+            assert setting is None
+            assert twin_queue.size() == 0
+        else:
+            assert setting is not None
+            assert isinstance(setting.value, int) and not isinstance(setting.value, bool)
+            assert setting.value == expected
+            assert setting.profile_epoch == 7
 
     @pytest.mark.parametrize(
         ("payload", "expected"),
@@ -560,3 +614,34 @@ class TestTwinControlHandlerSettingsAudit:
         assert setting.value == 1
         assert setting.audit_id == replacement_enqueued["audit_id"]
         assert getattr(setting, "raw_text", "") == payload2
+
+
+@pytest.mark.parametrize("control", ["mode", "ac_charge", "phase_correction"])
+def test_device_profile_is_required_before_command_admission(control):
+    queue = TwinQueue()
+    options = {}
+    if control != "mode":
+        from settings_constraints import PowerControlLimits
+
+        table = "tbl_invertor_prm1"
+        if control == "phase_correction":
+            options["power_limits"] = PowerControlLimits(**PHASE_ENABLED)
+            key, value = "P_CAL_R", 90
+        else:
+            options["power_limits"] = PowerControlLimits(ac_charge_max_a=125)
+            key, value = "AAC_MAX_CHRG", 100
+    else:
+        table, key, value = "tbl_box_prms", "MODE", 1
+    handler = TwinControlHandler(MagicMock(), queue, "10001", require_profile=True, **options)
+    topic = "oig/10001/control/set"
+    request = json.dumps({"table": table, "key": key, "value": value}).encode()
+    queue.set_profile_epoch(9, device_id="20002")
+
+    handler._on_message(topic, request)
+    assert queue.size() == 0
+
+    queue.set_profile_epoch(10, device_id="10001")
+    handler._on_message(topic, request)
+    setting = queue.get(table, key, device_id="10001")
+    assert setting is not None
+    assert setting.profile_epoch == 10

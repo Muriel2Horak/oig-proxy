@@ -4,10 +4,120 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from unittest.mock import patch
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from protocol.frame import build_frame
+from proxy.server import ProxyServer
+from twin.delivery import TwinDelivery
+from twin.state import TwinQueue
+from tests.v2.test_wire_profile_qualification import Clock, box_proof, cloud_transaction, learner, native
+
+
+TEST_BOX = "12345"
+MODEL = (39, 0xBB59)
+POLL = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device>", MODEL)
+ACK = native("<Result>ACK</Result><Reason>Setting</Reason>", MODEL)
+
+
+def _qualified_transport(config, *, callback=None, collector=None, timeout=60.0):
+    """Supply real native proof and an observed outbound counter before testing transport."""
+    clock = Clock()
+    clock.now = time.time() - 20
+    queue = TwinQueue()
+    delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector, inflight_timeout_s=timeout)
+    profiles = learner(clock)
+    box_proof(profiles, clock, TEST_BOX, MODEL, "v.3.25.43.1219")
+    cloud_transaction(profiles, clock, TEST_BOX, MODEL)
+    delivery._profiles = profiles
+    status = delivery.profile_status(TEST_BOX)
+    assert status.profile is not None
+    queue.set_profile_epoch(status.epoch, device_id=TEST_BOX)
+    delivery.observe_msg_id(13800000, TEST_BOX)
+    proxy = ProxyServer(config, on_confirmed_setting=callback, twin_delivery=delivery,
+                        device_id_provider=lambda: TEST_BOX)
+    return proxy, delivery, queue, clock
+
+
+def _setting_event(clock, value, *, id_set=1234100):
+    clock.now = time.time() + 1
+    return native(
+        f"<TblName>tbl_events</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+        f"<ID_Set>{id_set}</ID_Set><DT>{clock.stamp()}</DT><Reason>Table</Reason><Type>Setting</Type>"
+        f"<Content>Remotely : tbl_box_prms / MODE: [3]->[{value}]</Content>", MODEL,
+    )
+
+
+def _combined_ack(clock):
+    """Build the observed ACK envelope and actual-table suffix with synthetic data."""
+    clock.now = time.time()
+    stamp = clock.stamp()
+    table_fields = (
+        ("ENBL", 1), ("VIZ", 9), ("Temp", 24), ("Humid", 45), ("ACO_P", 450),
+        ("FV_P1", 0), ("FV_P2", 0), ("ACI_WR", 150), ("ACI_WS", 150), ("ACI_WT", 150),
+        ("BAT_P", 0), ("FV_PROC", 0), ("BAT_C", 83), ("MSC_SELF", 0), ("STAT", 0),
+        ("FV_AD", 0), ("FVE_PROD", 0), ("INFLOW", 0), ("LOAD", 450), ("MAXFG", 5000),
+        ("STATX", 0), ("ACINB_WR", 0), ("ACINB_WS", 0), ("ACINB_WT", 0),
+        ("ACO_PR", 150), ("ACO_PS", 150), ("ACO_PT", 150),
+    )
+    return native(
+        f"<Result>ACK</Result><Rdt>{stamp}</Rdt><Reason>Setting</Reason>"
+        f"<TblName>tbl_actual</TblName><ID_Set>1234321</ID_Set><DT>{stamp}</DT>"
+        f"<Reason>Table</Reason><ID_Device>{TEST_BOX}</ID_Device>"
+        + "".join(f"<{tag}>{value}</{tag}>" for tag, value in table_fields), MODEL,
+    )
+
+
+async def _send_poll(proxy, writer, *, session_id="box-flow", poll=POLL):
+    reader = asyncio.StreamReader()
+    reader.feed_data(poll)
+    reader.feed_eof()
+    cloud_writer = MagicMock(spec=asyncio.StreamWriter)
+    cloud_writer.drain = AsyncMock()
+    await proxy._pipe_box_to_cloud(reader, cloud_writer, writer, session_id=session_id)
+    return cloud_writer
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(make_config) -> None:
+    confirmed = AsyncMock()
+    telemetry = AsyncMock()
+    proxy, delivery, queue, clock = _qualified_transport(
+        make_config(proxy_mode="offline"), callback=confirmed, timeout=0.75,
+    )
+    proxy.on_frame = telemetry
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
+    reader, writer = await asyncio.open_connection("127.0.0.1", listener.sockets[0].getsockname()[1])
+    try:
+        writer.write(POLL)
+        await writer.drain()
+        setting = await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2)
+        assert b"<TblName>tbl_box_prms</TblName>" in setting
+        assert b"<ID_Set>1234321</ID_Set>" not in setting
+
+        ack = _combined_ack(clock)
+        writer.write(ack.replace(b"<BAT_C>83</BAT_C>", b"<BAT_C>42</BAT_C>") + ack)
+        await writer.drain()
+        end = await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2)
+        assert b"<Result>END</Result>" in end
+        assert await asyncio.wait_for(reader.read(), 2) == b""
+
+        assert delivery.inflight() is None and queue.size() == 0
+        confirmed.assert_not_awaited()
+        telemetry.assert_awaited_once()
+        table, = telemetry.await_args.args
+        assert (table["_device_id"], table["_table"], table["BAT_C"]) == (TEST_BOX, "tbl_actual", 83)
+        assert "Result" not in table and "Rdt" not in table
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        listener.close()
+        await listener.wait_closed()
+        await proxy.stop()
 
 
 def _frame(table: str, device_id: str, **fields: object) -> bytes:
@@ -15,6 +125,67 @@ def _frame(table: str, device_id: str, **fields: object) -> bytes:
     inner = [f"<TblName>{table}</TblName>", f"<ID_Device>{device_id}</ID_Device>"]
     inner.extend(f"<{k}>{v}</{k}>" for k, v in fields.items())
     return build_frame("".join(inner)).encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_box_stream_forwards_fragments_and_coalesced_frames_exactly_once(
+    make_config, dummy_writer_factory,
+) -> None:
+    proxy = importlib.import_module("proxy.server").ProxyServer(make_config())
+    first = _frame("tbl_actual", "12345", Temp=25)
+    second = _frame("tbl_batt_prms", "12345", BAT_MIN=20)
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.read.side_effect = [first[:15], first[15:] + second + b"tail", b""]
+    writer = dummy_writer_factory()
+
+    await proxy._pipe_box_to_cloud(reader, writer)
+
+    assert b"".join(writer.written) == first + second + b"tail"
+
+
+@pytest.mark.asyncio
+async def test_bad_box_crc_is_forwarded_without_updating_state(
+    make_config, stream_reader_from_chunks, dummy_writer_factory,
+) -> None:
+    callback = AsyncMock()
+    proxy = ProxyServer(make_config(), on_frame=callback)
+    original = _frame("tbl_box_prms", TEST_BOX, MODE=3)
+    bad_crc = original.replace(b"<MODE>3</MODE>", b"<MODE>0</MODE>")
+    writer = dummy_writer_factory()
+
+    await proxy._pipe_box_to_cloud(stream_reader_from_chunks(bad_crc), writer)
+
+    assert writer.written == [bad_crc]
+    callback.assert_not_awaited()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_mode", ["online", "hybrid"])
+async def test_online_mode_change_closes_existing_idle_offline_socket(
+    make_config, new_mode,
+) -> None:
+    proxy = importlib.import_module("proxy.server").ProxyServer(make_config(proxy_mode="offline"))
+    listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
+    port = listener.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(_frame("tbl_actual", "12345", Temp=25))
+        await writer.drain()
+        ack = await asyncio.wait_for(reader.readuntil(b"</Frame>"), 2)
+        assert b"<Result>ACK</Result>" in ack
+        await asyncio.wait_for(reader.readexactly(2), 2)
+
+        assert await proxy.apply_configured_mode(new_mode)
+
+        assert await asyncio.wait_for(reader.read(1), 2) == b""
+        assert proxy.mode_manager.should_try_cloud()
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        listener.close()
+        await listener.wait_closed()
+        await proxy.stop()
 
 
 @pytest.mark.asyncio
@@ -93,29 +264,19 @@ async def test_hybrid_mode_transition(make_config, dummy_writer_factory) -> None
 
 @pytest.mark.asyncio
 async def test_twin_setting_delivery(make_config, dummy_writer_factory) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    build_frame = importlib.import_module("protocol.frame").build_frame
-    cfg = make_config()
-    queue = TwinQueue()
-    queue.enqueue("tbl_set", "T_Room", 22)
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+    server, _delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_boiler_prms", "ISON", 1, device_id=TEST_BOX, require_profile=True)
     box_writer = dummy_writer_factory()
+    cloud_writer = await _send_poll(server, box_writer)
+    cloud_writer.write.assert_not_called()
 
-    await server._deliver_pending_for_isnewset(
-        build_frame("<TblName>IsNewSet</TblName><ID_Device>12345</ID_Device>"),
-        box_writer,
-    )
-
-    delivered = b"".join(box_writer.written)
-    assert b"<TblName>tbl_set</TblName>" in delivered
+    delivered, = box_writer.written
+    assert b"<TblName>tbl_boiler_prms</TblName>" in delivered
     assert b"<ID_Device>12345</ID_Device>" in delivered
     assert b"<ID_Set>" in delivered
     assert b"<Reason>Setting</Reason>" in delivered
-    assert b"<TblItem>T_Room</TblItem>" in delivered
-    assert b"<NewValue>22</NewValue>" in delivered
+    assert b"<TblItem>ISON</TblItem>" in delivered
+    assert b"<NewValue>1</NewValue>" in delivered
     assert b"<ID_SubD>0</ID_SubD>" in delivered
     assert b"<ID_Server>9</ID_Server>" in delivered
     assert b"<Confirm>New</Confirm>" in delivered
@@ -123,190 +284,147 @@ async def test_twin_setting_delivery(make_config, dummy_writer_factory) -> None:
 
 @pytest.mark.asyncio
 async def test_twin_tbl_events_ack_removes_pending(make_config, dummy_writer_factory) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    cfg = make_config()
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 0)
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    on_confirmed_setting = AsyncMock()
-    server = ProxyServer(
-        cfg,
-        twin_delivery=twin_delivery,
-        on_confirmed_setting=on_confirmed_setting,
-    )
-    box_writer = dummy_writer_factory()
-
-    await server._deliver_pending_for_isnewset(
-        _frame("IsNewSet", "12345").decode("utf-8"),
-        box_writer,
-    )
+    confirmed = AsyncMock()
+    proxy, _delivery, queue, clock = _qualified_transport(make_config(), callback=confirmed)
+    queue.enqueue("tbl_box_prms", "MODE", 0, device_id=TEST_BOX, require_profile=True)
+    await _send_poll(proxy, dummy_writer_factory())
     assert queue.size() == 1
 
-    ack_frame = _frame(
-        "tbl_events",
-        "12345",
-        Type="Setting",
-        Content="Remotely : tbl_box_prms / MODE: [3]->[0]",
-    )
-    await server._handle_twin_frames(ack_frame, box_writer)
+    event = _setting_event(clock, 0)
+    await proxy._handle_twin_frames(event, "box-flow")
 
     assert queue.size() == 0
-    on_confirmed_setting.assert_awaited_once_with("12345", "tbl_box_prms", "MODE", "0")
+    confirmed.assert_awaited_once_with(TEST_BOX, "tbl_box_prms", "MODE", "0", source_dt=clock.stamp())
 
 
 @pytest.mark.asyncio
-async def test_twin_reason_setting_ack_removes_pending(make_config, dummy_writer_factory) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    cfg = make_config()
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 3)
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    on_confirmed_setting = AsyncMock()
-    server = ProxyServer(
-        cfg,
-        twin_delivery=twin_delivery,
-        on_confirmed_setting=on_confirmed_setting,
-    )
-    box_writer = dummy_writer_factory()
+async def test_twin_reason_setting_ack_retires_only_its_bound_session(make_config, dummy_writer_factory) -> None:
+    confirmed = AsyncMock()
+    proxy, delivery, queue, _clock = _qualified_transport(make_config(), callback=confirmed)
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    await _send_poll(proxy, dummy_writer_factory())
+    assert delivery.inflight() == ("tbl_box_prms", "MODE")
 
-    await server._deliver_pending_for_isnewset(
-        _frame("IsNewSet", "12345").decode("utf-8"),
-        box_writer,
-    )
+    # A native ACK without a device field cannot inherit another connection's identity.
+    await proxy._handle_twin_frames(POLL, "other-flow")
+    assert await proxy._handle_twin_frames(ACK, "other-flow") is None
     assert queue.size() == 1
-    assert twin_delivery.inflight() == ("tbl_box_prms", "MODE")
-
-    reason_ack = b"<Frame><Result>ACK</Result><Reason>Setting</Reason></Frame>"
-    await server._handle_twin_frames(reason_ack, box_writer)
-
+    assert await proxy._handle_twin_frames(ACK, "box-flow") == "ack"
     assert queue.size() == 0
-    assert twin_delivery.inflight() is None
-    on_confirmed_setting.assert_awaited_once_with("12345", "tbl_box_prms", "MODE", 3)
+    assert delivery.inflight() is None
+    confirmed.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_cloud_setting_marks_cloud_inflight_for_tbl_payload(make_config, dummy_writer_factory) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    cfg = make_config()
-    queue = TwinQueue()
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
-
-    cloud_setting = _frame(
-        "tbl_box_prms",
-        "12345",
-        TblItem="MODE",
-        NewValue=3,
-        Reason="Setting",
-    )
-    box_writer = dummy_writer_factory()
-    cloud_reader = asyncio.StreamReader()
-    cloud_reader.feed_data(cloud_setting)
-    cloud_reader.feed_eof()
-
-    assert twin_delivery.is_cloud_inflight() is False
-    await server._pipe_cloud_to_box(cloud_reader, box_writer)
-    assert twin_delivery.is_cloud_inflight() is True
+async def test_cloud_setting_tracks_only_native_target_on_bound_flow(make_config, dummy_writer_factory) -> None:
+    proxy, delivery, _queue, _clock = _qualified_transport(make_config())
+    writer = dummy_writer_factory()
+    await proxy._handle_twin_frames(POLL, "box-flow")
+    own = _frame("tbl_box_prms", TEST_BOX, TblItem="MODE", NewValue=3, Reason="Setting")
+    foreign = _frame("tbl_box_prms", "98765", TblItem="MODE", NewValue=3, Reason="Setting")
+    for session, setting, tracked in [("unbound", own, False), ("box-flow", foreign, False), ("box-flow", own, True)]:
+        reader = asyncio.StreamReader()
+        reader.feed_data(setting)
+        reader.feed_eof()
+        await proxy._pipe_cloud_to_box(reader, writer, session_id=session)
+        assert delivery.is_cloud_inflight(TEST_BOX) is tracked
+    assert writer.written == [own, foreign, own]
 
 
 @pytest.mark.asyncio
-async def test_cloud_end_clears_cloud_inflight(make_config, dummy_writer_factory) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    build_frame = importlib.import_module("protocol.frame").build_frame
-    cfg = make_config()
-    queue = TwinQueue()
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    twin_delivery.set_cloud_inflight()
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+async def test_cloud_end_clears_only_its_bound_flow(make_config, dummy_writer_factory) -> None:
+    proxy, delivery, _queue, _clock = _qualified_transport(make_config())
+    await proxy._handle_twin_frames(POLL, "box-flow")
+    await proxy._handle_twin_frames(POLL, "other-flow")
+    delivery.set_cloud_inflight("box-flow")
 
-    box_writer = dummy_writer_factory()
-    cloud_reader = asyncio.StreamReader()
-    cloud_reader.feed_data(build_frame("<Result>END</Result>").encode("utf-8"))
-    cloud_reader.feed_eof()
-
-    assert twin_delivery.is_cloud_inflight() is True
-    await server._pipe_cloud_to_box(cloud_reader, box_writer)
-    assert twin_delivery.is_cloud_inflight() is False
+    for session, in_flight in [("other-flow", True), ("box-flow", False)]:
+        reader = asyncio.StreamReader()
+        reader.feed_data(build_frame("<Result>END</Result>").encode())
+        reader.feed_eof()
+        await proxy._pipe_cloud_to_box(reader, dummy_writer_factory(), session_id=session)
+        assert delivery.is_cloud_inflight() is in_flight
 
 
 @pytest.mark.asyncio
-async def test_local_setting_frame_uses_monotonic_msg_id(make_config, stream_reader_from_chunks, dummy_writer_factory) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    cfg = make_config()
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 3)
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    twin_delivery.observe_msg_id(13800000)
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
-
-    box_writer = dummy_writer_factory()
-    cloud_writer = dummy_writer_factory()
-
-    isnewset = _frame("IsNewSet", "12345")
-    box_reader = stream_reader_from_chunks(isnewset)
-
-    await server._pipe_box_to_cloud(box_reader, cloud_writer, box_writer)
-
-    sent = b"".join(box_writer.written).decode("utf-8", errors="replace")
-    assert "<ID>13800001</ID>" in sent
+async def test_local_setting_frame_uses_monotonic_msg_id(make_config, dummy_writer_factory) -> None:
+    proxy, _delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    writer = dummy_writer_factory()
+    await _send_poll(proxy, writer)
+    assert b"<ID>13800001</ID>" in b"".join(writer.written)
 
 
 @pytest.mark.asyncio
-async def test_replay_file_frame_sent_before_queue_delivery(
-    make_config,
-    stream_reader_from_chunks,
-    dummy_writer_factory,
-    tmp_path,
+async def test_stale_replay_file_is_ignored_during_normal_delivery(
+    make_config, dummy_writer_factory, tmp_path, monkeypatch,
 ) -> None:
-    ProxyServer = importlib.import_module("proxy.server").ProxyServer
-    TwinDelivery = importlib.import_module("twin.delivery").TwinDelivery
-    TwinQueue = importlib.import_module("twin.state").TwinQueue
-    server_module = importlib.import_module("proxy.server")
+    proxy, _delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    monkeypatch.chdir(tmp_path)
+    replay = tmp_path / "replay_setting_frame.xml"
+    replay.write_bytes(_frame("tbl_box_prms", TEST_BOX, TblItem="MODE", NewValue=1, ID=77777777))
+    writer = dummy_writer_factory()
 
-    cfg = make_config()
-    queue = TwinQueue()
-    queue.enqueue("tbl_box_prms", "MODE", 3)
-    twin_delivery = TwinDelivery(queue, MagicMock())
-    server = ProxyServer(cfg, twin_delivery=twin_delivery)
+    await _send_poll(proxy, writer)
 
-    replay_payload = _frame(
-        "tbl_box_prms",
-        "12345",
-        TblItem="MODE",
-        NewValue=3,
-        Reason="Setting",
-        ID=77777777,
-        ID_Set=1773669999,
-        Confirm="New",
-        ID_Server=9,
-        ver=54321,
+    sent, = writer.written
+    assert b"<ID>13800001</ID>" in sent
+    assert b"<NewValue>3</NewValue>" in sent
+    assert b"<ID>77777777</ID>" not in sent
+    assert replay.exists()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["ack", "event_then_ack", "timeout"])
+async def test_switch_online_preserves_inflight_offline_exchange_until_terminal(make_config, outcome) -> None:
+    event_seen = asyncio.Event()
+
+    async def on_confirmed(*_args, **_kwargs):
+        event_seen.set()
+
+    proxy, delivery, queue, clock = _qualified_transport(
+        make_config(proxy_mode="offline"), callback=on_confirmed, timeout=0.25 if outcome == "timeout" else 2.0,
     )
-    replay_path = tmp_path / "replay_setting_frame.xml"
-    replay_path.write_bytes(replay_payload)
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
+    port = listener.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    idle_reader, idle_writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        idle_writer.write(_frame("tbl_actual", TEST_BOX, Temp=25))
+        await idle_writer.drain()
+        assert b"<Result>ACK</Result>" in await asyncio.wait_for(idle_reader.readuntil(b"</Frame>\r\n"), 2)
+        writer.write(POLL)
+        await writer.drain()
+        setting = await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2)
+        assert b"<Reason>Setting</Reason>" in setting
+        assert b"<NewValue>3</NewValue>" in setting
 
-    with patch.object(
-        server_module,
-        "_read_replay_frame_once",
-        side_effect=lambda _path: replay_path.read_bytes() if replay_path.exists() else None,
-    ):
-        box_writer = dummy_writer_factory()
-        cloud_writer = dummy_writer_factory()
-        box_reader = stream_reader_from_chunks(_frame("IsNewSet", "12345"))
-
-        await server._pipe_box_to_cloud(box_reader, cloud_writer, box_writer)
-
-    sent = b"".join(box_writer.written)
-    assert b"<ID>77777777</ID>" in sent
+        assert await proxy.apply_configured_mode("online")
+        assert await asyncio.wait_for(idle_reader.read(), 2) == b""
+        assert delivery.inflight() == ("tbl_box_prms", "MODE")
+        if outcome == "event_then_ack":
+            writer.write(_setting_event(clock, 3))
+            await writer.drain()
+            await asyncio.wait_for(event_seen.wait(), 1)
+            assert queue.size() == 0
+        if outcome != "timeout":
+            writer.write(ACK)
+            await writer.drain()
+            end = await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2)
+            assert b"<Result>END</Result>" in end
+        assert await asyncio.wait_for(reader.read(), 2) == b""
+        assert delivery.inflight() is None
+        assert queue.size() == 0
+    finally:
+        for connection in (writer, idle_writer):
+            connection.close()
+            await connection.wait_closed()
+        listener.close()
+        await listener.wait_closed()
+        await proxy.stop()
 
 
 @pytest.mark.asyncio

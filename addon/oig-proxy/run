@@ -188,6 +188,12 @@ else
     export CONTROL_MQTT_ENABLED="false"
 fi
 
+AC_CHARGE_MAX_A=$(bashio::config 'ac_charge_max_a')
+GRID_EXPORT_MAX_W=$(bashio::config 'grid_export_max_w')
+PHASE_CALIBRATION_ENABLED=$(bashio::config 'phase_calibration_enabled')
+MAXFG_AS_EXPORT_LIMIT_READBACK=$(bashio::config 'maxfg_as_export_limit_readback')
+export AC_CHARGE_MAX_A GRID_EXPORT_MAX_W PHASE_CALIBRATION_ENABLED MAXFG_AS_EXPORT_LIMIT_READBACK
+
 # telemetry_enabled (default true)
 TELEMETRY_ENABLED_RAW=$(bashio::config 'telemetry_enabled')
 if [ -z "$TELEMETRY_ENABLED_RAW" ] || [ "$TELEMETRY_ENABLED_RAW" = "null" ]; then
