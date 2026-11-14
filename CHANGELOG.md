@@ -6,9 +6,10 @@
 
 > [!WARNING]
 > **Experimentální předběžná verze. Nastavení měníte na vlastní odpovědnost.**
-> Tento kandidát zatím neprošel provozní zkouškou na fyzickém boxu. Na jedné
-> instalaci byly vyzkoušené vybrané funkce předchozího prototypu. Chování na
-> dalších boxech a firmwarech zatím není ověřené. Odpovídáte za zvolené
+> U tohoto kandidáta jsme na jednom fyzickém boxu ověřili start proxy, živá
+> data v MQTT a spojení s cloudem. Zápisy tohoto sestavení jsou zatím
+> neověřené. Dřívější zkoušky zápisů proběhly s prototypem na jedné instalaci.
+> Chování na dalších boxech a firmwarech zatím není ověřené. Odpovídáte za zvolené
 > hodnoty a za jejich dopad na nabíjení baterie, spotřebu a dodávku do sítě.
 > Každou změnu nejdřív vyzkoušejte ručně na své instalaci a ověřte její dopad.
 

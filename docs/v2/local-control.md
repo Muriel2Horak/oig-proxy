@@ -3,9 +3,10 @@
 > [!WARNING]
 > **Experimentální funkce v kandidátu `2.2.0-rc.3`.**
 > Zápisy mění režim boxu, nabíjení baterie a dodávku do sítě.
-> Nastavení měníte na vlastní odpovědnost. Tento kandidát zatím neprošel
-> provozní zkouškou na fyzickém boxu. Před zapojením automatizace ověřte ruční
-> příkaz, potvrzenou hodnotu a skutečné chování na své instalaci.
+> Nastavení měníte na vlastní odpovědnost. U tohoto kandidáta jsme na jednom
+> fyzickém boxu ověřili start a příjem živých dat. Místní zápisy tohoto
+> sestavení zatím čekají na ověření. Před zapojením automatizace ověřte
+> ruční příkaz, potvrzenou hodnotu a skutečné chování na své instalaci.
 
 ## Povolení v OIG Proxy
 
@@ -14,8 +15,11 @@
 2. Zapněte `control_mqtt_enabled`. Pro první ověření profilu nastavte
    `proxy_mode: hybrid`. Volby proudu, přetoků a fází nastavte podle parametrů,
    které chcete ovládat. Nastavení uložte a restartujte OIG Proxy.
-3. V **Nastavení → Zařízení a služby → Entity** vyhledejte `control_ver_ready`
-   a `control_ver_reason`. Ovládání používejte po přechodu na `on` a `ready`.
+3. V **Nastavení → Zařízení a služby → Entity** najděte zařízení
+   **Diagnostika OIG (oig_proxy)** pod integrací **MQTT**. Vyhledejte
+   **Lokální zápis – ověřený profil ver** (`control_ver_ready`) a
+   **Lokální zápis – důvod stavu profilu ver** (`control_ver_reason`).
+   Ovládání použijte, až budou jejich stavy `on` a `ready`.
 
 ![Aplikace OIG Proxy se záložkami Informace, Nastavení a Protokol](images/local-control/proxy-app.jpg)
 ![Zapnutá volba control_mqtt_enabled v nastavení OIG Proxy](images/local-control/proxy-mqtt-switch.jpg)
@@ -36,23 +40,34 @@ verze evidovaná Supervisorem. Nové volby níže popisují RC3.
 Stropy v aplikaci omezují hodnoty příkazů. Hodnotu uloženou v boxu nastavíte
 příslušnou entitou `_cfg`. Pro první ověření kontrolního součtu `ver` potřebuje
 proxy čerstvé rámce boxu, údaj o firmwaru a cloudový zápis potvrzený boxem.
-Ověřený profil lze znovu potvrdit z čerstvých dat po restartu.
-Po ověření profilu fungují také místní příkazy v offline režimu.
+Pokud čeká na cloudový důkaz, proveďte běžnou změnu z cloudu a ověřte,
+že ji box potvrdil. Proxy může po restartu dříve ověřený profil znovu
+potvrdit z čerstvých dat boxu. Dokud je profil připravený, může proxy
+odesílat příkazy i bez cloudu. [Režimy proxy](proxy_modes.md)
+
+U režimu boxu, proudu, přetoků a povolených fázových korekcí uvidíte senzor
+pro čtení a vedle něj ovladač s příponou `_cfg`. Oba používají stav hlášený
+boxem. Požadavek odešlete ovladačem. Senzor se změní po novém potvrzení.
+V HA mohou mít obě entity stejný název. Rozlište je podle typu a ID.
+Vlastní názvy v registru nebo na panelu se mohou lišit od ukázek.
+Pokud po snížení stropu nebo vypnutí zápisů zůstane na panelu starší
+ovladač, platí omezení z nastavení proxy.
 
 ## Změna režimu
 
 1. V registru **Nastavení → Zařízení a služby → Entity** vyhledejte
    `tbl_box_prms_mode` a zkontrolujte sloupec **Integrace**, který má ukazovat
    **MQTT**.
-2. Otevřete entitu typu `select`, jejíž ID končí na `tbl_box_prms_mode_cfg`.
-   Z rozbalovací nabídky vyberte například **Home 2**.
+2. Otevřete **Režim** typu `select`, jehož ID končí na `tbl_box_prms_mode_cfg`.
+   Z rozbalovací nabídky vyberte například **Home 2**. Režimy připojení
+   `online`, `hybrid` a `offline` najdete v samostatném ovladači **Proxy - Režim**.
 3. Vyčkejte na potvrzený režim v senzoru `tbl_box_prms_mode`. Při první
    zkoušce můžete stejným postupem vrátit původní režim.
 
 ![Lokální MQTT ovladač Režim boxu s rozbalenou nabídkou](images/local-control/mqtt-mode.jpg)
 
-Snímek ukazuje nabídku ověřovaného prototypu. RC3 přidává do výběru také Home 5
-a Home 6. Fyzické přepnutí těchto dvou režimů přes RC3 zatím čeká na ověření.
+Snímek ukazuje nabídku ověřovaného prototypu. V RC3 jsou v nabídce také Home 5
+a Home 6. Fyzické přepnutí těchto dvou režimů zatím čeká na ověření.
 
 | Hodnota MQTT | 0 | 1 | 2 | 3 | 4 | 5 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -61,22 +76,39 @@ a Home 6. Fyzické přepnutí těchto dvou režimů přes RC3 zatím čeká na o
 ## Nabíjení v Home UPS
 
 1. Požádejte o Home UPS a vyčkejte na potvrzení v senzoru režimu.
-2. Vyhledejte `aac_max_chrg` a otevřete MQTT entitu typu `number` s příponou
-   `_cfg`. Zadejte proud odpovídající stropu instalace.
+2. Vyhledejte `aac_max_chrg`. Pod zařízením **Baterie** otevřete
+   **Nabíječka - Max. AC proud** typu `number` s příponou `_cfg`.
+   Hned po potvrzení režimu zadejte proud v mezích své instalace.
 3. Ověřte hodnotu `AAC_MAX_CHRG` v senzoru. Tato hodnota vyjadřuje nastavený
    limit nabíjení ze sítě. Okamžitý proud baterie ukazuje `BAT_I` a její
    výkon `BAT_P`. Po další změně režimu limit znovu zkontrolujte.
 
 ![MQTT ovladač maximálního proudu nabíjení z AC v ampérech](images/local-control/mqtt-aac.jpg)
 
+Snímek ukazuje číselné pole prototypu. V RC3 hledejte název
+**Nabíječka - Max. AC proud** nebo ID obsahující `aac_max_chrg`.
+
 ## Přetoky do sítě
 
-1. V `p_max_feed_grid_cfg` nastavte limit ve wattech a zkontrolujte, že
-   senzor `P_MAX_FEED_GRID` hlásí stejnou hodnotu.
-2. `TO_GRID` řídí povolení dodávky do sítě. Pro vybíjení baterie do sítě
-   použijte `GRID_PV_OFF` bez výroby FVE nebo `GRID_PV_ON` při dostupné výrobě.
-   Každý z těchto přepínačů používá `0` pro vypnutí a `1` pro zapnutí.
-3. Po změně ověřte potvrzený příznak i skutečný tok do sítě.
+1. Pod zařízením **Síť** otevřete **Síť - Max. výkon do sítě**
+   (`p_max_feed_grid_cfg`). Nastavte limit ve wattech podle povoleného
+   přetoku své instalace. S dalším krokem počkejte na jeho potvrzení v senzoru.
+2. **Síť - Dodávka aktivní** (`TO_GRID`) povoluje dodávku do sítě. Ověřte
+   jeho potvrzený stav. Podle stavu FVE použijte **Síť - Vybíjení bat. bez FVE**
+   (`GRID_PV_OFF`) nebo **Síť - Vybíjení bat. s FVE** (`GRID_PV_ON`). Jde o dva
+   samostatné přepínače. Každý používá `0` pro vypnutí a `1` pro zapnutí.
+3. Po změně ověřte potvrzený příznak a čerstvé měření toku do sítě. Předaná
+   hodnota limitu je nastavení boxu. Skutečný přetok ověřte měřením výkonu
+   v místě připojení nebo na elektroměru, který tuto hodnotu ukazuje.
+4. Po zkoušce vypněte zkušební vybíjení a ověřte příznaky i tok do sítě.
+   Pokud jste měnili další nastavení, vraťte původní hodnoty v povoleném
+   rozsahu a ověřte jejich potvrzení.
+
+Při přímém ovládání použijte akci `mqtt.publish` z příkladu níže.
+Limit se posílá na `oig_local/<ID_BOXU>/set/tbl_invertor_prm1/P_MAX_FEED_GRID`.
+Přepínače mají vlastní topicy pod `oig_local/<ID_BOXU>/set/tbl_invertor_prms/`,
+například `GRID_PV_OFF` s payloadem `"1"`. Závislé příkazy posílejte postupně,
+po potvrzení předchozí změny.
 
 ## Fázové korekce L1, L2 a L3
 
@@ -92,15 +124,21 @@ entitu `number` s příponou `_cfg`. Po každé změně ověřte senzor stejné 
 | L3 | `tbl_invertor_prm1:P_CAL_T` | 90 |
 
 Hodnoty jsou v surových jednotkách boxu. Převod na fyzikální jednotku zatím
-nemáme ověřený. Atribut `allowed_values` uvádí přesné povolené zápisy.
-Ovladač může ukazovat i dříve potvrzenou hodnotu mimo tento seznam, například
-75 na L2 či L3. Tuto hodnotu RC3 přes MQTT nenastaví zpět.
+nemáme ověřený. V detailech ovladače `_cfg` uvádí atribut `allowed_values`
+přesné povolené zápisy. Číselné pole má širší rozsah kvůli dříve potvrzeným
+hodnotám, například 75 na L2 či L3. Proxy při zápisu přijímá jen hodnoty
+z tabulky. Před změnou si zapište stav každé fáze a ověřte způsob návratu.
+Hodnotu 75 na L2 nebo L3 přes MQTT v RC3 neobnovíte.
 
 ## Automatizace Home UPS a AAC
 
 V HA vytvořte skript a nahraďte ukázková ID skutečnými ID svého boxu z registru
 MQTT entit. `100` je proud z fyzické zkoušky jedné instalace. Použijte hodnotu
-v povoleném rozsahu svého boxu.
+v povoleném rozsahu svého boxu. Skript nastaví cílový stav a přeskočí krok,
+pokud příslušný senzor již ukazuje cílovou hodnotu. Po přechodu do Home UPS
+ověřte také skutečný proud baterie. Pokud potřebujete znovu poslat stejnou
+hodnotu, potvrzení tohoto nového příkazu ověřujte zvlášť podle výsledku a
+nové zprávy boxu.
 
 ```yaml
 alias: OIG - Home UPS a 100 A
@@ -126,16 +164,22 @@ sequence:
                       'Home UPS') }}
         timeout: "00:02:00"
         continue_on_timeout: false
-  - action: number.set_value
-    target:
-      entity_id: number.oig_local_1234567890_tbl_invertor_prm1_aac_max_chrg_cfg
-    data:
-      value: 100
-  - wait_template: >
-      {{ states('sensor.oig_local_1234567890_tbl_invertor_prm1_aac_max_chrg')
-         | float(-1) == 100 }}
-    timeout: "00:02:00"
-    continue_on_timeout: false
+  - if:
+      - condition: template
+        value_template: >
+          {{ states('sensor.oig_local_1234567890_tbl_invertor_prm1_aac_max_chrg')
+             | float(-1) != 100 }}
+    then:
+      - action: number.set_value
+        target:
+          entity_id: number.oig_local_1234567890_tbl_invertor_prm1_aac_max_chrg_cfg
+        data:
+          value: 100
+      - wait_template: >
+          {{ states('sensor.oig_local_1234567890_tbl_invertor_prm1_aac_max_chrg')
+             | float(-1) == 100 }}
+        timeout: "00:02:00"
+        continue_on_timeout: false
 ```
 
 Pro přímý zápis použijte akci `mqtt.publish`. Nahraďte ukázkové ID v topicu
@@ -156,14 +200,31 @@ s payloadem `"100"` a stejnými hodnotami `qos` a `retain`.
 
 ## Potvrzení a diagnostika
 
-- **Control - poslední výsledek** (`control_last_result`) ukazuje výsledek a
-  atributy příkazu. `ack` potvrzuje přijetí. Před závislým krokem ověřte
-  skutečný stav v senzoru.
+- **Control - poslední výsledek** (`control_last_result`) ukazuje například
+  `ack tbl_box_prms:MODE=3`. V atributech najdete mimo jiné `event_id`, čas
+  `at`, `source` (`local` nebo `cloud`) a druh potvrzení `evidence`.
+  `ack` s `protocol_ack` potvrzuje přijetí rámce. Použitou hodnotu ověřte
+  v odpovídajícím senzoru podle zprávy boxu. Poslední výsledek může patřit
+  jinému příkazu, proto porovnejte také tabulku, parametr, hodnotu a čas.
 - Při `nack`, `timeout` nebo `dropped` ověřte výsledek, čas a stav boxu.
   Pokud se výsledek neaktualizoval, podívejte se do záložky **Protokol** aplikace.
+  Neplatný nebo nepovolený vstup se může objevit jen v protokolu.
 - Při `cloud_evidence_pending` chybí potvrzený cloudový zápis pro profil.
   Při `firmware_unverified` proxy čeká na čerstvý údaj o firmwaru.
   Při `box_evidence_stale` potřebuje nová data boxu.
+- Po restartu může HA zobrazit poslední potvrzený stav z cache.
+  Pro ověření nové změny sledujte zprávu přijatou po příkazu. S čekáním
+  na vhodný dotaz boxu se i samotné odeslání může zpozdit.
+
+## Návrat po zkoušce
+
+Před prvním zápisem si poznamenejte potvrzené hodnoty, které chcete po zkoušce
+obnovit, a zkontrolujte, že je proxy dovolí zapsat. Pokud jste používali
+`offline`, vraťte obvyklý režim proxy a v protokolu ověřte, že box navázal
+spojení a komunikace s cloudem pokračuje. Chcete-li místní zápisy vypnout,
+vypněte `control_mqtt_enabled`, uložte nastavení a restartujte aplikaci.
+Tím zastavíte další místní zápisy z MQTT. Hodnoty uložené v boxu obnovte
+samostatně podporovaným způsobem a ověřte je v HA nebo na boxu.
 
 ## Co jsme ověřili
 
@@ -175,7 +236,9 @@ s payloadem `"100"` a stejnými hodnotami `qos` a `retain`.
   potvrdil příkaz střídač. Čerstvá tabulka s hodnotou `1` tehdy chyběla.
 - Box potvrdil `90/90/90` pro L1, L2 a L3. Během dvouminutové zkoušky hlásil
   odběr 0 až 26 W. Zátěž se během zkoušky měnila.
-- RC3 prošel automatickými testy a ověřením MQTT s Mosquittem. Živá zkouška
-  tohoto sestavení na boxu zatím zbývá.
+- RC3 prošel automatickými testy a ověřením MQTT s Mosquittem. Na jednom
+  fyzickém boxu prošel start v hybridu. Do HA proudila čerstvá data a cloud
+  odpovídal. Zkouška místních zápisů tohoto sestavení čeká na první potvrzený
+  cloudový příkaz pro kvalifikaci profilu.
 
 [Konfigurace aplikace](configuration.md) · [Technický popis MQTT a profilu ver](twin.md)

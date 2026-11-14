@@ -1,5 +1,7 @@
 # Connection Lifecycle Documentation
 
+> Historical connection sample. See [proxy modes](../v2/proxy_modes.md) for current transitions and the meaning of status fields.
+
 ## Overview
 
 This document describes connection lifecycle patterns and mode transitions for the OIG Proxy based on analysis of 18,598 transitions over 45 days.

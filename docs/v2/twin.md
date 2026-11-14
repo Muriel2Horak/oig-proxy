@@ -14,7 +14,7 @@ The existing MQTT input accepts a JSON object on
 
 Home Assistant discovery uses the existing per-setting command topics, for
 example `oig_local/<device_id>/set/tbl_box_prms/MODE` with scalar payload `0`.
-Send a new command without the MQTT retain flag. Home Assistant's read-only
+Send a fresh command with QoS 0 and retain disabled. Home Assistant's read-only
 entity and its `_cfg` counterpart display the last Box-confirmed value. The
 `_cfg` entity also accepts requests.
 
@@ -37,9 +37,13 @@ A previously qualified profile can be revalidated from fresh Box frames
 with device timestamps after the proxy starts.
 A new installation that starts without a qualified profile can read and
 publish telemetry while it gathers evidence. An unknown, stale, or changed
-profile blocks local writes until it is qualified again. Check
+profile blocks local writes until it is qualified again. For initial qualification, use hybrid mode and
+let the live Box acknowledge a normal Cloud Setting on the same connection.
+Then check
 `control_ver_ready` and `control_ver_reason` in the proxy status. Qualification
-uses live frames and works with capture logging disabled.
+uses live frames and works with capture logging disabled. A fresh install without a previously
+qualified profile can read telemetry offline. Local writes wait for the
+initial Cloud exchange.
 
 ## Offline and hybrid delivery
 
@@ -62,3 +66,7 @@ profile readiness, and one supported setting's reported result and
 confirmed state before enabling automations that depend on local writes.
 If a context is still qualifying, check the status reason and allow normal
 Box and Cloud exchanges to provide evidence.
+
+See the [Home Assistant walkthrough](local-control.md) for user-facing
+controls and the [configuration reference](configuration.md) for installation
+limits.

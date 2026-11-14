@@ -1,5 +1,7 @@
 # OIG Protocol Behavior Specification
 
+> Historical protocol analysis. Captured frame shapes and timing concern the observed firmware and sessions. For current proxy behavior and verification, see [proxy modes](v2/proxy_modes.md) and [MQTT control](v2/twin.md).
+
 ## Overview
 
 This document specifies the behavior of the OIG protocol between the Cloud server and the Box device, focusing on the correct Setting Flow mechanism based on recent analysis findings.

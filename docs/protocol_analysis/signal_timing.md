@@ -1,5 +1,7 @@
 # Signal Timing Documentation
 
+> Historical timings measured on the captured sample. See [MQTT control](../v2/twin.md) for current command confirmation behavior.
+
 ## Overview
 
 This document describes observed timing patterns for OIG protocol signals based on analysis of 871,952 frames.
