@@ -16,4 +16,8 @@ COPY . /app/
 COPY run /run.sh
 RUN chmod +x /run.sh
 
+# The HA s6 entrypoint initializes /run. The startup script also writes DNS
+# configuration under /etc and starts dnsmasq on the host's port 53.
+# Keep the inherited user until startup privileges and /data upgrades can be tested separately.
+# nosemgrep: dockerfile.security.missing-user.missing-user
 CMD ["/run.sh"]
