@@ -4,8 +4,8 @@
 > **Experimentální funkce v kandidátu `2.2.0-rc.3`.**
 > Zápisy mění režim boxu, nabíjení baterie a dodávku do sítě.
 > Nastavení měníte na vlastní odpovědnost. U tohoto kandidáta jsme na jednom
-> fyzickém boxu ověřili start a příjem živých dat. Místní zápisy tohoto
-> sestavení zatím čekají na ověření. Před zapojením automatizace ověřte
+> fyzickém boxu ověřili start, živá data a místní přepínání Home 1 a Home 2
+> v hybridním režimu. Před zapojením automatizace ověřte
 > ruční příkaz, potvrzenou hodnotu a skutečné chování na své instalaci.
 
 ## Povolení v OIG Proxy
@@ -162,7 +162,7 @@ sequence:
       - wait_template: >
           {{ is_state('sensor.oig_local_1234567890_tbl_box_prms_mode',
                       'Home UPS') }}
-        timeout: "00:02:00"
+        timeout: "00:05:00"
         continue_on_timeout: false
   - if:
       - condition: template
@@ -236,9 +236,13 @@ samostatně podporovaným způsobem a ověřte je v HA nebo na boxu.
   potvrdil příkaz střídač. Čerstvá tabulka s hodnotou `1` tehdy chyběla.
 - Box potvrdil `90/90/90` pro L1, L2 a L3. Během dvouminutové zkoušky hlásil
   odběr 0 až 26 W. Zátěž se během zkoušky měnila.
-- RC3 prošel automatickými testy a ověřením MQTT s Mosquittem. Na jednom
-  fyzickém boxu prošel start v hybridu. Do HA proudila čerstvá data a cloud
-  odpovídal. Zkouška místních zápisů tohoto sestavení čeká na první potvrzený
-  cloudový příkaz pro kvalifikaci profilu.
+- Dne 14. listopadu 2026 jsme s RC3 a firmwarem `v.4.11.26.0518` ověřili
+  Home 1 → Home 2 → Home 1 přes MQTT ovladač v HA v hybridním režimu.
+  Po cloudové změně se profil zpřístupnil. U obou místních změn přišel ACK
+  a nová tabulka `tbl_box_prms` potvrdila režim v senzoru i ovladači.
+  Zobrazení se změnilo přibližně 1,5 až 2,75 minuty po odeslání rámce boxu.
+  První požadavek na návrat nahradil novější požadavek na stejný režim.
+  Další požadavek zopakoval Home 1 až po potvrzení návratu.
+- RC3 prošel automatickými testy a ověřením MQTT s Mosquittem.
 
 [Konfigurace aplikace](configuration.md) · [Technický popis MQTT a profilu ver](twin.md)

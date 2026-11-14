@@ -6,9 +6,9 @@
 
 > [!WARNING]
 > **Experimentální předběžná verze. Nastavení měníte na vlastní odpovědnost.**
-> U tohoto kandidáta jsme na jednom fyzickém boxu ověřili start proxy, živá
-> data v MQTT a spojení s cloudem. Zápisy tohoto sestavení jsou zatím
-> neověřené. Dřívější zkoušky zápisů proběhly s prototypem na jedné instalaci.
+> Na jednom fyzickém boxu jsme u tohoto kandidáta v hybridním režimu ověřili
+> živá data, spojení s cloudem a místní změnu Home 1 → Home 2 → Home 1.
+> Zkoušky proudu, přetoků a korekcí na této instalaci proběhly s prototypem.
 > Chování na dalších boxech a firmwarech zatím není ověřené. Odpovídáte za zvolené
 > hodnoty a za jejich dopad na nabíjení baterie, spotřebu a dodávku do sítě.
 > Každou změnu nejdřív vyzkoušejte ručně na své instalaci a ověřte její dopad.
@@ -53,6 +53,9 @@ boxu. Stejný stav zkontrolujte po restartu. Ověření vychází z dat vašeho 
 a firmwaru. Po úspěšném ověření jsou místní zápisy dostupné i bez cloudu, pokud
 proxy stále hlásí připravenost. V automatizaci před dalším krokem čekejte
 s časovým limitem na potvrzenou hodnotu, zejména mezi Home UPS a změnou proudu.
+Box může přijmout příkaz během několika sekund od odeslání a novou hodnotu
+odeslat do HA až o několik minut později. Před opakováním příkazu zkontrolujte
+jeho výsledek a čas poslední potvrzené hodnoty.
 
 [Návod k lokálnímu ovládání se snímky z Home Assistantu a příklady skriptu a MQTT](docs/v2/local-control.md)
 
