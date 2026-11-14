@@ -2,6 +2,11 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0] - 2026-10-13
+
+### Added
+- New `builtin_dns_enabled` option (default `true`, backwards compatible). Set it to `false` to skip starting the built-in dnsmasq, freeing TCP/UDP port 53 for an external resolver (e.g. AdGuard Home or Pi-hole) running on the same host. The external resolver then handles the `target_server` rewrite. The proxy resolves the cloud via `dns_upstream` independently, so disabling the built-in DNS does not affect the proxy↔cloud connection.
+
 ## [2.1.2] - 2026-08-13
 
 ### Fixed

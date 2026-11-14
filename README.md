@@ -115,6 +115,7 @@ Nejjednodušší je udělat DNS override v lokální síti.
 Tento add-on spouští **dnsmasq** (poslouchá na `53/udp` a `53/tcp`) a umí lokálně přepsat aktuálně nastavený `target_server` na IP HA (viz `ha_ip` + `dns_upstream` v konfiguraci add-onu). Pro kompatibilitu přidává i legacy alias `oigservis.cz`, pokud je cílem nová doména.
 
 1. V HA v add-onu **OIG Proxy** nastav (Konfigurace):
+   - `builtin_dns_enabled`: `true` (default) spustí vestavěný dnsmasq na portu 53. Nastav `false`, pokud port 53 má obsluhovat jiný resolver (např. AdGuard Home / Pi-hole) – viz Varianta B níže.
    - `ha_ip`: IP Home Assistanta v LAN (nebo ponech prázdné – add-on se ji pokusí autodetekovat)
     - `dns_override_ip`: volitelné, explicitní IP pro DNS override aktuálního `target_server` (má prioritu nad `ha_ip`; použij např. pro NAS relay)
    - `dns_upstream`: DNS upstream (default `8.8.8.8`, nebo dej IP tvého routeru/DNS)
@@ -134,6 +135,13 @@ Poznámky:
     - `bridge.oigpower.cz` → `<IP Home Assistanta>`
 3. Nastav v routeru DHCP tak, aby klientům (včetně BOXu) rozdával jako DNS právě tento DNS server.
 4. Zkontroluj, že klienti nemají „fallback“ na veřejné DNS (např. 8.8.8.8).
+
+> **Pozor – AdGuard/Pi-hole na stejném HOSTu jako add-on:** vestavěný dnsmasq add-onu
+> poslouchá na portu 53 (`host_network: true`), takže by se o port 53 pral s AdGuardem/Pi-hole
+> běžícím na stejném hostu (podle pořadí startu vyhraje jen jeden). V takovém případě nastav
+> v add-onu `builtin_dns_enabled: false` – dnsmasq se nespustí, port 53 zůstane volný pro
+> AdGuard/Pi-hole a ten obstará přepis `bridge.oigpower.cz`. Proxy si cloud resolvuje přes
+> `dns_upstream` nezávisle, takže vypnutí vestavěného DNS nemá vliv na spojení proxy↔cloud.
 
 #### Varianta C: Jen pro test (hosts na jednom PC)
 Funguje jen pro testování z PC, ne pro BOX:

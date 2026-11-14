@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "slug": "oig_proxy",
   "description": "OIG TCP proxy v2 – async architektura, MQTT, HA discovery",
   "arch": ["amd64", "aarch64"],
@@ -25,6 +25,7 @@
     "mqtt_username": "",
     "mqtt_password": "",
     "ha_ip": "",
+    "builtin_dns_enabled": true,
     "dns_override_ip": "",
     "dns_upstream": "8.8.8.8",
     "log_level": "INFO",
@@ -53,6 +54,7 @@
     "mqtt_username": "str",
     "mqtt_password": "str",
     "ha_ip": "str?",
+    "builtin_dns_enabled": "bool?",
     "dns_override_ip": "str?",
     "dns_upstream": "str?",
     "log_level": "list(INFO|DEBUG|TRACE)",
@@ -70,6 +72,11 @@
     "5710/tcp": 5710,
     "53/udp": 53,
     "53/tcp": 53
+  },
+  "ports_description": {
+    "5710/tcp": "OIG datalogger proxy",
+    "53/udp": "Built-in DNS (only used when builtin_dns_enabled is true)",
+    "53/tcp": "Built-in DNS (only used when builtin_dns_enabled is true)"
   },
   "map": ["data:rw"]
 }
