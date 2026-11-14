@@ -12,6 +12,16 @@ import math
 import os
 import socket
 
+from settings_constraints import PowerControlLimits
+
+
+def _read_power_limit(variable: str, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(variable, "0"))
+    except ValueError:
+        return 0
+    return value if 0 <= value <= maximum else 0
+
 
 class Config:
     """Konfigurace proxy nactena z env vars."""
@@ -37,6 +47,8 @@ class Config:
     mqtt_qos: int = 1
     mqtt_state_retain: bool = True
     control_mqtt_enabled: bool = False
+    power_limits: PowerControlLimits = PowerControlLimits()
+    maxfg_as_export_limit_readback: bool = False
     confirmed_state_path: str = "/data/confirmed_state.json"
     control_ver_profile_state_path: str = "/data/control_ver_profile.json"
     control_counter_state_path: str = "/data/control_counters.json"
@@ -115,6 +127,16 @@ class Config:
             "MQTT_STATE_RETAIN", "true").lower() == "true"
         self.control_mqtt_enabled = (
             os.environ.get("CONTROL_MQTT_ENABLED", "false").strip().lower() in {"true", "1"}
+        )
+        self.power_limits = PowerControlLimits(
+            ac_charge_max_a=_read_power_limit("AC_CHARGE_MAX_A", 125),
+            grid_export_max_w=_read_power_limit("GRID_EXPORT_MAX_W", 0xFFFFFFFF),
+            phase_calibration_enabled=(
+                os.environ.get("PHASE_CALIBRATION_ENABLED", "false").strip().lower() in {"true", "1"}
+            ),
+        )
+        self.maxfg_as_export_limit_readback = (
+            os.environ.get("MAXFG_AS_EXPORT_LIMIT_READBACK", "false").strip().lower() in {"true", "1"}
         )
         self.confirmed_state_path = os.environ.get(
             "CONFIRMED_STATE_PATH", "/data/confirmed_state.json")

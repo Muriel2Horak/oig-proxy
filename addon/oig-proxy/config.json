@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "2.2.0-rc.1",
+  "version": "2.2.0-rc.3",
   "slug": "oig_proxy",
   "description": "OIG TCP proxy v2 – async architektura, MQTT, HA discovery",
   "arch": ["amd64", "aarch64"],
@@ -35,6 +35,10 @@
     "capture_retention_days": 7,
     "capture_pcap": false,
     "control_mqtt_enabled": false,
+    "ac_charge_max_a": 0,
+    "grid_export_max_w": 0,
+    "phase_calibration_enabled": false,
+    "maxfg_as_export_limit_readback": false,
     "telemetry_enabled": true,
     "max_concurrent_connections": 5
   },
@@ -63,6 +67,10 @@
     "capture_retention_days": "int?",
     "capture_pcap": "bool?",
     "control_mqtt_enabled": "bool?",
+    "ac_charge_max_a": "int(0,125)?",
+    "grid_export_max_w": "int(0,4294967295)?",
+    "phase_calibration_enabled": "bool?",
+    "maxfg_as_export_limit_readback": "bool?",
     "telemetry_enabled": "bool?",
     "max_concurrent_connections": "int?"
   },

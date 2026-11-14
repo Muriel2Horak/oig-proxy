@@ -1,5 +1,5 @@
 """Tests for sensor/processor.py — FrameProcessor."""
-# pylint: disable=protected-access,missing-function-docstring
+# pylint: disable=protected-access,missing-function-docstring,too-many-lines
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
@@ -139,6 +139,166 @@ async def test_restart_replays_direct_box_observations_with_original_ordering(
     )
     mock_mqtt.publish_state.assert_not_called()
     assert ConfirmedStateStore(path, device).snapshot()["tables"]["tbl_box_prms"]["fields"]["MODE"]["value"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_maxfg_export_limit_readback_is_opt_in(
+    enabled: bool, tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    """Only an opted-in processor mirrors valid MAXFG while preserving raw state and siblings."""
+    store = ConfirmedStateStore(tmp_path / "confirmed.json", "BOX01")
+    options = {"maxfg_as_export_limit_readback": True} if enabled else {}
+    processor = FrameProcessor(mock_mqtt, mock_loader, state_store=store, **options)
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "AAC_MAX_CHRG": 50, "_dt": "2026-11-12 14:00:00",
+    })
+    mock_mqtt.publish_state.reset_mock()
+
+    await processor.process("BOX01", "tbl_actual", {"MAXFG": 2000.0, "_dt": "2026-11-12 14:01:00"})
+
+    published = [args for args, _kwargs in mock_mqtt.publish_state.call_args_list]
+    assert published[0] == ("BOX01", "tbl_actual", {"MAXFG": 2000.0})
+    expected = [("BOX01", "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 2000, "AAC_MAX_CHRG": 50})]
+    assert published[1:] == (expected if enabled else [])
+    field = store.snapshot()["tables"]["tbl_invertor_prm1"]["fields"]["P_MAX_FEED_GRID"]
+    assert field["origin"] == ("actual_mirror" if enabled else "direct")
+
+
+@pytest.mark.asyncio
+async def test_maxfg_needs_a_direct_baseline_for_this_field_and_box(
+    tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    """A sibling, a confirmation event, or a foreign BOX cannot qualify the alias."""
+    processor = FrameProcessor(
+        mock_mqtt, mock_loader, state_store=ConfirmedStateStore(tmp_path / "state.json", "BOX01"),
+        maxfg_as_export_limit_readback=True,
+    )
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "AAC_MAX_CHRG": 50, "_dt": "2026-11-12 14:00:00",
+    })
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "_dt": "2026-11-12 14:00:00",
+    }, confirmed_event=True)
+    await processor.process("BOX02", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "_dt": "2026-11-12 14:00:00",
+    })
+    mock_mqtt.publish_state.reset_mock()
+
+    for device in ("BOX01", "BOX02"):
+        await processor.process(device, "tbl_actual", {"MAXFG": 2000, "_dt": "2026-11-12 14:01:00"})
+
+    assert [args[:2] for args, _ in mock_mqtt.publish_state.call_args_list] == [
+        ("BOX01", "tbl_actual"), ("BOX02", "tbl_actual"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "stamp"),
+    [
+        (0, "2026-11-12 14:01:00"), (-1, "2026-11-12 14:01:00"),
+        (2000.5, "2026-11-12 14:01:00"), (True, "2026-11-12 14:01:00"),
+        (float("inf"), "2026-11-12 14:01:00"), (float("nan"), "2026-11-12 14:01:00"),
+        (2**32, "2026-11-12 14:01:00"), ("2000", "2026-11-12 14:01:00"),
+        (2000, None), (2000, "invalid"), (2000, "2026-11-12T14:01:00Z"),
+    ],
+)
+async def test_maxfg_requires_positive_integer_watts_and_orderable_device_time(
+    value: object, stamp: str | None, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    processor = FrameProcessor(mock_mqtt, mock_loader, maxfg_as_export_limit_readback=True)
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "_dt": "2026-11-12 14:00:00",
+    })
+    mock_mqtt.publish_state.reset_mock()
+
+    await processor.process("BOX01", "tbl_actual", {"MAXFG": value, "_dt": stamp})
+
+    assert [args[:2] for args, _ in mock_mqtt.publish_state.call_args_list] == [("BOX01", "tbl_actual")]
+
+
+@pytest.mark.asyncio
+async def test_maxfg_cannot_replace_a_newer_or_tied_canonical_event(
+    tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    store = ConfirmedStateStore(tmp_path / "state.json", "BOX01")
+    processor = FrameProcessor(
+        mock_mqtt, mock_loader, state_store=store, maxfg_as_export_limit_readback=True,
+    )
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "_dt": "2026-11-12 14:00:00",
+    })
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 3200, "_dt": "2026-11-12 14:03:00",
+    }, confirmed_event=True)
+
+    for stamp in ("2026-11-12 14:02:00", "2026-11-12 14:03:00", "2026-11-12 14:04:00"):
+        await processor.process("BOX01", "tbl_actual", {"MAXFG": 2000, "_dt": stamp})
+    await processor.process("BOX01", "tbl_actual", {"MAXFG": 2500, "_dt": "2026-11-12 14:04:00"})
+    await processor.process("BOX01", "tbl_actual", {"BAT_P": -50, "_dt": "2026-11-12 14:05:00"})
+
+    canonical = [args[2]["P_MAX_FEED_GRID"] for args, _ in mock_mqtt.publish_state.call_args_list
+                 if args[1] == "tbl_invertor_prm1"]
+    assert canonical == [5333, 3200, 2000]
+    field = store.snapshot()["tables"]["tbl_invertor_prm1"]["fields"]["P_MAX_FEED_GRID"]
+    assert field["sourceDT"] == "2026-11-12 14:04:00"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persistent", [False, True])
+async def test_maxfg_alias_requires_a_new_baseline_after_firmware_change(
+    persistent: bool, tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    store = ConfirmedStateStore(tmp_path / "state.json", "BOX01") if persistent else None
+    processor = FrameProcessor(
+        mock_mqtt, mock_loader, state_store=store, maxfg_as_export_limit_readback=True,
+    )
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "SW": "old-fw", "_dt": "2026-11-12 14:00:00",
+    })
+    await processor.process("BOX01", "tbl_actual", {
+        "MAXFG": 2000, "SW": "new-fw", "_dt": "2026-11-12 14:01:00",
+    })
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5000, "SW": "new-fw", "_dt": "2026-11-12 14:02:00",
+    })
+    await processor.process("BOX01", "tbl_actual", {"MAXFG": 2100, "_dt": "2026-11-12 14:03:00"})
+
+    canonical = [args[2]["P_MAX_FEED_GRID"] for args, _ in mock_mqtt.publish_state.call_args_list
+                 if args[1] == "tbl_invertor_prm1"]
+    assert canonical == [5333, 5000, 2100]
+
+
+@pytest.mark.asyncio
+async def test_maxfg_restart_replays_history_without_reusing_unproven_baseline(
+    tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    path = tmp_path / "state.json"
+    device = "BOX01"
+    store = ConfirmedStateStore(path, device)
+    assert store.record(
+        "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 5333}, source_dt="2026-11-12 14:00:00",
+        priority=0, origin="direct", baseline=True,
+    )
+    processor = FrameProcessor(
+        mock_mqtt, mock_loader, state_store=ConfirmedStateStore(path, device),
+        maxfg_as_export_limit_readback=True,
+    )
+    await processor.process(device, "tbl_actual", {"MAXFG": 2000, "_dt": "2026-11-12 14:01:00"})
+    mock_mqtt.publish_state.assert_called_with(device, "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 2000})
+
+    restarted = FrameProcessor(
+        mock_mqtt, mock_loader, state_store=ConfirmedStateStore(path, device),
+        maxfg_as_export_limit_readback=True,
+    )
+    assert restarted.replay_confirmed_states()
+    mock_mqtt.publish_confirmed_state.assert_any_call(device, "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 2000})
+    mock_mqtt.publish_state.reset_mock()
+
+    await restarted.process(device, "tbl_actual", {"MAXFG": 2200, "_dt": "2026-11-12 14:02:00"})
+
+    mock_mqtt.publish_state.assert_called_once_with(device, "tbl_actual", {"MAXFG": 2200})
 
 
 @pytest.mark.asyncio

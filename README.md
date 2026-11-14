@@ -2,6 +2,8 @@
 
 TCP proxy pro OIG Box, která dekóduje XML rámce, publikuje data do MQTT (HA autodiscovery), dekóduje warningy a loguje neznámé senzory pro doplnění mapy. Součástí je DNS přepis, aby Box mluvil na lokální proxy místo cloudu.
 
+[Návod k experimentálnímu lokálnímu ovládání v Home Assistantu](docs/v2/local-control.md)
+
 ## Klíčové funkce
 - 🔄 **Multi‑mode proxy**: ONLINE (forward) / OFFLINE (lokální ACK + queue) / REPLAY (vyprazdňování fronty)
 - 💾 **Persistentní fronty**: SQLite fronta pro cloud (frames) i MQTT (messages)

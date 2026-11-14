@@ -34,6 +34,10 @@ The canonical defaults live in `addon/oig-proxy/config.py` (class attributes). T
 | `capture_retention_days` | `CAPTURE_RETENTION_DAYS` | int? | `7` | Days to keep captured frames before pruning |
 | `capture_pcap` | `CAPTURE_PCAP` | bool? | `false` | Capture raw TCP traffic to `/data/capture.pcap` using the PCAP recorder |
 | `control_mqtt_enabled` | `CONTROL_MQTT_ENABLED` | bool? | `false` | Enable Twin control MQTT topic (device settings via `oig/{device_id}/control/set`) |
+| `ac_charge_max_a` | `AC_CHARGE_MAX_A` | int? | `0` | Installation ceiling for `AAC_MAX_CHRG` in amperes, up to 125 A. Zero keeps it read-only |
+| `grid_export_max_w` | `GRID_EXPORT_MAX_W` | int? | `0` | Installation ceiling for export limit commands in watts. Zero keeps the limit and grid export flags read-only |
+| `phase_calibration_enabled` | `PHASE_CALIBRATION_ENABLED` | bool? | `false` | Allow the verified raw values of `P_CAL_R/S/T` on a compatible installation |
+| `maxfg_as_export_limit_readback` | `MAXFG_AS_EXPORT_LIMIT_READBACK` | bool? | `false` | Use fresh `MAXFG` observations for confirmed export-limit state when the mapping has been verified for this installation |
 | `telemetry_enabled` | `TELEMETRY_ENABLED` | bool? | `true` | Enable anonymous operational telemetry |
 | `max_concurrent_connections` | `MAX_CONCURRENT_CONNECTIONS` | int? | `5` | Maximum number of concurrent Box connections the proxy will keep open |
 
@@ -154,6 +158,19 @@ Automatic pruning of capture database entries older than this many days. Prevent
 ### `control_mqtt_enabled`
 
 When enabled, the proxy accepts supported settings via `oig/{device_id}/control/set` and Home Assistant discovery command topics. Local delivery requires a qualified Box wire profile. See [Twin control](twin.md) for command results, offline behavior, and upgrade checks.
+
+### Charging and grid export controls
+
+- Set `ac_charge_max_a` to the approved maximum for the installation. `AAC_MAX_CHRG` accepts whole amperes from 0 to that ceiling.
+- Set `grid_export_max_w` to the approved maximum for the installation. `P_MAX_FEED_GRID` accepts whole watts from 1 to that ceiling. The add-on option constrains local commands. The Box's applied limit remains a separate setting.
+- `GRID_PV_OFF` and `GRID_PV_ON` permit battery discharge to grid with PV unavailable and available respectively. `TO_GRID` controls grid feed-in. All three use `0` for off and `1` for on. Verify the Box's reported limit before enabling battery export.
+- Use `maxfg_as_export_limit_readback` after verifying that `tbl_actual:MAXFG` reports the same limit as `tbl_invertor_prm1:P_MAX_FEED_GRID` on the Box. The proxy needs a direct parameter baseline and updates from later observations for the same Box. A full parameter refresh can provide the direct value.
+- The read-only sensor and `_cfg` entity read the same confirmed state. MQTT commands use the existing `oig_local/<box>/set/<table>/<key>` topic with a scalar payload and retain disabled. Wait for the Box's confirmed readback before proceeding with a dependent operation.
+
+### Phase calibration
+
+- Enable `phase_calibration_enabled` and `control_mqtt_enabled` for an installation where these parameters have been verified. `P_CAL_R` (L1) accepts raw values 0, 50, 75 and 90. `P_CAL_S` (L2) and `P_CAL_T` (L3) accept 90. The physical trials were performed on one Box. Check the existing values before making changes. A previous S/T value such as 75 remains visible and is outside the RC3 write policy.
+- Read `allowed_values` on the MQTT number entity for the exact write choices. Its numeric display can show the full U16 readback. The proxy validates the exact list for both MQTT admission and delivery to the Box. The raw value has no assigned unit.
 
 ### `telemetry_enabled`
 

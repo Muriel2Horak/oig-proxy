@@ -16,7 +16,7 @@ import pytest
 # sys.path nastaven v conftest.py
 from mqtt.client import MQTTClient
 from sensor.loader import SensorMapLoader
-from settings_constraints import is_setting_allowed, validate_setting_value
+from settings_constraints import PowerControlLimits, is_setting_allowed, validate_setting_value
 
 
 # ---------------------------------------------------------------------------
@@ -381,10 +381,13 @@ def test_inverter_priority_preserves_reviewed_read_only_labels():
     ("table", "key", "value"),
     [("tbl_invertor_prm1", "AAC_MAX_CHRG", 100),
      ("tbl_invertor_prms", "PRRTY", 1),
-     ("tbl_invertor_prm1", "P_MAX_FEED_GRID", 1000)],
+     ("tbl_invertor_prm1", "P_MAX_FEED_GRID", 2000),
+     ("tbl_invertor_prms", "GRID_PV_OFF", 1),
+     ("tbl_invertor_prms", "GRID_PV_ON", 1),
+     ("tbl_invertor_prms", "TO_GRID", 1)],
 )
 def test_unreleased_setting_is_observable_without_command_discovery(table, key, value):
-    """Observed AAC, PRRTY and export settings cannot acquire a control."""
+    """Unconfigured power controls and inverter PRRTY stay read-only."""
     client = make_client()
     broker = inject_mock_paho(client)
 
@@ -396,6 +399,79 @@ def test_unreleased_setting_is_observable_without_command_discovery(table, key, 
     assert "command_topic" not in json.loads(raw)
     assert is_setting_allowed(table, key) is False
     assert validate_setting_value(table, key, value)[0] is False
+
+
+@pytest.mark.parametrize(
+    ("table", "key", "ro_component", "cfg_component", "low", "high"),
+    [
+        ("tbl_invertor_prm1", "AAC_MAX_CHRG", "sensor", "number", 0, 125),
+        ("tbl_invertor_prm1", "P_MAX_FEED_GRID", "sensor", "number", 1, 5400),
+        ("tbl_invertor_prms", "GRID_PV_OFF", "binary_sensor", "switch", 0, 1),
+        ("tbl_invertor_prms", "GRID_PV_ON", "binary_sensor", "switch", 0, 1),
+        ("tbl_invertor_prms", "TO_GRID", "binary_sensor", "switch", 0, 1),
+    ],
+)
+def test_opted_in_power_controls_keep_private_ids_and_confirmed_state(
+    table, key, ro_component, cfg_component, low, high,
+):
+    limits = PowerControlLimits(ac_charge_max_a=125, grid_export_max_w=5400)
+    metadata = load_released_sensor_map().lookup(table, key)
+    assert metadata is not None
+    client = make_client(power_limits=limits)
+    broker = inject_mock_paho(client)
+
+    assert client.send_discovery(
+        device_id="BOX01", table=table, sensor_key=key, sensor_name=key,
+        is_binary=metadata.get("is_binary", False),
+        unit=metadata.get("unit_of_measurement", ""),
+    )
+
+    publications = {
+        args[0]: json.loads(args[1]) for args, _kwargs in broker.publish.call_args_list
+    }
+    state_id = f"oig_local_box01_{table}_{key.lower()}"
+    control_id = f"{state_id}_cfg"
+    ro = publications[f"homeassistant/{ro_component}/{state_id}/config"]
+    cfg = publications[f"homeassistant/{cfg_component}/{control_id}/config"]
+    assert len(publications) == 2
+    assert ro["unique_id"] == state_id
+    assert "command_topic" not in ro
+    assert cfg["unique_id"] == control_id
+    assert ro["state_topic"] == cfg["state_topic"] == f"oig_local/BOX01/{table}/state"
+    assert ro["value_template"] == cfg["value_template"]
+    assert cfg["command_topic"] == f"oig_local/BOX01/set/{table}/{key}"
+    assert cfg["retain"] is False and cfg["optimistic"] is False
+    if cfg_component == "number":
+        assert (cfg["min"], cfg["max"], cfg["step"]) == (low, high, 1)
+        for value in (True, False, "on", "false"):
+            assert not validate_setting_value(table, key, value, power_limits=limits)[0]
+    else:
+        assert (cfg["payload_off"], cfg["payload_on"]) == (0, 1)
+    for value in (low, high):
+        assert validate_setting_value(table, key, f"{value}.0", power_limits=limits) == (True, value, "")
+    for value in (low - 1, high + 1, f"{high}.0000000000000001", "NaN"):
+        assert not validate_setting_value(table, key, value, power_limits=limits)[0]
+
+
+@pytest.mark.parametrize(("key", "allowed"), [
+    ("P_CAL_R", [0, 50, 75, 90]), ("P_CAL_S", [90]), ("P_CAL_T", [90]),
+])
+def test_phase_cfg_discovery_keeps_number_ids_and_reports_allowed_values(key, allowed):
+    client = make_client(power_limits=PowerControlLimits(phase_calibration_enabled=True))
+    broker = inject_mock_paho(client)
+    table = "tbl_invertor_prm1"
+    assert client.send_discovery(device_id="BOX01", table=table, sensor_key=key, sensor_name=key)
+
+    ro, cfg = [json.loads(call.args[1]) for call in broker.publish.call_args_list]
+    base = f"oig_local_box01_{table}_{key.lower()}"
+    assert ro["unique_id"] == base and cfg["unique_id"] == base + "_cfg"
+    assert cfg["default_entity_id"] == f"number.{base}_cfg"
+    assert cfg["state_topic"] == ro["state_topic"] == cfg["json_attributes_topic"]
+    assert cfg["value_template"] == ro["value_template"]
+    assert json.loads(cfg["json_attributes_template"]) == {"allowed_values": allowed}
+    # A prior directly observed 75 must remain readable on all three cfg numbers.
+    assert cfg["min"] <= 75 <= cfg["max"]
+    assert cfg["command_topic"] == f"oig_local/BOX01/set/{table}/{key}"
 
 
 def test_box_mode_discovery_retries_failed_select_without_republishing_sensor():

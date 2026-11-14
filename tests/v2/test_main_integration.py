@@ -32,6 +32,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy"))
 
 from main import Config, ProxyApp, main  # noqa: E402  # pylint: disable=wrong-import-position
+from settings_constraints import PowerControlLimits  # noqa: E402  # pylint: disable=wrong-import-position
 
 
 @pytest.fixture
@@ -364,8 +365,12 @@ class TestStartupSequence:
         assert app.sensor_loader.sensor_count() == 2
 
     @pytest.mark.asyncio
-    async def test_startup_creates_mqtt_client(self, mock_config):
+    @pytest.mark.parametrize("enable_writes", [False, True])
+    async def test_startup_creates_mqtt_client(self, mock_config, enable_writes):
         """Test that startup creates MQTT client with correct config."""
+        limits = PowerControlLimits(ac_charge_max_a=125, grid_export_max_w=5400)
+        mock_config.control_mqtt_enabled = enable_writes
+        mock_config.power_limits = limits
         app = ProxyApp(mock_config)
 
         with patch("main.DeviceIdManager") as mock_device_manager:
@@ -393,6 +398,7 @@ class TestStartupSequence:
             namespace=mock_config.mqtt_namespace,
             qos=mock_config.mqtt_qos,
             state_retain=mock_config.mqtt_state_retain,
+            power_limits=limits if enable_writes else PowerControlLimits(),
         )
 
     @pytest.mark.asyncio
@@ -456,6 +462,8 @@ class TestStartupSequence:
         mock_config.telemetry_enabled = True
         profile_path = temp_dir / "profile.json"
         counter_path = temp_dir / "counters.json"
+        limits = PowerControlLimits(ac_charge_max_a=125, grid_export_max_w=5400)
+        mock_config.power_limits = limits
         mock_config.control_ver_profile_state_path = str(profile_path)
         mock_config.control_counter_state_path = str(counter_path)
         app = ProxyApp(mock_config)
@@ -495,6 +503,7 @@ class TestStartupSequence:
             profile_state_path=profile_path,
             counter_state_path=counter_path,
             box_writes_enabled=True,
+            power_limits=limits,
         )
 
     @pytest.mark.asyncio
@@ -634,7 +643,8 @@ class TestFrameProcessing:
         app.frame_processor.process.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_on_frame_records_in_status_publisher(self, mock_config):
+    @pytest.mark.parametrize("source_table", ["tbl_actual", "IsNewSet"])
+    async def test_on_frame_records_in_status_publisher(self, mock_config, source_table):
         """Test that _on_frame records frames in status publisher."""
         app = ProxyApp(mock_config)
 
@@ -652,11 +662,12 @@ class TestFrameProcessing:
         # Call with valid frame
         await app._on_frame({
             "_device_id": "test_device",
-            "_table": "tbl_actual",
+            "_table": source_table,
             "Temp": 25.5,
         })
 
         app.status_publisher.record_frame.assert_called_once_with("test_device", "tbl_actual")
+        assert app.frame_processor.process.await_args.args[:2] == ("test_device", source_table)
 
     @pytest.mark.asyncio
     async def test_on_frame_skips_empty_data(self, mock_config):

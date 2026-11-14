@@ -2,6 +2,65 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.3] - Unreleased
+
+> [!WARNING]
+> **Experimentální předběžná verze. Nastavení měníte na vlastní odpovědnost.**
+> Tento kandidát zatím neprošel provozní zkouškou na fyzickém boxu. Na jedné
+> instalaci byly vyzkoušené vybrané funkce předchozího prototypu. Chování na
+> dalších boxech a firmwarech zatím není ověřené. Odpovídáte za zvolené
+> hodnoty a za jejich dopad na nabíjení baterie, spotřebu a dodávku do sítě.
+> Každou změnu nejdřív vyzkoušejte ručně na své instalaci a ověřte její dopad.
+
+### Jak lokální ovládání zapnout
+
+1. V Home Assistantu otevřete **Nastavení → Aplikace → OIG Proxy → Nastavení**
+   a povolte `control_mqtt_enabled`. Lokální změny jsou ve výchozím nastavení
+   vypnuté. Chcete-li řídit proud nebo přetoky, nastavte také příslušné stropy
+   podle své instalace. Fázové korekce se povolují samostatně.
+2. Pro první zprovoznění použijte hybridní režim. Nechte proxy přijmout
+   aktuální data i údaj o firmwaru boxu a proveďte jednu běžnou změnu z cloudu,
+   kterou box potvrdí. V MQTT entitách ověřte `control_ver_ready` ve stavu
+   `on` a `control_ver_reason` ve stavu `ready`.
+3. V registru entit vyhledejte svůj box pod integrací **MQTT**. Hodnotu měňte
+   entitou s příponou `_cfg` a výsledek ověřte v odpovídajícím senzoru.
+   Obě entity zobrazují potvrzenou hodnotu boxu.
+
+### Co můžete z Home Assistantu ovládat
+
+- **Režim boxu.** V ovladači režimu zvolte Home 1, Home 2, Home 3, Home UPS,
+  Home 5 nebo Home 6 podle možností boxu. Při první zkoušce ověřte změnu i
+  návrat. Home 5 a Home 6 zatím čekají na fyzické ověření.
+- **Nabíjení ze sítě v Home UPS.** Pokud potřebujete zvýšit nabíjecí výkon,
+  například nad 2,4 kW, přepněte do Home UPS, vyčkejte na potvrzení režimu a nastavte
+  maximální proud nabíjení ze sítě (`AAC_MAX_CHRG`). Hodnotu zvolte podle
+  limitů své baterie a instalace, nejvýše 125 A. Zkontrolujte potvrzený limit
+  a skutečný proud baterie. Po další změně režimu limit zkontrolujte znovu.
+- **Přetoky a vybíjení baterie do sítě.** Nejdřív nastavte a ověřte limit
+  přetoku ve wattech. Dodávku do sítě povoluje `TO_GRID`. Pro vybíjení baterie
+  použijte `GRID_PV_ON` při výrobě FVE a `GRID_PV_OFF` bez výroby. Ověřte
+  příznak i naměřený tok do sítě a dodržte povolený limit přetoků.
+- **Fázové korekce L1, L2 a L3.** Po povolení odpovídající volby se dají
+  nastavit hodnoty `P_CAL_R/S/T`. L1 dovoluje 0, 50, 75 a 90. L2 a L3 dovolují
+  zápis pouze 90. Pokud L2 nebo L3 zobrazuje například 75, zapište si původní
+  hodnotu. Tato verze ji přes MQTT neumí obnovit. Jednotka korekce není ověřená.
+
+### Aktualizace a automatizace
+
+Po aktualizaci nebo změně firmwaru mohou místní automatizace čekat na ověření
+boxu. Stejný stav zkontrolujte po restartu. Ověření vychází z dat vašeho boxu
+a firmwaru. Po úspěšném ověření jsou místní zápisy dostupné i bez cloudu, pokud
+proxy stále hlásí připravenost. V automatizaci před dalším krokem čekejte
+s časovým limitem na potvrzenou hodnotu, zejména mezi Home UPS a změnou proudu.
+
+[Návod k lokálnímu ovládání se snímky z Home Assistantu a příklady skriptu a MQTT](docs/v2/local-control.md)
+
+## [2.2.0-rc.2] - Unreleased
+
+### Added
+- Enable AC charge current and grid export controls using limits set for the installation. Read-only and configuration entities share confirmed Box state and preserve their MQTT identifiers.
+- Allow installations with a verified `MAXFG` mapping to update the configured export limit from fresh Box observations after a direct parameter baseline.
+
 ## [2.2.0-rc.1] - Unreleased
 
 ### Changed

@@ -21,7 +21,7 @@ from protocol.frames import build_setting_frame
 from protocol.ver_profile import (
     ProfileStatus, VerProfiles, matches_setting_poll, native_frame_fields, parse_setting_reply,
 )
-from settings_constraints import is_setting_allowed, validate_setting_value
+from settings_constraints import PowerControlLimits, is_setting_allowed, validate_setting_value
 from telemetry.settings_audit import (
     TERMINAL_STEPS,
     SettingResult,
@@ -149,12 +149,14 @@ class TwinDelivery:
         profile_state_path: Path | None = None,
         counter_state_path: Path | None = None,
         box_writes_enabled: bool = True,
+        power_limits: PowerControlLimits = PowerControlLimits(),
     ) -> None:
         self._twin_queue = twin_queue
         self._mqtt = mqtt
         self._inflight_timeout_s = inflight_timeout_s
         self._telemetry_collector = telemetry_collector
         self._box_writes_enabled = box_writes_enabled
+        self._power_limits = power_limits
 
         # Cloud-initiated setting tracking
         self._cloud_pending: dict[tuple[str, str, str], deque[_CloudPendingSetting]] = defaultdict(deque)
@@ -665,10 +667,14 @@ class TwinDelivery:
                                "manual request older than the 120-second project intent limit",
                                disposition="expired")
             return []
-        if source.table == "proxy_control" or not is_setting_allowed(source.table, source.key):
+        if source.table == "proxy_control" or not is_setting_allowed(
+            source.table, source.key, power_limits=self._power_limits,
+        ):
             self._reject_local(source, device_id, session_id, "Setting is outside local write policy")
             return []
-        ok, normalized, reason = validate_setting_value(source.table, source.key, source.value)
+        ok, normalized, reason = validate_setting_value(
+            source.table, source.key, source.value, power_limits=self._power_limits,
+        )
         if not ok:
             self._reject_local(source, device_id, session_id, reason)
             return []

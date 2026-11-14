@@ -47,6 +47,7 @@ from sensor.loader import SensorMapLoader
 from sensor.processor import FrameProcessor
 from sensor.confirmed_store import ConfirmedStateStore
 from parameter_refresh import ParameterRefreshScheduler
+from settings_constraints import PowerControlLimits
 from telemetry.collector import TelemetryCollector
 from twin import TwinControlHandler, TwinQueue
 from twin.delivery import TwinDelivery
@@ -89,6 +90,11 @@ class ProxyApp:
         cache_path = getattr(config, "confirmed_state_path", "")
         self._confirmed_state_path = str(cache_path) if isinstance(cache_path, (str, Path)) else ""
         self.parameter_refresh: ParameterRefreshScheduler | None = None
+        power_limits = getattr(config, "power_limits", None)
+        self._power_limits = (
+            power_limits if self._box_control_enabled() and isinstance(power_limits, PowerControlLimits)
+            else PowerControlLimits()
+        )
 
     def _configured_state_path(self, name: str) -> Path | None:
         value = getattr(self.config, name, "")
@@ -127,6 +133,7 @@ class ProxyApp:
             namespace=self.config.mqtt_namespace,
             qos=self.config.mqtt_qos,
             state_retain=self.config.mqtt_state_retain,
+            power_limits=self._power_limits,
         )
 
         # Restore observations before a reconnect callback or first BOX frame can publish.
@@ -200,6 +207,7 @@ class ProxyApp:
             profile_state_path=self._configured_state_path("control_ver_profile_state_path"),
             counter_state_path=self._configured_state_path("control_counter_state_path"),
             box_writes_enabled=self._box_control_enabled(),
+            power_limits=self._power_limits,
         )
         self.twin_delivery = twin_delivery
 
@@ -412,15 +420,12 @@ class ProxyApp:
         if device_id and device_id != "unknown" and path:
             self.confirmed_store = ConfirmedStateStore(
                 Path(path), device_id=device_id, namespace=self.config.mqtt_namespace)
-        if self.confirmed_store is not None:
-            self.frame_processor = FrameProcessor(
-                self.mqtt, self.sensor_loader,
-                proxy_device_id=self.config.proxy_device_id,
-                state_store=self.confirmed_store,
-            )
-        else:
-            self.frame_processor = FrameProcessor(
-                self.mqtt, self.sensor_loader, proxy_device_id=self.config.proxy_device_id)
+        self.frame_processor = FrameProcessor(
+            self.mqtt, self.sensor_loader,
+            proxy_device_id=self.config.proxy_device_id,
+            state_store=self.confirmed_store,
+            maxfg_as_export_limit_readback=getattr(self.config, "maxfg_as_export_limit_readback", False) is True,
+        )
 
     def _request_state_recovery(self) -> None:
         """Marshal Paho callbacks onto the application event-loop owner."""
@@ -647,6 +652,7 @@ class ProxyApp:
                 telemetry_collector=self.telemetry_collector, proxy_device_id=self.config.proxy_device_id,
                 require_profile=True,
                 box_writes_enabled=self._box_control_enabled(),
+                power_limits=self._power_limits,
             )
             await self.twin_handler.start()
         else:
@@ -667,6 +673,7 @@ class ProxyApp:
         if not table or not frame_device_id:
             return
 
+        source_table = table
         if table in ("IsNewSet", "IsNewWeather", "IsNewFW"):
             table = "tbl_actual"
             data["_table"] = "tbl_actual"
@@ -711,7 +718,7 @@ class ProxyApp:
         # Process frame through FrameProcessor (publishes to MQTT)
         if self.frame_processor:
             try:
-                await self.frame_processor.process(frame_device_id, table, data)
+                await self.frame_processor.process(frame_device_id, source_table, data)
             except Exception as exc:
                 logger.error("Frame processing error: %s", exc)
 

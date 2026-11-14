@@ -10,7 +10,7 @@ import logging
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
 
-from settings_constraints import is_setting_allowed, validate_setting_value
+from settings_constraints import PowerControlLimits, is_setting_allowed, validate_setting_value
 from telemetry.settings_audit import (
     SettingResult,
     SettingStep,
@@ -52,6 +52,7 @@ class TwinControlHandler:
         proxy_device_id: str = "oig_proxy",
         require_profile: bool = False,
         box_writes_enabled: bool = True,
+        power_limits: PowerControlLimits = PowerControlLimits(),
     ) -> None:
         """Initialize the control handler.
 
@@ -67,6 +68,7 @@ class TwinControlHandler:
         self._require_profile = require_profile
         self._namespace = namespace
         self._box_writes_enabled = box_writes_enabled
+        self._power_limits = power_limits
         if box_writes_enabled:
             self._topic = "oig/+/control/set"
             self._topic_compat = f"{namespace}/+/set/#"
@@ -172,14 +174,14 @@ class TwinControlHandler:
                 device_id=expected, table=table, key=key, raw_text=raw_payload, value=value,
             )
             self._record_setting_audit(incoming_record)
-            if not is_setting_allowed(table, key):
+            if not is_setting_allowed(table, key, power_limits=self._power_limits):
                 self._record_setting_audit(make_step_record(
                     incoming_record, SettingStep.REJECTED_NOT_ALLOWED,
                     SettingResult.REJECTED, raw_text=raw_payload,
                 ))
                 logger.warning("Twin setting rejected: %s:%s not allowed", table, key)
                 return
-            ok, normalized, reason = validate_setting_value(table, key, value)
+            ok, normalized, reason = validate_setting_value(table, key, value, power_limits=self._power_limits)
             if not ok:
                 self._record_setting_audit(make_step_record(
                     incoming_record, SettingStep.REJECTED_VALIDATION,

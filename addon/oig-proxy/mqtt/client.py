@@ -18,7 +18,13 @@ from threading import RLock
 import time
 from typing import Any, Callable
 
-from settings_constraints import SETTING_CONSTRAINTS, SettingConstraint, is_setting_allowed
+from settings_constraints import (
+    AC_CHARGE_CONTROL,
+    POWER_CONTROLS,
+    PowerControlLimits,
+    SettingConstraint,
+    get_setting_constraint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +81,7 @@ class MQTTClient:
         namespace: str = "oig_local",
         qos: int = 1,
         state_retain: bool = True,
+        power_limits: PowerControlLimits = PowerControlLimits(),
     ) -> None:
         self.host = host
         self.port = port
@@ -83,6 +90,7 @@ class MQTTClient:
         self.namespace = namespace
         self.qos = qos
         self.state_retain = state_retain
+        self._power_limits = power_limits
 
         self._client: Any | None = None
         self.connected = False
@@ -387,8 +395,9 @@ class MQTTClient:
         mapped_device = device_mapping or "inverter"
         device_identifier = f"{self.namespace}_{device_id}_{mapped_device}"
         device_label = DEVICE_NAMES.get(mapped_device, DEVICE_NAMES["inverter"])
-        is_setting = is_setting_allowed(table, sensor_key)
-        if not is_setting and unique_id in self._discovery_sent:
+        setting_identity = (table, sensor_key)
+        constraint = get_setting_constraint(table, sensor_key, power_limits=self._power_limits)
+        if constraint is None and unique_id in self._discovery_sent:
             return True
         component = "binary_sensor" if is_binary else "sensor"
 
@@ -443,9 +452,9 @@ class MQTTClient:
             client = self._client
             if client is None:
                 return False
-            if is_setting:
+            if constraint is not None:
                 control_unique_id = f"{unique_id}_cfg"
-                dual_publish_sensor = table == "tbl_box_prms" and sensor_key == "MODE"
+                dual_publish_sensor = setting_identity == ("tbl_box_prms", "MODE") or setting_identity in POWER_CONTROLS
 
                 if control_unique_id in self._discovery_sent and (
                     not dual_publish_sensor or unique_id in self._discovery_sent
@@ -465,8 +474,9 @@ class MQTTClient:
                     else:
                         return False
 
-                constraint = SETTING_CONSTRAINTS.get((table, sensor_key))
-                binary_control = is_binary or self._is_binary_control_constraint(constraint)
+                binary_control = setting_identity != AC_CHARGE_CONTROL and (
+                    is_binary or self._is_binary_control_constraint(constraint)
+                )
                 if self._is_select_control(table, sensor_key, enum_map):
                     control_component = "select"
                 else:
@@ -493,13 +503,21 @@ class MQTTClient:
                         control_payload["unit_of_measurement"] = unit
                     if device_class:
                         control_payload["device_class"] = device_class
-                    if constraint is not None:
-                        if constraint.min_value is not None:
-                            control_payload["min"] = constraint.min_value
-                        if constraint.max_value is not None:
-                            control_payload["max"] = constraint.max_value
-                        if constraint.step is not None:
-                            control_payload["step"] = constraint.step
+                    if constraint.min_value is not None:
+                        control_payload["min"] = constraint.min_value
+                    if constraint.max_value is not None:
+                        control_payload["max"] = constraint.max_value
+                    if constraint.step is not None:
+                        control_payload["step"] = constraint.step
+                    if constraint.allowed_values is not None:
+                        allowed = sorted(constraint.allowed_values)
+                        # HA applies these bounds to state too. Keep historical U16 readback visible.
+                        control_payload.update(
+                            min=0, max=65535, step=1,
+                            name=f"{sensor_name} – experimentální",
+                            json_attributes_topic=state_topic,
+                            json_attributes_template=json.dumps({"allowed_values": allowed}),
+                        )
                 elif control_component == "switch":
                     control_payload["payload_on"] = 1
                     control_payload["payload_off"] = 0

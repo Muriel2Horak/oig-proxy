@@ -14,6 +14,9 @@ from mqtt.client import MQTTClient
 logger = logging.getLogger(__name__)
 
 ISNEW_TABLES = {"IsNewFW", "IsNewSet", "IsNewWeather"}
+_EXPORT_LIMIT_TABLE = "tbl_invertor_prm1"
+_EXPORT_LIMIT_KEY = "P_MAX_FEED_GRID"
+_MAX_EXPORT_LIMIT_WATTS = (1 << 32) - 1  # Canonical field encoding, independent of write policy.
 # NOTE: kept in sync with proxy/server.py:TRANSPORT_METADATA_KEYS. Not extracted to
 # a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
 # new untracked file before the image is built.
@@ -34,6 +37,16 @@ TRANSPORT_METADATA_KEYS = frozenset(
 )
 
 
+def _positive_integer_watts(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 < value <= _MAX_EXPORT_LIMIT_WATTS:
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    return int(value)
+
+
 class FrameProcessor:
     """Processes parsed frame data and publishes to MQTT with sensor_map metadata."""
 
@@ -43,12 +56,15 @@ class FrameProcessor:
         sensor_loader: SensorMapLoader,
         proxy_device_id: str = "oig_proxy",
         state_store: ConfirmedStateStore | None = None,
+        *,
+        maxfg_as_export_limit_readback: bool = False,
     ) -> None:
         """Initialize processor with MQTT client and sensor loader.
 
         Args:
             mqtt: MQTT client for publishing.
             sensor_loader: Sensor map loader for metadata lookup.
+            maxfg_as_export_limit_readback: Opt in to the installation's MAXFG readback alias.
         """
         self._mqtt = mqtt
         self._sensor_loader = sensor_loader
@@ -60,6 +76,9 @@ class FrameProcessor:
         self._field_device_times: dict[tuple[str, str, str], tuple[datetime, int]] = {}
         self._state_store = state_store
         self._table_baselines: set[tuple[str, str]] = set()
+        self._maxfg_as_export_limit_readback = maxfg_as_export_limit_readback
+        self._direct_export_limits: dict[str, datetime] = {}
+        self._export_limit_firmware: dict[str, str] = {}
         self._restore_confirmed_states()
 
     def _restore_confirmed_states(self) -> None:
@@ -80,6 +99,14 @@ class FrameProcessor:
                         stamp,
                         field["ordering_priority"],
                     )
+                    if (
+                        table == _EXPORT_LIMIT_TABLE
+                        and key == _EXPORT_LIMIT_KEY
+                        and record["baseline"]
+                        and field["origin"] == "direct"
+                        and field["sourceDT"] == field["ordering_sourceDT"]
+                    ):
+                        self._record_direct_export_limit(device, field["value"], stamp)
         banks = self._last_table_values.get((device, "tbl_batt_prms"), {}).get("BAT_N")
         if isinstance(banks, (int, float)) and not isinstance(banks, bool):
             self._battery_bank_count_by_device[device] = int(banks)
@@ -111,6 +138,7 @@ class FrameProcessor:
             for identity, value in self._field_device_times.items()
             if identity[0] != device_id
         }
+        self._direct_export_limits.pop(device_id, None)
         if self._state_store is not None and self._state_store.device_id == device_id:
             self._state_store.reset_ordering_epoch(reason)
 
@@ -158,6 +186,63 @@ class FrameProcessor:
             if stamp < previous or stamp == previous and priority < old_priority:
                 return False
         return True
+
+    def _export_limit_alias_enabled(self, device_id: str) -> bool:
+        return (
+            self._maxfg_as_export_limit_readback
+            and bool(device_id)
+            and device_id != "unknown"
+            and (self._state_store is None or self._state_store.device_id == device_id)
+        )
+
+    def _record_direct_export_limit(
+        self, device_id: str, value: object, stamp: datetime | None,
+    ) -> None:
+        if not self._export_limit_alias_enabled(device_id):
+            return
+        if stamp is None or stamp.year <= 1970 or _positive_integer_watts(value) is None:
+            self._direct_export_limits.pop(device_id, None)
+        else:
+            self._direct_export_limits[device_id] = stamp
+
+    def _export_limit_readback(
+        self, device_id: str, value: object, stamp: datetime | None,
+    ) -> int | None:
+        baseline = self._direct_export_limits.get(device_id)
+        watts = _positive_integer_watts(value)
+        if stamp is None or baseline is None or watts is None:
+            return None
+        if (stamp.tzinfo is None) != (baseline.tzinfo is None) or stamp <= baseline:
+            return None
+        previous = self._field_device_times.get((device_id, _EXPORT_LIMIT_TABLE, _EXPORT_LIMIT_KEY))
+        if previous is not None:
+            previous_stamp, _priority = previous
+            if (stamp.tzinfo is None) != (previous_stamp.tzinfo is None) or stamp <= previous_stamp:
+                return None
+        if self._sensor_loader.lookup(_EXPORT_LIMIT_TABLE, _EXPORT_LIMIT_KEY) is None:
+            return None
+        if self._accept_field_time(device_id, _EXPORT_LIMIT_TABLE, _EXPORT_LIMIT_KEY, stamp, 0):
+            return watts
+        return None
+
+    def _observe_firmware(
+        self, device_id: str, firmware: str,
+    ) -> None:
+        if self._state_store is None:
+            previous = self._export_limit_firmware.get(device_id)
+            self._export_limit_firmware[device_id] = firmware
+            if previous is not None and previous != firmware:
+                self._direct_export_limits.pop(device_id, None)
+        elif self._state_store.set_context(firmware=firmware):
+            self._direct_export_limits.pop(device_id, None)
+            self._field_device_times = {
+                identity: value
+                for identity, value in self._field_device_times.items()
+                if identity[0] != device_id
+            }
+            self._table_baselines = {
+                identity for identity in self._table_baselines if identity[0] != device_id
+            }
 
     def _can_publish_observation(self, device: str, table: str) -> bool:
         return (
@@ -321,13 +406,15 @@ class FrameProcessor:
         if not data:
             return
 
+        native_actual = table == "tbl_actual"
         if table in ISNEW_TABLES:
             table = "tbl_actual"
 
-        if (
-            self._state_store is not None
-            and self._state_store.device_id == device_id
-            and observation_table(table)
+        stamp = self._parse_device_time(data.get("_dt"))
+        priority = 1 if confirmed_event else 0
+        if observation_table(table) and (
+            self._export_limit_alias_enabled(device_id)
+            or (self._state_store is not None and self._state_store.device_id == device_id)
         ):
             # Firmware observations are context, never proof of live control readiness.
             for firmware_key in ("Fw", "SW"):
@@ -335,23 +422,9 @@ class FrameProcessor:
                 if (
                     isinstance(firmware, str)
                     and firmware.strip()
-                    and self._firmware_observation_current(
-                        device_id,
-                        self._parse_device_time(data.get("_dt")),
-                        1 if confirmed_event else 0,
-                    )
+                    and self._firmware_observation_current(device_id, stamp, priority)
                 ):
-                    if self._state_store.set_context(firmware=firmware):
-                        self._field_device_times = {
-                            identity: value
-                            for identity, value in self._field_device_times.items()
-                            if identity[0] != device_id
-                        }
-                        self._table_baselines = {
-                            identity
-                            for identity in self._table_baselines
-                            if identity[0] != device_id
-                        }
+                    self._observe_firmware(device_id, firmware)
 
         if table == "tbl_batt_prms":
             bat_n = data.get("BAT_N")
@@ -389,15 +462,12 @@ class FrameProcessor:
             data = {**deduped, **{key: value for key, value in data.items() if key.startswith("_")}}
 
         transport_metadata_frame = self._is_transport_metadata_frame(data)
-        stamp = self._parse_device_time(data.get("_dt"))
         if stamp is None:
             logger.debug(
                 "BOX observation for %s:%s has no usable device DT; temporal ordering unproven",
                 device_id,
                 table,
             )
-        priority = 1 if confirmed_event else 0
-
         for key, value in data.items():
             # Skip internal keys prefixed with _
             if key.startswith("_"):
@@ -483,6 +553,11 @@ class FrameProcessor:
 
         # Publish state if we have any data
         if pub_data:
+            if table == _EXPORT_LIMIT_TABLE and _EXPORT_LIMIT_KEY in pub_data and not transport_metadata_frame:
+                if not confirmed_event:
+                    self._record_direct_export_limit(device_id, pub_data[_EXPORT_LIMIT_KEY], stamp)
+                elif stamp is None:
+                    self._direct_export_limits.pop(device_id, None)
             if table == "tbl_batt_prms" and self._state_store is not None:
                 accepted_banks = pub_data.get("BAT_N")
                 if isinstance(accepted_banks, (int, float)) and not isinstance(
@@ -514,6 +589,16 @@ class FrameProcessor:
                         and self._accept_field_time(device_id, mirror_table, key, stamp, priority)
                     ):
                         mirror_payloads.setdefault(mirror_table, {})[key] = value
+
+                if (
+                    native_actual
+                    and not confirmed_event
+                    and not transport_metadata_frame
+                    and _EXPORT_LIMIT_KEY not in mirror_payloads.get(_EXPORT_LIMIT_TABLE, {})
+                ):
+                    export_limit = self._export_limit_readback(device_id, pub_data.get("MAXFG"), stamp)
+                    if export_limit is not None:
+                        mirror_payloads.setdefault(_EXPORT_LIMIT_TABLE, {})[_EXPORT_LIMIT_KEY] = export_limit
 
                 for mirror_table, mirror_data in mirror_payloads.items():
                     merged_mirror = self._remember_observation(

@@ -56,18 +56,58 @@ def _cloud_mode_frame(value, msg_id, id_set):
 
 
 @pytest.mark.asyncio
-async def test_deliver_pending_returns_twin_settings() -> None:
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(("tbl_batt_prms", "BAT_MIN", 22, {}, True), id="battery"),
+        pytest.param(("tbl_invertor_prm1", "AAC_MAX_CHRG", 100, {}, False), id="disabled-ac"),
+        pytest.param(("tbl_invertor_prm1", "AAC_MAX_CHRG", 100, {"ac_charge_max_a": 125}, True), id="qualified-ac"),
+        pytest.param(("tbl_invertor_prm1", "AAC_MAX_CHRG", 100, {"ac_charge_max_a": 80}, False), id="ac-over-limit"),
+        pytest.param(("tbl_invertor_prm1", "P_MAX_FEED_GRID", 5400, {"grid_export_max_w": 5400}, True),
+                     id="qualified-grid"),
+        pytest.param(("tbl_invertor_prm1", "P_MAX_FEED_GRID", 5400, {"grid_export_max_w": 5000}, False),
+                     id="grid-over-limit"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_R", 90, {}, False), id="phase-disabled"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_R", 90, {"phase_calibration_enabled": True}, True),
+                     id="phase-r-wire"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_S", 90, {"phase_calibration_enabled": True}, True),
+                     id="phase-s-wire"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_T", 90, {"phase_calibration_enabled": True}, True),
+                     id="phase-t-wire"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_R", 85, {"phase_calibration_enabled": True}, False),
+                     id="phase-r-unlisted"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_S", 75, {"phase_calibration_enabled": True}, False),
+                     id="phase-s-unqualified"),
+    ],
+)
+async def test_deliver_pending_returns_twin_settings(case) -> None:
+    table, key, value, limit_options, should_send = case
     queue = TwinQueue()
-    delivery = _qualified_delivery(queue)
-    queue.enqueue("tbl_batt_prms", "BAT_MIN", 22, device_id="12345")
-    queue.enqueue("tbl_box_prms", "SA", 1, device_id="12345")
+    options = {}
+    if limit_options:
+        from settings_constraints import PowerControlLimits
 
-    pending = await delivery.deliver_pending("12345")
+        options["power_limits"] = PowerControlLimits(**limit_options)
+    delivery = _qualified_delivery(queue, **options)
+    queue.enqueue(table, key, value, device_id="12345")
+    if should_send:
+        queue.enqueue("tbl_box_prms", "SA", 1, device_id="12345")
 
-    assert len(pending) == 1
-    assert pending[0].table == "tbl_batt_prms"
-    assert pending[0].key == "BAT_MIN"
-    assert pending[0].value == 22
+    pending = await delivery.deliver_pending("12345", "sender")
+
+    if not should_send:
+        assert pending == []
+        assert delivery.local_inflight_setting() is None
+        assert queue.size() == 0
+        return
+
+    selected, = pending
+    assert (selected.table, selected.key, selected.value) == (table, key, value)
+    wire = native_frame_fields(_bind(delivery, selected, "sender"))
+    assert wire is not None
+    assert (wire["ID_Device"], wire["TblName"], wire["TblItem"], wire["NewValue"]) == (
+        "12345", table, key, str(value),
+    )
 
 
 @pytest.mark.asyncio
