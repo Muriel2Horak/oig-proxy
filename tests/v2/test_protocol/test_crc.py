@@ -16,10 +16,9 @@ def test_crc_empty():
     assert crc16_modbus(b"") == 0xFFFF
 
 
-def test_crc_deterministic():
-    """Stejný input vždy stejný výsledek."""
-    data = b"<TblName>tbl_actual</TblName>"
-    assert crc16_modbus(data) == crc16_modbus(data)
+def test_crc_modbus_check_vector():
+    """Standard CRC-16/MODBUS check value for ASCII digits 1 through 9."""
+    assert crc16_modbus(b"123456789") == 0x4B37
 
 
 def test_crc_matches_v1_reference():

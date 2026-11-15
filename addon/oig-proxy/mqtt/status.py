@@ -251,16 +251,18 @@ class ProxyStatusPublisher:
         logger.info("Proxy status: periodic publish every %ss", self._interval)
         self._running = True
 
-        while self._running:
-            try:
-                self._publish()
+        try:
+            while self._running:
+                try:
+                    self._publish()
+                except Exception as exc:
+                    logger.debug("Proxy status loop error: %s", exc)
                 await asyncio.sleep(self._interval)
-            except asyncio.CancelledError:
-                logger.info("Proxy status loop cancelled")
-                break
-            except Exception as exc:
-                logger.debug("Proxy status loop error: %s", exc)
-                await asyncio.sleep(self._interval)
+        except asyncio.CancelledError:
+            logger.info("Proxy status loop cancelled")
+            raise
+        finally:
+            self._running = False
 
     def stop(self) -> None:
         """Stop the status publishing loop."""

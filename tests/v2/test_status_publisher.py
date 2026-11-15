@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mqtt.status import ProxyStatusPublisher
 
 
@@ -241,6 +243,20 @@ def test_run_publishes_periodically():
     asyncio.run(run_test())
 
     assert mqtt.publish_state.call_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_run_propagates_cancellation_and_clears_running() -> None:
+    """Cancellation stops the periodic loop and remains visible to its owner."""
+    publisher = make_publisher(make_mqtt_client())
+    task = asyncio.create_task(publisher.run())
+    await asyncio.sleep(0)
+    assert publisher._running
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not publisher._running
 
 
 def test_stop_sets_running_false():
