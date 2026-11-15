@@ -1,3 +1,18 @@
+# 2.2.0-rc.5
+
+> **Pozor: lokální ovládání OIG Boxu je experimentální.** Před nasazením do
+> automatizací ověřte chování na své instalaci. Home Assistant se zapnutou
+> automatickou aktualizací může tuto verzi nainstalovat sám.
+
+- Po události boxu `HG … Start` se senzor režimu i ovladač `_cfg` v Home
+  Assistantu aktualizují okamžitě. Týká se to režimů Home 1, Home 2,
+  Home 3 a Home UPS.
+- Ověřeno na fyzickém boxu při přepnutí Home UPS → Home 2 → Home UPS. Obě
+  entity ukázaly nový režim do 0,1 s od příjmu události, před přijetím nové
+  tabulky parametrů. Starší tabulka novější potvrzený režim nepřepíše.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.5/docs/v2/local-control.md)
+
 # 2.2.0-rc.4
 
 > **Pozor: lokální ovládání OIG Boxu je experimentální.** Parametry měníte
