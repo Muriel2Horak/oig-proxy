@@ -1,7 +1,7 @@
 # Lokální ovládání OIG Boxu v Home Assistantu
 
 > [!WARNING]
-> **Experimentální funkce v kandidátu `2.2.0-rc.4`.**
+> **Experimentální lokální ovládání.**
 > Zápisy mění režim boxu, nabíjení baterie a dodávku do sítě.
 > Nastavení měníte na vlastní odpovědnost. Před zapojením automatizace ověřte
 > ruční příkaz, potvrzenou hodnotu a skutečné chování na své instalaci.
@@ -23,7 +23,7 @@
 ![Zapnutá volba control_mqtt_enabled v nastavení OIG Proxy](images/local-control/proxy-mqtt-switch.jpg)
 
 Snímky pocházejí z HA s testovacím prototypem. Verze na obrazovce aplikace je
-verze evidovaná Supervisorem. Volby níže popisují RC4.
+verze evidovaná Supervisorem.
 
 <!-- markdownlint-disable MD013 -->
 | Volba | Výchozí hodnota | K čemu slouží |
@@ -205,6 +205,9 @@ s payloadem `"100"` a stejnými hodnotami `qos` a `retain`.
   `ack` s `protocol_ack` potvrzuje přijetí rámce. Použitou hodnotu ověřte
   v odpovídajícím senzoru podle zprávy boxu. Poslední výsledek může patřit
   jinému příkazu, proto porovnejte také tabulku, parametr, hodnotu a čas.
+- Od RC5 aktualizuje událost boxu `HG … Start` senzor režimu i jeho ovladač
+  `_cfg` hned po přijetí. Platí pro Home 1, Home 2, Home 3 a Home UPS.
+  Starší tabulka parametrů novější potvrzený režim nepřepíše.
 - Při `nack`, `timeout` nebo `dropped` ověřte výsledek, čas a stav boxu.
   Pokud se výsledek neaktualizoval, podívejte se do záložky **Protokol** aplikace.
   Neplatný nebo nepovolený vstup se může objevit jen v protokolu.

@@ -142,6 +142,50 @@ async def test_restart_replays_direct_box_observations_with_original_ordering(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("event", "mode"), [("I", 0), ("II", 1), ("III", 2), ("IV-UPS", 3)])
+async def test_mode_start_updates_and_restores_confirmed_mode(
+    tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock, event: str, mode: int,
+) -> None:
+    path = tmp_path / "confirmed.json"
+    device = "BOX01"
+    store = ConfirmedStateStore(path, device)
+    processor = FrameProcessor(mock_mqtt, mock_loader, state_store=store)
+    await processor.process(device, "tbl_events", {
+        "Type": "Factory", "Content": f"HG {event}  Start (Load: 500 W)", "_dt": "2026-11-15 14:00:01",
+    })
+    mock_mqtt.publish_state.assert_any_call(device, "tbl_box_prms", {"MODE": mode})
+
+    restored = FrameProcessor(mock_mqtt, mock_loader, state_store=ConfirmedStateStore(path, device))
+    assert restored.replay_confirmed_states()
+    mock_mqtt.publish_confirmed_state.assert_called_once_with(device, "tbl_box_prms", {"MODE": mode})
+
+    conflicting_mode = (mode + 1) % 4
+    for stamp in ("2026-11-15 14:00:00", "2026-11-15 14:00:01"):
+        await restored.process(device, "tbl_box_prms", {"MODE": conflicting_mode, "IP": "", "_dt": stamp})
+        mock_mqtt.publish_state.assert_called_with(device, "tbl_box_prms", {"MODE": mode, "IP": ""})
+    await restored.process(device, "tbl_box_prms", {
+        "MODE": conflicting_mode, "IP": "", "_dt": "2026-11-15 14:00:02",
+    })
+    mock_mqtt.publish_state.assert_called_with(device, "tbl_box_prms", {"MODE": conflicting_mode, "IP": ""})
+
+
+@pytest.mark.asyncio
+async def test_non_start_or_undated_events_do_not_publish_mode(
+    processor: FrameProcessor, mock_mqtt: MagicMock,
+) -> None:
+    stamp = "2026-11-15 14:00:01"
+    for kind, content, dt in (
+        ("Factory", "HG II (Load: 500 W)", stamp),
+        ("Factory", "HG V Start", stamp),
+        ("Other", "HG II Start", stamp),
+        ("Factory", "HG II Start", "1970-01-01 00:00:00"),
+        ("Factory", "HG II Start", None),
+    ):
+        await processor.process("BOX01", "tbl_events", {"Type": kind, "Content": content, "_dt": dt})
+    assert all(call.args[1] == "tbl_events" for call in mock_mqtt.publish_state.call_args_list)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_maxfg_export_limit_readback_is_opt_in(
     enabled: bool, tmp_path: Path, mock_mqtt: MagicMock, mock_loader: MagicMock,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from sensor.confirmed_store import ConfirmedStateStore, finite_json, observation_table
@@ -17,6 +18,9 @@ ISNEW_TABLES = {"IsNewFW", "IsNewSet", "IsNewWeather"}
 _EXPORT_LIMIT_TABLE = "tbl_invertor_prm1"
 _EXPORT_LIMIT_KEY = "P_MAX_FEED_GRID"
 _MAX_EXPORT_LIMIT_WATTS = (1 << 32) - 1  # Canonical field encoding, independent of write policy.
+_BOX_MODE_TABLE = "tbl_box_prms"
+_MODE_BY_EVENT = {"I": 0, "II": 1, "III": 2, "IV-UPS": 3}
+_MODE_START = re.compile(r"HG\s+(I|II|III|IV-UPS)\s+Start(?=\s*(?:\(|$))")
 # NOTE: kept in sync with proxy/server.py:TRANSPORT_METADATA_KEYS. Not extracted to
 # a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
 # new untracked file before the image is built.
@@ -117,14 +121,25 @@ class FrameProcessor:
             return True
         complete = True
         device = self._state_store.device_id
+        snapshot = self._state_store.snapshot()
         for (source, table), values in self._last_table_values.items():
             if (
                 source != device
                 or not observation_table(table)
-                or (source, table) not in self._table_baselines
                 or not self._table_enabled_for_device(source, table)
             ):
                 continue
+            if (source, table) not in self._table_baselines:
+                if table != _BOX_MODE_TABLE:
+                    continue
+                mode = snapshot["tables"][table]["fields"].get("MODE")
+                if (
+                    not mode or mode["origin"] != "confirmed_event"
+                    or mode["ordering_epoch"] != snapshot["ordering_epoch"]
+                    or not self._is_dated_mode(mode["value"], self._parse_device_time(mode["sourceDT"]))
+                ):
+                    continue
+                values = {"MODE": mode["value"]}
             if values and not self._mqtt.publish_confirmed_state(source, table, dict(values)):
                 complete = False
         return complete
@@ -343,6 +358,13 @@ class FrameProcessor:
         return complete
 
     @staticmethod
+    def _is_dated_mode(value: Any, stamp: datetime | None) -> bool:
+        return (
+            isinstance(value, int) and not isinstance(value, bool)
+            and value in range(6) and stamp is not None and stamp.year > 1970
+        )
+
+    @staticmethod
     def _parse_device_time(value: Any) -> datetime | None:
         if not isinstance(value, str) or not value.strip():
             return None
@@ -411,6 +433,13 @@ class FrameProcessor:
             table = "tbl_actual"
 
         stamp = self._parse_device_time(data.get("_dt"))
+        if table == "tbl_events" and data.get("Type") == "Factory" and stamp is not None and stamp.year > 1970:
+            content = data.get("Content")
+            if isinstance(content, str) and (match := _MODE_START.match(content)):
+                await self.process(
+                    device_id, _BOX_MODE_TABLE, {"MODE": _MODE_BY_EVENT[match[1]], "_dt": data["_dt"]},
+                    confirmed_event=True,
+                )
         priority = 1 if confirmed_event else 0
         if observation_table(table) and (
             self._export_limit_alias_enabled(device_id)
@@ -571,6 +600,8 @@ class FrameProcessor:
             )
             if self._can_publish_observation(device_id, table):
                 self._mqtt.publish_state(target_device_id, table, merged)
+            elif table == _BOX_MODE_TABLE and confirmed_event and self._is_dated_mode(pub_data.get("MODE"), stamp):
+                self._mqtt.publish_state(target_device_id, table, {"MODE": pub_data["MODE"]})
             logger.debug("Published %d keys for %s:%s", len(merged), target_device_id, table)
 
             if table == "tbl_actual":
