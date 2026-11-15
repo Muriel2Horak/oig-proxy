@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import lru_cache
 import json
@@ -274,7 +274,7 @@ def _identify(samples: list[_Sample]) -> tuple[VerProfile | None, bool]:
 @dataclass(frozen=True)
 class _Enrollment:
     profile: VerProfile
-    firmware: str
+    firmware: str | None
     include_tto: bool
 
 
@@ -360,7 +360,8 @@ class VerProfiles:
                 n, k = record.get("N"), record.get("K")
                 firmware, include_tto = record.get("firmware"), record.get("include_tto")
                 if (type(n) is not int or type(k) is not int or type(include_tto) is not bool
-                        or not isinstance(firmware, str) or not _FIRMWARE_ID.fullmatch(firmware)):
+                        or (firmware is not None
+                            and (not isinstance(firmware, str) or not _FIRMWARE_ID.fullmatch(firmware)))):
                     raise ValueError("invalid enrolled profile")
                 result[device_id] = _Enrollment(VerProfile(n, k), firmware, include_tto)
             return result
@@ -438,9 +439,6 @@ class VerProfiles:
         fresh = {sample.wire.state for sample in proof.samples if self._fresh(sample, now)}
         if len(fresh) < 6 or len(fresh - proof.basis) < 3:
             return "box_evidence_stale" if proof.ever_ready else "box_profile_unconfirmed"
-        firmware = proof.firmware
-        if firmware is None or not self._fresh(firmware, now) or not firmware.matches(profile):
-            return "firmware_unverified"
         return "ready"
 
     @staticmethod
@@ -458,10 +456,7 @@ class VerProfiles:
         enrollment = self._enrollments.get(device_id)
         if proof.ambiguous_layout:
             reason = "ambiguous_setting_layout"
-        elif reason == "ready" and (
-            enrollment is None or enrollment.profile != proof.candidate
-            or enrollment.firmware != self._firmware_value(proof.firmware)
-        ):
+        elif reason == "ready" and (enrollment is None or enrollment.profile != proof.candidate):
             reason = "cloud_evidence_pending"
         if proof.ready and reason != "ready":
             proof.epoch += 1
@@ -521,6 +516,8 @@ class VerProfiles:
     def _observe_firmware(
         self, device_id: str, proof: _DeviceProof, sample: _Sample, flow: _Flow | None,
     ) -> None:
+        if proof.firmware is not None and sample.at < proof.firmware.at:
+            return
         value = self._firmware_value(sample)
         if not value or not _FIRMWARE_ID.fullmatch(value):
             return
@@ -531,17 +528,24 @@ class VerProfiles:
         if sample.wire.fields.get("Result") == "IsNewFW":
             if flow is not None:
                 flow.firmware_poll = sample
-                self._bind_firmware_poll(proof, flow)
-        elif proof.firmware is None or sample.at >= proof.firmware.at:
-            proof.firmware = sample
+                self._bind_firmware_poll(device_id, proof, flow)
+        else:
+            self._remember_firmware(device_id, proof, sample)
 
-    @staticmethod
-    def _bind_firmware_poll(proof: _DeviceProof, flow: _Flow) -> None:
+    def _remember_firmware(self, device_id: str, proof: _DeviceProof, sample: _Sample) -> None:
+        if proof.firmware is not None and sample.at < proof.firmware.at:
+            return
+        proof.firmware = sample
+        enrollment = self._enrollments.get(device_id)
+        if enrollment is not None and enrollment.firmware is None:
+            self._enrollments[device_id] = replace(enrollment, firmware=self._firmware_value(sample))
+            self._save_enrollments()
+
+    def _bind_firmware_poll(self, device_id: str, proof: _DeviceProof, flow: _Flow) -> None:
         poll, dated = flow.firmware_poll, flow.last_dated
         if poll is not None and dated is not None and abs(poll.at - dated.at) <= _SESSION_WINDOW:
             bound = _Sample(poll.wire, min(poll.at, dated.at), poll.session)
-            if proof.firmware is None or bound.at >= proof.firmware.at:
-                proof.firmware = bound
+            self._remember_firmware(device_id, proof, bound)
 
     def observe_box(self, raw: bytes, session_id: str | None) -> int | None:
         """Consume native BOX evidence and expose a qualified counter if present."""
@@ -603,7 +607,7 @@ class VerProfiles:
             flow.last_native = _Sample(wire, now, session_id)
             flow.last_dated = sample
             if not fields.get("SW"):
-                self._bind_firmware_poll(proof, flow)
+                self._bind_firmware_poll(device_id, proof, flow)
         self._learn(device_id, proof, now)
         counter = fields.get("ID_Set", "")
         if self.status(device_id).profile is not None and counter.isascii() and counter.isdecimal() and len(counter) <= 19:
@@ -679,13 +683,12 @@ class VerProfiles:
                 or any(fields.get(tag, command[expected]) != command[expected]
                        for tag, expected in _SETTING_REPLY_ECHOES.items())):
             return
-        firmware = self._firmware_value(proof.firmware)
-        if firmware is None:
-            return
-        enrollment = _Enrollment(profile, firmware, pending.include_tto)
         existing = self._enrollments.get(flow.device_id)
-        if existing is not None and existing != enrollment:
-            self._withdraw_layout(flow.device_id, proof)
-        elif existing is None and len(self._enrollments) < _MAX_DEVICES:
-            self._enrollments[flow.device_id] = enrollment
+        if existing is not None:
+            if existing.profile != profile or existing.include_tto != pending.include_tto:
+                self._withdraw_layout(flow.device_id, proof)
+        elif len(self._enrollments) < _MAX_DEVICES:
+            self._enrollments[flow.device_id] = _Enrollment(
+                profile, self._firmware_value(proof.firmware), pending.include_tto,
+            )
             self._save_enrollments()

@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "2.2.0-rc.3",
+  "version": "2.2.0-rc.4",
   "slug": "oig_proxy",
   "description": "OIG TCP proxy v2 – async architektura, MQTT, HA discovery",
   "arch": ["amd64", "aarch64"],

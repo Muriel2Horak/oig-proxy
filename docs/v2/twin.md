@@ -28,22 +28,18 @@ deciding whether to issue a new command.
 
 ## Profile qualification
 
-The proxy learns the Setting checksum (`ver`) from the installed Box. It
-uses fresh native Box frames and independently observed Cloud Setting and
-Box reply evidence to qualify the observed layout. Different Box identities,
-firmware contexts, and protocol layouts can qualify on the same rules.
+The proxy learns the Setting checksum (`ver`) from fresh native Box frames.
+To qualify the Setting layout for the first time, it also observes a normal
+Cloud Setting and the Box ACK on the same connection. This works with capture
+logging disabled and with or without a firmware report.
 
-A previously qualified profile can be revalidated from fresh Box frames
-with device timestamps after the proxy starts.
-A new installation that starts without a qualified profile can read and
-publish telemetry while it gathers evidence. An unknown, stale, or changed
-profile blocks local writes until it is qualified again. For initial qualification, use hybrid mode and
-let the live Box acknowledge a normal Cloud Setting on the same connection.
-Then check
-`control_ver_ready` and `control_ver_reason` in the proxy status. Qualification
-uses live frames and works with capture logging disabled. A fresh install without a previously
-qualified profile can read telemetry offline. Local writes wait for the
-initial Cloud exchange.
+After a restart or upgrade, the proxy can revalidate a previously qualified
+profile from fresh Box frames with device timestamps. A reported change in
+firmware, a checksum mismatch, or a conflicting Setting layout sends the
+profile back through qualification. The proxy can continue to publish
+telemetry while it gathers evidence. A fresh offline installation can read
+telemetry and must wait for the initial Cloud exchange to enable local writes.
+Check `control_ver_ready` and `control_ver_reason` in the proxy status.
 
 ## Offline and hybrid delivery
 
