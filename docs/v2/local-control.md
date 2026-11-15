@@ -1,11 +1,9 @@
 # Lokální ovládání OIG Boxu v Home Assistantu
 
 > [!WARNING]
-> **Experimentální funkce v kandidátu `2.2.0-rc.3`.**
+> **Experimentální funkce v kandidátu `2.2.0-rc.4`.**
 > Zápisy mění režim boxu, nabíjení baterie a dodávku do sítě.
-> Nastavení měníte na vlastní odpovědnost. U tohoto kandidáta jsme na jednom
-> fyzickém boxu ověřili start, živá data a místní přepínání Home 1 a Home 2
-> v hybridním režimu. Před zapojením automatizace ověřte
+> Nastavení měníte na vlastní odpovědnost. Před zapojením automatizace ověřte
 > ruční příkaz, potvrzenou hodnotu a skutečné chování na své instalaci.
 
 ## Povolení v OIG Proxy
@@ -25,7 +23,7 @@
 ![Zapnutá volba control_mqtt_enabled v nastavení OIG Proxy](images/local-control/proxy-mqtt-switch.jpg)
 
 Snímky pocházejí z HA s testovacím prototypem. Verze na obrazovce aplikace je
-verze evidovaná Supervisorem. Nové volby níže popisují RC3.
+verze evidovaná Supervisorem. Volby níže popisují RC4.
 
 <!-- markdownlint-disable MD013 -->
 | Volba | Výchozí hodnota | K čemu slouží |
@@ -39,9 +37,10 @@ verze evidovaná Supervisorem. Nové volby níže popisují RC3.
 
 Stropy v aplikaci omezují hodnoty příkazů. Hodnotu uloženou v boxu nastavíte
 příslušnou entitou `_cfg`. Pro první ověření kontrolního součtu `ver` potřebuje
-proxy čerstvé rámce boxu, údaj o firmwaru a cloudový zápis potvrzený boxem.
+proxy čerstvé rámce boxu a cloudový zápis potvrzený boxem na stejném spojení.
+RC4 může profil ověřit i bez aktuálního údaje o firmwaru.
 Pokud čeká na cloudový důkaz, proveďte běžnou změnu z cloudu a ověřte,
-že ji box potvrdil. Proxy může po restartu dříve ověřený profil znovu
+že ji box potvrdil. Proxy může po restartu nebo aktualizaci ověřený profil znovu
 potvrdit z čerstvých dat boxu. Dokud je profil připravený, může proxy
 odesílat příkazy i bez cloudu. [Režimy proxy](proxy_modes.md)
 
@@ -66,7 +65,7 @@ ovladač, platí omezení z nastavení proxy.
 
 ![Lokální MQTT ovladač Režim boxu s rozbalenou nabídkou](images/local-control/mqtt-mode.jpg)
 
-Snímek ukazuje nabídku ověřovaného prototypu. V RC3 jsou v nabídce také Home 5
+Snímek ukazuje nabídku ověřovaného prototypu. V RC4 jsou v nabídce také Home 5
 a Home 6. Fyzické přepnutí těchto dvou režimů zatím čeká na ověření.
 
 | Hodnota MQTT | 0 | 1 | 2 | 3 | 4 | 5 |
@@ -85,7 +84,7 @@ a Home 6. Fyzické přepnutí těchto dvou režimů zatím čeká na ověření.
 
 ![MQTT ovladač maximálního proudu nabíjení z AC v ampérech](images/local-control/mqtt-aac.jpg)
 
-Snímek ukazuje číselné pole prototypu. V RC3 hledejte název
+Snímek ukazuje číselné pole prototypu. V RC4 hledejte název
 **Nabíječka - Max. AC proud** nebo ID obsahující `aac_max_chrg`.
 
 ## Přetoky do sítě
@@ -117,7 +116,7 @@ entitu `number` s příponou `_cfg`. Po každé změně ověřte senzor stejné 
 
 ![MQTT ovladač korekce L1 s potvrzenou hodnotou 90](images/local-control/mqtt-phase.jpg)
 
-| Fáze | Parametr | Povolené zápisy v RC3 |
+| Fáze | Parametr | Povolené zápisy v RC4 |
 | --- | --- | --- |
 | L1 | `tbl_invertor_prm1:P_CAL_R` | 0, 50, 75, 90 |
 | L2 | `tbl_invertor_prm1:P_CAL_S` | 90 |
@@ -128,7 +127,7 @@ nemáme ověřený. V detailech ovladače `_cfg` uvádí atribut `allowed_values
 přesné povolené zápisy. Číselné pole má širší rozsah kvůli dříve potvrzeným
 hodnotám, například 75 na L2 či L3. Proxy při zápisu přijímá jen hodnoty
 z tabulky. Před změnou si zapište stav každé fáze a ověřte způsob návratu.
-Hodnotu 75 na L2 nebo L3 přes MQTT v RC3 neobnovíte.
+Hodnotu 75 na L2 nebo L3 přes MQTT v RC4 neobnovíte.
 
 ## Automatizace Home UPS a AAC
 
@@ -210,8 +209,8 @@ s payloadem `"100"` a stejnými hodnotami `qos` a `retain`.
   Pokud se výsledek neaktualizoval, podívejte se do záložky **Protokol** aplikace.
   Neplatný nebo nepovolený vstup se může objevit jen v protokolu.
 - Při `cloud_evidence_pending` chybí potvrzený cloudový zápis pro profil.
-  Při `firmware_unverified` proxy čeká na čerstvý údaj o firmwaru.
   Při `box_evidence_stale` potřebuje nová data boxu.
+  Pokud box ohlásí změnu firmwaru, proxy profil ověří znovu.
 - Po restartu může HA zobrazit poslední potvrzený stav z cache.
   Pro ověření nové změny sledujte zprávu přijatou po příkazu. S čekáním
   na vhodný dotaz boxu se i samotné odeslání může zpozdit.

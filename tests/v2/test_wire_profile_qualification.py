@@ -215,13 +215,52 @@ def test_enrollment_restarts_unready_and_revalidates_only_same_context(tmp_path)
 
     restored = learner(clock, state_path=state_path)
     assert restored.status(BOX_B).profile is None
-    box_proof(restored, clock, BOX_B, model, FW_B, samples=5, prefix="restore")
+    box_proof(restored, clock, BOX_B, model, None, samples=5, prefix="restore")
     assert restored.status(BOX_B).profile is None
     restored.observe_box(observation(clock, BOX_B, model), "final-holdout")
     assert restored.status(BOX_B).profile == ver_profile.VerProfile(*model)
     assert not restored.status(BOX_B).include_tto
     clock.step(901)
     assert restored.status(BOX_B).profile is None
+
+
+def test_enrollment_without_firmware_survives_restart(tmp_path):
+    """Qualify without a firmware field and revalidate the retained layout offline."""
+    clock = Clock()
+    state_path = tmp_path / "wire-profile.json"
+    model = (42, 0x1234)
+    profiles = learner(clock, state_path=state_path)
+    box_proof(profiles, clock, BOX_B, model, None)
+    cloud_transaction(profiles, clock, BOX_B, model, include_tto=False, ack=False)
+    assert profiles.status(BOX_B).reason == "cloud_evidence_pending"
+    cloud_transaction(profiles, clock, BOX_B, model, include_tto=False)
+    assert profiles.status(BOX_B).profile == ver_profile.VerProfile(*model)
+
+    restored = learner(clock, state_path=state_path)
+    assert restored.status(BOX_B).profile is None
+    box_proof(restored, clock, BOX_B, model, None, prefix="restore")
+    status = restored.status(BOX_B)
+    assert status.profile == ver_profile.VerProfile(*model)
+    assert not status.include_tto
+
+
+def test_current_box_frames_keep_qualification_after_firmware_ages_out():
+    """Refresh native proof while the last firmware value grows old."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock)
+    box_proof(profiles, clock, BOX_A, model, FW_A)
+    cloud_transaction(profiles, clock, BOX_A, model)
+    first = profiles.status(BOX_A)
+    assert first.profile == ver_profile.VerProfile(*model)
+
+    clock.step(450)
+    box_proof(profiles, clock, BOX_A, model, None, prefix="refresh-1")
+    clock.step(450)
+    box_proof(profiles, clock, BOX_A, model, None, prefix="refresh-2")
+    current = profiles.status(BOX_A)
+    assert current.profile == first.profile
+    assert current.epoch == first.epoch
 
 
 def test_retained_enrollment_rejects_replayed_pre_start_table_bytes(tmp_path):
@@ -368,19 +407,51 @@ def test_duplicate_retained_identity_cannot_authorize_writes(tmp_path):
     assert profiles.status(BOX_A).profile is None
 
 
-def test_firmware_poll_requires_dated_box_evidence_on_its_flow():
-    """An untimed firmware poll cannot replace fresh bound firmware evidence."""
+@pytest.mark.parametrize("poll_first", [True, False])
+def test_late_firmware_baseline_survives_restart_and_detects_change(tmp_path, poll_first):
+    """Record a flow-bound firmware value without requiring a new Cloud Setting."""
+    clock = Clock()
+    state_path = tmp_path / "wire-profile.json"
+    profiles = learner(clock, state_path=state_path)
+    model = (42, 123)
+    box_proof(profiles, clock, BOX_B, model, None)
+    cloud_transaction(profiles, clock, BOX_B, model)
+    first = profiles.status(BOX_B)
+    assert first.profile == ver_profile.VerProfile(*model)
+
+    fw = native(f"<Result>IsNewFW</Result><ID_Device>{BOX_B}</ID_Device><Fw>{FW_B}</Fw>", model)
+    if poll_first:
+        profiles.observe_box(fw, "firmware-flow")
+    profiles.observe_box(observation(clock, BOX_B, model), "firmware-flow")
+    if not poll_first:
+        profiles.observe_box(fw, "firmware-flow")
+    assert profiles.status(BOX_B) == first
+
+    restored = learner(clock, state_path=state_path)
+    box_proof(restored, clock, BOX_B, model, None, prefix="restore")
+    ready = restored.status(BOX_B)
+    assert ready.profile == first.profile
+    restored.observe_box(observation(clock, BOX_B, model, firmware=FW_A), "new-firmware")
+    changed = restored.status(BOX_B)
+    assert changed.profile is None and changed.epoch > ready.epoch
+    box_proof(restored, clock, BOX_B, model, None, prefix="after-change")
+    assert restored.status(BOX_B).reason == "cloud_evidence_pending"
+
+
+def test_delayed_firmware_report_does_not_revoke_current_profile():
+    """Ignore delayed telemetry for an earlier firmware value on the same profile."""
     clock = Clock()
     profiles = learner(clock)
     model = (42, 123)
     box_proof(profiles, clock, BOX_B, model, None)
-    fw = native(f"<Result>IsNewFW</Result><ID_Device>{BOX_B}</ID_Device><Fw>{FW_B}</Fw>", model)
-    profiles.observe_box(fw, "firmware-flow")
     cloud_transaction(profiles, clock, BOX_B, model)
-    assert profiles.status(BOX_B).reason == "firmware_unverified"
-    profiles.observe_box(observation(clock, BOX_B, model), "firmware-flow")
-    cloud_transaction(profiles, clock, BOX_B, model)
-    assert profiles.status(BOX_B).profile == ver_profile.VerProfile(*model)
+    ready = profiles.status(BOX_B)
+    assert ready.profile == ver_profile.VerProfile(*model)
+
+    delayed = observation(clock, BOX_B, model, firmware=FW_A)
+    profiles.observe_box(observation(clock, BOX_B, model, firmware=FW_B), "current")
+    profiles.observe_box(delayed, "delayed")
+    assert profiles.status(BOX_B) == ready
 
 
 @pytest.mark.parametrize("with_tto", [True, False])

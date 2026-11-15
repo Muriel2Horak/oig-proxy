@@ -18,18 +18,19 @@ from tests.v2.test_wire_profile_qualification import Clock, box_proof, cloud_tra
 
 TEST_BOX = "12345"
 MODEL = (39, 0xBB59)
+FIRMWARE = "v.3.25.43.1219"
 POLL = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device>", MODEL)
 ACK = native("<Result>ACK</Result><Reason>Setting</Reason>", MODEL)
 
 
-def _qualified_transport(config, *, callback=None, collector=None, timeout=60.0):
+def _qualified_transport(config, *, callback=None, collector=None, timeout=60.0, firmware=FIRMWARE):
     """Supply real native proof and an observed outbound counter before testing transport."""
     clock = Clock()
     clock.now = time.time() - 20
     queue = TwinQueue()
     delivery = TwinDelivery(queue, MagicMock(), telemetry_collector=collector, inflight_timeout_s=timeout)
     profiles = learner(clock)
-    box_proof(profiles, clock, TEST_BOX, MODEL, "v.3.25.43.1219")
+    box_proof(profiles, clock, TEST_BOX, MODEL, firmware)
     cloud_transaction(profiles, clock, TEST_BOX, MODEL)
     delivery._profiles = profiles
     status = delivery.profile_status(TEST_BOX)
@@ -82,11 +83,12 @@ async def _send_poll(proxy, writer, *, session_id="box-flow", poll=POLL):
 
 @pytest.mark.enable_socket
 @pytest.mark.asyncio
-async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(make_config) -> None:
+@pytest.mark.parametrize("firmware", [FIRMWARE, None])
+async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(make_config, firmware) -> None:
     confirmed = AsyncMock()
     telemetry = AsyncMock()
     proxy, delivery, queue, clock = _qualified_transport(
-        make_config(proxy_mode="offline"), callback=confirmed, timeout=0.75,
+        make_config(proxy_mode="offline"), callback=confirmed, timeout=0.75, firmware=firmware,
     )
     proxy.on_frame = telemetry
     queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
