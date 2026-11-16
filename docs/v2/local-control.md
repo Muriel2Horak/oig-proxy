@@ -40,6 +40,8 @@ Stropy v aplikaci omezují hodnoty příkazů. Hodnotu uloženou v boxu nastaví
 příslušnou entitou `_cfg`. Po restartu nebo aktualizaci proxy ověří kontrolní
 součet `ver` z čerstvých rámců boxu. Formát a počítadlo zápisů může využít
 ze zachovaných dat nebo obnovit z doloženého cloudového zápisu v archivu rámců.
+V hybridním režimu může proxy při posunutém čase použít čas z běžných
+odpovědí cloudu. Profil `ver` dál ověřuje z čerstvých rámců boxu.
 Pokud diagnostika dál hlásí `cloud_evidence_pending`, proveďte jednu běžnou
 změnu z cloudu a ověřte její potvrzení boxem. Dokud je profil připravený,
 může proxy odesílat příkazy i bez cloudu. [Režimy proxy](proxy_modes.md)
@@ -56,7 +58,9 @@ V hybridním režimu proxy po potvrzení příkazu nebo události změny čeká
 60 sekund na tabulku se správnou hodnotou. Pokud tabulka nepřijde, při
 dalším vhodném dotazu požádá box jednou o parametry přes `SA`.
 Chybějící potvrzení příkazu řeší samostatně. Po 30 sekundách bez ACK
-zkusí běžný zápis nejvýš jednou znovu na vhodném dotazu boxu.
+nebo jednoznačné události změny zkusí běžný zápis nejvýš jednou znovu na
+vhodném dotazu boxu. Pokud čekající požadavek při dotazu `IsNewSet`
+neodešle, důvod najdete v protokolu add-onu.
 
 ## Změna režimu
 

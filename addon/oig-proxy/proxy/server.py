@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -22,7 +23,7 @@ try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
     from ..parameter_refresh import ParameterReadbackRefresh
-    from ..protocol.frame import extract_frame_from_buffer, infer_table_name
+    from ..protocol.frame import FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name
     from ..protocol.frames import build_end_time_frame, build_getactual_frame
     from ..protocol.parser import parse_xml_frame
     from ..protocol.ver_profile import native_frame_fields, native_receipt_fields
@@ -35,7 +36,9 @@ except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
     from parameter_refresh import ParameterReadbackRefresh  # type: ignore[no-redef]
-    from protocol.frame import extract_frame_from_buffer, infer_table_name  # type: ignore[no-redef]
+    from protocol.frame import (  # type: ignore[no-redef]
+        FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name,
+    )
     from protocol.frames import build_end_time_frame, build_getactual_frame  # type: ignore[no-redef]
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
     from protocol.ver_profile import native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
@@ -59,6 +62,7 @@ logger = logging.getLogger(__name__)
 TRACE_LEVEL = 5
 TRANSPORT_RESULT_VALUES = frozenset({"ACK", "END"})
 POLL_RESULT_VALUES = frozenset({"IsNewSet", "IsNewWeather", "IsNewFW"})
+SETTING_POLL_TAG = b"<Result>IsNewSet</Result>"
 # NOTE: kept in sync with sensor/processor.py:TRANSPORT_METADATA_KEYS. Not extracted
 # to a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
 # new untracked file before the image is built.
@@ -81,6 +85,51 @@ TRANSPORT_METADATA_KEYS = frozenset(
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
 ConfirmedSettingCallback = Callable[..., Awaitable[None]]
+
+
+def _before_partial_marker(data: bytes, marker: bytes, start: int) -> int:
+    for size in range(min(len(marker) - 1, len(data) - start), 0, -1):
+        if data.endswith(marker[:size]):
+            return len(data) - size
+    return len(data)
+
+
+def _box_frame_spans(data: bytes, oversized: bool) -> tuple[list[tuple[int, int]], int, bool]:
+    """Find complete frames and the prefix ready to send, leaving only an unfinished tail."""
+    frames: list[tuple[int, int]] = []
+    cursor = 0
+    if oversized:
+        close = data.find(FRAME_END)
+        if close < 0:
+            return frames, _before_partial_marker(data, FRAME_END, cursor), True
+        cursor = close + len(FRAME_END)
+
+    while (start := data.find(FRAME_START, cursor)) >= 0:
+        close = data.find(FRAME_END, start + len(FRAME_START))
+        if close < 0:
+            if len(data) - start < MAX_FRAME_BYTES:
+                return frames, start, False
+            return frames, _before_partial_marker(data, FRAME_END, start), True
+        end = close + len(FRAME_END)
+        cursor = end
+        if end - start <= MAX_FRAME_BYTES:
+            if data.startswith(b"\r\n", end):
+                cursor += 2
+            elif data.startswith((b"\r", b"\n"), end):
+                cursor += 1
+            frames.append((start, cursor))
+    return frames, _before_partial_marker(data, FRAME_START, cursor), False
+
+
+def _may_acknowledge_setting(frame: bytes) -> bool:
+    return (b"<Result>ACK</Result>" in frame or b"<Result>NACK</Result>" in frame
+            or b"<TblName>tbl_events</TblName>" in frame and b"<Type>Setting</Type>" in frame)
+
+
+def _buffered_box_bytes(reader: asyncio.StreamReader) -> int:
+    # StreamReader exposes no public count for bytes already received before a write.
+    buffer = getattr(reader, "_buffer", None)
+    return len(buffer) if isinstance(buffer, bytearray) else 0
 
 
 class ProxyServer:
@@ -570,10 +619,14 @@ class ProxyServer:
         # ~15 s přibude jeden "stuck" cloud socket dokud systém nevyčerpá FDs).
         pipe_tasks = [
             asyncio.ensure_future(
-                self._pipe_box_to_cloud(box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id)
+                self._pipe_box_to_cloud(
+                    box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id, conn_id=session_conn_id,
+                )
             ),
             asyncio.ensure_future(
-                self._pipe_cloud_to_box(cloud_reader, box_writer, peer=peer, session_id=session_id)
+                self._pipe_cloud_to_box(
+                    cloud_reader, box_writer, peer=peer, session_id=session_id, conn_id=session_conn_id,
+                )
             ),
         ]
         try:
@@ -597,6 +650,8 @@ class ProxyServer:
                 self.twin_delivery.clear_session(session_id)
             self._box_devices.pop(session_id, None)
             self._cloud_partial_sessions.discard(session_id)
+            if self.telemetry_collector is not None:
+                self.telemetry_collector.discard_requests(session_conn_id)
             for writer in (box_writer, cloud_writer):
                 if writer and not writer.is_closing():
                     writer.close()
@@ -627,74 +682,171 @@ class ProxyServer:
         box_writer: asyncio.StreamWriter | None = None,
         peer: tuple | None = None,
         session_id: str | None = None,
+        *,
+        conn_id: int | None = None,
     ) -> None:
-        """Forward original reads once and inspect complete frames separately."""
+        """Forward original bytes, substituting at most one eligible poll in a read."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
-        conn_id = id(asyncio.current_task())
-        buf = bytearray()
+        pipe_id = id(asyncio.current_task())
+        if conn_id is None:
+            conn_id = pipe_id
+        tail = b""
+        prewire_end = 0
+        oversized = False
+        dropped_delimiter = b""
+
+        def record_local_write() -> None:
+            nonlocal prewire_end
+            prewire_end = len(data) + _buffered_box_bytes(box_reader)
+
         while True:
             try:
-                data = await box_reader.read(4096)
-            except (asyncio.IncompleteReadError, OSError):
+                # Positive reads return the bytes currently available, subject to
+                # StreamReader/transport backpressure; avoid an artificial frame boundary.
+                incoming = await box_reader.read(sys.maxsize)
+                eof = not incoming
+            except asyncio.CancelledError:
+                # Cloud may half-close while it can still read the withheld BOX tail.
+                if tail and not cloud_writer.is_closing():
+                    try:
+                        cloud_writer.write(tail)
+                    except OSError:
+                        pass
+                raise
+            except asyncio.IncompleteReadError as exc:
+                incoming = exc.partial
+                eof = True
+            except OSError:
+                incoming = b""
+                eof = True
+
+            received_at = time.monotonic()
+            # The optional line ending belongs to the previous replaced frame, even
+            # when either delimiter byte arrives in a later read.
+            received_size = len(incoming)
+            if dropped_delimiter == b"\r\n" and incoming.startswith(b"\r"):
+                incoming = incoming[1:]
+                dropped_delimiter = b"\n"
+            if dropped_delimiter and incoming:
+                incoming = incoming.removeprefix(b"\n")
+                dropped_delimiter = b""
+            prewire_end = max(0, prewire_end - (received_size - len(incoming)))
+            data = tail + incoming
+            spans, ready, oversized = _box_frame_spans(data, oversized)
+            tail = data[ready:]
+            if eof:
+                ready = len(data)
+            frames = [data[start:end] for start, end in spans]
+            poll_count = sum(SETTING_POLL_TAG in frame for frame in frames)
+            last_reply_start = max((start for frame, (start, _) in zip(frames, spans)
+                                    if _may_acknowledge_setting(frame)), default=-1)
+            send_from = 0
+            local_write_failed = False
+            forwarded_frames: list[bytes] = []
+            readback_fields: list[dict[str, str]] = []
+            for frame, (start, end) in zip(frames, spans):
+                is_poll = box_writer is not None and SETTING_POLL_TAG in frame
+                ambiguous = poll_count > 1
+                if is_poll and not ambiguous and send_from < start:
+                    if not await self._forward_box_bytes(
+                        data[send_from:start], forwarded_frames, readback_fields, cloud_writer,
+                        box_writer, session_id, conn_id,
+                    ):
+                        return
+                    send_from = start
+                    forwarded_frames.clear()
+                    readback_fields.clear()
+                fields = await self._observe_box_stream_frame(
+                    frame, session_id, pipe_id, peer_str, allow_local_receipt=start >= prewire_end,
+                    received_at=received_at,
+                )
+                if box_writer is not None and is_poll:
+                    try:
+                        replaced = await self._deliver_pending_for_isnewset(
+                            frame, box_writer, session_id, conn_id=pipe_id, peer=peer_str,
+                            transport_block="ambiguous_box_batch" if ambiguous else None,
+                            buffered_reply=bool(tail) or start < last_reply_start or bool(_buffered_box_bytes(box_reader)),
+                            before_write=record_local_write,
+                        )
+                    except OSError:
+                        # The Box may already have received the Setting. Forward its
+                        # neighbors, and leave this poll owned by the local attempt.
+                        replaced = local_write_failed = True
+                    if replaced:
+                        send_from = end
+                        if end == len(data) and not frame.endswith(b"\n"):
+                            dropped_delimiter = b"\n" if frame.endswith(b"\r") else b"\r\n"
+                        continue
+                forwarded_frames.append(frame)
+                if fields is not None and fields.get("TblName") != "tbl_events":
+                    readback_fields.append(fields)
+            prewire_end = max(0, prewire_end - ready)
+            if not await self._forward_box_bytes(
+                data[send_from:len(data) if local_write_failed else ready],
+                forwarded_frames, readback_fields, cloud_writer,
+                box_writer, session_id, conn_id,
+            ) or local_write_failed:
                 break
-            if not data:
+            if eof:
                 self._write_eof(cloud_writer)
                 break
 
-            standalone = not buf
-            buf.extend(data)
-            frames: list[bytes] = []
-            observed: list[dict[str, str]] = []
-            while True:
-                buf[:] = buf.lstrip(b"\r\n")
-                frame = extract_frame_from_buffer(buf)
-                if frame is None:
-                    break
-                frames.append(frame)
-                fields = await self._observe_box_stream_frame(frame, session_id, conn_id, peer_str)
-                if fields is not None:
-                    observed.append(fields)
-
-            # A fragmented or coalesced poll is already part of transparent traffic.
-            # Only an isolated frame can be replaced without withholding adjacent bytes.
-            if standalone and frames == [data] and box_writer is not None:
-                try:
-                    if await self._deliver_pending_for_isnewset(
-                        data, box_writer, session_id, conn_id=conn_id, peer=peer_str,
-                    ):
-                        continue
-                except OSError:
-                    break
-
-            try:
-                cloud_writer.write(data)
-                await cloud_writer.drain()
-                self.frames_forwarded += len(frames)
-                for fields in observed:
-                    if fields.get("TblName") != "tbl_events":
-                        self._observe_parameter_readback(fields, session_id)
-            except OSError as exc:
-                self.mode_manager.record_failure(reason=str(exc))
-                if self.mode_manager.is_offline() and box_writer is not None and frames:
-                    await self._handle_offline_frames(
-                        bytearray(b"".join(frames)), box_writer, session_id, allow_settings=False,
-                    )
-                break
+    async def _forward_box_bytes(
+        self, data: bytes, frames: list[bytes], observed: list[dict[str, str]],
+        cloud_writer: asyncio.StreamWriter, box_writer: asyncio.StreamWriter | None,
+        session_id: str | None, conn_id: int,
+    ) -> bool:
+        if not data:
+            return True
+        delivery = self.twin_delivery
+        try:
+            self._record_cloud_requests(frames, conn_id)
+            cloud_writer.write(data)
+            forwarded = data.strip(b"\r\n")
+            if delivery is not None and self._bound_box_device(session_id) is not None and forwarded:
+                poll = frames[0] if (len(frames) == 1 and session_id not in self._cloud_partial_sessions
+                                     and not cloud_writer.is_closing()
+                                     and forwarded == frames[0].rstrip(b"\r\n")) else None
+                # The response can arrive while drain yields to the Cloud pipe.
+                delivery.note_forwarded_clock_poll(poll, session_id)
+            await cloud_writer.drain()
+        except OSError as exc:
+            if delivery is not None:
+                delivery.note_forwarded_clock_poll(None, session_id)
+            self.mode_manager.record_failure(reason=str(exc))
+            if self.mode_manager.is_offline() and box_writer is not None and frames:
+                await self._handle_offline_frames(
+                    bytearray(b"".join(frames)), box_writer, session_id, allow_settings=False,
+                )
+            return False
+        self.frames_forwarded += len(frames)
+        for fields in observed:
+            self._observe_parameter_readback(fields, session_id)
+        return True
 
     async def _observe_box_stream_frame(
         self, frame: bytes, session_id: str | None, conn_id: int, peer: str | None,
+        *, allow_local_receipt: bool, received_at: float,
     ) -> dict[str, str] | None:
         self._capture_frame(frame, "box_to_cloud", conn_id=conn_id, peer=peer)
         fields = await self._process_frame(frame)
-        await self._handle_twin_frames(frame, session_id)
+        await self._handle_twin_frames(
+            frame, session_id, allow_local_receipt=allow_local_receipt, received_at=received_at,
+        )
         if fields is not None and fields.get("TblName") == "tbl_events":
             self._observe_parameter_readback(fields, session_id)
         if self.telemetry_collector is not None:
-            text = frame.decode("utf-8", errors="replace")
-            table = self._effective_table_name(parse_xml_frame(text), text)
-            self.telemetry_collector.record_request(table or None, conn_id)
             self.telemetry_collector.record_frame_direction("box_to_proxy")
         return fields
+
+    def _record_cloud_requests(self, frames: list[bytes], conn_id: int) -> None:
+        collector = self.telemetry_collector
+        if collector is None:
+            return
+        for frame in frames:
+            text = frame.decode("utf-8", errors="replace")
+            table = self._effective_table_name(parse_xml_frame(text), text)
+            collector.record_request(table or None, conn_id)
 
     @staticmethod
     def _write_eof(writer: asyncio.StreamWriter) -> None:
@@ -712,9 +864,13 @@ class ProxyServer:
         box_writer: asyncio.StreamWriter,
         peer: tuple | None = None,
         session_id: str | None = None,
+        *,
+        conn_id: int | None = None,
     ) -> None:
         """Forward unchanged cloud bytes; no private transform or injection path."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
+        if conn_id is None:
+            conn_id = id(asyncio.current_task())
         buf = bytearray()
         while True:
             try:
@@ -728,16 +884,16 @@ class ProxyServer:
                 box_writer.write(data)
                 buf.extend(data)
                 self._cloud_partial_sessions.add(session_id)
-                await self._observe_cloud_buffer(buf, peer_str, session_id)
+                self._observe_cloud_buffer(buf, peer_str, session_id, conn_id)
                 if not buf:
                     self._cloud_partial_sessions.discard(session_id)
                 await box_writer.drain()
             except (OSError, ConnectionResetError):
                 break
 
-    async def _observe_cloud_buffer(
+    def _observe_cloud_buffer(
         self, buf: bytearray,
-        peer: str | None, session_id: str | None,
+        peer: str | None, session_id: str | None, conn_id: int,
     ) -> None:
         """Parse only complete output frames without changing their byte order."""
         while True:
@@ -746,7 +902,7 @@ class ProxyServer:
             frame = extract_frame_from_buffer(buf)
             if frame is None:
                 return
-            await self._observe_cloud_frame(frame, peer, session_id)
+            self._observe_cloud_frame(frame, peer, session_id, conn_id)
 
     def _bound_box_device(self, session_id: str | None) -> str | None:
         if session_id is None or self._device_id_provider is None:
@@ -771,12 +927,11 @@ class ProxyServer:
             return device_id
         return bound
 
-    async def _observe_cloud_frame(
-        self, frame_bytes: bytes, peer: str | None, session_id: str | None,
+    def _observe_cloud_frame(
+        self, frame_bytes: bytes, peer: str | None, session_id: str | None, conn_id: int,
     ) -> None:
         """Observe the exact complete frame submitted to the BOX socket."""
-        conn_id = id(asyncio.current_task())
-        self._capture_frame(frame_bytes, "cloud_to_box", conn_id=conn_id, peer=peer)
+        self._capture_frame(frame_bytes, "cloud_to_box", conn_id=id(asyncio.current_task()), peer=peer)
         frame_text = frame_bytes.decode("utf-8", errors="replace")
         self.frames_received += 1
         if self.telemetry_collector is not None:
@@ -788,10 +943,8 @@ class ProxyServer:
         if delivery is None or session_id is None or device_id is None:
             return
         fields = native_frame_fields(frame_bytes, allow_repeated_identity=False)
-        if fields is not None and fields.get("ID_Device", device_id) != device_id:
-            return
         delivery.observe_cloud_profile(frame_bytes, session_id, device_id)
-        if fields is None:
+        if fields is None or fields.get("ID_Device", device_id) != device_id:
             return
         if fields.get("Reason") == "Setting":
             self._track_cloud_setting(delivery, fields, frame_text, device_id, session_id)
@@ -818,7 +971,10 @@ class ProxyServer:
     def _wire_counter(value: str) -> int:
         return int(value) if len(value) <= 10 and value.isascii() and value.isdecimal() else 0
 
-    async def _handle_twin_frames(self, frame_bytes: bytes, session_id: str | None) -> str | None:
+    async def _handle_twin_frames(
+        self, frame_bytes: bytes, session_id: str | None, *, allow_local_receipt: bool = True,
+        received_at: float | None = None,
+    ) -> str | None:
         delivery = self.twin_delivery
         if delivery is None or session_id is None:
             return None
@@ -831,7 +987,10 @@ class ProxyServer:
 
         counter = delivery.observe_box_profile(frame_bytes, session_id, device_id)
         if counter is not None:
-            await self._observe_box_event(delivery, fields, device_id, session_id, counter)
+            await self._observe_box_event(
+                delivery, fields, device_id, session_id, counter, allow_local_receipt=allow_local_receipt,
+                received_at=received_at,
+            )
         result = fields.get("Result")
         if result not in {"ACK", "NACK"}:
             return None
@@ -850,11 +1009,11 @@ class ProxyServer:
             device_id, session_id=session_id, result="nack", evidence="protocol_nack", reply_fields=receipt,
         ):
             return None
-        return self._accept_local_reply(delivery, frame_bytes, device_id, session_id)
+        return self._accept_local_reply(delivery, frame_bytes, device_id, session_id) if allow_local_receipt else None
 
     async def _observe_box_event(
         self, delivery: TwinDelivery, fields: dict[str, str], device_id: str, session_id: str,
-        counter: int,
+        counter: int, *, allow_local_receipt: bool, received_at: float | None,
     ) -> None:
         event = parse_tbl_events_ack({**fields, "_table": fields.get("TblName")})
         source_dt = fields.get("DT")
@@ -862,14 +1021,15 @@ class ProxyServer:
             table, key, value = event["table"], event["key"], event["value"]
             delivery.match_cloud_tbl_events(
                 device_id, table, key, value, session_id=session_id,
-                source_dt=source_dt, event_id_set=counter,
+                source_dt=source_dt, event_id_set=counter, previous_value=event["previous_value"],
             )
-            delivery.acknowledge_local_event(
-                device_id, table, key, value, session_id=session_id,
-                source_dt=source_dt, event_id_set=counter,
-            )
+            if allow_local_receipt:
+                delivery.acknowledge_local_event(
+                    device_id, table, key, value, session_id=session_id,
+                    source_dt=source_dt, event_id_set=counter, previous_value=event["previous_value"],
+                )
         # A matching event cannot supply its own pre-wire counter baseline.
-        delivery.observe_box_frame(device_id, counter, source_dt, session_id=session_id)
+        delivery.observe_box_frame(device_id, counter, source_dt, session_id=session_id, received_at=received_at)
         if event is not None:
             await self._publish_confirmed_setting(device_id, table, key, value, source_dt=source_dt)
 
@@ -945,18 +1105,35 @@ class ProxyServer:
         conn_id: int | None = None,
         peer: str | None = None,
         offline: bool = False,
+        transport_block: str | None = None,
+        buffered_reply: bool = False,
+        before_write: Callable[[], None] | None = None,
     ) -> bool:
-        """Use an isolated, qualified BOX poll slot for exactly one local Setting."""
+        """Use a qualified BOX poll slot for exactly one local Setting."""
         delivery = self.twin_delivery
         device_id = self._bound_box_device(session_id)
         writer_id = id(box_writer)
-        if (delivery is None or device_id is None or box_writer.is_closing()
-                or b"<Result>IsNewSet</Result>" not in poll):
+        if delivery is None or SETTING_POLL_TAG not in poll:
             return False
-        if offline and (writer_id in self._offline_reply_deadlines or not self.mode_manager.is_offline()):
+        if device_id is None:
+            expected = self._device_id_provider() if self._device_id_provider is not None else None
+            if expected is not None and delivery.has_pending(expected):
+                reason = "poll_malformed" if native_frame_fields(poll) is None else "box_identity_unbound"
+                delivery.record_poll_skip(expected, session_id, reason, stage="transport")
             return False
-        if (any(self._bound_box_device(flow) == device_id for flow in self._cloud_partial_sessions)
-                or not delivery.valid_local_poll(poll, device_id)):
+        if box_writer.is_closing():
+            transport_block = "box_socket_closing"
+        elif offline and writer_id in self._offline_reply_deadlines:
+            transport_block = "offline_exchange_active"
+        elif offline and not self.mode_manager.is_offline():
+            transport_block = "offline_mode_changed"
+        elif any(self._bound_box_device(flow) == device_id for flow in self._cloud_partial_sessions):
+            transport_block = "cloud_partial_frame"
+        if not delivery.valid_local_poll(poll, device_id):
+            delivery.record_poll_skip(device_id, session_id, "poll_unqualified", stage="transport")
+            return False
+        if transport_block is not None:
+            delivery.record_poll_skip(device_id, session_id, transport_block, stage="transport")
             return False
         request_readback = self._request_readback
         automatic = not offline and request_readback is not None and self._readback.is_due()
@@ -971,7 +1148,8 @@ class ProxyServer:
         try:
             pending = await delivery.deliver_pending(
                 device_id, session_id=session_id, admit_if_idle=admit_readback if automatic else None,
-                online_poll=poll if not offline else None,
+                online_poll=poll.rstrip(b"\r\n") if not offline else None,
+                buffered_reply=buffered_reply,
             )
             if not pending:
                 return False
@@ -979,10 +1157,13 @@ class ProxyServer:
             frame = delivery.build_local_frame(setting, session_id)
             delivery.bind_local_wire(setting, frame, session_id=session_id, retain_receipt=offline)
         except ValueError:
+            delivery.record_poll_skip(device_id, session_id, "local_wire_invalid", stage="transport")
             return False
         finally:
             if admitted is not None:
                 delivery.discard_unsent(admitted, "readback_send_aborted")
+        if before_write is not None:
+            before_write()
         box_writer.write(frame)
         delivery.record_injected_box(setting, device_id, session_id=session_id or "")
         if (not offline and self._readback.is_due()
@@ -1153,8 +1334,11 @@ class ProxyServer:
                     data = await asyncio.wait_for(box_reader.read(4096), max(0, deadline - time.monotonic()))
                 if not data:
                     break
+                received_at = time.monotonic()
                 buf.extend(data)
-                if await self._handle_offline_frames(buf, box_writer, session_id, conn_id=conn_id, peer=peer_str):
+                if await self._handle_offline_frames(
+                    buf, box_writer, session_id, conn_id=conn_id, peer=peer_str, received_at=received_at,
+                ):
                     break
         except asyncio.TimeoutError:
             logger.warning("Offline Setting reply timed out (session=%s)", session_id)
@@ -1183,6 +1367,7 @@ class ProxyServer:
         conn_id: int | None = None,
         peer: str | None = None,
         allow_settings: bool = True,
+        received_at: float | None = None,
     ) -> bool:
         """Process offline frames and close the socket after a terminal Setting response."""
         while True:
@@ -1207,7 +1392,7 @@ class ProxyServer:
             deadline = self._offline_reply_deadlines.get(id(box_writer))
             if deadline is None:
                 await self._process_frame(frame_bytes)
-                await self._handle_twin_frames(frame_bytes, session_id)
+                await self._handle_twin_frames(frame_bytes, session_id, received_at=received_at)
                 # A reply buffered before the Setting cannot acknowledge it.
                 sent = (table == "IsNewSet" and not buf.strip()
                         and await self._deliver_pending_for_isnewset(
@@ -1222,7 +1407,9 @@ class ProxyServer:
 
             # Keep the existing terminal deadline through receipt processing and END drain.
             remaining = max(0, deadline - time.monotonic())
-            reply = await asyncio.wait_for(self._handle_twin_frames(frame_bytes, session_id), remaining)
+            reply = await asyncio.wait_for(
+                self._handle_twin_frames(frame_bytes, session_id, received_at=received_at), remaining,
+            )
             if reply == "ack":
                 end = build_end_time_frame(getactual=False)
                 box_writer.write(end)

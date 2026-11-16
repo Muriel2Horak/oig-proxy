@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from protocol.frame import build_frame
+from protocol.ver_profile import native_frame_fields
 from proxy.server import ProxyServer
 from twin.delivery import TwinDelivery
 from twin.state import TwinQueue
@@ -143,6 +144,98 @@ async def test_box_stream_forwards_fragments_and_coalesced_frames_exactly_once(
     await proxy._pipe_box_to_cloud(reader, writer)
 
     assert b"".join(writer.written) == first + second + b"tail"
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["online", "hybrid"])
+async def test_live_cloud_socket_replaces_split_poll_and_correlates_forwarded_traffic(make_config, mode) -> None:
+    first = _frame("tbl_actual", TEST_BOX, Temp=25)
+    last = _frame("tbl_batt_prms", TEST_BOX, BAT_MIN=20)
+    reply = build_frame("<Result>ACK</Result>").encode()
+    cloud_tail = asyncio.get_running_loop().create_future()
+
+    async def cloud_peer(reader, writer):
+        try:
+            assert await reader.readexactly(len(first)) == first
+            writer.write(reply)
+            await writer.drain()
+            cloud_tail.set_result(await reader.read())
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    cloud = await asyncio.start_server(cloud_peer, "127.0.0.1", 0)
+    config = make_config(proxy_mode=mode, cloud_port=cloud.sockets[0].getsockname()[1])
+    proxy, _delivery, queue, _clock = _qualified_transport(config)
+    collector = MagicMock()
+    proxy.telemetry_collector = collector
+    capture = MagicMock()
+    proxy.frame_capture = capture
+    listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
+    box_reader, box_writer = await asyncio.open_connection("127.0.0.1", listener.sockets[0].getsockname()[1])
+    try:
+        box_writer.write(first + POLL[:13])
+        await box_writer.drain()
+        assert await asyncio.wait_for(box_reader.readexactly(len(reply)), 2) == reply
+        queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+        box_writer.write(POLL[13:] + last[:19])
+        await box_writer.drain()
+        setting = await asyncio.wait_for(box_reader.readuntil(b"</Frame>\r\n"), 2)
+        fields = native_frame_fields(setting)
+        assert fields is not None and (fields["Reason"], fields["TblItem"], fields["NewValue"]) == ("Setting", "MODE", "3")
+        box_writer.write(last[19:] + b"<Frame>incomplete")
+        await box_writer.drain()
+        box_writer.write_eof()
+        assert await asyncio.wait_for(cloud_tail, 2) == last + b"<Frame>incomplete"
+        requests = [call.args for call in collector.record_request.call_args_list]
+        assert [table for table, _ in requests] == ["tbl_actual", "tbl_batt_prms"]
+        assert requests[0][1] == requests[1][1] == collector.record_response.call_args.kwargs["conn_id"]
+        capture_ids = {call.kwargs["direction"]: call.kwargs["conn_id"] for call in capture.capture.call_args_list}
+        assert capture_ids["box_to_cloud"] != capture_ids["cloud_to_box"]
+    finally:
+        box_writer.close()
+        await box_writer.wait_closed()
+        listener.close()
+        await listener.wait_closed()
+        await proxy.stop()
+        cloud.close()
+        await cloud.wait_closed()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+async def test_cloud_half_close_preserves_partial_box_frame(make_config) -> None:
+    first = _frame("tbl_actual", TEST_BOX, Temp=25)
+    partial = _frame("tbl_batt_prms", TEST_BOX, BAT_MIN=20)[:-12]
+    cloud_tail = asyncio.get_running_loop().create_future()
+
+    async def cloud_peer(reader, writer):
+        try:
+            assert await reader.readexactly(len(first)) == first
+            writer.write_eof()
+            cloud_tail.set_result(await reader.read())
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    cloud = await asyncio.start_server(cloud_peer, "127.0.0.1", 0)
+    proxy = ProxyServer(make_config(proxy_mode="online", cloud_port=cloud.sockets[0].getsockname()[1]))
+    listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
+    box_reader, box_writer = await asyncio.open_connection("127.0.0.1", listener.sockets[0].getsockname()[1])
+    try:
+        box_writer.write(first + partial)
+        await box_writer.drain()
+        assert await asyncio.wait_for(box_reader.read(), 2) == b""
+        assert await asyncio.wait_for(cloud_tail, 2) == partial
+    finally:
+        box_writer.close()
+        await box_writer.wait_closed()
+        listener.close()
+        await listener.wait_closed()
+        await proxy.stop()
+        cloud.close()
+        await cloud.wait_closed()
 
 
 @pytest.mark.asyncio

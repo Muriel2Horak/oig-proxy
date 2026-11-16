@@ -23,8 +23,9 @@ from the stream and handles trailing CRLF and TCP segmentation.
 The native frame carries an outer `<CRC>` field with a decimal CRC-16/MODBUS
 checksum. The proxy checks the checksum before feeding a Box frame into
 state processing. Ordinary Cloud forwarding retains the original bytes.
-A qualified local write can replace a single isolated `IsNewSet` poll when
-MQTT control is enabled and the Box has a pending command.
+A qualified local write can replace one `IsNewSet` poll when MQTT control
+is enabled and the Box has a pending command. The proxy can replace the
+poll across TCP reads or alongside ordinary frames in the same read.
 
 `proxy/mode.py` handles three configured modes.
 

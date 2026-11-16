@@ -241,6 +241,10 @@ class TelemetryCollector:
         if len(queue) > 1000:
             queue.popleft()
 
+    def discard_requests(self, conn_id: int) -> None:
+        """Release requests for a session that can no longer receive a response."""
+        self.req_pending.pop(conn_id, None)
+
     @staticmethod
     def _response_kind(response_text: str) -> str:
         if "<Result>Weather</Result>" in response_text:

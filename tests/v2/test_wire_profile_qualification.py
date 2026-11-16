@@ -169,6 +169,167 @@ def shifted_actuals(profiles, clock, device, model, offset, *, samples=9):  # py
         profiles.close_session(session)
 
 
+def native_poll(device, model, nonce):
+    """Produce a distinct native IsNewSet request as in the observed exchanges."""
+    return native(f"<Result>IsNewSet</Result><ID_Device>{device}</ID_Device><Lat>{nonce}</Lat>", model)
+
+
+def timed_end(clock, offset, *, local_skew=0):
+    """Build an ordinary Cloud clock response without a Settings ver field."""
+    payload = (
+        f"<Result>END</Result><Time>{clock.stamp(offset=offset + local_skew)}</Time>"
+        f"<UTCTime>{clock.stamp(utc=True, offset=offset)}</UTCTime>"
+    ).encode()
+    return b"<Frame>" + payload + f"<CRC>{crc(payload):05d}</CRC></Frame>\r\n".encode()
+
+
+def forward_clock_poll(profiles, poll, session):
+    """Observe the original native poll, then record its actual upstream write."""
+    profiles.observe_box(poll, session)
+    profiles.note_forwarded_clock_poll(poll, session)
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_sparse_native_tables_qualify_with_corroborated_cloud_clock(tmp_path, retained):
+    """Recover at measured intervals, while a cold learner still needs a Setting ACK."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    state_path = tmp_path / "profile.json"
+    if retained:
+        original = learner(clock, state_path=state_path)
+        box_proof(original, clock, BOX_A, model, FW_A)
+        cloud_transaction(original, clock, BOX_A, model)
+        assert original.status(BOX_A).profile is not None
+    profiles = learner(clock, state_path=state_path)
+
+    clock.step(45)
+    forward_clock_poll(profiles, native_poll(BOX_A, model, 1), "first-poll")
+    profiles.observe_cloud(timed_end(clock, 289), "first-poll")
+    clock.step(145)
+    shifted_actuals(profiles, clock, BOX_A, model, 160, samples=1)
+    clock.step(89)
+    forward_clock_poll(profiles, native_poll(BOX_A, model, 2), "second-poll")
+    profiles.observe_cloud(timed_end(clock, 290), "second-poll")
+    clock.step(226)
+    shifted_actuals(profiles, clock, BOX_A, model, 125, samples=1)
+    assert profiles.box_clock_offset(BOX_A) == 0
+    assert profiles.status(BOX_A).profile is None
+
+    clock.step(305)
+    shifted_actuals(profiles, clock, BOX_A, model, 279, samples=1)
+    assert profiles.box_timestamp(BOX_A, clock.stamp(offset=290)) == clock.now
+    assert profiles.status(BOX_A).profile is None
+    assert profiles.box_clock_offset(BOX_B) == 0
+
+    clock.step(140)
+    for index, table in enumerate(("tbl_dc_in", "tbl_ac_in", "tbl_ac_out", "tbl_batt", "tbl_box_prms", "tbl_box")):
+        profiles.observe_box(
+            native(
+                f"<TblName>{table}</TblName><ID_Set>1236000</ID_Set><DT>{clock.stamp(offset=259 - index * 10)}</DT>"
+                f"<Reason>Table</Reason><ID_Device>{BOX_A}</ID_Device>",
+                model,
+            ),
+            "table-batch",
+        )
+        clock.step(10)
+    if retained:
+        assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
+    else:
+        assert profiles.status(BOX_A).reason == "cloud_evidence_pending"
+        forward_clock_poll(profiles, native_poll(BOX_A, model, 3), "setting")
+        profiles.observe_cloud(
+            cloud_setting(clock, BOX_A, model, include_tto=True, server_id=9, tsec_offset=289), "setting",
+        )
+        assert profiles.status(BOX_A).profile is None
+        clock.step(13)
+        reply = native(f"<Result>ACK</Result><Rdt>{clock.stamp(offset=280)}</Rdt><Reason>Setting</Reason>", model)
+        profiles.observe_box(reply, "setting")
+        assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
+
+
+@pytest.mark.parametrize("misuse", [
+    "unforwarded", "duplicate_flow", "duplicate_poll", "foreign", "bad_poll_crc", "bad_end_crc",
+    "mismatched_dates", "outdated", "unbounded", "conflicting_dates", "intervening_command", "second_model",
+    "late_response", "invalid_native_counter", "local_send",
+])
+def test_unqualified_cloud_clock_exchange_cannot_adjust_the_box_clock(misuse):
+    """Reject ambiguous, conflicting, replayed, or unauthenticated clock observations."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock)
+    clock.step(10)
+    first = native_poll(BOX_A, model, 1)
+    forward_clock_poll(profiles, first, "first")
+    profiles.observe_cloud(timed_end(clock, 289), "first")
+    clock.step(901 if misuse == "outdated" else 244)
+    device = BOX_B if misuse == "foreign" else BOX_A
+    session = "first" if misuse == "duplicate_flow" else "second"
+    second_model = (40, 0xBB59) if misuse == "second_model" else model
+    second = first if misuse == "duplicate_poll" else native_poll(device, second_model, 2)
+    if misuse == "bad_poll_crc":
+        second = second.replace(b"<Lat>2", b"<Lat>3")
+    if misuse == "unforwarded":
+        profiles.observe_box(second, session)
+    else:
+        forward_clock_poll(profiles, second, session)
+    if misuse == "intervening_command":
+        profiles.observe_cloud(cloud_setting(clock, BOX_A, model, include_tto=True, server_id=9), session)
+    if misuse == "local_send":
+        profiles.note_local_send(session)
+    if misuse == "late_response":
+        clock.step(11)
+    advance = {"unbounded": 301, "conflicting_dates": 259}.get(misuse, 290)
+    end = timed_end(clock, advance, local_skew=1 if misuse == "mismatched_dates" else 0)
+    if misuse == "bad_end_crc":
+        end = end.replace(b"<UTCTime>", b"<UTCXime>")
+    profiles.observe_cloud(end, session)
+    clock.step(100)
+    if misuse == "invalid_native_counter":
+        payload = (
+            f"<TblName>tbl_box_prms</TblName><DT>{clock.stamp(offset=279)}</DT>"
+            f"<Reason>Table</Reason><ID_Device>{BOX_A}</ID_Device>"
+        )
+        profiles.observe_box(native(payload, model), "bad-table")
+    else:
+        shifted_actuals(profiles, clock, BOX_A, model, 279, samples=1)
+    assert profiles.box_clock_offset(BOX_A) == 0
+    assert profiles.box_clock_offset(BOX_B) == 0
+
+
+@pytest.mark.parametrize("native_revision", [False, True])
+def test_wall_clock_sync_retires_the_cloud_clock_before_local_writes(tmp_path, native_revision):
+    """After the proxy wall clock catches up, discard the inferred advance."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    state_path = tmp_path / "profile.json"
+    original = learner(clock, state_path=state_path)
+    box_proof(original, clock, BOX_A, model, FW_A)
+    cloud_transaction(original, clock, BOX_A, model)
+    assert original.status(BOX_A).profile is not None
+    stable = Clock()
+    profiles = learner(clock, monotonic=stable, state_path=state_path)
+    for index in (1, 2):
+        clock.step(244)
+        stable.step(244)
+        session = f"clock-{index}"
+        forward_clock_poll(profiles, native_poll(BOX_A, model, index), session)
+        profiles.observe_cloud(timed_end(clock, 289), session)
+    stable.step(10)
+    shifted_actuals(profiles, clock, BOX_A, model, 279, samples=1)
+    assert profiles.box_clock_offset(BOX_A) == 289
+    later_offset = 298 if native_revision else 289
+    for _ in range(9):
+        stable.step(10)
+        shifted_actuals(profiles, clock, BOX_A, model, later_offset, samples=1)
+    assert profiles.box_clock_offset(BOX_A) == later_offset
+    assert profiles.status(BOX_A).profile is not None
+    epoch = profiles.box_clock_epoch(BOX_A)
+    clock.step(later_offset)
+    assert profiles.box_clock_offset(BOX_A) == 0
+    assert profiles.box_clock_epoch(BOX_A) == epoch + 1
+    assert profiles.status(BOX_A).profile is None
+
+
 def test_consistent_ahead_box_actual_tables_qualify_without_affecting_other_boxes():
     """A repeatable offset permits normal BOX tables and a same-flow native Rdt."""
     clock = Clock()
@@ -468,6 +629,24 @@ def test_cloud_proof_requires_same_flow_valid_ack_and_serializer_constants():
     cloud_transaction(profiles, clock, BOX_A, model)
     assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
     assert profiles.status(BOX_B).profile is None
+
+
+@pytest.mark.parametrize("result", ["Setting", "NACK"])
+def test_intervening_foreign_cloud_command_invalidates_generic_ack(result):
+    """Keep an ambiguous same-flow receipt from enrolling a layout."""
+    clock = Clock()
+    profiles = learner(clock)
+    model = (39, 0xABCD)
+    box_proof(profiles, clock, BOX_A, model, FW_A)
+    session = "ambiguous-cloud"
+    cloud_transaction(profiles, clock, BOX_A, model, session=session, ack=False, close=False)
+    if result == "Setting":
+        foreign = cloud_setting(clock, BOX_B, model, include_tto=True, server_id=9)
+    else:
+        foreign = native(f"<Result>NACK</Result><ID_Device>{BOX_B}</ID_Device>", model)
+    profiles.observe_cloud(foreign, session)
+    profiles.observe_box(native(f"<Result>ACK</Result><Rdt>{clock.stamp()}</Rdt><Reason>Setting</Reason>", model), session)
+    assert profiles.status(BOX_A).reason == "cloud_evidence_pending"
 
 
 @pytest.mark.parametrize("echo", ["ID", "ID_Set"])

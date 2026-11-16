@@ -9,7 +9,7 @@ _TODO_RE = re.compile(rb"<ToDo>([^<]+)</ToDo>")  # NOSONAR
 _DT_RE = re.compile(rb"<DT>([^<]+)</DT>")  # NOSONAR
 _REASON_RE = re.compile(rb"<Reason>([^<]+)</Reason>")  # NOSONAR
 _TBL_EVENT_CONTENT_RE = re.compile(  # NOSONAR
-    r"Remotely\s*:\s*([A-Za-z0-9_]+)\s*/\s*([A-Za-z0-9_]+)\s*:\s*\[[^\]]*\]->\[([^\]]*)\]"
+    r"Remotely\s*:\s*([A-Za-z0-9_]+)\s*/\s*([A-Za-z0-9_]+)\s*:\s*\[([^\]]*)\]->\[([^\]]*)\]"
 )
 
 
@@ -59,5 +59,6 @@ def parse_tbl_events_ack(parsed_frame: dict[str, Any]) -> dict[str, str] | None:
     return {
         "table": m.group(1),
         "key": m.group(2),
-        "value": m.group(3),
+        "previous_value": m.group(3),
+        "value": m.group(4),
     }

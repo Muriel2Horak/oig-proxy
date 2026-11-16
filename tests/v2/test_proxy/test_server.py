@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+import logging
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,14 +18,15 @@ import pytest
 from proxy.server import ProxyServer
 from config import Config
 from parameter_refresh import ParameterReadbackRefresh
-from protocol.frame import build_frame
+from protocol.frame import MAX_FRAME_BYTES, build_frame
+from protocol.frames import czech_local_datetime_from_epoch
 from protocol.ver_profile import native_frame_fields
 from settings_constraints import PowerControlLimits
 from twin.handler import TwinControlHandler
 from tests.v2.test_integration import (
     ACK, MODEL, POLL, TEST_BOX, _combined_ack, _qualified_transport, _send_poll, _setting_event,
 )
-from tests.v2.test_wire_profile_qualification import native
+from tests.v2.test_wire_profile_qualification import learner, native, native_poll, observation, timed_end
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +384,11 @@ async def test_pipe_cloud_to_box_stops_on_empty_read():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind, delivers", [
     ("setting", True), ("setting_with_actual", True), ("weather", False),
-    ("table_only", False), ("foreign", False), ("bad_crc", False), ("coalesced", False),
+    ("table_only", False), ("foreign", False), ("bad_crc", False), ("with_ack", True),
 ])
-async def test_only_an_isolated_native_setting_poll_can_use_online_slot(dummy_writer_factory, kind, delivers):
+async def test_only_a_qualified_unambiguous_setting_poll_can_use_online_slot(
+    dummy_writer_factory, kind, delivers, caplog,
+):
     server, _delivery, queue, _clock = _qualified_transport(make_config())
     queue.enqueue("tbl_box_prms", "MODE", 1, device_id=TEST_BOX, require_profile=True)
     identity = f"<ID_Device>{TEST_BOX}</ID_Device>"
@@ -393,22 +398,305 @@ async def test_only_an_isolated_native_setting_poll_can_use_online_slot(dummy_wr
         "weather": native(f"<Result>IsNewWeather</Result>{identity}", MODEL),
         "table_only": native(f"<TblName>IsNewSet</TblName>{identity}", MODEL),
         "foreign": native("<Result>IsNewSet</Result><ID_Device>99999</ID_Device>", MODEL),
-        "bad_crc": POLL.replace(b"IsNewSet", b"IsNewSed"),
-        "coalesced": POLL + ACK,
+        "bad_crc": POLL.replace(b"12345", b"12346"),
+        "with_ack": POLL + ACK,
     }
     writer = dummy_writer_factory()
-    cloud = await _send_poll(server, writer, poll=inputs[kind])
+    with caplog.at_level(logging.INFO, logger="twin.delivery"):
+        cloud = await _send_poll(server, writer, poll=inputs[kind])
     if delivers:
         sent, = writer.written
         assert b"<Reason>Setting</Reason>" in sent
-        cloud.write.assert_not_called()
+        if kind == "with_ack":
+            cloud.write.assert_called_once_with(ACK)
+        else:
+            cloud.write.assert_not_called()
     else:
         assert not writer.written
         cloud.write.assert_called_once_with(inputs[kind])
+    reason = {"foreign": "box_identity_unbound", "bad_crc": "poll_malformed"}.get(kind)
+    if reason is not None:
+        assert f"IsNewSet skipped stage=transport reason={reason}" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(dummy_writer_factory, monkeypatch):
+@pytest.mark.parametrize("parts", [
+    (POLL[:3], POLL[3:40], POLL[40:]),
+    (POLL[:-2], b"\r", b"\n"),
+    (POLL[:-1], b"\n"),
+])
+async def test_fragmented_setting_poll_is_replaced_without_forwarding_any_fragment(dummy_writer_factory, parts):
+    proxy, _delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.read.side_effect = [*parts, b""]
+    cloud_writer = dummy_writer_factory()
+    box_writer = dummy_writer_factory()
+
+    await proxy._pipe_box_to_cloud(reader, cloud_writer, box_writer, session_id="online")
+
+    sent, = box_writer.written
+    fields = native_frame_fields(sent)
+    assert fields is not None and (fields["TblItem"], fields["NewValue"]) == ("MODE", "3")
+    assert cloud_writer.written == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("split", [False, True])
+async def test_coalesced_setting_poll_preserves_ordinary_frames_and_delimiters(dummy_writer_factory, split):
+    proxy, _delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    first = native(f"<TblName>tbl_actual</TblName><ID_Device>{TEST_BOX}</ID_Device><Temp>22</Temp>", MODEL)
+    last = native(f"<TblName>tbl_actual</TblName><ID_Device>{TEST_BOX}</ID_Device><Temp>23</Temp>", MODEL)
+    prefix = b"\n" + first + b"\r\r\n"
+    suffix = b"\r\n" + last
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.read.side_effect = ([prefix + POLL + suffix[:35], suffix[35:], b""] if split
+                               else [prefix + POLL + suffix, b""])
+    cloud_writer = dummy_writer_factory()
+    box_writer = dummy_writer_factory()
+
+    await proxy._pipe_box_to_cloud(reader, cloud_writer, box_writer, session_id="online")
+
+    sent, = box_writer.written
+    assert b"<Reason>Setting</Reason>" in sent
+    assert b"".join(cloud_writer.written) == prefix + suffix
+
+
+@pytest.mark.asyncio
+async def test_coalesced_competing_setting_polls_both_reach_cloud(dummy_writer_factory, caplog):
+    proxy, delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    writer = dummy_writer_factory()
+    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+
+    with caplog.at_level(logging.INFO, logger="twin.delivery"):
+        cloud = await _send_poll(proxy, writer, poll=POLL + next_poll)
+
+    assert not writer.written
+    assert b"".join(call.args[0] for call in cloud.write.call_args_list) == POLL + next_poll
+    assert delivery.has_pending(TEST_BOX)
+    assert "IsNewSet skipped stage=transport reason=ambiguous_box_batch" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_exchange", ["forwarded", "ambiguous", "failed_write", "foreign_reply"])
+async def test_timed_cloud_end_requires_a_successfully_forwarded_native_poll(dummy_writer_factory, second_exchange):
+    """Bind clock evidence to an actual upstream write, even if it answers during drain."""
+    proxy, delivery, _, clock = _qualified_transport(make_config())
+    profiles = delivery._profiles = learner(clock)
+    for index in (1, 2):
+        clock.step(244)
+        session = f"clock-flow-{index}"
+        mode = second_exchange if index == 2 else "forwarded"
+        poll = native_poll(TEST_BOX, MODEL, index)
+        reader = asyncio.StreamReader()
+        reader.feed_data(poll + (native_poll(TEST_BOX, MODEL, 3) if mode == "ambiguous" else b""))
+        reader.feed_eof()
+        cloud_writer = MagicMock(spec=asyncio.StreamWriter)
+        cloud_writer.is_closing.return_value = False
+        if mode == "failed_write":
+            cloud_writer.write.side_effect = OSError("upstream disconnected")
+
+        def respond(mode=mode, session=session):
+            prefix = (
+                build_frame("<Result>END</Result><ID_Device>foreign</ID_Device>").encode()
+                if mode == "foreign_reply" else b""
+            )
+            proxy._observe_cloud_buffer(bytearray(prefix + timed_end(clock, 289)), None, session, 1)
+
+        cloud_writer.drain = AsyncMock(side_effect=respond)
+        await proxy._pipe_box_to_cloud(reader, cloud_writer, dummy_writer_factory(), session_id=session)
+        if mode == "failed_write":
+            respond()
+
+    clock.step(135)
+    profiles.observe_box(observation(clock, TEST_BOX, MODEL, offset=279), "corroborating-table")
+    assert profiles.box_clock_offset(TEST_BOX) == (289 if second_exchange == "forwarded" else 0)
+
+
+@pytest.mark.asyncio
+async def test_oversized_incomplete_box_frame_streams_through_and_recovers_at_boundary(dummy_writer_factory):
+    proxy, _delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    cloud_writer = dummy_writer_factory()
+    box_writer = dummy_writer_factory()
+    oversized = b"<Frame>" + b"x" * MAX_FRAME_BYTES
+
+    async def chunks():
+        for start in range(0, len(oversized), 4096):
+            yield oversized[start:start + 4096]
+        yield b"</Fra"
+        assert b"".join(cloud_writer.written) == oversized
+        yield b"me>\r\n" + POLL
+        yield b""
+
+    incoming = chunks()
+    reader = AsyncMock(spec=asyncio.StreamReader)
+
+    async def read(_size):
+        return await anext(incoming)
+
+    reader.read.side_effect = read
+    await proxy._pipe_box_to_cloud(reader, cloud_writer, box_writer, session_id="online")
+
+    assert b"".join(cloud_writer.written) == oversized + b"</Frame>\r\n"
+    sent, = box_writer.written
+    assert b"<Reason>Setting</Reason>" in sent
+
+
+@pytest.mark.asyncio
+async def test_receipt_started_before_local_setting_cannot_acknowledge_it(dummy_writer_factory, monkeypatch):
+    proxy, delivery, queue, _clock = _qualified_transport(make_config())
+    wire_epoch = int(time.time()) - 30
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    stamp = czech_local_datetime_from_epoch(wire_epoch)
+    ack = build_frame(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt>").encode()
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.read.side_effect = [POLL + ack[:2], ack[2:12], ack[12:], b""]
+    cloud_writer = dummy_writer_factory()
+    box_writer = dummy_writer_factory()
+
+    await proxy._pipe_box_to_cloud(reader, cloud_writer, box_writer, session_id="box-flow")
+
+    sent, = box_writer.written
+    assert b"<Reason>Setting</Reason>" in sent
+    assert b"".join(cloud_writer.written) == ack
+    assert delivery.local_inflight_setting(session_id="box-flow") is not None
+    await _send_poll(proxy, box_writer, poll=ack)
+    assert delivery.local_inflight_setting(session_id="box-flow") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arrival", ["buffered", "during_observation", "during_drain"])
+async def test_receipt_provenance_with_real_stream_reader(dummy_writer_factory, monkeypatch, arrival):
+    proxy, delivery, queue, _clock = _qualified_transport(make_config())
+    wire_epoch = int(time.time()) - 30
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    stamp = czech_local_datetime_from_epoch(wire_epoch)
+    ack = build_frame(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt>").encode()
+    table = build_frame(f"<TblName>tbl_actual</TblName><ID_Device>{TEST_BOX}</ID_Device><Temp>25</Temp>").encode()
+    prefix = b"\n" * (4096 - len(table) - len(POLL)) + table
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    reader = asyncio.StreamReader()
+    cloud_writer = dummy_writer_factory()
+    box_writer = dummy_writer_factory()
+    paused = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def pause(*_args):
+        paused.set()
+        await resume.wait()
+
+    if arrival == "during_observation":
+        proxy.on_frame = pause
+    if arrival == "during_drain":
+        monkeypatch.setattr(box_writer, "drain", pause)
+    reader.feed_data(prefix + POLL + (ack if arrival == "buffered" else b""))
+    pipe = asyncio.create_task(proxy._pipe_box_to_cloud(reader, cloud_writer, box_writer, session_id="box-flow"))
+    if arrival != "buffered":
+        await asyncio.wait_for(paused.wait(), 1)
+        reader.feed_data(ack)
+    reader.feed_eof()
+    resume.set()
+    await asyncio.wait_for(pipe, 1)
+
+    assert len(box_writer.written) == 1
+    assert b"".join(cloud_writer.written) == prefix + ack
+    assert (delivery.local_inflight_setting(session_id="box-flow") is None) == (arrival == "during_drain")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack_prefix", [2, None])
+async def test_buffered_late_receipt_cancels_same_socket_replay(dummy_writer_factory, monkeypatch, ack_prefix):
+    proxy, delivery, queue, _clock = _qualified_transport(make_config())
+    tick = time.monotonic()
+    wire_epoch = int(time.time()) - 30
+    monkeypatch.setattr("twin.delivery.time", SimpleNamespace(time=time.time, monotonic=lambda: tick))
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    box_writer = dummy_writer_factory()
+    await _send_poll(proxy, box_writer)
+    tick += 60
+    delivery.poll_timeouts()
+    assert delivery.has_pending(TEST_BOX)
+    stamp = czech_local_datetime_from_epoch(wire_epoch + 1)
+    ack = build_frame(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt>").encode()
+    wire_epoch += 10
+    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    reader = AsyncMock(spec=asyncio.StreamReader)
+    reader.read.side_effect = ([next_poll + ack, b""] if ack_prefix is None
+                               else [next_poll + ack[:ack_prefix], ack[ack_prefix:], b""])
+    cloud_writer = dummy_writer_factory()
+
+    await proxy._pipe_box_to_cloud(reader, cloud_writer, box_writer, session_id="box-flow")
+
+    assert len(box_writer.written) == 1
+    assert b"".join(cloud_writer.written) == next_poll + ack
+    assert not delivery.has_pending(TEST_BOX)
+    assert delivery.local_inflight_setting(session_id="box-flow") is None
+
+
+@pytest.mark.asyncio
+async def test_coalesced_setting_event_keeps_box_state_without_acknowledging_local_write(dummy_writer_factory):
+    confirmed = AsyncMock()
+    proxy, delivery, queue, clock = _qualified_transport(make_config(), callback=confirmed)
+    queue.enqueue("tbl_box_prms", "MODE", 1, device_id=TEST_BOX, require_profile=True)
+    event = _setting_event(clock, 1)
+    box_writer = dummy_writer_factory()
+
+    cloud_writer = await _send_poll(proxy, box_writer, poll=POLL + event)
+
+    assert len(box_writer.written) == 1
+    assert delivery.local_inflight_setting(session_id="box-flow") is not None
+    cloud_writer.write.assert_called_once_with(event)
+    confirmed.assert_awaited_once_with(TEST_BOX, "tbl_box_prms", "MODE", "1", source_dt=clock.stamp())
+
+
+@pytest.mark.asyncio
+async def test_incomplete_cloud_frame_blocks_local_setting_without_interleaving(dummy_writer_factory, caplog):
+    proxy, delivery, queue, _clock = _qualified_transport(make_config())
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    box_writer = dummy_writer_factory()
+    partial_written = asyncio.Event()
+    complete_cloud = asyncio.Event()
+    cloud_frame = build_frame("<Result>END</Result>").encode()
+
+    async def chunks():
+        yield cloud_frame[:18]
+        partial_written.set()
+        await complete_cloud.wait()
+        yield cloud_frame[18:]
+        yield b""
+
+    incoming = chunks()
+    reader = AsyncMock(spec=asyncio.StreamReader)
+
+    async def read(_size):
+        return await anext(incoming)
+
+    reader.read.side_effect = read
+    cloud_pipe = asyncio.create_task(proxy._pipe_cloud_to_box(reader, box_writer, session_id="box-flow"))
+    try:
+        await asyncio.wait_for(partial_written.wait(), 1)
+        with caplog.at_level(logging.INFO, logger="twin.delivery"):
+            cloud = await _send_poll(proxy, box_writer)
+        cloud.write.assert_called_once_with(POLL)
+        assert delivery.has_pending(TEST_BOX)
+        assert "IsNewSet skipped stage=transport reason=cloud_partial_frame" in caplog.text
+    finally:
+        complete_cloud.set()
+        await cloud_pipe
+
+    assert b"".join(box_writer.written) == cloud_frame
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coalesced_ack", [False, True])
+async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(
+    dummy_writer_factory, monkeypatch, coalesced_ack,
+):
     proxy, delivery, queue, _clock = _qualified_transport(make_config())
     monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(ac_charge_max_a=75))
     wire_epoch = int(time.time()) - 30
@@ -422,14 +710,15 @@ async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(du
 
     stamp = datetime.strptime(mode["DT"], "%d.%m.%Y %H:%M:%S")
     first_ack = build_frame(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt>").encode()
-    forwarded = await _send_poll(proxy, writer, poll=first_ack)
-    assert forwarded.write.call_args.args == (first_ack,)
-    assert len(writer.written) == 1 and queue.size() == 1
+    if not coalesced_ack:
+        forwarded = await _send_poll(proxy, writer, poll=first_ack)
+        assert forwarded.write.call_args.args == (first_ack,)
+        assert len(writer.written) == 1 and queue.size() == 1
 
     wire_epoch += 10
     next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
-    forwarded = await _send_poll(proxy, writer, poll=next_poll)
-    forwarded.write.assert_not_called()
+    forwarded = await _send_poll(proxy, writer, poll=first_ack + next_poll if coalesced_ack else next_poll)
+    assert b"".join(call.args[0] for call in forwarded.write.call_args_list) == (first_ack if coalesced_ack else b"")
     aac = native_frame_fields(writer.written[1])
     assert aac is not None and (aac["TblItem"], aac["NewValue"]) == ("AAC_MAX_CHRG", "75")
 
@@ -444,8 +733,9 @@ async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(du
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("table_mode", [None, 0, 1])
+@pytest.mark.parametrize("coalesced_table", [False, True])
 async def test_readback_refresh_uses_first_qualified_poll_and_forwards_native_table(
-    dummy_writer_factory, table_mode,
+    dummy_writer_factory, table_mode, coalesced_table,
 ):
     proxy, delivery, queue, wire_clock = _qualified_transport(make_config())
     handler = TwinControlHandler(MagicMock(), queue, TEST_BOX, require_profile=True)
@@ -465,24 +755,28 @@ async def test_readback_refresh_uses_first_qualified_poll_and_forwards_native_ta
     early.write.assert_called_once_with(POLL)
     assert not writer.written
     elapsed[0] = 68
+    table = b""
     if table_mode is not None:
         table = native(
             f"<TblName>tbl_box_prms</TblName><ID_Device>{TEST_BOX}</ID_Device>"
             f"<DT>{wire_clock.stamp()}</DT><Reason>Table</Reason><MODE>{table_mode}</MODE>", MODEL,
         )
-        forwarded = await _send_poll(proxy, writer, poll=table)
-        forwarded.write.assert_called_once_with(table)
+        if not coalesced_table:
+            forwarded = await _send_poll(proxy, writer, poll=table)
+            forwarded.write.assert_called_once_with(table)
 
     next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
-    result = await _send_poll(proxy, writer, poll=next_poll)
+    prefix = table if coalesced_table else b""
+    result = await _send_poll(proxy, writer, poll=prefix + next_poll)
+    forwarded_bytes = b"".join(call.args[0] for call in result.write.call_args_list)
     if table_mode == 1:
         request.assert_not_called()
-        result.write.assert_called_once_with(next_poll)
+        assert forwarded_bytes == prefix + next_poll
     else:
         request.assert_called_once_with()
         sent, = writer.written
         assert b"<TblItem>SA</TblItem>" in sent and b"<NewValue>1</NewValue>" in sent
-        result.write.assert_not_called()
+        assert forwarded_bytes == prefix
         delivery.clear_session("box-flow")
         await _send_poll(proxy, dummy_writer_factory(), session_id="another-flow")
         assert request.call_count == 1
