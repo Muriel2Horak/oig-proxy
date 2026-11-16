@@ -21,6 +21,10 @@ from .crc import _crc16_table, crc16_modbus
 
 _MAX_AGE = 900
 _SESSION_WINDOW = 60
+_MAX_CLOCK_ADVANCE = 300
+_CLOCK_SAMPLE_SPAN = (10, 120)
+_CLOCK_SAMPLE_SPREAD = 5
+_CLOUD_CLOCK_DIFFERENCE = 20
 _MAX_DEVICES = 128
 _CRC_PERIOD = 32_767
 _LOCAL_ZONE = ZoneInfo("Europe/Prague")
@@ -196,14 +200,14 @@ def parse_setting_reply(raw: bytes, device_id: str, profile: VerProfile) -> dict
     return _receipt_fields(wire)
 
 
-def _timestamp(value: str, now: float, utc: bool = False) -> float | None:
+def _protocol_stamps(value: str, utc: bool = False) -> set[float]:
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         try:
             parsed = datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
         except ValueError:
-            return None
+            return set()
     try:
         if parsed.tzinfo is not None:
             stamps = {parsed.timestamp()}
@@ -216,9 +220,18 @@ def _timestamp(value: str, now: float, utc: bool = False) -> float | None:
                 if datetime.fromtimestamp(stamp, _LOCAL_ZONE).replace(tzinfo=None) == parsed:
                     stamps.add(stamp)
     except (OSError, OverflowError, ValueError):
-        return None
-    valid = [stamp for stamp in stamps if -2 <= now - stamp <= _MAX_AGE]
+        return set()
+    return stamps
+
+
+def _unique_stamp(stamps: set[float], earliest: float, latest: float) -> float | None:
+    valid = [stamp for stamp in stamps if earliest <= stamp <= latest]
     return valid[0] if len(valid) == 1 else None
+
+
+def recent_protocol_timestamp(value: str, now: float, utc: bool = False) -> float | None:
+    """Resolve a recent native timestamp on the protocol clock."""
+    return _unique_stamp(_protocol_stamps(value, utc), now - _MAX_AGE, now + 2)
 
 
 @dataclass(frozen=True)
@@ -237,6 +250,7 @@ class _Pending:
     received: float
     epoch: int
     include_tto: bool
+    future_cloud_stamp: float | None = None
 
 
 def _identify(samples: list[_Sample]) -> tuple[VerProfile | None, bool]:
@@ -278,6 +292,17 @@ class _Enrollment:
     include_tto: bool
 
 
+@dataclass(frozen=True)
+class _ClockReading:
+    received: float
+    source: float
+    counter: int
+
+    @property
+    def advance(self) -> float:
+        return self.source - self.received
+
+
 @dataclass
 class _DeviceProof:
     epoch: int = 0
@@ -292,6 +317,13 @@ class _DeviceProof:
     ever_ready: bool = False
     ambiguous_layout: bool = False
     block: str = "waiting_for_box"
+    clock_offset: float = 0.0
+    clock_epoch: int = 0
+    clock_readings: deque[_ClockReading] = field(default_factory=lambda: deque(maxlen=3))
+    clock_step_back: bool = False
+    readback_source_floor: float = 0.0
+    future_cloud_highwater: float = 0.0
+    live_cloud_seen: bool = False
 
 
 @dataclass
@@ -334,12 +366,12 @@ class VerProfiles:
         self._state_path = Path(state_path) if state_path is not None else None
         self._proofs: dict[str, _DeviceProof] = {}
         self._flows: dict[str, _Flow] = {}
-        self._enrollments = self._load_enrollments()
+        self._enrollments, self._archive_registry_cold = self._load_enrollments()
 
-    def _load_enrollments(self) -> dict[str, _Enrollment]:
+    def _load_enrollments(self) -> tuple[dict[str, _Enrollment], bool]:
         path = self._state_path
         if path is None:
-            return {}
+            return {}, True
         try:
             with path.open("rb") as stream:
                 raw = stream.read(65_537)
@@ -364,17 +396,18 @@ class VerProfiles:
                             and (not isinstance(firmware, str) or not _FIRMWARE_ID.fullmatch(firmware)))):
                     raise ValueError("invalid enrolled profile")
                 result[device_id] = _Enrollment(VerProfile(n, k), firmware, include_tto)
-            return result
+            return result, False
         except FileNotFoundError:
-            return {}
+            return {}, True
         except (OSError, ValueError, RecursionError):
             _LOGGER.warning("Ignoring invalid retained wire profile state")
-            return {}
+            return {}, False
 
-    def _save_enrollments(self) -> None:
+    def _save_enrollments(self, *, invalidate_on_failure: bool = True) -> bool:
         path = self._state_path
         if path is None:
-            return
+            self._archive_registry_cold = False
+            return True
         records = {
             device: {"N": item.profile.zero_count, "K": item.profile.xor_key,
                      "firmware": item.firmware, "include_tto": item.include_tto}
@@ -392,20 +425,30 @@ class VerProfiles:
             os.replace(temporary, path)
         except OSError:
             _LOGGER.warning("Could not save wire profile state")
-            # An older on-disk entry could otherwise survive a profile revocation.
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                _LOGGER.warning("Could not invalidate previous wire profile state")
+            if invalidate_on_failure:
+                # An empty or interrupted registry remains initialized on restart.
+                # Removing it would make revoked archive evidence eligible again.
+                try:
+                    with path.open("w", encoding="utf-8") as tombstone:
+                        json.dump({"version": 1, "enrollments": {}}, tombstone)
+                        tombstone.flush()
+                        os.fsync(tombstone.fileno())
+                except OSError:
+                    _LOGGER.warning("Could not invalidate previous wire profile state")
+            return False
         finally:
             if temporary is not None:
                 try:
                     temporary.unlink(missing_ok=True)
                 except OSError:
                     _LOGGER.debug("Could not remove temporary wire profile state")
+        self._archive_registry_cold = False
+        return True
 
     def _discard_enrollment(self, device_id: str) -> None:
-        if self._enrollments.pop(device_id, None) is not None:
+        if self._enrollments.pop(device_id, None) is not None or self._archive_registry_cold:
+            # Preserve the initialized registry, even when the last entry is removed.
+            self._archive_registry_cold = False
             self._save_enrollments()
 
     def _withdraw_layout(self, device_id: str, proof: _DeviceProof) -> None:
@@ -415,18 +458,108 @@ class VerProfiles:
 
     def _retire(self, device_id: str, proof: _DeviceProof, reason: str) -> None:
         self._discard_enrollment(device_id)
+        proof.ambiguous_layout = False
+        proof.clock_epoch += 1
+        proof.clock_readings.clear()
+        proof.clock_step_back = False
+        self._reset_native_proof(device_id, proof, reason)
+
+    def _reset_native_proof(self, device_id: str, proof: _DeviceProof, reason: str) -> None:
         proof.epoch += 1
         proof.candidate = None
         proof.basis = frozenset()
         proof.firmware = None
         proof.samples.clear()
         proof.cutoff = max(proof.cutoff, proof.latest_box)
-        proof.ready = proof.ever_ready = proof.ambiguous_layout = False
+        proof.ready = proof.ever_ready = False
         proof.block = reason
         for flow in self._flows.values():
             if flow.device_id == device_id:
                 flow.pending = flow.firmware_poll = flow.last_dated = None
                 flow.last_native = None
+
+    def box_clock_offset(self, device_id: str) -> float:
+        """Return the learned positive BOX clock shift, or zero without evidence."""
+        proof = self._proofs.get(device_id)
+        return proof.clock_offset if proof is not None else 0.0
+
+    def box_clock_epoch(self, device_id: str) -> int:
+        """Return the device-clock and wire-proof revision for readback correlation."""
+        proof = self._proofs.get(device_id)
+        return proof.clock_epoch if proof is not None else 0
+
+    def box_timestamp(self, device_id: str, value: str) -> float | None:
+        """Resolve BOX DT/Rdt with the current clock shift without learning from it."""
+        shift = self.box_clock_offset(device_id)
+        source = self._box_source_timestamp(value, self._clock(), shift)
+        return source - shift if source is not None else None
+
+    def box_readback_timestamp(self, device_id: str, value: str) -> float | None:
+        """Resolve only native data from the running process and current proof epoch."""
+        stamp = self.box_timestamp(device_id, value)
+        proof = self._proofs.get(device_id)
+        if stamp is None or stamp <= self._started:
+            return None
+        if proof is not None and (stamp < proof.cutoff
+                                  or stamp + proof.clock_offset <= proof.readback_source_floor):
+            return None
+        return stamp
+
+    @staticmethod
+    def _box_source_timestamp(value: str, now: float, shift: float) -> float | None:
+        return _unique_stamp(_protocol_stamps(value), now + shift - _MAX_AGE, now + shift + 2)
+
+    def _observe_clock(self, device_id: str, proof: _DeviceProof, wire: _Wire, now: float) -> None:
+        fields = wire.fields
+        if (now <= self._started or fields.get("TblName") != "tbl_actual" or fields.get("ID_SubD", "0") != "0"
+                or (proof.candidate is not None and not wire.matches(proof.candidate))):
+            return
+        source = _unique_stamp(_protocol_stamps(fields.get("DT", "")), now - 2, now + _MAX_CLOCK_ADVANCE)
+        counter = fields.get("ID_Set", "")
+        if source is None or not counter.isascii() or not counter.isdecimal() or len(counter) > 19:
+            return
+        sequence = int(counter)
+        if sequence <= 0:
+            return
+        readings = proof.clock_readings
+        sample = _ClockReading(now, source, sequence)
+        if readings and now - readings[-1].received > _MAX_AGE:
+            readings.clear()
+            proof.clock_step_back = False
+        if readings:
+            previous = readings[-1]
+            if now <= previous.received or sequence <= previous.counter:
+                return
+            if source <= previous.source:
+                # Recognize a clock step back only on a newer native sequence.
+                if sample.advance >= proof.clock_offset - 2:
+                    return
+                readings.clear()
+                proof.clock_step_back = True
+        if sample.advance >= proof.clock_offset - 2:
+            proof.clock_step_back = False
+        readings.append(sample)
+        if len(readings) < 3:
+            return
+        duration = now - readings[0].received
+        advances = [reading.advance for reading in readings]
+        low, high = min(advances), max(advances)
+        earliest, latest = _CLOCK_SAMPLE_SPAN
+        if not earliest <= duration <= latest or high - low > _CLOCK_SAMPLE_SPREAD:
+            return
+        offset = high if low > 2 else 0.0 if high <= 2 else proof.clock_offset
+        if (abs(offset - proof.clock_offset) <= 2
+                or (offset < proof.clock_offset and not proof.clock_step_back)):
+            return
+        if offset < proof.clock_offset:
+            # Old and current raw dates overlap until the BOX clock passes its old high-water mark.
+            proof.readback_source_floor = max(proof.readback_source_floor, proof.latest_box + proof.clock_offset)
+        proof.clock_offset = offset
+        proof.clock_epoch += 1
+        proof.clock_step_back = False
+        self._reset_native_proof(device_id, proof, "box_clock_changed")
+        # Earlier observations were never qualified in this revised clock domain.
+        proof.cutoff = max(proof.cutoff, now)
 
     @staticmethod
     def _fresh(sample: _Sample, now: float) -> bool:
@@ -465,6 +598,51 @@ class VerProfiles:
         if proof.ready and enrollment is not None:
             return ProfileStatus(enrollment.profile, reason, proof.epoch, enrollment.include_tto)
         return ProfileStatus(None, reason, proof.epoch)
+
+    def archive_basis(self, device_id: str) -> tuple[VerProfile, int] | None:
+        """Return the current independently qualified native model for an archive scan."""
+        proof = self._proofs.get(device_id)
+        if (proof is None or proof.candidate is None or proof.ambiguous_layout
+                or proof.live_cloud_seen or self._native_reason(proof, self._clock()) != "ready"):
+            return None
+        existing = self._enrollments.get(device_id)
+        if existing is None and not self._archive_registry_cold:
+            return None
+        if existing is not None and existing.profile != proof.candidate:
+            return None
+        return proof.candidate, proof.epoch
+
+    def can_adopt_archive_profile(
+        self, device_id: str, profile: VerProfile, epoch: int, include_tto: bool, *,
+        firmware: str | None = None,
+    ) -> bool:
+        """Check historical proof against current evidence without mutating state."""
+        if self.archive_basis(device_id) != (profile, epoch):
+            return False
+        existing = self._enrollments.get(device_id)
+        live_firmware = self._firmware_value(self._proofs[device_id].firmware) or (
+            existing.firmware if existing is not None else None
+        )
+        if firmware is not None and live_firmware is not None and live_firmware != firmware:
+            return False
+        if existing is None:
+            return len(self._enrollments) < _MAX_DEVICES
+        return existing.include_tto is include_tto
+
+    def adopt_archive_profile(
+        self, device_id: str, profile: VerProfile, epoch: int, include_tto: bool, *,
+        firmware: str | None = None,
+    ) -> bool:
+        """Restore an accepted historical layout after its counters are retained."""
+        if not self.can_adopt_archive_profile(device_id, profile, epoch, include_tto, firmware=firmware):
+            return False
+        if device_id not in self._enrollments:
+            known_firmware = self._firmware_value(self._proofs[device_id].firmware) or firmware
+            self._enrollments[device_id] = _Enrollment(profile, known_firmware, include_tto)
+            if not self._save_enrollments(invalidate_on_failure=False):
+                del self._enrollments[device_id]
+                return False
+        return True
 
     def note_local_send(self, session_id: str | None) -> None:
         """Prevent a locally generated Setting from proving a Cloud layout."""
@@ -582,15 +760,20 @@ class VerProfiles:
 
         if not fields.get("TblName") or fields.get("Reason") != "Table":
             return None
-        stamp = _timestamp(fields.get("DT", ""), now)
-        if stamp is None or stamp <= self._started or stamp < proof.cutoff:
+        if flow is not None:
+            self._observe_clock(device_id, proof, wire, now)
+        source_stamp = self._box_source_timestamp(fields.get("DT", ""), now, proof.clock_offset)
+        if source_stamp is None:
             return None
-        signature = (wire.state, wire.ver, stamp)
+        stamp = source_stamp - proof.clock_offset
+        if stamp <= self._started or stamp < proof.cutoff:
+            return None
+        signature = (wire.state, wire.ver, source_stamp)
         if len(proof.seen) >= 4096:
             proof.seen = {key: at for key, at in proof.seen.items() if now - at <= _MAX_AGE}
         if signature in proof.seen or len(proof.seen) >= 4096:
             return None
-        proof.seen[signature] = stamp
+        proof.seen[signature] = now
         if proof.candidate is not None and not wire.matches(proof.candidate):
             self._retire(device_id, proof, "profile_changed")
             if stamp < proof.cutoff:
@@ -619,12 +802,21 @@ class VerProfiles:
         flow = self._flows.get(session_id) if session_id is not None else None
         if flow is None or flow.quarantined:
             return
-        if b"<Reason>Setting</Reason>" not in raw and b"<Result>NACK</Result>" not in raw:
+        has_reason_tag = b"<Reason" in raw
+        if not has_reason_tag and b"<Result" not in raw:
             return
         wire = _parse(raw, allow_repeated_identity=False)
-        if wire is None or wire.fields.get("Result") == "NACK":
+        if wire is None:
+            if has_reason_tag or b"<Result>NACK</Result>" in raw:
+                flow.occupied = True
+                flow.pending = None
+            return
+        fields = wire.fields
+        if fields.get("Result") == "NACK":
             flow.occupied = True
             flow.pending = None
+            return
+        if fields.get("Reason") != "Setting":
             return
         occupied = flow.occupied
         flow.occupied = True
@@ -634,31 +826,54 @@ class VerProfiles:
         if proof is None:
             return
         now = self._clock()
-        fields = wire.fields
-        stamp = _timestamp(fields.get("TSec", ""), now, utc=True)
-        include_tto = _setting_layout(wire)
-        if (fields.get("Reason") != "Setting" or fields.get("ID_Device") != device_id
-                or flow.last_native is None or now - flow.last_native.at > _SESSION_WINDOW
-                or stamp is not None and (stamp < proof.cutoff or now - stamp > _SESSION_WINDOW)):
+        if (fields.get("ID_Device") != device_id or flow.last_native is None
+                or now - flow.last_native.at > _SESSION_WINDOW):
             return
+        # Live traffic owns enrollment for the rest of this boot, even without an ACK.
+        proof.live_cloud_seen = True
+        stamp = recent_protocol_timestamp(fields.get("TSec", ""), now, utc=True)
+        include_tto = _setting_layout(wire)
+        if stamp is not None and (stamp < proof.cutoff or now - stamp > _SESSION_WINDOW):
+            return
+        future_cloud_stamp = None
+        if stamp is None:
+            future_cloud_stamp = self._compatible_future_cloud_stamp(proof, fields, now)
+            if future_cloud_stamp is None:
+                return
+            stamp = now
         existing = self._enrollments.get(device_id)
-        if existing is not None and include_tto != existing.include_tto:
+        if existing is not None and include_tto != existing.include_tto and future_cloud_stamp is None:
             self._withdraw_layout(device_id, proof)
             return
         profile = proof.candidate
         if profile is None:
             return
         if not wire.matches(profile):
-            self._retire(device_id, proof, "cloud_profile_changed")
+            if future_cloud_stamp is None:
+                self._retire(device_id, proof, "cloud_profile_changed")
             return
-        if (occupied or include_tto is None or stamp is None
+        if (occupied or include_tto is None
                 or self._native_reason(proof, now) != "ready" or not flow.last_native.matches(profile)
                 or wire.state in {sample.wire.state for sample in proof.samples}):
             return
+        if future_cloud_stamp is not None:
+            proof.future_cloud_highwater = future_cloud_stamp
         self.status(device_id)
         flow.pending = _Pending(
-            _Sample(wire, stamp, session_id), now, proof.epoch, include_tto,
+            _Sample(wire, stamp, session_id), now, proof.epoch, include_tto, future_cloud_stamp,
         )
+
+    @staticmethod
+    def _compatible_future_cloud_stamp(proof: _DeviceProof, fields: dict[str, str], now: float) -> float | None:
+        """Retain a future UTC candidate only for same-flow corroboration by the BOX."""
+        if not proof.clock_offset or not -2 <= now - proof.latest_box <= _MAX_AGE or now < proof.cutoff:
+            return None
+        stamp = _unique_stamp(_protocol_stamps(fields.get("TSec", ""), utc=True), now + 3,
+                              now + _MAX_CLOCK_ADVANCE)
+        if (stamp is None or stamp <= proof.future_cloud_highwater
+                or abs((stamp - now) - proof.clock_offset) > _CLOUD_CLOCK_DIFFERENCE):
+            return None
+        return stamp
 
     def _observe_reply(self, wire: _Wire, session_id: str | None, now: float) -> None:
         flow = self._flows.get(session_id) if session_id is not None else None
@@ -673,7 +888,7 @@ class VerProfiles:
         pending, flow.pending = flow.pending, None
         proof = self._proofs[flow.device_id]
         profile = proof.candidate
-        stamp = _timestamp(fields.get("Rdt", ""), now)
+        stamp = self.box_timestamp(flow.device_id, fields.get("Rdt", ""))
         command = pending.sample.wire.fields
         if (profile is None or proof.ambiguous_layout or pending.epoch != proof.epoch
                 or stamp is None or stamp < pending.sample.at - 2
@@ -683,6 +898,10 @@ class VerProfiles:
                 or any(fields.get(tag, command[expected]) != command[expected]
                        for tag, expected in _SETTING_REPLY_ECHOES.items())):
             return
+        if pending.future_cloud_stamp is not None:
+            raw_box_stamp = stamp + proof.clock_offset
+            if not -2 <= raw_box_stamp - pending.future_cloud_stamp <= _SESSION_WINDOW:
+                return
         existing = self._enrollments.get(flow.device_id)
         if existing is not None:
             if existing.profile != profile or existing.include_tto != pending.include_tto:

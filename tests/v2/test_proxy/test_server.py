@@ -6,6 +6,8 @@ from __future__ import annotations
 # pyright: reportMissingImports=false
 
 import asyncio
+from datetime import datetime, timedelta
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +15,11 @@ import pytest
 # sys.path nastaven v conftest.py
 from proxy.server import ProxyServer
 from config import Config
+from parameter_refresh import ParameterReadbackRefresh
 from protocol.frame import build_frame
+from protocol.ver_profile import native_frame_fields
+from settings_constraints import PowerControlLimits
+from twin.handler import TwinControlHandler
 from tests.v2.test_integration import (
     ACK, MODEL, POLL, TEST_BOX, _combined_ack, _qualified_transport, _send_poll, _setting_event,
 )
@@ -399,6 +405,116 @@ async def test_only_an_isolated_native_setting_poll_can_use_online_slot(dummy_wr
     else:
         assert not writer.written
         cloud.write.assert_called_once_with(inputs[kind])
+
+
+@pytest.mark.asyncio
+async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(dummy_writer_factory, monkeypatch):
+    proxy, delivery, queue, _clock = _qualified_transport(make_config())
+    monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(ac_charge_max_a=75))
+    wire_epoch = int(time.time()) - 30
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+    queue.enqueue("tbl_invertor_prm1", "AAC_MAX_CHRG", 75, device_id=TEST_BOX, require_profile=True)
+    writer = dummy_writer_factory()
+    await _send_poll(proxy, writer)
+    mode = native_frame_fields(writer.written[0])
+    assert mode is not None and (mode["TblItem"], mode["NewValue"]) == ("MODE", "3")
+
+    stamp = datetime.strptime(mode["DT"], "%d.%m.%Y %H:%M:%S")
+    first_ack = build_frame(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt>").encode()
+    forwarded = await _send_poll(proxy, writer, poll=first_ack)
+    assert forwarded.write.call_args.args == (first_ack,)
+    assert len(writer.written) == 1 and queue.size() == 1
+
+    wire_epoch += 10
+    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    forwarded = await _send_poll(proxy, writer, poll=next_poll)
+    forwarded.write.assert_not_called()
+    aac = native_frame_fields(writer.written[1])
+    assert aac is not None and (aac["TblItem"], aac["NewValue"]) == ("AAC_MAX_CHRG", "75")
+
+    await _send_poll(proxy, writer, poll=first_ack)
+    assert delivery.local_inflight_setting() is not None
+    new_stamp = stamp + timedelta(seconds=10)
+    second_ack = build_frame(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{new_stamp}</Rdt>").encode()
+    await _send_poll(proxy, writer, poll=second_ack)
+    assert delivery.local_inflight_setting() is None and queue.size() == 0
+    assert len(writer.written) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table_mode", [None, 0, 1])
+async def test_readback_refresh_uses_first_qualified_poll_and_forwards_native_table(
+    dummy_writer_factory, table_mode,
+):
+    proxy, delivery, queue, wire_clock = _qualified_transport(make_config())
+    handler = TwinControlHandler(MagicMock(), queue, TEST_BOX, require_profile=True)
+    request = MagicMock(side_effect=lambda: handler.admit_message(
+        f"oig_local/{TEST_BOX}/set/tbl_box_prms/SA", b"1", only_if_empty=True,
+    ))
+    proxy._request_readback = request
+    elapsed = [0.0]
+    proxy._readback = ParameterReadbackRefresh(clock=lambda: elapsed[0])
+    event = _setting_event(wire_clock, 1)
+    writer = dummy_writer_factory()
+    forwarded = await _send_poll(proxy, writer, poll=event)
+    forwarded.write.assert_called_once_with(event)
+
+    elapsed[0] = 59
+    early = await _send_poll(proxy, writer)
+    early.write.assert_called_once_with(POLL)
+    assert not writer.written
+    elapsed[0] = 68
+    if table_mode is not None:
+        table = native(
+            f"<TblName>tbl_box_prms</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+            f"<DT>{wire_clock.stamp()}</DT><Reason>Table</Reason><MODE>{table_mode}</MODE>", MODEL,
+        )
+        forwarded = await _send_poll(proxy, writer, poll=table)
+        forwarded.write.assert_called_once_with(table)
+
+    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    result = await _send_poll(proxy, writer, poll=next_poll)
+    if table_mode == 1:
+        request.assert_not_called()
+        result.write.assert_called_once_with(next_poll)
+    else:
+        request.assert_called_once_with()
+        sent, = writer.written
+        assert b"<TblItem>SA</TblItem>" in sent and b"<NewValue>1</NewValue>" in sent
+        result.write.assert_not_called()
+        delivery.clear_session("box-flow")
+        await _send_poll(proxy, dummy_writer_factory(), session_id="another-flow")
+        assert request.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_sa", [False, True])
+async def test_readback_survives_failed_send_and_existing_sa_covers_batch(dummy_writer_factory, existing_sa):
+    proxy, delivery, queue, wire_clock = _qualified_transport(make_config())
+    handler = TwinControlHandler(MagicMock(), queue, TEST_BOX, require_profile=True)
+    request = MagicMock(side_effect=lambda: handler.admit_message(
+        f"oig_local/{TEST_BOX}/set/tbl_box_prms/SA", b"1", only_if_empty=True,
+    ))
+    proxy._request_readback = request
+    with patch.object(proxy._readback, "_clock", return_value=0):
+        await _send_poll(proxy, dummy_writer_factory(), poll=_setting_event(wire_clock, 1))
+    with patch.object(proxy._readback, "_clock", return_value=70):
+        if existing_sa:
+            queue.enqueue("tbl_box_prms", "SA", 1, device_id=TEST_BOX, require_profile=True)
+        else:
+            with patch.object(delivery, "build_local_frame", side_effect=ValueError("injected serialization fault")):
+                forwarded = await _send_poll(proxy, dummy_writer_factory())
+            forwarded.write.assert_called_once_with(POLL)
+            assert queue.size() == 0
+            assert proxy._readback.is_due()
+        writer = dummy_writer_factory()
+        next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+        await _send_poll(proxy, writer, poll=next_poll)
+        sent, = writer.written
+        assert b"<TblItem>SA</TblItem>" in sent
+        assert not proxy._readback.is_due()
+        assert request.call_count == (0 if existing_sa else 2)
 
 
 @pytest.mark.enable_socket
@@ -812,7 +928,8 @@ async def test_offline_reply_timeout_aborts_a_stalled_transport_close() -> None:
     writer.write.assert_called_once()
     assert b"<Reason>Setting</Reason>" in writer.write.call_args.args[0]
     assert delivery.inflight() is None
-    assert queue.size() == 0
+    replay, = queue.get_pending(device_id=TEST_BOX, unsent_only=True)
+    assert replay.retried
     writer.transport.abort.assert_called_once()
 
 

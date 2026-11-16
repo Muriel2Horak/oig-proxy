@@ -9,7 +9,11 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
+from protocol.parser import same_setting_value
+
 logger = logging.getLogger(__name__)
+_HEAD_WAIT_S = 300
+_BATCH_WAIT_S = 1800
 
 
 @dataclass
@@ -27,16 +31,40 @@ class TwinSetting:
     confirm: str = "New"
     profile_epoch: int | None = None
     device_id: str = ""
+    retried: bool = False
+
+
+@dataclass
+class _QueueBatch:
+    started_at: float
+    last_admitted: TwinSetting | None = None
+    head: TwinSetting | None = None
+    head_wait: float = 0.0
+    ready_since: float | None = None
+
+    def update_head(self, head: TwinSetting | None, now: float, *, blocked: bool) -> bool:
+        """Advance one waiting head's elapsed time under the current ownership."""
+        if self.head is not head:
+            self.head = head
+            self.head_wait = 0.0
+            self.ready_since = None
+        if self.ready_since is not None:
+            self.head_wait += now - self.ready_since
+        self.ready_since = now if head is not None and not blocked else None
+        return head is not None and self.head_wait >= _HEAD_WAIT_S
 
 
 class TwinQueue:
     """Keep the latest manual request per key across MQTT and delivery threads."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._queue: dict[tuple[str, str, str], TwinSetting] = {}
         self._next_id_set = int(time.time())
         self._lock = threading.RLock()
-        self._sent_requests: set[int] = set()
+        self._clock = clock
+        self._batches: dict[str, _QueueBatch] = {}
+        self._blocked_device_id: str | None = None
+        self._sent_requests: dict[int, TwinSetting] = {}
         self._profile_epochs: dict[str, int] = {}
         self._on_drop: Callable[[TwinSetting, str], None] | None = None
 
@@ -55,12 +83,45 @@ class TwinQueue:
             ]
             for setting in retired:
                 del self._queue[self._identity(setting)]
+            self._discard_drained_batch(device_id)
         for setting in retired:
             self._notify_drop(setting, "profile_epoch_changed")
 
     @staticmethod
     def _identity(setting: TwinSetting) -> tuple[str, str, str]:
         return setting.device_id, setting.table, setting.key
+
+    def _discard_drained_batch(self, device_id: str) -> None:
+        if not any(setting.device_id == device_id for setting in self._queue.values()) and not any(
+            setting.device_id == device_id for setting in self._sent_requests.values()
+        ):
+            self._batches.pop(device_id, None)
+
+    def expire_waiting(self, *, blocked_device_id: str | None = None) -> None:
+        """Expire unsent intent and promote the next eligible head per device."""
+        dropped: list[tuple[TwinSetting, str]] = []
+        with self._lock:
+            now = self._clock()
+            self._blocked_device_id = blocked_device_id
+            waiting: dict[str, list[TwinSetting]] = {}
+            for setting in self._queue.values():
+                if id(setting) not in self._sent_requests:
+                    waiting.setdefault(setting.device_id, []).append(setting)
+            for device_id, batch in self._batches.items():
+                pending = waiting.get(device_id, [])
+                batch_deadline = batch.started_at + _BATCH_WAIT_S
+                blocked = device_id == blocked_device_id
+                if batch.update_head(pending[0] if pending else None, min(now, batch_deadline), blocked=blocked):
+                    dropped.append((pending.pop(0), "expired"))
+                    batch.update_head(pending[0] if pending else None, now, blocked=blocked)
+                if now >= batch_deadline:
+                    dropped.extend((setting, "batch_expired") for setting in pending)
+                    batch.update_head(None, now, blocked=True)
+            for setting, _reason in dropped:
+                del self._queue[self._identity(setting)]
+                self._discard_drained_batch(setting.device_id)
+        for setting, reason in dropped:
+            self._notify_drop(replace(setting), reason)
 
     def set_drop_callback(self, callback: Callable[[TwinSetting, str], None]) -> None:
         """Attach the delivery owner's unsent-disposition observer."""
@@ -78,10 +139,24 @@ class TwinQueue:
     def mark_sent(self, expected: TwinSetting) -> bool:
         """Reserve send ownership atomically against replacement and explicit clear."""
         with self._lock:
-            if self._queue.get(self._identity(expected)) is not expected:
+            identity = self._identity(expected)
+            if self._queue.get(identity) is not expected or id(expected) in self._sent_requests:
                 return False
-            self._sent_requests.add(id(expected))
-            return True
+            batch = self._batches[expected.device_id]
+            now = self._clock()
+            batch_deadline = batch.started_at + _BATCH_WAIT_S
+            reason = "batch_expired" if now >= batch_deadline else None
+            if batch.head is expected:
+                if batch.update_head(expected, min(now, batch_deadline), blocked=True):
+                    reason = "expired"
+                batch.update_head(None, now, blocked=True)
+            if reason is None:
+                self._sent_requests[id(expected)] = expected
+                return True
+            del self._queue[identity]
+            self._discard_drained_batch(expected.device_id)
+        self._notify_drop(replace(expected), reason)
+        return False
 
     def is_sent(self, expected: TwinSetting) -> bool:
         """Distinguish queued intent from a request already bound to its actual send."""
@@ -91,7 +166,8 @@ class TwinQueue:
     def release_sent(self, expected: TwinSetting) -> None:
         """Forget completed send ownership even if a newer same-key request exists."""
         with self._lock:
-            self._sent_requests.discard(id(expected))
+            self._sent_requests.pop(id(expected), None)
+            self._discard_drained_batch(expected.device_id)
 
     def _generate_msg_id(self) -> int:
         return secrets.randbelow(1_000_000) + 14_000_000
@@ -118,14 +194,48 @@ class TwinQueue:
         *,
         device_id: str = "",
         require_profile: bool = False,
+        only_if_empty: bool = False,
     ) -> TwinSetting | None:
-        """Atomically replace one pending request and allocate its correlation IDs."""
+        """Admit a request, returning the original object for an adjacent duplicate."""
+        setting, _duplicate = self.admit(
+            table, key, value, confirm, audit_id, raw_text, device_id=device_id,
+            require_profile=require_profile, only_if_empty=only_if_empty,
+        )
+        return setting
+
+    def admit(
+        self,
+        table: str,
+        key: str,
+        value: Any,
+        confirm: str = "New",
+        audit_id: str = "",
+        raw_text: str = "",
+        *,
+        device_id: str = "",
+        require_profile: bool = False,
+        only_if_empty: bool = False,
+    ) -> tuple[TwinSetting | None, bool]:
+        """Admit one intent and report whether it duplicates the last admission."""
         dropped = None
         identity = (device_id, table, key)
         with self._lock:
+            if only_if_empty and (identity in self._queue or self._has_unsent()):
+                return None, False
             profile_epoch = self._profile_epochs.get(device_id)
             accepted = not require_profile or profile_epoch is not None
             previous = self._queue.get(identity) if accepted else None
+            batch = self._batches.get(device_id)
+            last = batch.last_admitted if batch is not None else None
+            if accepted and last is not None and (previous is last or id(last) in self._sent_requests):
+                same_request = (self._identity(last), last.confirm, last.profile_epoch) == (
+                    identity, confirm, profile_epoch,
+                )
+                same_value = same_setting_value(last.value, value) or (
+                    type(last.value) is type(value) and last.value == value
+                )
+                if same_request and same_value:
+                    return last, True
             if previous is not None and id(previous) not in self._sent_requests:
                 dropped = replace(previous)
             if not audit_id:
@@ -144,20 +254,45 @@ class TwinQueue:
                 device_id=device_id,
             )
             if accepted:
+                # Replacement is a new admission. Ordered iteration stays correct if wall time changes.
+                self._queue.pop(identity, None)
                 self._queue[identity] = setting
+                if batch is None:
+                    now = self._clock()
+                    batch = self._batches[device_id] = _QueueBatch(now)
+                    batch.update_head(setting, now, blocked=device_id == self._blocked_device_id)
+                batch.last_admitted = setting
         if not accepted:
             self._notify_drop(setting, "profile_unready")
-            return None
+            return None, False
         if dropped is not None:
             self._notify_drop(dropped, "replaced")
-        return setting
+        return setting, False
 
-    def get_pending(self, *, device_id: str | None = None) -> list[TwinSetting]:
+    def get_pending(self, *, device_id: str | None = None, unsent_only: bool = False) -> list[TwinSetting]:
         """Return pending references ordered by admission time."""
         with self._lock:
-            settings = (setting for setting in self._queue.values()
-                        if device_id is None or setting.device_id == device_id)
-            return sorted(settings, key=lambda setting: setting.enqueued_at)
+            return [setting for setting in self._queue.values()
+                    if (device_id is None or setting.device_id == device_id)
+                    and (not unsent_only or id(setting) not in self._sent_requests)]
+
+    def _has_unsent(self) -> bool:
+        return any(id(setting) not in self._sent_requests for setting in self._queue.values())
+
+    def retry_once(self, expected: TwinSetting) -> bool:
+        """Return a positively reconciled request to the queue once."""
+        with self._lock:
+            identity = self._identity(expected)
+            if (self._queue.get(identity) is not expected or id(expected) not in self._sent_requests
+                    or expected.retried or self._clock() - self._batches[expected.device_id].started_at >= _BATCH_WAIT_S):
+                return False
+            replay = replace(expected, retried=True)
+            self._queue[identity] = replay
+            self._sent_requests.pop(id(expected))
+            batch = self._batches[expected.device_id]
+            if batch.last_admitted is expected:
+                batch.last_admitted = replay
+            return True
 
     def acknowledge(self, table: str, key: str, *, device_id: str | None = None) -> bool:
         """Preserve the legacy explicit queue-removal API."""
@@ -165,6 +300,7 @@ class TwinQueue:
             setting = self.get(table, key, device_id=device_id)
             if setting is not None:
                 del self._queue[self._identity(setting)]
+                self._discard_drained_batch(setting.device_id)
             dropped = replace(setting) if setting is not None and id(setting) not in self._sent_requests else None
         if dropped is not None:
             self._notify_drop(dropped, "cleared")
@@ -178,6 +314,7 @@ class TwinQueue:
                 return False
             dropped = replace(expected)
             del self._queue[identity]
+            self._discard_drained_batch(expected.device_id)
         self._notify_drop(dropped, reason)
         return True
 
@@ -188,6 +325,7 @@ class TwinQueue:
             if self._queue.get(identity) is not expected:
                 return False
             del self._queue[identity]
+            self._discard_drained_batch(expected.device_id)
             return True
 
     def is_current(self, expected: TwinSetting) -> bool:
@@ -208,6 +346,8 @@ class TwinQueue:
             dropped = [replace(setting) for setting in self._queue.values()
                        if id(setting) not in self._sent_requests]
             self._queue.clear()
+            for device_id in tuple(self._batches):
+                self._discard_drained_batch(device_id)
         for setting in dropped:
             self._notify_drop(setting, reason)
 

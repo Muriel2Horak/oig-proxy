@@ -43,6 +43,31 @@ def _record_log(collector: Any, *, created: float, level: int, message: str, sou
     collector.record_log_entry(record)
 
 
+def test_box_receive_marks_only_the_current_metrics_window() -> None:
+    """A short exchange is visible even if the socket closes before collection."""
+    collector = _make_collector(box_connected=False)
+    collector.record_frame_direction("box_to_proxy")
+
+    assert collector.collect_metrics()["box_connected"] is True
+
+    collector.record_frame_direction("cloud_to_proxy")
+    collector.record_frame_direction("proxy_to_box")
+    assert collector.collect_metrics()["box_connected"] is False
+
+
+def test_box_session_ending_between_samples_counts_as_connected() -> None:
+    """Include short sessions that completed after the previous telemetry sample."""
+    collector = _make_collector(box_connected=False)
+    collector.record_box_session_end(connected_since_epoch=None, reason="missing start", peer=None)
+    assert collector.collect_metrics()["box_connected"] is False
+
+    collector.record_box_session_end(connected_since_epoch=1_000, reason="eof", peer="127.0.0.1:5710")
+    window = collector.collect_metrics()
+    assert window["box_connected"] is True
+    assert len(window["window_metrics"]["box_sessions"]) == 1
+    assert collector.collect_metrics()["box_connected"] is False
+
+
 def test_telemetry_topic_format() -> None:
     telemetry_client = importlib.import_module("telemetry.client")
     TelemetryClient = telemetry_client.TelemetryClient

@@ -4,12 +4,310 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timezone
 
 import pytest
 
-from parameter_refresh import ParameterRefreshScheduler
+from parameter_refresh import ParameterReadbackRefresh, ParameterRefreshScheduler
+from config import Config
+
+
+def test_unscheduled_sa_is_default_with_explicit_periodic_opt_in(monkeypatch):
+    monkeypatch.delenv("PARAMETER_REFRESH_INTERVAL_S", raising=False)
+    assert Config().parameter_refresh_interval_s == 0
+    monkeypatch.setenv("PARAMETER_REFRESH_INTERVAL_S", "86400")
+    assert Config().parameter_refresh_interval_s == 86400
 
 START = 1_800_000_000.0
+
+
+def native(table, offset, **values):
+    stamp = datetime.fromtimestamp(START + offset, timezone.utc).isoformat()
+    return {"Reason": "Table", "TblName": table, "DT": stamp, **values}
+
+
+def hg(mode, offset=0):
+    return native("tbl_events", offset, Type="Factory", Content=f"HG {mode} Start")
+
+
+def readback_for(boundary):
+    return ParameterReadbackRefresh(clock=lambda: boundary.now, wall_clock=lambda: boundary.now + 1)
+
+
+def send_if_due(readback, send):
+    if not readback.is_due() or not send():
+        return False
+    readback.mark_sent()
+    return True
+
+
+def readback_outcomes(caplog):
+    return [
+        (record.readback_table, record.readback_key, record.readback_outcome)
+        for record in caplog.records
+        if record.name == "parameter_refresh" and hasattr(record, "readback_outcome")
+    ]
+
+@pytest.mark.parametrize("table_mode, table_offset, expects_sa", [
+    (None, 0, True),
+    (0, 1, True),
+    (1, -1, True),
+    (1, 0, False),
+    (1, 1, False),
+])
+def test_mode_readback_requires_matching_native_table(table_mode, table_offset, expects_sa):
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II"))
+    if table_mode is not None:
+        readback.observe(native("tbl_box_prms", table_offset, MODE=str(table_mode)))
+    boundary.now += 59
+    assert not send_if_due(readback, lambda: boundary.request("mode"))
+    boundary.now += 1
+    assert send_if_due(readback, lambda: boundary.request("mode")) is expects_sa
+    boundary.now += 1
+    assert not send_if_due(readback, lambda: boundary.request("mode"))
+    assert len(boundary.requests) == int(expects_sa)
+
+
+def test_recent_native_table_can_precede_mode_event():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(native("tbl_box_prms", 0, MODE="3"))
+    readback.observe(hg("IV-UPS"))
+    boundary.now += 120
+    assert not send_if_due(readback, lambda: pytest.fail("matching table already received"))
+
+
+@pytest.mark.parametrize(("values", "offset", "expects_sa"), [
+    ({}, 1, True),
+    ({"P_CAL_S": "90"}, 1, True),
+    ({"P_CAL_S": "75"}, -1, True),
+    ({"P_CAL_S": "75.0"}, 1, False),
+])
+def test_matched_ack_observes_correct_native_parameter_before_one_sa(values, offset, expects_sa):
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.note_ack("tbl_invertor_prm1", "P_CAL_S", "75", box_time=(1, START))
+    readback.observe(native("tbl_invertor_prm1", offset, **values), box_time=(1, START + offset))
+    boundary.now += 59
+    assert not readback.is_due()
+    boundary.now += 1
+    assert send_if_due(readback, lambda: boundary.request("matched ACK")) is expects_sa
+    boundary.now += 200
+    assert not readback.is_due()
+    assert len(boundary.requests) == int(expects_sa)
+
+
+def test_ack_and_later_events_share_one_deadline_and_exclude_command_only_fields():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.note_ack("tbl_box_prms", "MODE", 1, box_time=(1, None))
+    boundary.now += 40
+    readback.observe(hg("II", 40), box_time=(1, START + 40))
+    boundary.now += 20
+    assert send_if_due(readback, lambda: boundary.request("first ACK"))
+    readback.note_ack("tbl_box_prms", "SA", 1, box_time=(1, START + 60))
+    readback.note_ack("tbl_box_prms", "RQRESET", 1, box_time=(1, START + 61))
+    readback.observe(hg("II", 100), box_time=(1, START + 100))
+    boundary.now += 200
+    assert not readback.is_due()
+
+
+def test_a_later_acknowledged_write_can_rearm_a_timed_out_readback():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.note_ack("tbl_box_prms", "MODE", 1, box_time=(1, START))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("first write"))
+    boundary.now += 90
+    assert not readback.is_due()
+    readback.note_ack("tbl_box_prms", "MODE", 1, box_time=(1, START + 150))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("new write"))
+
+
+def test_qualified_box_clock_keeps_event_and_readback_in_same_epoch(caplog):
+    caplog.set_level("INFO", logger="parameter_refresh")
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    future_mode = hg("II", 250)
+    readback.observe(future_mode, box_time=(0, None))
+    boundary.now += 60
+    assert not readback.is_due()
+
+    readback.observe(future_mode, box_time=(1, START))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("qualified mode"))
+    readback.observe(native("tbl_box_prms", 210, MODE="1"), box_time=(1, START - 40))
+    assert not readback_outcomes(caplog)
+    readback.observe(native("tbl_box_prms", 252, MODE="1"), box_time=(1, START + 2))
+    assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "confirmed")]
+
+
+def test_clock_epoch_reset_retires_an_sa_wait_and_rejects_old_epoch():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II", 250), box_time=(1, START))
+    boundary.now += 60
+    assert readback.is_due()
+    readback.observe(native("tbl_actual", 61), box_time=(2, None))
+    readback.observe(hg("II", 255), box_time=(1, START + 5))
+    boundary.now += 120
+    assert not readback.is_due()
+    readback.observe(hg("I", 180), box_time=(2, START + 180))
+    boundary.now += 60
+    assert readback.is_due()
+
+
+def test_duplicate_and_older_events_leave_deadline_and_new_mode_supersedes():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("IV-UPS"))
+    boundary.now += 35
+    readback.observe(hg("IV-UPS", 35))
+    readback.observe(hg("I", -1))
+    boundary.now += 25
+    boundary.admit = False
+    assert not send_if_due(readback, lambda: boundary.request("busy"))
+    assert len(boundary.requests) == 1
+    readback.observe(hg("II", 60))
+    boundary.admit = True
+    readback.observe(native("tbl_box_prms", 61, MODE="3"))
+    boundary.now += 59
+    assert not send_if_due(readback, lambda: pytest.fail("must wait for latest mode"))
+    boundary.now += 1
+    assert send_if_due(readback, lambda: boundary.request("mode"))
+
+
+@pytest.mark.parametrize("kind, prefix", [("Change", "Input"), ("Setting", "Remotely")])
+def test_other_parameters_use_numeric_matching_and_batch_missing_readbacks(kind, prefix):
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(native("tbl_events", 0, Type=kind,
+                            Content=f"{prefix} : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[100.0]"))
+    readback.observe(native("tbl_invertor_prm1", 1, AAC_MAX_CHRG="100"))
+    boundary.now += 60
+    assert not send_if_due(readback, lambda: pytest.fail("same numeric value already reported"))
+
+    readback.observe(native("tbl_events", 60, Type=kind,
+                            Content=f"{prefix} : tbl_invertor_prm1 / AAC_MAX_CHRG: [100]->[50]"))
+    readback.observe(native("tbl_events", 60, Type=kind,
+                            Content=f"{prefix} : tbl_invertor_prms / TO_GRID: [0]->[1]"))
+    readback.observe(native("tbl_invertor_prm1", 60, AAC_MAX_CHRG="100"))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("generic"))
+    readback.observe(native("tbl_events", 60, Type=kind,
+                            Content=f"{prefix} : tbl_invertor_prms / TO_GRID: [0]->[1]"))
+    boundary.now += 60
+    assert not send_if_due(readback, lambda: pytest.fail("one SA covers the batch"))
+
+
+def test_ignores_actions_no_op_replayed_and_invalid_events():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    for table, key, old, new in (
+        ("tbl_box_prms", "SA", 0, 1),
+        ("tbl_box_prms", "RQRESET", 0, 1),
+        ("tbl_box_prm2", "APP", 0, 1),
+        ("tbl_invertor_prm1", "AAC_MAX_CHRG", 50, "50.0"),
+    ):
+        readback.observe(native("tbl_events", 0, Type="Setting",
+                                Content=f"Remotely : {table} / {key}: [{old}]->[{new}]"))
+    readback.observe(hg("II", -3600))
+    readback.observe(hg("I") | {"DT": "invalid"})
+    boundary.now += 60
+    assert not send_if_due(readback, lambda: pytest.fail("no persistent setting change"))
+
+
+def test_same_target_rearms_after_fresh_contradictory_table():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II"))
+    readback.observe(native("tbl_box_prms", 1, MODE="1"))
+    boundary.now += 20
+    readback.observe(native("tbl_box_prms", 20, MODE="0"))
+    boundary.now += 20
+    readback.observe(hg("II", 40))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("mode"))
+
+
+def test_response_timeout_starts_when_sa_is_sent_and_reports_once(caplog):
+    caplog.set_level("INFO", logger="parameter_refresh")
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II"))
+    boundary.now += 60
+    assert readback.is_due()
+    boundary.now += 20
+    assert send_if_due(readback, lambda: boundary.request("mode"))
+    boundary.now += 89
+    readback.poll_timeouts()
+    assert not readback_outcomes(caplog)
+    boundary.now += 1
+    readback.poll_timeouts()
+    assert not readback.is_due()
+    assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "timeout")]
+
+    readback.observe(native("tbl_box_prms", 170, MODE="1"))
+    readback.observe(hg("II", 170))
+    boundary.now += 60
+    assert not readback.is_due()
+    assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "timeout")]
+    assert len(boundary.requests) == 1
+
+
+def test_batch_records_matching_and_missing_fields_independently(caplog):
+    caplog.set_level("INFO", logger="parameter_refresh")
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II"))
+    readback.observe(native("tbl_events", 0, Type="Setting",
+                            Content="Remotely : tbl_invertor_prm1 / AAC_MAX_CHRG: [50.0]->[100.0]"))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("both"))
+    boundary.now += 30
+    readback.mark_sent()
+    readback.observe(hg("II", 90))
+    readback.observe(native("tbl_box_prms", -1, MODE="1"))
+    assert not readback_outcomes(caplog)
+    readback.observe(native("tbl_box_prms", 1, MODE="1"))
+    readback.observe(native("tbl_box_prms", 1, MODE="1"))
+    assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "confirmed")]
+
+    boundary.now += 60
+    assert not readback.is_due()
+    assert readback_outcomes(caplog) == [
+        ("tbl_box_prms", "MODE", "confirmed"),
+        ("tbl_invertor_prm1", "AAC_MAX_CHRG", "timeout"),
+    ]
+    assert len(boundary.requests) == 1
+
+
+def test_mode_a_b_a_starts_a_new_wait_and_cannot_reuse_an_older_table(caplog):
+    caplog.set_level("INFO", logger="parameter_refresh")
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II"))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("first A"))
+    boundary.now += 1
+    readback.observe(hg("I", 61))
+    boundary.now += 1
+    readback.observe(hg("II", 62))
+    assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "superseded")]
+
+    readback.observe(native("tbl_box_prms", 1, MODE="1"))
+    boundary.now += 59
+    assert not readback.is_due()
+    boundary.now += 1
+    assert send_if_due(readback, lambda: boundary.request("second A"))
+    readback.observe(native("tbl_box_prms", 122, MODE="1"))
+    assert readback_outcomes(caplog) == [
+        ("tbl_box_prms", "MODE", "superseded"),
+        ("tbl_box_prms", "MODE", "confirmed"),
+    ]
 
 
 class Boundary:

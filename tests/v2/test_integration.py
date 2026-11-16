@@ -419,7 +419,12 @@ async def test_switch_online_preserves_inflight_offline_exchange_until_terminal(
             assert b"<Result>END</Result>" in end
         assert await asyncio.wait_for(reader.read(), 2) == b""
         assert delivery.inflight() is None
-        assert queue.size() == 0
+        waiting = queue.get_pending(device_id=TEST_BOX, unsent_only=True)
+        if outcome == "timeout":
+            replay, = waiting
+            assert replay.retried and (replay.table, replay.key, replay.value) == ("tbl_box_prms", "MODE", 3)
+        else:
+            assert not waiting
     finally:
         for connection in (writer, idle_writer):
             connection.close()

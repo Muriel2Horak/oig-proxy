@@ -54,7 +54,7 @@ class Config:
     control_counter_state_path: str = "/data/control_counters.json"
     ha_mqtt_birth_topic: str = "homeassistant/status"
     ha_mqtt_birth_payload: str = "online"
-    parameter_refresh_interval_s: float = 86400
+    parameter_refresh_interval_s: float = 0
     parameter_refresh_state_path: str = "/data/parameter_refresh.json"
     parameter_refresh_after_operations: frozenset[tuple[str, str]] = frozenset()
 
@@ -149,10 +149,10 @@ class Config:
         self.ha_mqtt_birth_payload = os.environ.get(
             "HA_MQTT_BIRTH_PAYLOAD", "online")
         try:
-            interval = float(os.environ.get("PARAMETER_REFRESH_INTERVAL_S", "86400"))
+            interval = float(os.environ.get("PARAMETER_REFRESH_INTERVAL_S", "0"))
         except ValueError:
-            interval = 86400
-        self.parameter_refresh_interval_s = interval if math.isfinite(interval) and interval >= 0 else 86400
+            interval = 0.0
+        self.parameter_refresh_interval_s = interval if math.isfinite(interval) and interval >= 0 else 0.0
         self.parameter_refresh_state_path = os.environ.get(
             "PARAMETER_REFRESH_STATE_PATH", "/data/parameter_refresh.json")
 

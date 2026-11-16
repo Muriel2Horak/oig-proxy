@@ -2,6 +2,17 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.6] - Unreleased
+
+Předběžná verze experimentálního lokálního ovládání přidává obnovu po upgradu
+z potvrzeného zápisu v archivu, rychlejší synchronizaci Home Assistantu
+a cloudu a navazující příkazy na delších spojeních s boxem.
+Korekce všech tří fází přijímají hodnoty v surovém formátu U16.
+Telemetrie zohledňuje krátká spojení v celém intervalu a převádí český
+čas událostí boxu do UTC.
+
+[Poznámky k verzi pro uživatele Home Assistantu](addon/oig-proxy/CHANGELOG.md)
+
 ## [2.2.0-rc.3] - Unreleased
 
 > [!WARNING]

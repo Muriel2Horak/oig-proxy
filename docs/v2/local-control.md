@@ -10,9 +10,10 @@
 
 1. V HA otevřete **Nastavení → Aplikace → OIG Proxy → Nastavení**.
    Ve starších verzích HA se nabídka **Aplikace** jmenuje **Doplňky**.
-2. Zapněte `control_mqtt_enabled`. Pro první ověření profilu nastavte
-   `proxy_mode: hybrid`. Volby proudu, přetoků a fází nastavte podle parametrů,
-   které chcete ovládat. Nastavení uložte a restartujte OIG Proxy.
+2. Zapněte `control_mqtt_enabled`. Pro první ověření bez potvrzeného zápisu
+   v archivu nastavte `proxy_mode: hybrid`. Volby proudu, přetoků a fází
+   nastavte podle parametrů, které chcete ovládat. Nastavení uložte a restartujte
+   OIG Proxy.
 3. V **Nastavení → Zařízení a služby → Entity** najděte zařízení
    **Diagnostika OIG (oig_proxy)** pod integrací **MQTT**. Vyhledejte
    **Lokální zápis – ověřený profil ver** (`control_ver_ready`) a
@@ -36,13 +37,12 @@ verze evidovaná Supervisorem.
 <!-- markdownlint-enable MD013 -->
 
 Stropy v aplikaci omezují hodnoty příkazů. Hodnotu uloženou v boxu nastavíte
-příslušnou entitou `_cfg`. Pro první ověření kontrolního součtu `ver` potřebuje
-proxy čerstvé rámce boxu a cloudový zápis potvrzený boxem na stejném spojení.
-RC4 může profil ověřit i bez aktuálního údaje o firmwaru.
-Pokud čeká na cloudový důkaz, proveďte běžnou změnu z cloudu a ověřte,
-že ji box potvrdil. Proxy může po restartu nebo aktualizaci ověřený profil znovu
-potvrdit z čerstvých dat boxu. Dokud je profil připravený, může proxy
-odesílat příkazy i bez cloudu. [Režimy proxy](proxy_modes.md)
+příslušnou entitou `_cfg`. Po restartu nebo aktualizaci proxy ověří kontrolní
+součet `ver` z čerstvých rámců boxu. Formát a počítadlo zápisů může využít
+ze zachovaných dat nebo obnovit z doloženého cloudového zápisu v archivu rámců.
+Pokud diagnostika dál hlásí `cloud_evidence_pending`, proveďte jednu běžnou
+změnu z cloudu a ověřte její potvrzení boxem. Dokud je profil připravený,
+může proxy odesílat příkazy i bez cloudu. [Režimy proxy](proxy_modes.md)
 
 U režimu boxu, proudu, přetoků a povolených fázových korekcí uvidíte senzor
 pro čtení a vedle něj ovladač s příponou `_cfg`. Oba používají stav hlášený
@@ -51,6 +51,12 @@ V HA mohou mít obě entity stejný název. Rozlište je podle typu a ID.
 Vlastní názvy v registru nebo na panelu se mohou lišit od ukázek.
 Pokud po snížení stropu nebo vypnutí zápisů zůstane na panelu starší
 ovladač, platí omezení z nastavení proxy.
+
+V hybridním režimu proxy po potvrzení příkazu nebo události změny čeká
+60 sekund na tabulku se správnou hodnotou. Pokud tabulka nepřijde, při
+dalším vhodném dotazu požádá box jednou o parametry přes `SA`.
+Chybějící potvrzení příkazu řeší samostatně. Po 30 sekundách bez ACK
+zkusí běžný zápis nejvýš jednou znovu na vhodném dotazu boxu.
 
 ## Změna režimu
 
@@ -116,18 +122,17 @@ entitu `number` s příponou `_cfg`. Po každé změně ověřte senzor stejné 
 
 ![MQTT ovladač korekce L1 s potvrzenou hodnotou 90](images/local-control/mqtt-phase.jpg)
 
-| Fáze | Parametr | Povolené zápisy v RC4 |
+| Fáze | Parametr | Surové kódování |
 | --- | --- | --- |
-| L1 | `tbl_invertor_prm1:P_CAL_R` | 0, 50, 75, 90 |
-| L2 | `tbl_invertor_prm1:P_CAL_S` | 90 |
-| L3 | `tbl_invertor_prm1:P_CAL_T` | 90 |
+| L1 | `tbl_invertor_prm1:P_CAL_R` | U16, celé číslo 0 až 65535 |
+| L2 | `tbl_invertor_prm1:P_CAL_S` | U16, celé číslo 0 až 65535 |
+| L3 | `tbl_invertor_prm1:P_CAL_T` | U16, celé číslo 0 až 65535 |
 
-Hodnoty jsou v surových jednotkách boxu. Převod na fyzikální jednotku zatím
-nemáme ověřený. V detailech ovladače `_cfg` uvádí atribut `allowed_values`
-přesné povolené zápisy. Číselné pole má širší rozsah kvůli dříve potvrzeným
-hodnotám, například 75 na L2 či L3. Proxy při zápisu přijímá jen hodnoty
-z tabulky. Před změnou si zapište stav každé fáze a ověřte způsob návratu.
-Hodnotu 75 na L2 nebo L3 přes MQTT v RC4 neobnovíte.
+Číselné pole používá krok 1. Jeho meze odpovídají surovému kódování U16.
+Provozní rozsah a převod na fyzikální jednotku zůstávají neověřené.
+Prototyp při zkoušce na jednom boxu potvrdil hodnotu 90 na všech fázích.
+Před změnou si zaznamenejte hodnotu každé fáze. Po případném návratu
+ověřte obnovenou hodnotu v senzoru a zkontrolujte měření toku do sítě.
 
 ## Automatizace Home UPS a AAC
 

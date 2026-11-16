@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from settings_constraints import (
     AC_CHARGE_CONTROL,
+    PHASE_CALIBRATION_CONTROLS,
     POWER_CONTROLS,
     PowerControlLimits,
     SettingConstraint,
@@ -509,14 +510,12 @@ class MQTTClient:
                         control_payload["max"] = constraint.max_value
                     if constraint.step is not None:
                         control_payload["step"] = constraint.step
-                    if constraint.allowed_values is not None:
-                        allowed = sorted(constraint.allowed_values)
-                        # HA applies these bounds to state too. Keep historical U16 readback visible.
+                    if setting_identity in PHASE_CALIBRATION_CONTROLS:
+                        # HA retains old custom attributes until it receives a replacement.
                         control_payload.update(
-                            min=0, max=65535, step=1,
                             name=f"{sensor_name} – experimentální",
                             json_attributes_topic=state_topic,
-                            json_attributes_template=json.dumps({"allowed_values": allowed}),
+                            json_attributes_template="{}",
                         )
                 elif control_component == "switch":
                     control_payload["payload_on"] = 1

@@ -371,9 +371,9 @@ class TestTwinControlHandlerEdgeCases:
             pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"90.0", PHASE_ENABLED, 90), id="phase-r-normalized"),
             pytest.param(("tbl_invertor_prm1", "P_CAL_S", b"90", PHASE_ENABLED, 90), id="phase-s-ninety"),
             pytest.param(("tbl_invertor_prm1", "P_CAL_T", b"90", PHASE_ENABLED, 90), id="phase-t-ninety"),
-            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"85", PHASE_ENABLED, None), id="phase-r-unlisted"),
-            pytest.param(("tbl_invertor_prm1", "P_CAL_S", b"75", PHASE_ENABLED, None), id="phase-s-unqualified"),
-            pytest.param(("tbl_invertor_prm1", "P_CAL_T", b"75", PHASE_ENABLED, None), id="phase-t-unqualified"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"99", PHASE_ENABLED, 99), id="phase-r-above-ninety"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_S", b"75", PHASE_ENABLED, 75), id="phase-s-restore"),
+            pytest.param(("tbl_invertor_prm1", "P_CAL_T", b"75", PHASE_ENABLED, 75), id="phase-t-restore"),
             pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"89.5", PHASE_ENABLED, None), id="phase-fraction"),
             pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"NaN", PHASE_ENABLED, None), id="phase-nonfinite"),
             pytest.param(("tbl_invertor_prm1", "P_CAL_R", b"off", PHASE_ENABLED, None), id="phase-boolean"),
@@ -579,6 +579,59 @@ class TestTwinControlHandlerSettingsAudit:
         assert rejected["audit_id"] == incoming["audit_id"]
         assert telemetry_collector.setting_burst_current_active is True
         assert telemetry_collector.setting_burst_next_windows_remaining == 1
+
+    def test_adjacent_duplicate_keeps_original_request_and_audit(
+        self, handler, telemetry_collector, twin_queue,
+    ):
+        original = handler.admit_message(
+            "oig/test_device_123/control/set",
+            b'{"table": "tbl_box_prms", "key": "MODE", "value": 2}',
+        )
+        assert original is not None
+        enqueued_at = original.enqueued_at
+
+        duplicate = handler.admit_message("oig_local/test_device_123/set/tbl_box_prms/MODE", b"2")
+
+        assert duplicate is original
+        assert twin_queue.get("tbl_box_prms", "MODE") is original
+        assert original.enqueued_at == enqueued_at
+        assert [record["step"] for record in telemetry_collector.settings_audit] == ["incoming", "enqueued"]
+        assert all(record["audit_id"] == original.audit_id for record in telemetry_collector.settings_audit)
+
+    def test_automatic_refresh_rejects_an_existing_manual_refresh(
+        self, handler, telemetry_collector, twin_queue,
+    ):
+        topic = "oig_local/test_device_123/set/tbl_box_prms/SA"
+        manual_refresh = handler.admit_message(topic, b"1")
+        assert manual_refresh is not None
+
+        assert handler.admit_message(topic, b"1", only_if_empty=True) is None
+        assert twin_queue.get("tbl_box_prms", "SA") is manual_refresh
+        assert [record["step"] for record in telemetry_collector.settings_audit] == [
+            "incoming", "enqueued", "incoming", "rejected_validation",
+        ]
+
+    def test_replacement_does_not_supersede_a_request_already_sent(
+        self, handler, telemetry_collector, twin_queue, monkeypatch,
+    ):
+        topic = "oig_local/test_device_123/set/tbl_box_prms/MODE"
+        original = handler.admit_message(topic, b"2")
+        assert original is not None and twin_queue.mark_sent(original)
+        admit = twin_queue.admit
+
+        def admit_while_delivery_completes(*args, **kwargs):
+            result = admit(*args, **kwargs)
+            twin_queue.release_sent(original)
+            return result
+
+        monkeypatch.setattr(twin_queue, "admit", admit_while_delivery_completes)
+
+        replacement = handler.admit_message(topic, b"1")
+
+        assert replacement is not None and replacement is not original
+        assert [record["step"] for record in telemetry_collector.settings_audit] == [
+            "incoming", "enqueued", "incoming", "enqueued",
+        ]
 
     def test_overwrite_same_key_audit_emits_superseded_before_replacement_enqueue(
         self,

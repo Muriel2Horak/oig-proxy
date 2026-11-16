@@ -22,6 +22,7 @@ import importlib
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -32,7 +33,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "addon" / "oig-proxy"))
 
 from main import Config, ProxyApp, main  # noqa: E402  # pylint: disable=wrong-import-position
+from parameter_refresh import ParameterReadbackRefresh  # noqa: E402  # pylint: disable=wrong-import-position
+from protocol.ver_profile import native_frame_fields  # noqa: E402  # pylint: disable=wrong-import-position
 from settings_constraints import PowerControlLimits  # noqa: E402  # pylint: disable=wrong-import-position
+from twin import delivery as delivery_module  # noqa: E402  # pylint: disable=wrong-import-position
+from tests.v2.test_integration import (  # noqa: E402  # pylint: disable=wrong-import-position
+    MODEL, POLL, TEST_BOX, _qualified_transport, _send_poll,
+)
+from tests.v2.test_wire_profile_qualification import native  # noqa: E402  # pylint: disable=wrong-import-position
 
 
 @pytest.fixture
@@ -239,19 +247,109 @@ class TestControlLifecycle:
         app.twin_delivery.profile_status.return_value = SimpleNamespace(profile=None)
 
         assert app._queue_parameter_refresh("daily") is False
-        app.twin_handler._on_message.assert_not_called()
+        app.twin_handler.admit_message.assert_not_called()
 
         app.twin_delivery.profile_status.return_value = SimpleNamespace(profile=object())
-        app.twin_queue.get.return_value = object()
+        app.twin_handler.admit_message.return_value = object()
         mock_config.control_mqtt_enabled = False
         assert app._queue_parameter_refresh("daily") is False
-        app.twin_handler._on_message.assert_not_called()
+        app.twin_handler.admit_message.assert_not_called()
         mock_config.control_mqtt_enabled = True
         assert app._queue_parameter_refresh("daily") is True
-        app.twin_handler._on_message.assert_called_once_with(
-            "oig_local/BOX01/set/tbl_box_prms/SA", b"1",
+        app.twin_handler.admit_message.assert_called_once_with(
+            "oig_local/BOX01/set/tbl_box_prms/SA", b"1", only_if_empty=True,
         )
-        app.twin_queue.get.assert_called_once_with("tbl_box_prms", "SA", device_id="BOX01")
+        app.twin_queue.get.assert_not_called()
+
+
+async def _prepare_mode_receipt(config, clock, source, writer):
+    """Send MODE through the normal local or Cloud path and return the result sink."""
+    app = ProxyApp(config)
+    app.device_id_manager = Mock(device_id=TEST_BOX)
+    app.frame_processor = AsyncMock()
+    proxy, delivery, queue, wire_clock = _qualified_transport(config, callback=app._on_confirmed_setting)
+    app.proxy = proxy
+    app.twin_delivery = delivery
+    app.twin_queue = queue
+    setting_results = []
+    delivery._on_result = setting_results.append
+    app.mqtt = Mock()
+    app.mqtt.is_ready.return_value = True
+    await app._ensure_control_handler(TEST_BOX)
+
+    proxy._readback = ParameterReadbackRefresh(clock=clock)
+    proxy._request_readback = lambda: app._admit_parameter_refresh("missing native readback")
+    proxy._box_connected = True
+
+    if source == "local":
+        assert app.twin_handler.admit_message(f"oig_local/{TEST_BOX}/set/tbl_box_prms/MODE", b"1") is not None
+        await _send_poll(proxy, writer)
+    else:
+        await _send_poll(proxy, writer)
+        wire_clock.now = time.time() - 10
+        setting = native(
+            f"<ID_Device>{TEST_BOX}</ID_Device><ID>13800001</ID><ID_Set>{int(wire_clock.now)}</ID_Set>"
+            f"<DT>{wire_clock.stamp()}</DT><Reason>Setting</Reason>"
+            "<TblName>tbl_box_prms</TblName><TblItem>MODE</TblItem><NewValue>1</NewValue>", MODEL,
+        )
+        reader = asyncio.StreamReader()
+        reader.feed_data(setting)
+        reader.feed_eof()
+        await proxy._pipe_cloud_to_box(reader, writer, session_id="box-flow")
+    return app, setting_results
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["local", "cloud"])
+@pytest.mark.parametrize("receipt", ["ACK", "NACK"])
+async def test_setting_receipt_arms_readback_only_for_positive_ack(
+    make_config, monkeypatch, dummy_writer_factory, source, receipt,
+):
+    """A matched ACK without an event deserves readback from either write path."""
+    clock = Mock(return_value=0.0)
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(monotonic=clock, time=time.time))
+    writer = dummy_writer_factory()
+    app, setting_results = await _prepare_mode_receipt(make_config(control_mqtt_enabled=True), clock, source, writer)
+    assert app.twin_delivery.inflight() == ("tbl_box_prms", "MODE")
+    assert len(writer.written) == 1
+
+    wrong_receipt = native("<Result>ACK</Result><Reason>Setting</Reason><TblItem>BAT_MIN</TblItem>", MODEL)
+    await _send_poll(app.proxy, writer, poll=wrong_receipt)
+    assert not setting_results
+
+    reply = native(f"<Result>{receipt}</Result><Reason>Setting</Reason>", MODEL)
+    forwarded = await _send_poll(app.proxy, writer, poll=reply)
+    forwarded.write.assert_called_once_with(reply)
+    assert [(entry["result"], entry["source"], entry["key"]) for entry in setting_results] == [
+        (receipt.lower(), source, "MODE"),
+    ]
+    app.frame_processor.process.assert_not_awaited()
+
+    writer = dummy_writer_factory()
+    clock.return_value = 59.0
+    await _send_poll(app.proxy, writer, session_id="readback-flow")
+    assert not writer.written
+    clock.return_value = 65.0
+    forwarded = await _send_poll(app.proxy, writer, session_id="readback-flow", poll=native(
+        f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL,
+    ))
+    if receipt == "NACK":
+        assert not writer.written
+        return
+
+    assert len(writer.written) == 1, "Expected one SA after the matched ACK"
+    sent = writer.written[0]
+    fields = native_frame_fields(sent)
+    assert fields is not None
+    assert (fields["TblName"], fields["TblItem"], fields["NewValue"]) == ("tbl_box_prms", "SA", "1")
+    forwarded.write.assert_not_called()
+
+    sa_ack = native("<Result>ACK</Result><Reason>Setting</Reason><TblItem>SA</TblItem>", MODEL)
+    await _send_poll(app.proxy, writer, session_id="readback-flow", poll=sa_ack)
+    assert app.twin_delivery.inflight() is None
+    clock.return_value = 130.0
+    await _send_poll(app.proxy, writer, session_id="later-flow")
+    assert writer.written == [sent]
 
 
 class TestStartupSequence:
@@ -466,6 +564,7 @@ class TestStartupSequence:
         mock_config.power_limits = limits
         mock_config.control_ver_profile_state_path = str(profile_path)
         mock_config.control_counter_state_path = str(counter_path)
+        mock_config.capture_db_path = str(temp_dir / "payloads.db")
         app = ProxyApp(mock_config)
 
         collector = Mock()
@@ -502,6 +601,7 @@ class TestStartupSequence:
             on_profile_change=app._on_ver_profile_change,
             profile_state_path=profile_path,
             counter_state_path=counter_path,
+            archive_path=temp_dir / "payloads.db",
             box_writes_enabled=True,
             power_limits=limits,
         )

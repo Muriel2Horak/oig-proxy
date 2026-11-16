@@ -1,4 +1,4 @@
-"""Timer-only admission of parameter refreshes, independent of MQTT recovery."""
+"""Parameter-refresh scheduling from time and native BOX readback."""
 from __future__ import annotations
 
 import json
@@ -8,8 +8,13 @@ import os
 from pathlib import Path
 import tempfile
 import time
+from dataclasses import dataclass
 from typing import Callable
 import uuid
+
+from protocol.parser import parse_parameter_change, same_setting_value
+from protocol.ver_profile import recent_protocol_timestamp
+from sensor.confirmed_store import observation_table
 
 _LOGGER = logging.getLogger(__name__)
 _BOOT_GRACE_S = 300.0
@@ -17,6 +22,11 @@ _RETRY_COOLDOWN_S = 300.0
 _PENDING_TIMEOUT_S = 180.0
 _OPERATION_DEBOUNCE_S = 60.0
 _FUTURE_SKEW_S = 5.0
+_READBACK_WAIT_S = 60.0
+_READBACK_RESPONSE_S = 90.0
+_COMMAND_ONLY_FIELDS = frozenset({
+    ("tbl_box_prms", "SA"), ("tbl_box_prms", "RQRESET"), ("tbl_box_prm2", "APP"),
+})
 _EXCLUDED_OPERATIONS = frozenset({
     ("tbl_box_prms", "MODE"), ("tbl_box_prms", "MODE1"),
     ("tbl_box_prm2", "APP"), ("proxy_control", "PROXY_MODE"),
@@ -29,6 +39,144 @@ def _timestamp(value: object) -> bool:
         isinstance(value, (float, int)) and not isinstance(value, bool)
         and math.isfinite(value) and value >= 0
     )
+
+
+@dataclass
+class _ExpectedField:
+    value: str | int
+    event_at: float
+    changed_at: float
+    due: float | None
+    confirmed: bool = False
+    response_deadline: float | None = None
+
+
+class ParameterReadbackRefresh:
+    """Request one full readback after a native change or a matched BOX acknowledgment."""
+
+    def __init__(
+        self, *, clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._clock = clock
+        self._wall_clock = wall_clock
+        self._expected: dict[tuple[str, str], _ExpectedField] = {}
+        self._tables: dict[str, tuple[float, dict[str, str]]] = {}
+        self._box_clock_epoch: int | None = None
+
+    def _accept_box_epoch(self, epoch: int) -> bool:
+        if self._box_clock_epoch is not None and epoch < self._box_clock_epoch:
+            return False
+        if epoch != self._box_clock_epoch:
+            for (table, key), pending in self._expected.items():
+                self._report_outcome(table, key, pending, "clock_changed")
+            self._expected.clear()
+            self._tables.clear()
+            self._box_clock_epoch = epoch
+        return True
+
+    def note_ack(self, table: str, key: str, value: str | int, *,
+                 box_time: tuple[int, float | None]) -> None:
+        """Expect native readback of an already matched setting, without confirming its value."""
+        epoch, stamp = box_time
+        if self._accept_box_epoch(epoch):
+            self.poll_timeouts()
+            # Undated ACKs have arrival time at the native table's second resolution.
+            self._note_change(
+                table, key, value, stamp if stamp is not None else math.floor(self._wall_clock()),
+                acknowledged=True,
+            )
+
+    def observe(self, fields: dict[str, str], *, box_time: tuple[int, float | None] | None = None) -> None:
+        """Observe native data, optionally in the shared BOX clock epoch."""
+        if box_time is not None:
+            epoch, stamp = box_time
+            if not self._accept_box_epoch(epoch):
+                return
+        else:
+            stamp = recent_protocol_timestamp(fields.get("DT", ""), self._wall_clock())
+        self.poll_timeouts()
+        table = fields.get("TblName", "")
+        if fields.get("Reason") != "Table":
+            return
+        if table != "tbl_events" and not observation_table(table):
+            return
+        if stamp is None:
+            return
+        if table == "tbl_events":
+            change = parse_parameter_change(fields.get("Type", ""), fields.get("Content", ""))
+            if change is not None:
+                self._note_change(*change, stamp)
+            return
+        previous = self._tables.get(table)
+        if previous is not None and stamp < previous[0]:
+            return
+        self._tables[table] = stamp, fields
+        for (expected_table, key), expected in self._expected.items():
+            if (expected_table == table and stamp >= expected.changed_at
+                    and key in fields and same_setting_value(expected.value, fields[key])):
+                expected.due = None
+                expected.confirmed = True
+                self._report_outcome(expected_table, key, expected, "confirmed")
+
+    def _note_change(
+        self, table: str, key: str, value: str | int, stamp: float, *, acknowledged: bool = False,
+    ) -> None:
+        identity = table, key
+        if not observation_table(table) or identity in _COMMAND_ONLY_FIELDS:
+            return
+        previous = self._expected.get(identity)
+        seen = self._tables.get(table)
+        if previous is not None:
+            if stamp <= previous.event_at:
+                return
+            if same_setting_value(previous.value, value):
+                intervening_change = (previous.confirmed and seen is not None and seen[0] > previous.changed_at
+                                      and key in seen[1] and not same_setting_value(value, seen[1][key]))
+                new_write_after_readback = acknowledged and previous.due is None and previous.response_deadline is None
+                if not intervening_change and not new_write_after_readback:
+                    previous.event_at = stamp
+                    return
+            self._report_outcome(table, key, previous, "superseded")
+        confirmed = (seen is not None and seen[0] >= stamp
+                     and key in seen[1] and same_setting_value(value, seen[1][key]))
+        self._expected[identity] = _ExpectedField(
+            value=value, event_at=stamp, changed_at=stamp,
+            due=None if confirmed else self._clock() + _READBACK_WAIT_S, confirmed=confirmed,
+        )
+
+    def is_due(self) -> bool:
+        """Return whether at least one unmatched field has waited a minute."""
+        self.poll_timeouts()
+        now = self._clock()
+        return any(field.due is not None and field.due <= now for field in self._expected.values())
+
+    def mark_sent(self) -> None:
+        """Start the response deadline after the SA has been written to the BOX."""
+        self.poll_timeouts()
+        deadline = self._clock() + _READBACK_RESPONSE_S
+        for expected in self._expected.values():
+            if expected.due is not None:
+                expected.due = None
+                expected.response_deadline = deadline
+
+    def poll_timeouts(self) -> None:
+        """Report unresolved SA readbacks even while the BOX sends no data."""
+        now = self._clock()
+        for (table, key), expected in self._expected.items():
+            if expected.response_deadline is not None and expected.response_deadline <= now:
+                self._report_outcome(table, key, expected, "timeout")
+
+    @staticmethod
+    def _report_outcome(table: str, key: str, expected: _ExpectedField, outcome: str) -> None:
+        if expected.response_deadline is None:
+            return
+        expected.response_deadline = None
+        _LOGGER.log(
+            logging.WARNING if outcome == "timeout" else logging.INFO,
+            "Parameter readback %s for %s:%s",
+            outcome, table, key,
+            extra={"readback_outcome": outcome, "readback_table": table, "readback_key": key},
+        )
 
 
 class ParameterRefreshScheduler:  # pylint: disable=too-many-instance-attributes

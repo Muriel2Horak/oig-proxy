@@ -93,6 +93,7 @@ def build_setting_frame(
     *,
     profile: VerProfile,
     include_tto: bool = True,
+    wire_now: datetime | None = None,
 ) -> bytes:
     """Sestaví Setting frame pro odeslání do BOXu.
 
@@ -111,11 +112,11 @@ def build_setting_frame(
     _ = todo
     if not device_id:
         raise ValueError("Setting frame requires a device identity")
-    now_utc = datetime.now(timezone.utc)
-    now_epoch = int(now_utc.timestamp())
-    if id_set > now_epoch:
+    if wire_now is not None and wire_now.utcoffset() is None:
+        raise ValueError("Setting wire clock requires a timezone")
+    tsec_utc = datetime.now(timezone.utc) if wire_now is None else wire_now.astimezone(timezone.utc)
+    if id_set > int(tsec_utc.timestamp()):
         raise ValueError("ID_Set must not be in the future")
-    tsec_utc = now_utc
     setting_dt_cz = czech_local_datetime_from_epoch(id_set)
     if msg_id is None:
         msg_id = secrets.randbelow(1_000_000) + 14_000_000
