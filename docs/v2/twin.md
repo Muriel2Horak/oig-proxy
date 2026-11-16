@@ -29,16 +29,21 @@ deciding whether to issue a new command.
 ## Profile qualification
 
 The proxy learns the Setting checksum (`ver`) from fresh native Box frames.
-To qualify the Setting layout for the first time, it also observes a normal
-Cloud Setting and the Box ACK on the same connection. This works with capture
-logging disabled and with or without a firmware report.
+The outbound layout and counters come from a normal Cloud Setting and its
+matching Box ACK on the same TCP connection. This live qualification works
+with capture logging disabled and with or without a firmware report.
 
-After a restart or upgrade, the proxy can revalidate a previously qualified
-profile from fresh Box frames with device timestamps. A reported change in
-firmware, a checksum mismatch, or a conflicting Setting layout sends the
-profile back through qualification. The proxy can continue to publish
-telemetry while it gathers evidence. A fresh offline installation can read
-telemetry and must wait for the initial Cloud exchange to enable local writes.
+After a restart or upgrade, the proxy can revalidate a retained profile from
+fresh Box frames. During an upgrade with a local frame archive, it can also
+restore missing outbound evidence from the most recent verifiable Cloud
+transaction for this Box. The scan covers up to seven days and 250,000
+retained frames. It reads the archive without editing it and preserves
+higher outbound counters seen after the qualifying exchange.
+
+A reported firmware change, checksum mismatch, or conflicting Setting
+layout requires new qualification. Telemetry continues while the proxy
+gathers evidence. A fresh offline installation without a verified archive
+exchange waits for a confirmed Cloud Setting before accepting local writes.
 Check `control_ver_ready` and `control_ver_reason` in the proxy status.
 
 ## Offline and hybrid delivery
@@ -49,10 +54,24 @@ timed `END`. Returning to hybrid closes offline connections so the Box can
 reconnect through the Cloud path. A Setting already on the wire can reach
 its bounded terminal outcome.
 
-The queue is in memory. A newer request for the same setting can replace an
-unsent request. Restart, reconnection, profile changes, and Cloud return do
-not replay uncertain writes. Values confirmed since the upgrade can be
-restored on MQTT reconnect and proxy restart without emitting a command.
+In hybrid mode, each qualified `IsNewSet` can carry one queued command.
+Following a matched ACK, a distinct qualified poll can carry the next
+command on that connection. If a normal command receives no ACK within
+30 seconds of transmission, it can be replayed once on the next eligible
+poll. The replay ACK must supply enough evidence to reopen the connection
+for a different command. After a replay, the next command is confirmed by
+a matching wire identifier, a fresh reply naming a distinct parameter, or a
+matching Box change event. A poll can be forwarded when its frame is part of
+a larger TCP read, repeats the previous bytes, or arrives during another
+write.
+
+The queue is in memory. Adjacent identical requests are deduplicated, and a
+newer request for the same setting can replace an unsent request. A request
+can wait up to five minutes at the head of the queue, within a 30-minute
+batch window. After an accepted write or a native change event, the proxy
+can ask for parameters once with `SA` after 60 seconds without a matching
+native table. Confirmed values can be restored on MQTT reconnect and proxy
+restart without emitting a command.
 
 ## Upgrade checks
 

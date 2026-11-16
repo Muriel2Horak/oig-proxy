@@ -57,9 +57,9 @@ class Clock:
         self.now += seconds
         self.count += 1
 
-    def stamp(self, utc: bool = False) -> str:
+    def stamp(self, utc: bool = False, offset: int = 0) -> str:
         """Render the native protocol's local or UTC clock."""
-        return datetime.fromtimestamp(self.now, timezone.utc if utc else PRAGUE).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(self.now + offset, timezone.utc if utc else PRAGUE).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def learner(clock, **kwargs):
@@ -67,14 +67,14 @@ def learner(clock, **kwargs):
     return ver_profile.VerProfiles(clock=clock, **kwargs)
 
 
-def observation(clock, device, model, *, firmware=None, same=False):
+def observation(clock, device, model, *, firmware=None, same=False, offset=0):  # pylint: disable=too-many-arguments
     """Create a dated BOX observation with a different CRC state."""
     if not same:
         clock.step()
     table = "tbl_box_prms" if firmware else "tbl_actual"
     payload = (
         f"<TblName>{table}</TblName><ID_Set>{1234000 + clock.count}</ID_Set>"
-        f"<DT>{clock.stamp()}</DT><Reason>Table</Reason><ID_Device>{device}</ID_Device>"
+        f"<DT>{clock.stamp(offset=offset)}</DT><Reason>Table</Reason><ID_Device>{device}</ID_Device>"
         f"<Sample>{clock.count}</Sample>"
     )
     if firmware:
@@ -93,7 +93,7 @@ def box_proof(profiles, clock, device, model, firmware, *, samples=6, prefix="bo
         profiles.close_session(session)
 
 
-def cloud_setting(clock, device, model, *, include_tto, server_id):
+def cloud_setting(clock, device, model, *, include_tto, server_id, tsec_offset=0):  # pylint: disable=too-many-arguments
     """Build the native Cloud wire independently of the product serializer."""
     fields = (
         f"<ID>{14800000+clock.count}</ID><ID_Device>{device}</ID_Device><ID_Set>{int(clock.now)}</ID_Set>"
@@ -104,7 +104,7 @@ def cloud_setting(clock, device, model, *, include_tto, server_id):
         fields += "<TTO_P>0,000</TTO_P><TTO_E>0,000</TTO_E>"
     fields += (
         f"<ID_Server>{server_id}</ID_Server><mytimediff>0</mytimediff>"
-        f"<Reason>Setting</Reason><TSec>{clock.stamp(True)}</TSec>"
+        f"<Reason>Setting</Reason><TSec>{clock.stamp(True, tsec_offset)}</TSec>"
     )
     return native(fields, model)
 
@@ -158,6 +158,175 @@ def test_fresh_box_and_acknowledged_natural_cloud_evidence_qualify(device, firmw
     assert status.profile == ver_profile.VerProfile(*model)
     assert status.include_tto is with_tto
     assert profiles.status(BOX_B if device == BOX_A else BOX_A).profile is None
+
+
+def shifted_actuals(profiles, clock, device, model, offset, *, samples=9):  # pylint: disable=too-many-arguments
+    """Feed dated actual frames with increasing native sequence and receipt times."""
+    for _ in range(samples):
+        clock.step(10)
+        session = f"shifted-{device}-{clock.count}"
+        profiles.observe_box(observation(clock, device, model, same=True, offset=offset), session)
+        profiles.close_session(session)
+
+
+def test_consistent_ahead_box_actual_tables_qualify_without_affecting_other_boxes():
+    """A repeatable offset permits normal BOX tables and a same-flow native Rdt."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock)
+    shifted_actuals(profiles, clock, BOX_A, model, 256, samples=2)
+    assert profiles.status(BOX_A).profile is None
+    shifted_actuals(profiles, clock, BOX_A, model, 256, samples=7)
+    session = "strict-utc-cloud"
+    cloud_transaction(profiles, clock, BOX_A, model, session=session, ack=False, close=False)
+    ack = f"<Result>ACK</Result><Rdt>{clock.stamp(offset=256)}</Rdt><Reason>Setting</Reason>"
+    profiles.observe_box(native(ack, model), session)
+    assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
+    assert profiles.box_timestamp(BOX_A, clock.stamp(offset=256)) == clock.now
+    assert profiles.box_timestamp(BOX_B, clock.stamp(offset=256)) is None
+    assert profiles.box_clock_offset(BOX_A) == 256
+    assert profiles.box_clock_offset(BOX_B) == 0
+    assert profiles.box_clock_epoch(BOX_A) == 1
+
+
+def test_clock_learning_ignores_repeated_corrupt_or_out_of_bound_actuals():
+    """A replay, bad outer CRC, and unsupported offsets do not establish a clock."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock)
+    repeat = observation(clock, BOX_A, model, offset=256)
+    for index in range(6):
+        clock.step(10)
+        profiles.observe_box(repeat, f"replay-{index}")
+        corrupt = observation(clock, BOX_A, model, offset=256).replace(b"<Sample>", b"<SamplX>")
+        profiles.observe_box(corrupt, f"corrupt-{index}")
+    shifted_actuals(profiles, clock, BOX_A, model, 310)
+    assert profiles.box_timestamp(BOX_A, clock.stamp(offset=256)) is None
+    assert profiles.box_clock_epoch(BOX_A) == 0
+    shifted_actuals(profiles, clock, BOX_A, model, 256)
+    assert profiles.box_timestamp(BOX_A, clock.stamp(offset=256)) == clock.now
+
+
+def test_clock_revision_requalifies_native_proof_and_rejects_older_tables(tmp_path):
+    """A common-ver clock step invalidates prior timing without discarding the layout."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock, state_path=tmp_path / "profile.json")
+    shifted_actuals(profiles, clock, BOX_A, model, 256)
+    session = "establish"
+    cloud_transaction(profiles, clock, BOX_A, model, session=session, ack=False, close=False)
+    native_ack = f"<Result>ACK</Result><Rdt>{clock.stamp(offset=256)}</Rdt><Reason>Setting</Reason>"
+    profiles.observe_box(native(native_ack, model), session)
+    assert profiles.status(BOX_A).profile is not None
+    retained = observation(clock, BOX_A, model, offset=256)
+    first_epoch = profiles.box_clock_epoch(BOX_A)
+
+    shifted_actuals(profiles, clock, BOX_A, model, 280, samples=3)
+    assert profiles.box_clock_epoch(BOX_A) == first_epoch + 1
+    assert profiles.status(BOX_A).profile is None
+    assert profiles.observe_box(retained, "older-observation") is None
+    shifted_actuals(profiles, clock, BOX_A, model, 280, samples=6)
+    assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
+    assert profiles.box_clock_offset(BOX_A) == 280
+
+
+def test_future_cloud_tsec_needs_matching_box_clock_and_same_flow_ack():
+    """An ahead cloud stamp can only enroll via coherent immutable wire evidence."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock)
+    shifted_actuals(profiles, clock, BOX_A, model, 256)
+    poll = native(f"<Result>IsNewSet</Result><ID_Device>{BOX_A}</ID_Device><Lat>47</Lat>", model)
+    profiles.observe_box(poll, "bad-cloud")
+    profiles.observe_cloud(cloud_setting(clock, BOX_A, model, include_tto=True, server_id=9, tsec_offset=350),
+                           "bad-cloud")
+    ack = f"<Result>ACK</Result><Rdt>{clock.stamp(offset=257)}</Rdt><Reason>Setting</Reason>"
+    profiles.observe_box(native(ack, model), "bad-cloud")
+    assert profiles.status(BOX_A).profile is None
+
+    clock.step(10)
+    profiles.observe_box(poll, "coherent-cloud")
+    profiles.observe_cloud(cloud_setting(clock, BOX_A, model, include_tto=True, server_id=9, tsec_offset=266),
+                           "coherent-cloud")
+    clock.step(12)
+    reply = native(
+        f"<Result>ACK</Result><Rdt>{clock.stamp(offset=256)}</Rdt><Reason>Setting</Reason>", model,
+    )
+    profiles.observe_box(reply, "bad-cloud")
+    assert profiles.status(BOX_A).profile is None
+    profiles.observe_box(reply, "coherent-cloud")
+    assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
+
+
+def test_same_native_frame_stays_a_replay_after_clock_shift_resets():
+    """An unchanged raw frame cannot obtain new evidence from another normalization."""
+    clock = Clock()
+    model = (39, 0xBB59)
+    profiles = learner(clock)
+    shifted_actuals(profiles, clock, BOX_A, model, 256)
+    session = "establish"
+    cloud_transaction(profiles, clock, BOX_A, model, session=session, ack=False, close=False)
+    receipt = f"<Result>ACK</Result><Rdt>{clock.stamp(offset=256)}</Rdt><Reason>Setting</Reason>"
+    profiles.observe_box(native(receipt, model), session)
+    old = observation(clock, BOX_A, model, offset=256)
+    old_source = clock.now + 256
+    assert profiles.observe_box(old, "before-clock-reset") is not None
+
+    shifted_actuals(profiles, clock, BOX_A, model, 0)
+    assert profiles.box_clock_offset(BOX_A) == 0
+    assert profiles.status(BOX_A).profile == ver_profile.VerProfile(*model)
+    clock.now = old_source
+    assert profiles.observe_box(old, "clock-has-caught-up") is None
+
+
+def test_coherent_reduced_clock_shift_fences_old_readbacks():
+    """A step back with a new counter epoch revises the clock and fences old events."""
+    clock = Clock()
+    profiles = learner(clock)
+    model = (39, 0xBB59)
+    shifted_actuals(profiles, clock, BOX_A, model, 256)
+    initial = profiles.box_clock_epoch(BOX_A)
+    shifted_actuals(profiles, clock, BOX_A, model, 200, samples=3)
+    assert profiles.box_clock_offset(BOX_A) == 200
+    assert profiles.box_clock_epoch(BOX_A) == initial + 1
+    old_dt = clock.stamp(offset=199)
+    assert profiles.box_timestamp(BOX_A, old_dt) == clock.now - 1
+    assert profiles.box_readback_timestamp(BOX_A, old_dt) is None
+    # Source timestamps overlap between the old and new epochs during the step back.
+    assert profiles.box_readback_timestamp(BOX_A, clock.stamp(offset=200)) is None
+    clock.step(30)
+    assert profiles.box_readback_timestamp(BOX_A, clock.stamp(offset=200)) == clock.now
+
+
+def test_future_cloud_layout_does_not_revoke_before_same_flow_corroboration():
+    """Reject uncorroborated future layout contradictions before any revocation."""
+    clock = Clock()
+    profiles = learner(clock)
+    model = (39, 0xBB59)
+    shifted_actuals(profiles, clock, BOX_A, model, 256)
+    initial = "initial"
+    cloud_transaction(profiles, clock, BOX_A, model, session=initial, ack=False, close=False)
+    ack = f"<Result>ACK</Result><Rdt>{clock.stamp(offset=256)}</Rdt><Reason>Setting</Reason>"
+    profiles.observe_box(native(ack, model), initial)
+    ready = profiles.status(BOX_A)
+    assert ready.profile is not None
+
+    poll = native(f"<Result>IsNewSet</Result><ID_Device>{BOX_A}</ID_Device><Lat>47</Lat>", model)
+    clock.step()
+    profiles.observe_box(poll, "out-of-range")
+    bad = cloud_setting(clock, BOX_A, model, include_tto=False, server_id=9, tsec_offset=350)
+    profiles.observe_cloud(bad, "out-of-range")
+    assert profiles.status(BOX_A) == ready
+
+    clock.step()
+    profiles.observe_box(poll, "coherent")
+    contrary = cloud_setting(clock, BOX_A, model, include_tto=False, server_id=9, tsec_offset=266)
+    profiles.observe_cloud(contrary, "coherent")
+    assert profiles.status(BOX_A) == ready
+    clock.step(12)
+    ack = f"<Result>ACK</Result><Rdt>{clock.stamp(offset=256)}</Rdt><Reason>Setting</Reason>"
+    profiles.observe_box(native(ack, model), "coherent")
+    assert profiles.status(BOX_A).reason == "ambiguous_setting_layout"
 
 
 def test_raw_repeats_bad_crc_unacknowledged_and_local_frames_cannot_enroll():

@@ -1,8 +1,9 @@
-# pylint: disable=missing-module-docstring,missing-function-docstring,too-few-public-methods
+# pylint: disable=missing-module-docstring,missing-function-docstring,too-few-public-methods,too-many-lines
 from datetime import datetime, timedelta
 import os
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,8 +15,10 @@ from unittest.mock import MagicMock  # pylint: disable=wrong-import-position
 
 from protocol.ver_profile import ProfileStatus, VerProfile, native_frame_fields  # pylint: disable=wrong-import-position
 from protocol.frame import build_frame  # pylint: disable=wrong-import-position
-from protocol.frames import build_setting_frame  # pylint: disable=wrong-import-position
+from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch  # pylint: disable=wrong-import-position
+from settings_constraints import PowerControlLimits  # pylint: disable=wrong-import-position
 from telemetry.settings_audit import SettingResult, SettingStep, record_to_dict  # pylint: disable=wrong-import-position
+from twin import delivery as delivery_module  # pylint: disable=wrong-import-position
 from twin.delivery import TwinDelivery  # pylint: disable=wrong-import-position
 from twin.state import TwinQueue  # pylint: disable=wrong-import-position
 
@@ -48,6 +51,11 @@ def _bind(delivery, setting, session_id=None, **options):
     return frame
 
 
+def _setting_ack_at(stamp=None):
+    date = "" if stamp is None else f"<Rdt>{stamp}</Rdt>"
+    return build_frame(f"<Result>ACK</Result><Reason>Setting</Reason>{date}").encode()
+
+
 def _cloud_mode_frame(value, msg_id, id_set):
     return build_setting_frame(
         device_id="dev_1", table="tbl_box_prms", key="MODE", value=value,
@@ -74,10 +82,12 @@ def _cloud_mode_frame(value, msg_id, id_set):
                      id="phase-s-wire"),
         pytest.param(("tbl_invertor_prm1", "P_CAL_T", 90, {"phase_calibration_enabled": True}, True),
                      id="phase-t-wire"),
-        pytest.param(("tbl_invertor_prm1", "P_CAL_R", 85, {"phase_calibration_enabled": True}, False),
-                     id="phase-r-unlisted"),
-        pytest.param(("tbl_invertor_prm1", "P_CAL_S", 75, {"phase_calibration_enabled": True}, False),
-                     id="phase-s-unqualified"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_R", 99, {"phase_calibration_enabled": True}, True),
+                     id="phase-r-above-ninety"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_S", 75, {"phase_calibration_enabled": True}, True),
+                     id="phase-s-restore"),
+        pytest.param(("tbl_invertor_prm1", "P_CAL_T", 75, {"phase_calibration_enabled": True}, True),
+                     id="phase-t-restore"),
     ],
 )
 async def test_deliver_pending_returns_twin_settings(case) -> None:
@@ -85,8 +95,6 @@ async def test_deliver_pending_returns_twin_settings(case) -> None:
     queue = TwinQueue()
     options = {}
     if limit_options:
-        from settings_constraints import PowerControlLimits
-
         options["power_limits"] = PowerControlLimits(**limit_options)
     delivery = _qualified_delivery(queue, **options)
     queue.enqueue(table, key, value, device_id="12345")
@@ -264,7 +272,7 @@ async def test_timeout_records_timeout_step() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_session_records_session_cleared() -> None:
+async def test_selected_unsent_intent_can_be_delivered_after_reconnect() -> None:
     queue = TwinQueue()
     collector = _make_collector()
     delivery = _qualified_delivery(queue, "dev_1", telemetry_collector=collector)
@@ -279,9 +287,12 @@ async def test_clear_session_records_session_cleared() -> None:
     assert len(collector.settings_audit) == 2
     session_record = collector.settings_audit[1]
     assert session_record["step"] == SettingStep.SESSION_CLEARED.value
-    assert session_record["result"] == SettingResult.INCOMPLETE.value
+    assert session_record["result"] == SettingResult.PENDING.value
     assert session_record["audit_id"] == pending[0].audit_id
     assert session_record["raw_text"] == "<Frame><TblItem>BAT_MIN</TblItem><NewValue>22</NewValue></Frame>"
+    recovered, = await delivery.deliver_pending("dev_1", session_id="sess_2")
+    assert recovered.audit_id == pending[0].audit_id
+    assert recovered.enqueued_at == pending[0].enqueued_at
 
 
 @pytest.mark.asyncio
@@ -627,6 +638,406 @@ async def test_wire_reply_checks_explicit_echoes_and_reuses_no_session():
     assert await delivery.deliver_pending("12345", "sender") == []
     assert delivery.local_protocol_reply(build_frame(ack).encode(), "sender") is None
     assert len(await delivery.deliver_pending("12345", "new-sender")) == 1
+
+
+@pytest.mark.asyncio
+async def test_dated_wire_ack_opens_later_online_poll_for_next_queued_parameter(monkeypatch):
+    queue = TwinQueue()
+    outcomes = []
+    delivery = _qualified_delivery(
+        queue, on_result=outcomes.append, power_limits=PowerControlLimits(ac_charge_max_a=125),
+    )
+    wire_epoch = int(time.time()) - 30
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id="12345")
+    queue.enqueue("tbl_invertor_prm1", "AAC_MAX_CHRG", 75, device_id="12345")
+
+    first, = await delivery.deliver_pending("12345", "sender", online_poll=b"poll-1")
+    first_fields = native_frame_fields(_bind(delivery, first, "sender"))
+    assert first_fields is not None and first.key == "MODE"
+    stamp = datetime.strptime(first_fields["DT"], "%d.%m.%Y %H:%M:%S")
+    ack = "<Result>ACK</Result><Reason>Setting</Reason>"
+    first_reply = build_frame(ack + f"<Rdt>{stamp.isoformat()}</Rdt>").encode()
+
+    assert await delivery.deliver_pending("12345", "sender", online_poll=b"poll-2") == []
+    assert delivery.local_protocol_reply(first_reply, "sender") is not None
+    assert delivery.acknowledge("tbl_box_prms", "MODE", "sender", receipt_dt=stamp.isoformat())
+    assert [request.key for request in queue.get_pending()] == ["AAC_MAX_CHRG"]
+    assert await delivery.deliver_pending("12345", "sender", online_poll=b"poll-2") == []
+
+    wire_epoch += 10
+    assert await delivery.deliver_pending("12345", "sender", online_poll=b"poll-1") == []
+    second, = await delivery.deliver_pending("12345", "sender", online_poll=b"poll-2")
+    second_fields = native_frame_fields(_bind(delivery, second, "sender"))
+    assert second_fields is not None and second.key == "AAC_MAX_CHRG"
+    assert second_fields["ID_Set"] != first_fields["ID_Set"]
+    assert delivery.local_protocol_reply(first_reply, "sender") is None
+    assert delivery.local_protocol_reply(build_frame(ack).encode(), "sender") is None
+    assert delivery.local_protocol_reply(
+        build_frame(ack + f'<ID>{first_fields["ID"]}</ID>').encode(), "sender",
+    ) is None
+    second_stamp = stamp + timedelta(seconds=10)
+    second_reply = build_frame(ack + f"<Rdt>{second_stamp.isoformat()}</Rdt>").encode()
+    assert delivery.local_protocol_reply(second_reply, "another-sender") is None
+    assert delivery.local_protocol_reply(second_reply, "sender") is not None
+    assert delivery.acknowledge(
+        "tbl_invertor_prm1", "AAC_MAX_CHRG", "sender", receipt_dt=second_stamp.isoformat(),
+    )
+    assert [result["key"] for result in outcomes] == ["MODE", "AAC_MAX_CHRG"]
+    assert queue.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_aac_retries_one_bound_nack_with_new_wire_ids():
+    queue = TwinQueue()
+    outcomes = []
+    collector = _make_collector()
+    delivery = _qualified_delivery(
+        queue, on_result=outcomes.append, telemetry_collector=collector,
+        power_limits=PowerControlLimits(ac_charge_max_a=125),
+    )
+    queue.enqueue("tbl_invertor_prm1", "AAC_MAX_CHRG", 75, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "first", online_poll=b"poll-1")
+    first_wire = native_frame_fields(_bind(delivery, first, "first"))
+    assert first_wire is not None
+    nack = build_frame("<Result>NACK</Result><Reason>Setting</Reason>").encode()
+    assert delivery.local_protocol_reply(nack, "first") == {"result": "NACK", "reason": "Setting"}
+    assert delivery.acknowledge("tbl_invertor_prm1", "AAC_MAX_CHRG", "first", result="nack")
+    assert not outcomes
+    assert await delivery.deliver_pending("12345", "first", online_poll=b"poll-2") == []
+
+    second, = await delivery.deliver_pending("12345", "second", online_poll=b"poll-3")
+    assert second.audit_id == first.audit_id and second.enqueued_at == first.enqueued_at
+    second_wire = native_frame_fields(_bind(delivery, second, "second"))
+    assert second_wire is not None
+    assert second_wire["ID"] != first_wire["ID"] and second_wire["ID_Set"] != first_wire["ID_Set"]
+    assert delivery.acknowledge("tbl_invertor_prm1", "AAC_MAX_CHRG", "second", result="nack")
+    assert [outcome["result"] for outcome in outcomes] == ["nack"]
+    assert [item["result"] for item in collector.settings_audit if item["step"] == SettingStep.NACK.value] == [
+        SettingResult.PENDING.value, SettingResult.FAILED.value,
+    ]
+    assert queue.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_aac_nack_does_not_restore_a_value_superseded_by_cloud():
+    queue = TwinQueue()
+    delivery = _qualified_delivery(queue, power_limits=PowerControlLimits(ac_charge_max_a=125))
+    table, key, device_id = "tbl_invertor_prm1", "AAC_MAX_CHRG", "12345"
+    queue.enqueue(table, key, 75, device_id=device_id)
+    first, = await delivery.deliver_pending(device_id, "local", online_poll=b"poll")
+    _bind(delivery, first, "local")
+    cloud = build_setting_frame(device_id=device_id, table=table, key=key, value=100,
+                                id_set=int(time.time()), msg_id=13_800_010, profile=VerProfile(39, 0x1940))
+    delivery.begin_cloud_setting(device_id, table, key, 100, cloud.decode(), session_id="cloud")
+    assert delivery.acknowledge(table, key, "local", result="nack")
+    assert queue.size() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parameter, terminal, echo", [
+    ("MODE", "ack", None),
+    ("MODE", "ack", "ID"),
+    ("MODE", "nack", "ID"),
+    ("MODE", "nack", "ID_Set"),
+    ("AAC_MAX_CHRG", "timeout", None),
+])
+async def test_local_timeout_replays_once_on_same_session(monkeypatch, parameter, terminal, echo):  # pylint: disable=too-many-locals
+    queue = TwinQueue()
+    outcomes = []
+    delivery = _qualified_delivery(
+        queue, on_result=outcomes.append, power_limits=PowerControlLimits(ac_charge_max_a=125),
+    )
+    wire_epoch = int(time.time()) - 40
+    timer = time.monotonic()
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(time=time.time, monotonic=lambda: timer))
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    table, value = ("tbl_box_prms", 3) if parameter == "MODE" else ("tbl_invertor_prm1", 75)
+    queue.enqueue(table, parameter, value, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-1")
+    first_wire = native_frame_fields(_bind(delivery, first, "open"))
+    assert first_wire is not None
+    delivery.record_injected_box(first, "12345", "open")
+
+    timer += 29
+    assert await delivery.deliver_pending("12345", "open", online_poll=b"poll-2") == []
+    timer += 1
+    delivery.poll_timeouts()
+    assert not outcomes and delivery.has_pending("12345")
+    nack_body = "<Result>NACK</Result><Reason>Setting</Reason>"
+    original_nack = build_frame(nack_body + f'<ID>{first_wire["ID"]}</ID>').encode()
+    assert delivery.local_protocol_reply(original_nack, "open") is None
+    assert delivery.has_pending("12345")
+    assert await delivery.deliver_pending("12345", "open", online_poll=b"poll-1") == []
+
+    wire_epoch += 30
+    retry, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-3")
+    assert retry.audit_id == first.audit_id
+    retry_wire = native_frame_fields(_bind(delivery, retry, "open"))
+    assert retry_wire is not None and retry_wire["ID_Set"] != first_wire["ID_Set"]
+    delivery.record_injected_box(retry, "12345", "open")
+    assert delivery.local_protocol_reply(_setting_ack_at(czech_local_datetime_from_epoch(wire_epoch - 30)), "open") is None
+    assert delivery.local_protocol_reply(_setting_ack_at(), "open") is None
+    stamp = czech_local_datetime_from_epoch(wire_epoch + 1).isoformat()
+    delayed_nack = build_frame(nack_body + f"<Rdt>{stamp}</Rdt>").encode()
+    assert delivery.local_protocol_reply(delayed_nack, "open") is None
+    assert delivery.local_protocol_reply(original_nack, "open") is None
+    assert not outcomes and delivery.local_inflight_setting(session_id="open") is not None
+    if terminal == "timeout":
+        timer += 30
+        delivery.poll_timeouts()
+    else:
+        echoed_id = f"<{echo}>{retry_wire[echo]}</{echo}>" if echo else ""
+        rdt = "" if terminal == "nack" else f"<Rdt>{stamp}</Rdt>"
+        body = f"<Result>{terminal.upper()}</Result><Reason>Setting</Reason>{rdt}{echoed_id}"
+        reply = delivery.local_protocol_reply(build_frame(body).encode(), "open")
+        assert reply is not None and reply["result"] == terminal.upper()
+        assert delivery.acknowledge(table, parameter, "open", result=terminal, receipt_dt=reply.get("rdt"))
+    assert [event["result"] for event in outcomes] == [terminal]
+    assert await delivery.deliver_pending("12345", "open", online_poll=b"poll-4") == []
+    assert await delivery.deliver_pending("12345", "new", online_poll=b"poll-5") == []
+
+
+def _assert_post_replay_receipt_fence(delivery, replay_ack, prior_wires, following, wire_epoch):
+    current_frame = _bind(delivery, following, "open")
+    delivery.record_injected_box(following, "12345", "open")
+    ambiguous_dates = (
+        czech_local_datetime_from_epoch(wire_epoch - 1),
+        czech_local_datetime_from_epoch(wire_epoch),
+        czech_local_datetime_from_epoch(wire_epoch + 2) + timedelta(milliseconds=900),
+    )
+    for stale in (replay_ack, _setting_ack_at(), *(_setting_ack_at(date) for date in ambiguous_dates)):
+        assert delivery.local_protocol_reply(stale, "open") is None
+    stamp = czech_local_datetime_from_epoch(wire_epoch + 3)
+    assert delivery.local_protocol_reply(_setting_ack_at(stamp), "open") is None
+    delayed_nack = build_frame(f"<Result>NACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt>").encode()
+    assert delivery.local_protocol_reply(delayed_nack, "open") is None
+    for prior in prior_wires:
+        stale_echo = build_frame(
+            f'<Result>ACK</Result><Reason>Setting</Reason><Rdt>{stamp}</Rdt><ID>{prior["ID"]}</ID>',
+        ).encode()
+        assert delivery.local_protocol_reply(stale_echo, "open") is None
+    _assert_bound_post_replay_receipts(delivery, current_frame, ambiguous_dates[-1], stamp)
+    return current_frame
+
+
+def _assert_bound_post_replay_receipts(delivery, current_frame, same_second, fresh_stamp):
+    current_wire = native_frame_fields(current_frame)
+    assert current_wire is not None
+    exact_echo = build_frame(
+        f'<Result>ACK</Result><Reason>Setting</Reason><ID_Set>{current_wire["ID_Set"]}</ID_Set>'
+        f"<Rdt>{same_second}</Rdt>",
+    ).encode()
+    echoed_reply = delivery.local_protocol_reply(exact_echo, "open")
+    assert echoed_reply is not None and echoed_reply["wire_echo"] == "true"
+    named_ack = build_frame(
+        f"<Result>ACK</Result><TblName>tbl_batt_prms</TblName><ToDo>BAT_MIN</ToDo><Rdt>{fresh_stamp}</Rdt>",
+    ).encode()
+    named_reply = delivery.local_protocol_reply(named_ack, "open")
+    assert named_reply is not None and named_reply["todo"] == "BAT_MIN"
+
+
+async def _bind_second_replay(delivery, following, prior_wire_epoch):
+    delivery.poll_timeouts()
+    prewire_ack = _setting_ack_at(czech_local_datetime_from_epoch(prior_wire_epoch - 1))
+    assert delivery.local_protocol_reply(prewire_ack, "open") is None
+    candidates = await delivery.deliver_pending("12345", "open", online_poll=b"poll-4")
+    assert [candidate.audit_id for candidate in candidates] == [following.audit_id]
+    frame = _bind(delivery, candidates[0], "open")
+    delivery.record_injected_box(candidates[0], "12345", "open")
+    return frame
+
+
+def _finish_unrelated_setting(delivery, frame, fresh_stamp, *, use_echo):
+    assert delivery.local_protocol_reply(_setting_ack_at(fresh_stamp), "open") is None
+    outbound = native_frame_fields(frame)
+    assert outbound is not None
+    receipt = (
+        f'<Reason>Setting</Reason><ID_Set>{outbound["ID_Set"]}</ID_Set>' if use_echo else
+        f'<TblName>tbl_batt_prms</TblName><ToDo>BAT_MIN</ToDo><Rdt>{fresh_stamp}</Rdt>'
+    )
+    reply_bytes = build_frame(f"<Result>ACK</Result>{receipt}").encode()
+    assert delivery.local_protocol_reply(reply_bytes, "other") is None
+    reply = delivery.local_protocol_reply(reply_bytes, "open")
+    assert reply is not None and reply["result"] == "ACK"
+    assert delivery.acknowledge(
+        "tbl_batt_prms", "BAT_MIN", "open", receipt_dt=reply.get("rdt"),
+        receipt_echoed=reply.get("wire_echo") == "true",
+    )
+
+
+async def _assert_old_named_target_still_fenced(delivery, queue, wire_epoch):
+    queue.enqueue("tbl_box_prms", "MODE", 1, device_id="12345")
+    new_mode, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-5")
+    _bind(delivery, new_mode, "open")
+    delivery.record_injected_box(new_mode, "12345", "open")
+    late_stamp = czech_local_datetime_from_epoch(wire_epoch + 3)
+    delayed_named = build_frame(
+        f"<Result>ACK</Result><TblName>tbl_box_prms</TblName><ToDo>MODE</ToDo><Rdt>{late_stamp}</Rdt>",
+    ).encode()
+    assert delivery.local_protocol_reply(delayed_named, "open") is None
+    assert delivery.inflight() == ("tbl_box_prms", "MODE")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "echo, replay_following, box_offset", [(None, False, 0), ("ID", False, 120.5), ("ID_Set", True, 0)],
+)
+async def test_acknowledged_replay_reopens_flow_for_unrelated_setting(  # pylint: disable=too-many-locals
+    monkeypatch, echo, replay_following, box_offset,
+):
+    queue = TwinQueue()
+    outcomes = []
+    delivery = _qualified_delivery(queue, on_result=outcomes.append)
+    wire_epoch = int(time.time()) - 90
+    timer = time.monotonic()
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(
+        time=lambda: wire_epoch - box_offset + 2.25, monotonic=lambda: timer,
+    ))
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: wire_epoch)
+    monkeypatch.setattr(delivery._profiles, "box_clock_offset", lambda _device: box_offset)  # pylint: disable=protected-access
+
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-1")
+    first_wire = native_frame_fields(_bind(delivery, first, "open"))
+    assert first_wire is not None
+    delivery.record_injected_box(first, "12345", "open")
+    timer += 30
+    wire_epoch += 30
+
+    replay, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-2")
+    replay_wire = native_frame_fields(_bind(delivery, replay, "open"))
+    assert replay_wire is not None and replay.audit_id == first.audit_id
+    delivery.record_injected_box(replay, "12345", "open")
+    replay_stamp = czech_local_datetime_from_epoch(wire_epoch + 3)
+    ack = "<Result>ACK</Result><Reason>Setting</Reason>"
+    if echo is None:
+        replay_ack = _setting_ack_at(replay_stamp)
+    else:
+        replay_ack = build_frame(ack + f"<{echo}>{replay_wire[echo]}</{echo}>").encode()
+    reply = delivery.local_protocol_reply(replay_ack, "open")
+    assert reply is not None
+    echoed = reply.get("wire_echo") == "true"
+    assert echoed is (echo is not None)
+    assert delivery.acknowledge(
+        "tbl_box_prms", "MODE", "open", receipt_dt=reply.get("rdt"), receipt_echoed=echoed,
+    )
+
+    queue.enqueue("tbl_batt_prms", "BAT_MIN", 25, device_id="12345")
+    wire_epoch += 10
+    assert await delivery.deliver_pending("12345", "open", online_poll=b"poll-2") == []
+    candidates = await delivery.deliver_pending("12345", "open", online_poll=b"poll-3")
+    assert len(candidates) == 1, "A confirmed replay must release a later distinct poll for another setting"
+    following = candidates[0]
+    assert following.key == "BAT_MIN" and following.audit_id != replay.audit_id
+    frame = _assert_post_replay_receipt_fence(delivery, replay_ack, (first_wire, replay_wire), following, wire_epoch)
+    if replay_following:
+        timer += 30
+        wire_epoch += 30
+        frame = await _bind_second_replay(delivery, following, wire_epoch - 30)
+    fresh_stamp = czech_local_datetime_from_epoch(wire_epoch + 3)
+    _finish_unrelated_setting(delivery, frame, fresh_stamp, use_echo=echo is not None)
+    assert [(result["key"], result["result"]) for result in outcomes] == [("MODE", "ack"), ("BAT_MIN", "ack")]
+    assert queue.size() == 0
+    if replay_following:
+        wire_epoch += 10
+        await _assert_old_named_target_still_fenced(delivery, queue, wire_epoch)
+
+
+@pytest.mark.asyncio
+async def test_correlated_confirmation_before_replay_cancels_it(monkeypatch):
+    queue = TwinQueue()
+    outcomes = []
+    delivery = _qualified_delivery(queue, on_result=outcomes.append)
+    timer = time.monotonic()
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(time=time.time, monotonic=lambda: timer))
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-1")
+    wire = native_frame_fields(_bind(delivery, first, "open"))
+    assert wire is not None
+    delivery.record_injected_box(first, "12345", "open")
+    timer += 30
+    delivery.poll_timeouts()
+    assert delivery.has_pending("12345")
+    stamp = datetime.strptime(wire["DT"], "%d.%m.%Y %H:%M:%S").isoformat()
+    assert delivery.local_protocol_reply(_setting_ack_at(stamp), "open") is not None
+    assert delivery.acknowledge("tbl_box_prms", "MODE", "open", receipt_dt=stamp)
+    assert not delivery.has_pending("12345")
+    assert [event["result"] for event in outcomes] == ["ack"]
+
+
+@pytest.mark.asyncio
+async def test_timeout_after_disconnect_keeps_retry_without_restoring_closed_session(monkeypatch):
+    queue = TwinQueue()
+    delivery = _qualified_delivery(queue)
+    timer = time.monotonic()
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(time=time.time, monotonic=lambda: timer))
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "closed", online_poll=b"poll-1")
+    _bind(delivery, first, "closed")
+    delivery.record_injected_box(first, "12345", "closed")
+    delivery.clear_session("closed")
+    timer += 30
+    delivery.poll_timeouts()
+    assert "closed" not in delivery._online_receipts  # pylint: disable=protected-access
+    retry, = await delivery.deliver_pending("12345", "new", online_poll=b"poll-2")
+    assert retry.audit_id == first.audit_id
+
+
+@pytest.mark.asyncio
+async def test_timed_out_socket_cannot_send_a_replacement_intent(monkeypatch):
+    queue = TwinQueue()
+    delivery = _qualified_delivery(queue)
+    timer = time.monotonic()
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(time=time.time, monotonic=lambda: timer))
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-1")
+    _bind(delivery, first, "open")
+    delivery.record_injected_box(first, "12345", "open")
+    timer += 30
+    delivery.poll_timeouts()
+    latest = queue.enqueue("tbl_box_prms", "MODE", 0, device_id="12345")
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: int(time.time()) + 30)
+    assert await delivery.deliver_pending("12345", "open", online_poll=b"poll-2") == []
+    chosen, = await delivery.deliver_pending("12345", "new", online_poll=b"poll-3")
+    assert chosen.audit_id == latest.audit_id
+
+
+@pytest.mark.asyncio
+async def test_cloud_reply_on_original_socket_cannot_confirm_a_queued_local_retry(monkeypatch):
+    queue = TwinQueue()
+    delivery = _qualified_delivery(queue)
+    timer = time.monotonic()
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(time=time.time, monotonic=lambda: timer))
+    queue.enqueue("tbl_box_prms", "MODE", 3, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "open", online_poll=b"poll-1")
+    wire = native_frame_fields(_bind(delivery, first, "open"))
+    assert wire is not None
+    delivery.record_injected_box(first, "12345", "open")
+    timer += 30
+    delivery.poll_timeouts()
+    cloud = build_setting_frame(device_id="12345", table="tbl_batt_prms", key="BAT_MIN", value=25,
+                                id_set=int(time.time()), msg_id=13_800_010, profile=VerProfile(39, 0x1940))
+    delivery.begin_cloud_setting("12345", "tbl_batt_prms", "BAT_MIN", 25, cloud.decode(), session_id="open")
+    stamp = datetime.strptime(wire["DT"], "%d.%m.%Y %H:%M:%S") + timedelta(seconds=31)
+    assert delivery.local_protocol_reply(_setting_ack_at(stamp), "open") is None
+    assert delivery.has_pending("12345")
+
+
+@pytest.mark.asyncio
+async def test_closed_aac_socket_with_a_sent_frame_does_not_replay():
+    queue = TwinQueue()
+    outcomes = []
+    delivery = _qualified_delivery(
+        queue, on_result=outcomes.append, inflight_timeout_s=0.0,
+        power_limits=PowerControlLimits(ac_charge_max_a=125),
+    )
+    queue.enqueue("tbl_invertor_prm1", "AAC_MAX_CHRG", 75, device_id="12345")
+    first, = await delivery.deliver_pending("12345", "first", online_poll=b"poll-1")
+    _bind(delivery, first, "first")
+    delivery.clear_session("first")
+    assert await delivery.deliver_pending("12345", "second", online_poll=b"poll-2") == []
+    assert [outcome["result"] for outcome in outcomes] == ["timeout"]
 
 
 @pytest.mark.asyncio

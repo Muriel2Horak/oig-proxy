@@ -10,11 +10,13 @@ from datetime import datetime, timezone
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .client import TelemetryClient
 from .settings_audit import SettingStep, SettingsAuditRecord, record_to_dict
 
 logger = logging.getLogger(__name__)
+_BOX_TIME_ZONE = ZoneInfo("Europe/Prague")
 
 ISNEW_STATE_TOPIC_ALIASES = {
     "isnewfw": "IsNewFW",
@@ -133,6 +135,7 @@ class TelemetryCollector:
 
     @staticmethod
     def _parse_frame_dt(value: Any) -> str | None:
+        """Normalize a BOX timestamp without guessing across a clock transition."""
         if value is None:
             return None
         text = str(value).strip()
@@ -142,12 +145,20 @@ class TelemetryCollector:
             dt = datetime.fromisoformat(text)
         except ValueError:
             try:
-                dt = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+                dt = datetime.strptime(text, "%d.%m.%Y %H:%M:%S")
             except ValueError:
                 return None
+        if dt.year <= 1970:
+            return None
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            dt = dt.replace(tzinfo=_BOX_TIME_ZONE, fold=0)
+            # Different offsets cover both the repeated hour and the missing hour.
+            if dt.utcoffset() != dt.replace(fold=1).utcoffset():
+                return None
+        try:
+            return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except OverflowError:
+            return None
 
     def _prune_log_buffer(self) -> None:
         cutoff = time.time() - float(self.log_window_s)
@@ -265,6 +276,7 @@ class TelemetryCollector:
     def record_frame_direction(self, direction: str) -> None:
         if direction == "box_to_proxy":
             self.frames_box_to_proxy += 1
+            self.box_seen_in_window = True
         elif direction == "cloud_to_proxy":
             self.frames_cloud_to_proxy += 1
         elif direction == "proxy_to_box":
@@ -359,7 +371,8 @@ class TelemetryCollector:
         )
 
     def record_tbl_event(self, *, parsed: dict[str, Any], device_id: str | None) -> None:
-        event_time = self._parse_frame_dt(parsed.get("_dt")) or self._utc_iso()
+        received_at = time.time()
+        event_time = self._parse_frame_dt(parsed.get("_dt")) or self._utc_iso(received_at)
         self.tbl_events.append(
             {
                 "timestamp": event_time,
@@ -383,6 +396,7 @@ class TelemetryCollector:
     def record_box_session_end(self, *, connected_since_epoch: float | None, reason: str, peer: str | None) -> None:
         if connected_since_epoch is None:
             return
+        self.box_seen_in_window = True
         disconnected_at = time.time()
         self.box_sessions.append(
             {

@@ -59,27 +59,19 @@ class PowerControlLimits:
 
 @dataclass(frozen=True)
 class SettingConstraint:
-    """Describe the numeric envelope and any exact values required for a write."""
+    """Describe the numeric envelope for a write."""
 
     min_value: float | None = None
     max_value: float | None = None
     step: float | None = None
     integer_only: bool = False
-    allowed_values: frozenset[int] | None = None
 
 
-_PHASE_CALIBRATION_CONSTRAINTS = {
-    ("tbl_invertor_prm1", "P_CAL_R"): SettingConstraint(
-        0, 90, 5, integer_only=True, allowed_values=frozenset({0, 50, 75, 90}),
-    ),
-    ("tbl_invertor_prm1", "P_CAL_S"): SettingConstraint(
-        90, 90, 1, integer_only=True, allowed_values=frozenset({90}),
-    ),
-    ("tbl_invertor_prm1", "P_CAL_T"): SettingConstraint(
-        90, 90, 1, integer_only=True, allowed_values=frozenset({90}),
-    ),
-}
-PHASE_CALIBRATION_CONTROLS = frozenset(_PHASE_CALIBRATION_CONSTRAINTS)
+PHASE_CALIBRATION_CONTROLS = frozenset(
+    ("tbl_invertor_prm1", key) for key in ("P_CAL_R", "P_CAL_S", "P_CAL_T")
+)
+# The vendor workbook specifies U16 for all three calibration parameters.
+_PHASE_CALIBRATION_U16 = SettingConstraint(0, 0xFFFF, 1, integer_only=True)
 _NUMERIC_POWER_CONTROLS = frozenset({AC_CHARGE_CONTROL, EXPORT_LIMIT_CONTROL}) | PHASE_CALIBRATION_CONTROLS
 POWER_CONTROLS = GRID_SWITCH_CONTROLS | _NUMERIC_POWER_CONTROLS
 
@@ -124,7 +116,7 @@ def get_setting_constraint(
         return None
     identity = (table, key)
     if identity in PHASE_CALIBRATION_CONTROLS:
-        return _PHASE_CALIBRATION_CONSTRAINTS[identity] if power_limits.phase_calibration_enabled is True else None
+        return _PHASE_CALIBRATION_U16 if power_limits.phase_calibration_enabled is True else None
     if identity == AC_CHARGE_CONTROL and 0 < power_limits.ac_charge_max_a <= 125:
         return SettingConstraint(0, power_limits.ac_charge_max_a, 1, integer_only=True)
     if 0 < power_limits.grid_export_max_w <= 0xFFFFFFFF:
@@ -192,7 +184,4 @@ def validate_setting_value(
         return False, None, f"value below min ({constraint.min_value})"
     if constraint.max_value is not None and parsed > constraint.max_value:
         return False, None, f"value above max ({constraint.max_value})"
-    if constraint.allowed_values is not None and parsed not in constraint.allowed_values:
-        return False, None, "value is not one of the allowed settings"
-
     return True, int(parsed) if integral else float(parsed), ""

@@ -50,6 +50,7 @@ from parameter_refresh import ParameterRefreshScheduler
 from settings_constraints import PowerControlLimits
 from telemetry.collector import TelemetryCollector
 from twin import TwinControlHandler, TwinQueue
+from twin.state import TwinSetting
 from twin.delivery import TwinDelivery
 
 logger = logging.getLogger("oig_proxy_v2")
@@ -206,6 +207,7 @@ class ProxyApp:
             on_profile_change=self._on_ver_profile_change,
             profile_state_path=self._configured_state_path("control_ver_profile_state_path"),
             counter_state_path=self._configured_state_path("control_counter_state_path"),
+            archive_path=self._configured_state_path("capture_db_path"),
             box_writes_enabled=self._box_control_enabled(),
             power_limits=self._power_limits,
         )
@@ -317,6 +319,7 @@ class ProxyApp:
             frame_capture=self.frame_capture,
             telemetry_collector=self.telemetry_collector,
             device_id_provider=lambda: device_id_manager.device_id,
+            request_readback=lambda: self._admit_parameter_refresh("missing native readback"),
         )
         if self.telemetry_collector is not None:
             self.proxy.mode_manager.on_hybrid_transition = self._on_hybrid_transition
@@ -351,10 +354,16 @@ class ProxyApp:
                 poll = getattr(self.twin_delivery, "poll_timeouts", None)
                 if callable(poll):
                     poll()  # pylint: disable=not-callable
+                if self.proxy is not None:
+                    self.proxy.poll_readback_timeouts()
                 self._drain_setting_results()
                 if self.status_publisher is not None:
                     self.status_publisher.flush_setting_results()
                     self.status_publisher.publish_ver_profile_change()
+                if self.twin_delivery is not None and self.device_id_manager is not None:
+                    device_id = self.device_id_manager.device_id
+                    if device_id:
+                        await self.twin_delivery.restore_archived_control(device_id)
             except Exception:
                 logger.exception("Local control housekeeping deferred")
 
@@ -504,19 +513,21 @@ class ProxyApp:
         )
 
     def _queue_parameter_refresh(self, reason: str) -> bool:
+        """Report admission to the periodic scheduler."""
+        return self._admit_parameter_refresh(reason) is not None
+
+    def _admit_parameter_refresh(self, reason: str) -> TwinSetting | None:
         """Admit only the diagnostic SA request through the ordinary validator/audit."""
         if not self._parameter_refresh_idle():
-            return False
+            return None
         manager = self.device_id_manager
         if manager is None or not manager.device_id or self.twin_handler is None or self.twin_queue is None:
-            return False
+            return None
         topic = f"{self.config.mqtt_namespace}/{manager.device_id}/set/tbl_box_prms/SA"
-        self.twin_handler._on_message(topic, b"1")
-        queued = self.twin_queue.get("tbl_box_prms", "SA", device_id=manager.device_id)
+        queued = self.twin_handler.admit_message(topic, b"1", only_if_empty=True)
         if queued is not None:
             logger.info("Parameter refresh queued (%s); waiting for BOX confirmation", reason)
-            return True
-        return False
+        return queued
 
     def _start_parameter_refresh(self) -> None:
         """Start the separate daily timer; construction/recovery never requests SA."""

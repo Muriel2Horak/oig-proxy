@@ -1,4 +1,4 @@
-"""Validate the installation opt-in and exact phase calibration domains."""
+"""Validate the installation opt-in and phase calibration wire encoding."""
 
 import pytest
 
@@ -17,48 +17,38 @@ def test_phase_calibration_is_read_only_without_explicit_opt_in(key: str) -> Non
 
 
 @pytest.mark.parametrize(
-    ("key", "allowed", "display_range"),
+    ("key", "value"),
     [
-        ("P_CAL_R", {0, 50, 75, 90}, (0, 90, 5)),
-        ("P_CAL_S", {90}, (90, 90, 1)),
-        ("P_CAL_T", {90}, (90, 90, 1)),
+        ("P_CAL_R", 91),
+        ("P_CAL_R", 99),
+        ("P_CAL_S", 75),
+        ("P_CAL_T", 75),
+        ("P_CAL_R", 0),
+        ("P_CAL_T", 65535),
     ],
 )
-def test_phase_calibration_reports_and_accepts_only_qualified_values(
-    key: str, allowed: set[int], display_range: tuple[int, int, int],
-) -> None:
-    """Discovery receives the exact set in addition to its numeric envelope."""
+def test_phase_calibration_accepts_values_representable_as_u16(key: str, value: int) -> None:
+    """The proxy accepts a raw unsigned 16-bit value for an enabled phase."""
     limits = PowerControlLimits(phase_calibration_enabled=True)
-    constraint = get_setting_constraint(TABLE, key, power_limits=limits)
-    assert constraint is not None and constraint.integer_only
-    assert constraint.allowed_values == allowed
-    assert (constraint.min_value, constraint.max_value, constraint.step) == display_range
-    for value in allowed:
-        assert validate_setting_value(TABLE, key, value, power_limits=limits) == (True, value, "")
-        assert validate_setting_value(TABLE, key, f"{value}.0", power_limits=limits) == (True, value, "")
+    assert validate_setting_value(TABLE, key, value, power_limits=limits) == (True, value, "")
+    assert validate_setting_value(TABLE, key, f"{value}.0", power_limits=limits) == (True, value, "")
 
 
 @pytest.mark.parametrize(
     ("table", "key", "value"),
     [
         (TABLE, "P_CAL_R", -1),
-        (TABLE, "P_CAL_R", 5),
-        (TABLE, "P_CAL_R", 55),
-        (TABLE, "P_CAL_R", 89),
-        (TABLE, "P_CAL_R", 91),
+        (TABLE, "P_CAL_T", 65536),
         (TABLE, "P_CAL_R", "90.000000000000001"),
         (TABLE, "P_CAL_R", False),
         (TABLE, "P_CAL_R", "off"),
         (TABLE, "P_CAL_R", float("nan")),
         (TABLE, "P_CAL_R", "Infinity"),
-        (TABLE, "P_CAL_S", 75),
-        (TABLE, "P_CAL_T", 75),
-        (TABLE, "P_CAL_T", 65535),
         ("tbl_invertor_prms", "P_CAL_R", 90),
         (TABLE, "P_CAL_X", 90),
     ],
 )
-def test_phase_calibration_rejects_unqualified_commands(table: str, key: str, value: object) -> None:
-    """A display step, device encoding or observed baseline cannot grant permission."""
+def test_phase_calibration_rejects_malformed_commands(table: str, key: str, value: object) -> None:
+    """Reject unknown controls and values that cannot be represented as U16."""
     limits = PowerControlLimits(phase_calibration_enabled=True)
     assert validate_setting_value(table, key, value, power_limits=limits)[0] is False

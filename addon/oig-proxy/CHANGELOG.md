@@ -1,3 +1,32 @@
+# 2.2.0-rc.6
+
+<!-- markdownlint-disable MD025 -->
+
+> **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
+> odpovědnost. Před aktualizací zálohujte aplikaci a před zapnutím automatizací
+> ověřte příkaz a jeho skutečný dopad na své instalaci.
+> Home Assistant se zapnutými automatickými aktualizacemi může tuto verzi
+> nainstalovat po vydání sám.
+
+- Pokud má proxy v archivu potvrzený cloudový zápis pro váš box, může po
+  aktualizaci obnovit údaje potřebné k lokálním zápisům. Jakmile ověří čerstvá
+  data boxu, můžete pokračovat bez dalšího cloudového zápisu.
+- Box s delším připojením může zpracovat několik lokálních příkazů postupně
+  na stejném spojení. Po jednoznačném potvrzení opakovaného příkazu může další
+  zápis odejít při vhodném dotazu boxu.
+- Když po potvrzení příkazu nebo události změny nepřijde správná tabulka,
+  proxy po minutě jednou požádá box o parametry. Box tak může dřív poslat
+  potvrzenou hodnotu do Home Assistantu i do cloudu.
+- Fázové korekce na všech třech fázích používají formát z tabulky parametrů
+  boxu. V ovladačích zmizel seznam vybraných hodnot z dřívějších zkoušek.
+  Provozní rozsah korekcí závisí na konkrétní instalaci.
+- Grafana zobrazuje dostupnost boxu za celý telemetrický interval. Počítá se
+  i krátké spojení, které skončilo před odesláním statistik.
+- Časy událostí boxu se před uložením převádějí z českého času do UTC
+  se zohledněním letního času.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.6/docs/v2/local-control.md)
+
 # 2.2.0-rc.5
 
 > **Pozor: lokální ovládání OIG Boxu je experimentální.** Před nasazením do

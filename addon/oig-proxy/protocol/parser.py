@@ -9,9 +9,44 @@ from __future__ import annotations
 
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_MODE_BY_EVENT = {"I": 0, "II": 1, "III": 2, "IV-UPS": 3}
+_MODE_START = re.compile(r"HG\s+(I|II|III|IV-UPS)\s+Start(?=\s*(?:\(|$))")
+_PARAMETER_CHANGE = re.compile(
+    r"(Remotely|Input)\s*:\s*(tbl_[A-Za-z0-9_]+)\s*/\s*([A-Za-z0-9_]+)"
+    r"\s*:\s*\[([^\]]*)\]\s*->\s*\[([^\]]*)\]"
+)
+
+
+def parse_mode_start(event_type: Any, content: Any) -> int | None:
+    """Decode the mode from a native Factory start event."""
+    if event_type == "Factory" and isinstance(content, str) and (match := _MODE_START.match(content)):
+        return _MODE_BY_EVENT[match[1]]
+    return None
+
+
+def same_setting_value(expected: Any, observed: Any) -> bool:
+    """Compare native scalar settings across their numeric wire encodings."""
+    try:
+        left, right = Decimal(str(expected)), Decimal(str(observed))
+        return left.is_finite() and right.is_finite() and left == right
+    except (InvalidOperation, ValueError, TypeError):
+        return isinstance(expected, str) and expected == observed
+
+
+def parse_parameter_change(event_type: str, content: str) -> tuple[str, str, str | int] | None:
+    """Identify an explicit BOX parameter change without attributing a command."""
+    mode = parse_mode_start(event_type, content)
+    if mode is not None:
+        return "tbl_box_prms", "MODE", mode
+    prefix = {"Setting": "Remotely", "Change": "Input"}.get(event_type)
+    match = _PARAMETER_CHANGE.match(content) if prefix is not None else None
+    if match is None or match[1] != prefix or same_setting_value(match[4], match[5]):
+        return None
+    return match[2], match[3], match[5]
 
 # Fieldy které se přeskočí při parsování dat
 _SKIP_FIELDS = frozenset({

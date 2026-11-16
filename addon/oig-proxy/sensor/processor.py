@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-import re
 from typing import Any
 
 from sensor.confirmed_store import ConfirmedStateStore, finite_json, observation_table
 from sensor.loader import SensorMapLoader
 from sensor.warnings import decode_warning_details, decode_warnings
 from mqtt.client import MQTTClient
+from protocol.parser import parse_mode_start
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,6 @@ _EXPORT_LIMIT_TABLE = "tbl_invertor_prm1"
 _EXPORT_LIMIT_KEY = "P_MAX_FEED_GRID"
 _MAX_EXPORT_LIMIT_WATTS = (1 << 32) - 1  # Canonical field encoding, independent of write policy.
 _BOX_MODE_TABLE = "tbl_box_prms"
-_MODE_BY_EVENT = {"I": 0, "II": 1, "III": 2, "IV-UPS": 3}
-_MODE_START = re.compile(r"HG\s+(I|II|III|IV-UPS)\s+Start(?=\s*(?:\(|$))")
 # NOTE: kept in sync with proxy/server.py:TRANSPORT_METADATA_KEYS. Not extracted to
 # a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
 # new untracked file before the image is built.
@@ -433,11 +431,11 @@ class FrameProcessor:
             table = "tbl_actual"
 
         stamp = self._parse_device_time(data.get("_dt"))
-        if table == "tbl_events" and data.get("Type") == "Factory" and stamp is not None and stamp.year > 1970:
-            content = data.get("Content")
-            if isinstance(content, str) and (match := _MODE_START.match(content)):
+        if table == "tbl_events" and stamp is not None and stamp.year > 1970:
+            mode = parse_mode_start(data.get("Type"), data.get("Content"))
+            if mode is not None:
                 await self.process(
-                    device_id, _BOX_MODE_TABLE, {"MODE": _MODE_BY_EVENT[match[1]], "_dt": data["_dt"]},
+                    device_id, _BOX_MODE_TABLE, {"MODE": mode, "_dt": data["_dt"]},
                     confirmed_event=True,
                 )
         priority = 1 if confirmed_event else 0

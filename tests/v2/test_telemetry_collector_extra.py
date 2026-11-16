@@ -48,7 +48,7 @@ def test_update_device_id_parse_frame_dt_and_version_loading(tmp_path: Path) -> 
     assert collector._parse_frame_dt(None) is None
     assert collector._parse_frame_dt("   ") is None
     assert collector._parse_frame_dt("not-a-date") is None
-    assert collector._parse_frame_dt("2026-03-12 12:00:00") == "2026-03-12T12:00:00Z"
+    assert collector._parse_frame_dt("2026-03-12 12:00:00") == "2026-03-12T11:00:00Z"
     assert collector._parse_frame_dt("2026-03-12T12:00:00+01:00") == "2026-03-12T11:00:00Z"
 
     config_path = tmp_path / "config.json"
@@ -117,7 +117,7 @@ def test_record_context_sessions_tbl_events_and_window_flush(monkeypatch: pytest
     assert window["error_context"][0]["event_type"] == "error_event"
     assert json.loads(window["error_context"][0]["details"]) == {"detail": "{'bad': {1, 2, 3}}"}
     assert len(window["tbl_events"]) == 2
-    assert window["tbl_events"][0]["event_time"] == "2026-03-12T12:00:00Z"
+    assert window["tbl_events"][0]["event_time"] == "2026-03-12T11:00:00Z"
     assert window["box_sessions"][0]["peer"] == "1.2.3.4:5710"
     assert window["cloud_sessions"][0]["duration_s"] == 0
     assert window["hybrid_sessions"][0]["reason"] == "done"
@@ -130,6 +130,37 @@ def test_record_context_sessions_tbl_events_and_window_flush(monkeypatch: pytest
     assert not collector.tbl_events
     assert not collector.error_context
     assert not collector.settings_audit
+
+
+@pytest.mark.parametrize(
+    ("frame_dt", "expected"),
+    [
+        ("2026-01-12 12:00:00", "2026-01-12T11:00:00Z"),
+        ("2026-07-12 12:00:00", "2026-07-12T10:00:00Z"),
+        ("12.07.2026 12:00:00", "2026-07-12T10:00:00Z"),
+        ("2026-07-12T12:00:00+03:00", "2026-07-12T09:00:00Z"),
+        ("2026-07-12T12:00:00Z", "2026-07-12T12:00:00Z"),
+        ("2026-10-25 02:30:00+01:00", "2026-10-25T01:30:00Z"),
+        ("2026-10-25 02:30:00", None),
+        ("2026-03-29 02:30:00", None),
+        ("1970-01-01 00:00:00", None),
+        ("01.01.1970 00:00:00", None),
+        ("1970-01-01T00:00:00Z", None),
+        ("1970-12-31T23:59:59-03:00", None),
+        ("invalid", None),
+        (None, None),
+    ],
+)
+def test_tbl_event_reports_box_time_or_unambiguous_receive_time(
+    monkeypatch: pytest.MonkeyPatch, frame_dt: str | None, expected: str | None,
+) -> None:
+    monkeypatch.setattr(telemetry_collector.time, "time", lambda: 1_763_208_005.25)
+    collector = _make_collector()
+    collector.record_tbl_event(parsed={"_dt": frame_dt, "Type": "Setting"}, device_id="dev-1")
+
+    event = collector.tbl_events[0]
+    assert event["event_time"] == (expected or "2025-11-15T12:00:05.250000Z")
+    assert event["timestamp"] == event["event_time"]
 
 
 def test_cached_state_value_device_specific_metrics_and_collect_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
