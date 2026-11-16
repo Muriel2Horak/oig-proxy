@@ -1,6 +1,25 @@
-# 2.2.0-rc.6
-
 <!-- markdownlint-disable MD025 -->
+
+# 2.2.0-rc.7
+
+> **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
+> odpovědnost. Před aktualizací zálohujte aplikaci. Než zapnete automatizace,
+> vyzkoušejte změnu ručně a ověřte její skutečný dopad na svém boxu.
+> Home Assistant se zapnutými automatickými aktualizacemi může tuto verzi
+> nainstalovat po vydání sám.
+
+- Lokální požadavek může odejít už při nejbližším vhodném dotazu boxu na
+  otevřeném spojení. Proxy zpracuje dotaz i při rozdělení nebo sloučení
+  zpráv. V protokolu add-onu uvádí důvod, proč čekající požadavek neodeslala.
+- Jednoznačná událost o změně hodnoty může potvrdit příkaz i při chybějícím
+  protokolovém ACK. Proxy pak už provedenou změnu zbytečně neopakuje.
+- U boxů s posunutým časem může `ver` přejít na `ready` dříve. Proxy si
+  čas ověří z běžné komunikace s cloudem a profil dál ověřuje z čerstvých
+  rámců boxu. Dostupnost lokálního zápisu uvidíte v Diagnostice OIG v HA.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.7/docs/v2/local-control.md)
+
+# 2.2.0-rc.6
 
 > **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
 > odpovědnost. Před aktualizací zálohujte aplikaci a před zapnutím automatizací

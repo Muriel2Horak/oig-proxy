@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import json
 import logging
+from math import ceil
 import os
 from pathlib import Path
 import re
@@ -18,6 +19,7 @@ import xml.etree.ElementTree as ET  # nosec B405
 from zoneinfo import ZoneInfo
 
 from .crc import _crc16_table, crc16_modbus
+from .frame import MAX_FRAME_BYTES
 
 _MAX_AGE = 900
 _SESSION_WINDOW = 60
@@ -25,6 +27,8 @@ _MAX_CLOCK_ADVANCE = 300
 _CLOCK_SAMPLE_SPAN = (10, 120)
 _CLOCK_SAMPLE_SPREAD = 5
 _CLOUD_CLOCK_DIFFERENCE = 20
+_CLOUD_CLOCK_ROUNDTRIP = 10
+_CLOUD_CLOCK_ORDER = ("Result", "Time", "UTCTime", "CRC")
 _MAX_DEVICES = 128
 _CRC_PERIOD = 32_767
 _LOCAL_ZONE = ZoneInfo("Europe/Prague")
@@ -114,7 +118,7 @@ class _Wire:
 
 def _parse(raw: bytes, *, allow_repeated_identity: bool) -> _Wire | None:
     raw = raw.rstrip(b"\r\n")
-    if len(raw) > 65_536 or not raw.startswith(b"<Frame>") or b"<!DOCTYPE" in raw:
+    if len(raw) > MAX_FRAME_BYTES or not raw.startswith(b"<Frame>") or b"<!DOCTYPE" in raw:
         return None
     tail = _TAIL.search(raw)
     if tail is None:
@@ -200,7 +204,7 @@ def parse_setting_reply(raw: bytes, device_id: str, profile: VerProfile) -> dict
     return _receipt_fields(wire)
 
 
-def _protocol_stamps(value: str, utc: bool = False) -> set[float]:
+def _protocol_stamps(value: str, utc: bool = False, *, naive_only: bool = False) -> set[float]:
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError:
@@ -210,7 +214,7 @@ def _protocol_stamps(value: str, utc: bool = False) -> set[float]:
             return set()
     try:
         if parsed.tzinfo is not None:
-            stamps = {parsed.timestamp()}
+            stamps = set() if naive_only else {parsed.timestamp()}
         elif utc:
             stamps = {parsed.replace(tzinfo=timezone.utc).timestamp()}
         else:
@@ -232,6 +236,10 @@ def _unique_stamp(stamps: set[float], earliest: float, latest: float) -> float |
 def recent_protocol_timestamp(value: str, now: float, utc: bool = False) -> float | None:
     """Resolve a recent native timestamp on the protocol clock."""
     return _unique_stamp(_protocol_stamps(value, utc), now - _MAX_AGE, now + 2)
+
+
+def _positive_counter(value: str) -> int | None:
+    return (int(value) or None) if len(value) <= 19 and value.isascii() and value.isdecimal() else None
 
 
 @dataclass(frozen=True)
@@ -303,6 +311,18 @@ class _ClockReading:
         return self.source - self.received
 
 
+@dataclass(frozen=True)
+class _CloudClockReading:
+    poll: _Sample
+    received: float
+    source: float
+    wall_bias: float
+
+    @property
+    def advance(self) -> float:
+        return self.source - self.received
+
+
 @dataclass
 class _DeviceProof:
     epoch: int = 0
@@ -322,6 +342,9 @@ class _DeviceProof:
     clock_readings: deque[_ClockReading] = field(default_factory=lambda: deque(maxlen=3))
     clock_step_back: bool = False
     readback_source_floor: float = 0.0
+    cloud_clock_readings: deque[_CloudClockReading] = field(default_factory=lambda: deque(maxlen=2))
+    cloud_clock_polls: dict[tuple[int, int], float] = field(default_factory=dict)
+    cloud_wall_bias: float | None = None
     future_cloud_highwater: float = 0.0
     live_cloud_seen: bool = False
 
@@ -335,6 +358,8 @@ class _Flow:
     last_dated: _Sample | None = None
     firmware_poll: _Sample | None = None
     pending: _Pending | None = None
+    clock_poll: tuple[_Sample, float] | None = None
+    clock_poll_used: bool = False
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -360,8 +385,10 @@ class VerProfiles:
 
     def __init__(
         self, *, clock: Callable[[], float] = time.time, state_path: Path | str | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._clock = clock
+        self._monotonic = monotonic or (time.monotonic if clock is time.time else clock)
         self._started = clock()
         self._state_path = Path(state_path) if state_path is not None else None
         self._proofs: dict[str, _DeviceProof] = {}
@@ -461,6 +488,7 @@ class VerProfiles:
         proof.ambiguous_layout = False
         proof.clock_epoch += 1
         proof.clock_readings.clear()
+        proof.cloud_clock_readings.clear()
         proof.clock_step_back = False
         self._reset_native_proof(device_id, proof, reason)
 
@@ -476,17 +504,23 @@ class VerProfiles:
         for flow in self._flows.values():
             if flow.device_id == device_id:
                 flow.pending = flow.firmware_poll = flow.last_dated = None
-                flow.last_native = None
+                flow.last_native = flow.clock_poll = None
 
     def box_clock_offset(self, device_id: str) -> float:
         """Return the learned positive BOX clock shift, or zero without evidence."""
         proof = self._proofs.get(device_id)
-        return proof.clock_offset if proof is not None else 0.0
+        if proof is None:
+            return 0.0
+        self._check_wall_clock(device_id, proof, self._clock())
+        return proof.clock_offset
 
     def box_clock_epoch(self, device_id: str) -> int:
         """Return the device-clock and wire-proof revision for readback correlation."""
         proof = self._proofs.get(device_id)
-        return proof.clock_epoch if proof is not None else 0
+        if proof is None:
+            return 0
+        self._check_wall_clock(device_id, proof, self._clock())
+        return proof.clock_epoch
 
     def box_timestamp(self, device_id: str, value: str) -> float | None:
         """Resolve BOX DT/Rdt with the current clock shift without learning from it."""
@@ -515,11 +549,8 @@ class VerProfiles:
                 or (proof.candidate is not None and not wire.matches(proof.candidate))):
             return
         source = _unique_stamp(_protocol_stamps(fields.get("DT", "")), now - 2, now + _MAX_CLOCK_ADVANCE)
-        counter = fields.get("ID_Set", "")
-        if source is None or not counter.isascii() or not counter.isdecimal() or len(counter) > 19:
-            return
-        sequence = int(counter)
-        if sequence <= 0:
+        sequence = _positive_counter(fields.get("ID_Set", ""))
+        if source is None or sequence is None:
             return
         readings = proof.clock_readings
         sample = _ClockReading(now, source, sequence)
@@ -551,15 +582,63 @@ class VerProfiles:
         if (abs(offset - proof.clock_offset) <= 2
                 or (offset < proof.clock_offset and not proof.clock_step_back)):
             return
+        self._change_clock(device_id, proof, offset, now, wall_bias=proof.cloud_wall_bias if offset else None)
+
+    def _change_clock(
+        self, device_id: str, proof: _DeviceProof, offset: float, now: float, *, wall_bias: float | None = None,
+    ) -> None:
         if offset < proof.clock_offset:
             # Old and current raw dates overlap until the BOX clock passes its old high-water mark.
             proof.readback_source_floor = max(proof.readback_source_floor, proof.latest_box + proof.clock_offset)
         proof.clock_offset = offset
         proof.clock_epoch += 1
         proof.clock_step_back = False
+        proof.cloud_clock_readings.clear()
+        proof.cloud_wall_bias = wall_bias
         self._reset_native_proof(device_id, proof, "box_clock_changed")
         # Earlier observations were never qualified in this revised clock domain.
         proof.cutoff = max(proof.cutoff, now)
+
+    def _check_wall_clock(self, device_id: str, proof: _DeviceProof, now: float) -> None:
+        """Invalidate clock samples from before a proxy wall clock correction."""
+        readings = proof.cloud_clock_readings
+        bias = proof.cloud_wall_bias if proof.cloud_wall_bias is not None else (
+            readings[-1].wall_bias if readings else None
+        )
+        if bias is None or abs(now - self._monotonic() - bias) <= _CLOCK_SAMPLE_SPREAD:
+            return
+        readings.clear()
+        if proof.cloud_wall_bias is not None:
+            proof.clock_readings.clear()
+            self._change_clock(device_id, proof, 0.0, now)
+
+    def _observe_cloud_assisted_clock(self, device_id: str, proof: _DeviceProof, wire: _Wire, now: float) -> None:
+        readings = proof.cloud_clock_readings
+        if (proof.clock_offset or proof.ready or len(readings) < 2 or wire.fields.get("ID_SubD", "0") != "0"
+                or _positive_counter(wire.fields.get("ID_Set", "")) is None):
+            return
+        first, second = readings
+        offset = ceil(max(first.advance, second.advance))
+        if not second.received <= now <= first.received + _MAX_AGE:
+            return
+        source = _unique_stamp(
+            _protocol_stamps(wire.fields.get("DT", "")),
+            now + max(3, offset - _CLOUD_CLOCK_DIFFERENCE), now + min(offset + 2, _MAX_CLOCK_ADVANCE),
+        )
+        if source is None or wire.state is None or wire.ver is None or (wire.state, wire.ver, source) in proof.seen:
+            return
+        stamp = source - offset
+        if stamp <= self._started or stamp < proof.cutoff:
+            return
+        # The Cloud clocks provide a time reference only. Match their two
+        # native polls to this independently dated BOX frame before using it.
+        profile = proof.candidate
+        if profile is None:
+            profile, _ = _identify([first.poll, second.poll, _Sample(wire, now, None)])
+        if profile is None or not all(item.matches(profile) for item in (first.poll, second.poll, wire)):
+            return
+        proof.clock_readings.clear()
+        self._change_clock(device_id, proof, offset, now, wall_bias=second.wall_bias)
 
     @staticmethod
     def _fresh(sample: _Sample, now: float) -> bool:
@@ -585,7 +664,9 @@ class VerProfiles:
         proof = self._proofs.get(device_id)
         if proof is None:
             return ProfileStatus(None, "waiting_for_box", 0)
-        reason = self._native_reason(proof, self._clock())
+        now = self._clock()
+        self._check_wall_clock(device_id, proof, now)
+        reason = self._native_reason(proof, now)
         enrollment = self._enrollments.get(device_id)
         if proof.ambiguous_layout:
             reason = "ambiguous_setting_layout"
@@ -602,6 +683,8 @@ class VerProfiles:
     def archive_basis(self, device_id: str) -> tuple[VerProfile, int] | None:
         """Return the current independently qualified native model for an archive scan."""
         proof = self._proofs.get(device_id)
+        if proof is not None:
+            self._check_wall_clock(device_id, proof, self._clock())
         if (proof is None or proof.candidate is None or proof.ambiguous_layout
                 or proof.live_cloud_seen or self._native_reason(proof, self._clock()) != "ready"):
             return None
@@ -649,6 +732,24 @@ class VerProfiles:
         if session_id is not None and (flow := self._flows.get(session_id)) is not None:
             flow.occupied = True
             flow.pending = None
+            flow.clock_poll = None
+
+    def note_forwarded_clock_poll(self, raw: bytes | None, session_id: str | None) -> None:
+        """Arm one clock response for an actual, unambiguous upstream native poll."""
+        flow = self._flows.get(session_id) if session_id is not None else None
+        if flow is None:
+            return
+        flow.clock_poll = None
+        sample = flow.last_native
+        if (raw is None or flow.occupied or flow.quarantined or flow.clock_poll_used or sample is None
+                or sample.wire.fields.get("Result") != "IsNewSet"):
+            return
+        now = self._clock()
+        if (now <= self._started or not 0 <= now - sample.at <= _CLOUD_CLOCK_ROUNDTRIP
+                or _parse(raw, allow_repeated_identity=False) != sample.wire):
+            return
+        flow.clock_poll_used = True
+        flow.clock_poll = (_Sample(sample.wire, now, session_id), now - self._monotonic())
 
     def close_session(self, session_id: str | None) -> None:
         if session_id is not None:
@@ -663,6 +764,7 @@ class VerProfiles:
         elif flow.device_id != device_id:
             flow.quarantined = True
             flow.pending = None
+            flow.clock_poll = None
         return flow
 
     def _learn(self, device_id: str, proof: _DeviceProof, now: float) -> None:
@@ -762,6 +864,7 @@ class VerProfiles:
             return None
         if flow is not None:
             self._observe_clock(device_id, proof, wire, now)
+            self._observe_cloud_assisted_clock(device_id, proof, wire, now)
         source_stamp = self._box_source_timestamp(fields.get("DT", ""), now, proof.clock_offset)
         if source_stamp is None:
             return None
@@ -792,16 +895,16 @@ class VerProfiles:
             if not fields.get("SW"):
                 self._bind_firmware_poll(device_id, proof, flow)
         self._learn(device_id, proof, now)
-        counter = fields.get("ID_Set", "")
-        if self.status(device_id).profile is not None and counter.isascii() and counter.isdecimal() and len(counter) <= 19:
-            return int(counter) or None
+        if self.status(device_id).profile is not None:
+            return _positive_counter(fields.get("ID_Set", ""))
         return None
 
     def observe_cloud(self, raw: bytes, session_id: str | None) -> None:
-        """Track an exact natural Setting on its actual BOX flow."""
+        """Track an exact natural Setting or clock response on its actual BOX flow."""
         flow = self._flows.get(session_id) if session_id is not None else None
         if flow is None or flow.quarantined:
             return
+        clock_poll, flow.clock_poll = flow.clock_poll, None
         has_reason_tag = b"<Reason" in raw
         if not has_reason_tag and b"<Result" not in raw:
             return
@@ -812,6 +915,9 @@ class VerProfiles:
                 flow.pending = None
             return
         fields = wire.fields
+        if wire.order == _CLOUD_CLOCK_ORDER and fields.get("Result") == "END" and clock_poll is not None:
+            self._observe_cloud_clock(flow, wire, clock_poll)
+            return
         if fields.get("Result") == "NACK":
             flow.occupied = True
             flow.pending = None
@@ -826,6 +932,7 @@ class VerProfiles:
         if proof is None:
             return
         now = self._clock()
+        self._check_wall_clock(device_id, proof, now)
         if (fields.get("ID_Device") != device_id or flow.last_native is None
                 or now - flow.last_native.at > _SESSION_WINDOW):
             return
@@ -862,6 +969,48 @@ class VerProfiles:
         flow.pending = _Pending(
             _Sample(wire, stamp, session_id), now, proof.epoch, include_tto, future_cloud_stamp,
         )
+
+    def _observe_cloud_clock(self, flow: _Flow, wire: _Wire, clock_poll: tuple[_Sample, float]) -> None:
+        proof = self._proofs.get(flow.device_id)
+        if proof is None or flow.occupied:
+            return
+        now, monotonic = self._clock(), self._monotonic()
+        self._check_wall_clock(flow.device_id, proof, now)
+        poll, forwarded_bias = clock_poll
+        bias = now - monotonic
+        if (proof.clock_offset or proof.ready or abs(bias - forwarded_bias) > _CLOCK_SAMPLE_SPREAD
+                or not 0 <= now - poll.at <= _CLOUD_CLOCK_ROUNDTRIP):
+            return
+        source = _unique_stamp(
+            _protocol_stamps(wire.fields["Time"], naive_only=True)
+            & _protocol_stamps(wire.fields["UTCTime"], utc=True, naive_only=True),
+            now + 3, now + _MAX_CLOCK_ADVANCE,
+        )
+        state, ver = poll.wire.state, poll.wire.ver
+        if source is None or state is None or ver is None:
+            return
+        # Keep duplicates out even if they are resent on different sockets.
+        seen = proof.cloud_clock_polls
+        signature = state, ver
+        if monotonic - seen.get(signature, float("-inf")) <= _MAX_AGE:
+            return
+        if len(seen) >= 256:
+            seen = proof.cloud_clock_polls = {item: at for item, at in seen.items() if monotonic - at <= _MAX_AGE}
+        if len(seen) >= 256:
+            return
+        readings = proof.cloud_clock_readings
+        sample = _CloudClockReading(poll, now, source, bias)
+        if readings:
+            previous = readings[-1]
+            if (now <= previous.received or source <= previous.source or poll.session == previous.poll.session):
+                return
+            if (now - previous.received > _MAX_AGE
+                    or abs(sample.advance - previous.advance) > _CLOCK_SAMPLE_SPREAD):
+                readings.clear()
+            elif now - previous.received < _CLOCK_SAMPLE_SPAN[0]:
+                return
+        readings.append(sample)
+        seen[signature] = monotonic
 
     @staticmethod
     def _compatible_future_cloud_stamp(proof: _DeviceProof, fields: dict[str, str], now: float) -> float | None:

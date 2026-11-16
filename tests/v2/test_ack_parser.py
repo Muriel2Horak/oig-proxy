@@ -44,7 +44,7 @@ def test_parse_tbl_events_ack_setting_event() -> None:
             "Content": "Remotely : tbl_box_prms / MODE: [3]->[0]",
         }
     )
-    assert parsed == {"table": "tbl_box_prms", "key": "MODE", "value": "0"}
+    assert parsed == {"table": "tbl_box_prms", "key": "MODE", "previous_value": "3", "value": "0"}
 
 
 def test_parse_tbl_events_ack_non_setting_returns_none() -> None:

@@ -21,6 +21,8 @@ from telemetry.settings_audit import SettingResult, SettingStep, record_to_dict 
 from twin import delivery as delivery_module  # pylint: disable=wrong-import-position
 from twin.delivery import TwinDelivery  # pylint: disable=wrong-import-position
 from twin.state import TwinQueue  # pylint: disable=wrong-import-position
+from tests.v2.test_integration import MODEL, TEST_BOX, _qualified_transport, _send_poll  # pylint: disable=wrong-import-position
+from tests.v2.test_wire_profile_qualification import native  # pylint: disable=wrong-import-position
 
 
 class _MQTTStub:
@@ -615,6 +617,221 @@ async def test_local_application_event_requires_the_sending_session():
         "12345", "tbl_box_prms", "MODE", 1, event_time,
         event_id_set=10, session_id="sender",
     )
+
+
+async def _start_native_mode_write(  # pylint: disable=too-many-arguments
+    monkeypatch, baseline_lag, *, baseline_age=0.25, refresh_counter=False,
+    baseline_session="sender", prior_span=3.0, prior_clock_skew=0,
+):
+    queue = TwinQueue()
+    outcomes = []
+    delivery = _qualified_delivery(queue, on_result=outcomes.append)
+    sender_epoch = int(time.time()) - 10
+    clock = SimpleNamespace(now=100.0 - baseline_age)
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(
+        time=lambda: sender_epoch + 0.55, monotonic=lambda: clock.now,
+    ))
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: sender_epoch - 2)
+    if prior_span is not None:
+        clock.now -= prior_span
+        source_epoch = sender_epoch - baseline_lag - int(baseline_age + prior_span) + prior_clock_skew
+        delivery.observe_box_frame(
+            TEST_BOX, 9, czech_local_datetime_from_epoch(source_epoch).isoformat(), session_id=baseline_session,
+        )
+        clock.now += prior_span
+    delivery.observe_box_frame(
+        TEST_BOX, 10,
+        czech_local_datetime_from_epoch(sender_epoch - baseline_lag - int(baseline_age)).isoformat(),
+        session_id=baseline_session,
+    )
+    clock.now = 100.0
+    if refresh_counter:
+        delivery.observe_box_frame(
+            TEST_BOX, 10, czech_local_datetime_from_epoch(sender_epoch - baseline_lag).isoformat(),
+            session_id=baseline_session,
+        )
+    queue.enqueue("tbl_box_prms", "MODE", 0, device_id=TEST_BOX)
+    first, = await delivery.deliver_pending(TEST_BOX, "sender", online_poll=b"poll-1")
+    _bind(delivery, first, "sender")
+    delivery.record_injected_box(first, TEST_BOX, "sender")
+    return delivery, outcomes, clock, sender_epoch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("baseline_lag,receipt_delay,baseline_age", [(6, 1, 0.25), (4, 1, 0.25), (6, 30, 10.0)])
+async def test_native_transition_confirms_before_wire_dt_and_cancels_replay(
+    monkeypatch, baseline_lag, receipt_delay, baseline_age,
+):
+    delivery, outcomes, clock, sender_epoch = await _start_native_mode_write(
+        monkeypatch, baseline_lag, baseline_age=baseline_age,
+    )
+    clock.now += receipt_delay
+    delivery.poll_timeouts()
+    assert delivery.has_pending(TEST_BOX) == (receipt_delay == 30)
+
+    event_time = czech_local_datetime_from_epoch(sender_epoch - 5).isoformat()
+    assert delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, event_time,
+        event_id_set=11, session_id="sender", previous_value="3",
+    )
+    assert [event["evidence"] for event in outcomes] == ["setting_event"]
+    assert not delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, event_time,
+        event_id_set=11, session_id="sender", previous_value="3",
+    )
+    assert await delivery.deliver_pending(TEST_BOX, "sender", online_poll=b"poll-2") == []
+    assert not delivery.has_pending(TEST_BOX)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_lag", [1, 3])
+async def test_local_noop_still_confirms_within_existing_timestamp_bounds(monkeypatch, event_lag):
+    delivery, outcomes, clock, sender_epoch = await _start_native_mode_write(monkeypatch, 6)
+    clock.now += 1
+    event_time = czech_local_datetime_from_epoch(sender_epoch - event_lag).isoformat()
+    assert delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, event_time,
+        event_id_set=11, session_id="sender", previous_value="0.0",
+    )
+    assert [event["evidence"] for event in outcomes] == ["setting_event"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_lag,counter,session,previous_value", [
+    pytest.param(15, 11, "sender", "3", id="historical-event"),
+    pytest.param(5, 10, "sender", "3", id="old-early-counter"),
+    pytest.param(5, 11, "other", "3", id="other-socket"),
+    pytest.param(5, 11, "sender", "0.0", id="same-value"),
+    pytest.param(5, 11, "sender", "", id="missing-old-value"),
+])
+async def test_local_event_rejects_evidence_that_cannot_confirm_the_write(
+    monkeypatch, event_lag, counter, session, previous_value,
+):
+    delivery, outcomes, clock, sender_epoch = await _start_native_mode_write(monkeypatch, 6)
+    clock.now += 1
+    event_time = czech_local_datetime_from_epoch(sender_epoch - event_lag).isoformat()
+    assert not delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, event_time,
+        event_id_set=counter, session_id=session, previous_value=previous_value,
+    )
+    assert delivery.local_inflight_setting() is not None
+    assert outcomes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("baseline_lag,event_lag,options", [
+    pytest.param(29, 28, {}, id="recently-received-buffered-source"),
+    pytest.param(5, 5, {"prior_span": None}, id="single-buffered-observation"),
+    pytest.param(5, 5, {"prior_span": 0.25}, id="buffered-burst"),
+    pytest.param(5, 5, {"prior_clock_skew": -3}, id="inconsistent-clock-rate"),
+    pytest.param(6, 5, {"prior_clock_skew": -2}, id="historical-earlier-sample"),
+    pytest.param(6, 5, {"baseline_age": 31.0, "refresh_counter": True}, id="repeated-old-counter"),
+    pytest.param(6, 5, {"baseline_session": "other"}, id="unrelated-anchor"),
+])
+async def test_early_transition_requires_recent_native_anchor(monkeypatch, baseline_lag, event_lag, options):
+    delivery, outcomes, clock, sender_epoch = await _start_native_mode_write(monkeypatch, baseline_lag, **options)
+    clock.now += 1
+    event_time = czech_local_datetime_from_epoch(sender_epoch - event_lag).isoformat()
+    assert not delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, event_time,
+        event_id_set=11, session_id="sender", previous_value="3",
+    )
+    assert delivery.local_inflight_setting() is not None
+    assert outcomes == []
+
+
+@pytest.mark.asyncio
+async def test_dated_setting_event_can_follow_an_unrelated_native_observation(monkeypatch):
+    delivery, outcomes, clock, sender_epoch = await _start_native_mode_write(monkeypatch, 6)
+    clock.now += 1
+    stamp = czech_local_datetime_from_epoch(sender_epoch).isoformat()
+    delivery.observe_box_frame(TEST_BOX, 11, stamp, session_id="other")
+    assert delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, stamp,
+        event_id_set=12, session_id="sender", previous_value="3",
+    )
+    assert [event["evidence"] for event in outcomes] == ["setting_event"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalidation", ["counter-reset", "clock-change-before-bind", "clock-change", "cloud-write"])
+async def test_local_transition_rejects_a_changed_evidence_epoch(monkeypatch, invalidation):
+    if invalidation == "clock-change-before-bind":
+        monkeypatch.setattr(delivery_module.VerProfiles, "box_clock_epoch",
+                            lambda _profiles, _device: int(delivery_module.time.monotonic() >= 100.0))
+    delivery, outcomes, clock, sender_epoch = await _start_native_mode_write(monkeypatch, 6)
+    clock.now += 1
+    event_time = czech_local_datetime_from_epoch(sender_epoch - 5).isoformat()
+    if invalidation == "counter-reset":
+        delivery.observe_box_frame(TEST_BOX, 9, event_time, session_id="sender")
+    elif invalidation == "clock-change":
+        monkeypatch.setattr(delivery._profiles, "box_clock_epoch", lambda _device: 1)  # pylint: disable=protected-access
+    elif invalidation == "cloud-write":
+        cloud = build_setting_frame(
+            device_id=TEST_BOX, table="tbl_box_prms", key="MODE", value=3,
+            msg_id=13_800_010, id_set=sender_epoch, profile=VerProfile(39, 0x1940),
+        )
+        delivery.begin_cloud_setting(TEST_BOX, "tbl_box_prms", "MODE", 3, cloud.decode(), session_id="other")
+    assert not delivery.acknowledge_local_event(
+        TEST_BOX, "tbl_box_prms", "MODE", 0, event_time,
+        event_id_set=11, session_id="sender", previous_value="3",
+    )
+    assert delivery.local_inflight_setting() is not None
+    assert outcomes == []
+
+
+async def _send_timing_anchors(proxy, writer, clock, sender_epoch, *, coalesced):
+    baselines = []
+    for elapsed, counter in ((-3, 1234099), (0, 1234100)):
+        clock.now = sender_epoch + elapsed
+        baseline = native(
+            f"<TblName>tbl_actual</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+            f"<ID_Set>{counter}</ID_Set><DT>{clock.stamp(offset=-6)}</DT><Reason>Table</Reason>", MODEL,
+        )
+        if coalesced:
+            baselines.append(baseline)
+        else:
+            await _send_poll(proxy, writer, poll=baseline)
+    if coalesced:
+        last_stamp = clock.stamp(offset=-6)
+
+        async def process_frame(fields):
+            if fields.get("_dt") == last_stamp:
+                clock.now = sender_epoch
+
+        clock.now = sender_epoch - 3
+        proxy.on_frame = process_frame
+        await _send_poll(proxy, writer, poll=b"".join(baselines))
+        proxy.on_frame = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coalesced", [False, True], ids=["independent-reads", "coalesced-with-callback-delay"])
+async def test_signed_box_transition_uses_independent_timing_samples(
+    make_config, dummy_writer_factory, monkeypatch, coalesced,
+):
+    proxy, delivery, queue, clock = _qualified_transport(make_config())
+    sender_epoch = int(time.time())
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(
+        time=lambda: clock.now + 0.55, monotonic=lambda: clock.now,
+    ))
+    monkeypatch.setattr("proxy.server.time", SimpleNamespace(time=time.time, monotonic=lambda: clock.now))
+    monkeypatch.setattr(delivery, "_allocate_id_set", lambda _state, _now: sender_epoch - 2)
+    writer = dummy_writer_factory()
+    await _send_timing_anchors(proxy, writer, clock, sender_epoch, coalesced=coalesced)
+    queue.enqueue("tbl_box_prms", "MODE", 0, device_id=TEST_BOX)
+    await _send_poll(proxy, writer)
+    assert len(writer.written) == 1
+    event = native(
+        f"<TblName>tbl_events</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+        f"<ID_Set>1234101</ID_Set><DT>{clock.stamp(offset=-5)}</DT><Reason>Table</Reason><Type>Setting</Type>"
+        "<Content>Remotely : tbl_box_prms / MODE: [3]->[0]</Content>", MODEL,
+    )
+    await _send_poll(proxy, writer, poll=event.replace(b"[3]", b"[2]"))
+    assert delivery.local_inflight_setting() is not None
+    await _send_poll(proxy, writer, poll=event)
+    assert (delivery.local_inflight_setting() is not None) == coalesced
+    assert queue.size() == int(coalesced)
 
 
 @pytest.mark.asyncio

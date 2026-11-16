@@ -16,6 +16,9 @@ _TABLE_NAME_RE = re.compile(r"<TblName>([^<]+)</TblName>")
 _RESULT_RE = re.compile(r"<Result>([^<]+)</Result>")
 _DEVICE_ID_RE = re.compile(r"<ID_Device>(\d+)</ID_Device>")
 
+FRAME_START = b"<Frame>"
+FRAME_END = b"</Frame>"
+MAX_FRAME_BYTES = 65_536
 RESULT_ACK = "<Result>ACK</Result>"
 RESULT_END = "<Result>END</Result>"
 
@@ -53,12 +56,11 @@ def extract_frame_from_buffer(buf: bytearray) -> bytes | None:
 
     Vrátí frame bytes nebo None pokud buffer neobsahuje kompletní frame.
     """
-    end_tag = b"</Frame>"
-    end_idx = buf.find(end_tag)
+    end_idx = buf.find(FRAME_END)
     if end_idx < 0:
         return None
 
-    frame_end = end_idx + len(end_tag)
+    frame_end = end_idx + len(FRAME_END)
     # Konzumuj volitelný CRLF terminador
     if len(buf) > frame_end:
         if buf[frame_end: frame_end + 2] == b"\r\n":

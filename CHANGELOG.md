@@ -2,6 +2,14 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.7] - Unreleased
+
+Experimentální lokální ovládání lépe využívá dotazy boxu na otevřeném
+spojení, přijímá jednoznačnou událost boxu jako potvrzení příkazu a
+rychleji ověřuje profil `ver` při posunutém čase.
+
+[Poznámky k verzi pro uživatele Home Assistantu](addon/oig-proxy/CHANGELOG.md)
+
 ## [2.2.0-rc.6] - Unreleased
 
 Předběžná verze experimentálního lokálního ovládání přidává obnovu po upgradu
