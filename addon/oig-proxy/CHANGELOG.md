@@ -1,5 +1,21 @@
 <!-- markdownlint-disable MD025 -->
 
+# 2.2.0-rc.9
+
+> **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
+> odpovědnost. Před aktualizací zálohujte aplikaci. Než zapnete automatizace,
+> vyzkoušejte změnu ručně a ověřte její skutečný dopad na svém boxu.
+> Home Assistant se zapnutými automatickými aktualizacemi může tuto verzi
+> nainstalovat po vydání sám.
+
+- Proxy může odeslat čekající místní příkaz `Setting` po ověřeném dotazu
+  boxu `IsNewSet`, `IsNewFW` nebo `IsNewWeather`. Využije TCP spojení,
+  na kterém box dotaz poslal. Při probíhajícím zápisu z cloudu lokální
+  příkaz počká na další vhodný dotaz. Při obnově hybridního spojení dostane
+  cloud nejdřív příležitost potvrdit, že opět odpovídá.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.9/docs/v2/local-control.md)
+
 # 2.2.0-rc.8
 
 > **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní

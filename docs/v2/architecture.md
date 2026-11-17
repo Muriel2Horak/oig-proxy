@@ -23,9 +23,11 @@ from the stream and handles trailing CRLF and TCP segmentation.
 The native frame carries an outer `<CRC>` field with a decimal CRC-16/MODBUS
 checksum. The proxy checks the checksum before feeding a Box frame into
 state processing. Ordinary Cloud forwarding retains the original bytes.
-A qualified local write can replace one `IsNewSet` poll when MQTT control
-is enabled and the Box has a pending command. The proxy can replace the
-poll across TCP reads or alongside ordinary frames in the same read.
+A qualified local write can replace one `IsNewSet`, `IsNewFW`, or
+`IsNewWeather` poll when MQTT control is enabled and the Box has a pending
+command. The proxy can replace the poll across TCP reads or alongside
+ordinary frames in the same read. A Cloud write already in progress keeps
+priority.
 
 `proxy/mode.py` handles three configured modes.
 
@@ -73,9 +75,10 @@ and allows a newer request to replace an unsent request for the same setting.
 scope delivery to a qualified Box and protocol layout. MQTT Box writes are
 opt-in.
 
-Offline delivery sends one Setting on an eligible `IsNewSet` poll. On a
-matching Box ACK, the proxy sends a timed `END` and closes that session. The
-receipt and the observed parameter value are separate. A Box event or table
+Offline delivery sends one Setting on an eligible `IsNewSet`, `IsNewFW`,
+or `IsNewWeather` poll. On a matching Box ACK, the proxy sends a timed
+`END` and closes that session. The receipt and the observed parameter value
+are separate. A Box event or table
 readback can update confirmed state. The confirmed state cache supports MQTT
 state restoration after reconnect or proxy restart without marking cached
 observations as fresh. See the

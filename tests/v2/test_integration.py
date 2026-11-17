@@ -1,5 +1,5 @@
 """Integration tests for proxy server."""
-# pylint: disable=protected-access,missing-function-docstring,invalid-name,too-many-locals
+# pylint: disable=protected-access,missing-function-docstring,invalid-name,too-many-locals,too-many-lines
 from __future__ import annotations
 
 import asyncio
@@ -24,8 +24,14 @@ from tests.v2.test_wire_profile_qualification import Clock, box_proof, cloud_tra
 TEST_BOX = "12345"
 MODEL = (39, 0xBB59)
 FIRMWARE = "v.3.25.43.1219"
+SETTING_POLL_RESULTS = ("IsNewSet", "IsNewFW", "IsNewWeather")
 POLL = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device>", MODEL)
 ACK = native("<Result>ACK</Result><Reason>Setting</Reason>", MODEL)
+
+
+def _setting_poll(result, firmware=FIRMWARE):
+    fw = f"<Fw>{firmware}</Fw>" if result == "IsNewFW" and firmware else ""
+    return native(f"<Result>{result}</Result><ID_Device>{TEST_BOX}</ID_Device>{fw}", MODEL)
 
 
 def _qualified_transport(config, *, callback=None, collector=None, timeout=60.0, firmware=FIRMWARE):
@@ -89,7 +95,8 @@ async def _send_poll(proxy, writer, *, session_id="box-flow", poll=POLL):
 @pytest.mark.enable_socket
 @pytest.mark.asyncio
 @pytest.mark.parametrize("firmware", [FIRMWARE, None])
-async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(make_config, firmware) -> None:
+@pytest.mark.parametrize("poll_result", SETTING_POLL_RESULTS)
+async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(make_config, firmware, poll_result) -> None:
     confirmed = AsyncMock()
     telemetry = AsyncMock()
     proxy, delivery, queue, clock = _qualified_transport(
@@ -100,7 +107,7 @@ async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(m
     listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
     reader, writer = await asyncio.open_connection("127.0.0.1", listener.sockets[0].getsockname()[1])
     try:
-        writer.write(POLL)
+        writer.write(_setting_poll(poll_result, firmware))
         await writer.drain()
         setting = await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2)
         assert b"<TblName>tbl_box_prms</TblName>" in setting
@@ -115,8 +122,12 @@ async def test_offline_combined_ack_retires_receipt_and_publishes_actual_table(m
 
         assert delivery.inflight() is None and queue.size() == 0
         confirmed.assert_not_awaited()
-        telemetry.assert_awaited_once()
-        table, = telemetry.await_args.args
+        observations = [call.args[0] for call in telemetry.await_args_list]
+        if poll_result == "IsNewFW" and firmware is not None:
+            poll_data, table = observations
+            assert (poll_data["Result"], poll_data["Fw"]) == ("IsNewFW", firmware)
+        else:
+            table, = observations
         assert (table["_device_id"], table["_table"], table["BAT_C"]) == (TEST_BOX, "tbl_actual", 83)
         assert "Result" not in table and "Rdt" not in table
     finally:
@@ -503,9 +514,11 @@ async def test_box_stream_forwards_fragments_and_coalesced_frames_exactly_once(
 @pytest.mark.enable_socket
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["online", "hybrid"])
-async def test_live_cloud_socket_replaces_split_poll_and_correlates_forwarded_traffic(make_config, mode) -> None:
+@pytest.mark.parametrize("poll_result", SETTING_POLL_RESULTS)
+async def test_live_cloud_socket_replaces_split_poll_and_correlates_forwarded_traffic(make_config, mode, poll_result) -> None:
     first = _frame("tbl_actual", TEST_BOX, Temp=25)
     last = _frame("tbl_batt_prms", TEST_BOX, BAT_MIN=20)
+    poll = _setting_poll(poll_result)
     reply = build_frame("<Result>ACK</Result>").encode()
     cloud_tail = asyncio.get_running_loop().create_future()
 
@@ -521,7 +534,7 @@ async def test_live_cloud_socket_replaces_split_poll_and_correlates_forwarded_tr
 
     cloud = await asyncio.start_server(cloud_peer, "127.0.0.1", 0)
     config = make_config(proxy_mode=mode, cloud_port=cloud.sockets[0].getsockname()[1])
-    proxy, _delivery, queue, _clock = _qualified_transport(config)
+    proxy, delivery, queue, _clock = _qualified_transport(config)
     collector = MagicMock()
     proxy.telemetry_collector = collector
     capture = MagicMock()
@@ -529,21 +542,22 @@ async def test_live_cloud_socket_replaces_split_poll_and_correlates_forwarded_tr
     listener = await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0)
     box_reader, box_writer = await asyncio.open_connection("127.0.0.1", listener.sockets[0].getsockname()[1])
     try:
-        box_writer.write(first + POLL[:13])
+        box_writer.write(first + poll[:13])
         await box_writer.drain()
         assert await asyncio.wait_for(box_reader.readexactly(len(reply)), 2) == reply
         queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
-        box_writer.write(POLL[13:] + last[:19])
+        box_writer.write(poll[13:] + last[:19])
         await box_writer.drain()
         setting = await asyncio.wait_for(box_reader.readuntil(b"</Frame>\r\n"), 2)
         fields = native_frame_fields(setting)
         assert fields is not None and (fields["Reason"], fields["TblItem"], fields["NewValue"]) == ("Setting", "MODE", "3")
-        box_writer.write(last[19:] + b"<Frame>incomplete")
+        box_writer.write(last[19:] + ACK + b"<Frame>incomplete")
         await box_writer.drain()
         box_writer.write_eof()
-        assert await asyncio.wait_for(cloud_tail, 2) == last + b"<Frame>incomplete"
+        assert await asyncio.wait_for(cloud_tail, 2) == last + ACK + b"<Frame>incomplete"
+        assert delivery.inflight() is None and queue.size() == 0
         requests = [call.args for call in collector.record_request.call_args_list]
-        assert [table for table, _ in requests] == ["tbl_actual", "tbl_batt_prms"]
+        assert [table for table, _ in requests] == ["tbl_actual", "tbl_batt_prms", "ACK"]
         assert requests[0][1] == requests[1][1] == collector.record_response.call_args.kwargs["conn_id"]
         capture_ids = {call.kwargs["direction"]: call.kwargs["conn_id"] for call in capture.capture.call_args_list}
         assert capture_ids["box_to_cloud"] != capture_ids["cloud_to_box"]
@@ -555,6 +569,96 @@ async def test_live_cloud_socket_replaces_split_poll_and_correlates_forwarded_tr
         await proxy.stop()
         cloud.close()
         await cloud.wait_closed()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+@pytest.mark.parametrize("poll_result", SETTING_POLL_RESULTS)
+async def test_live_cloud_setting_keeps_poll_slot_while_local_work_is_queued(make_config, poll_result) -> None:
+    first = _frame("tbl_actual", TEST_BOX, Temp=25)
+    cloud_setting = _frame("tbl_batt_prms", TEST_BOX, TblItem="BAT_MIN", NewValue=20, Reason="Setting")
+    poll = _setting_poll(poll_result)
+    reply = build_frame("<Result>ACK</Result>").encode()
+    forwarded = asyncio.Queue()
+
+    async def cloud_peer(reader, writer):
+        try:
+            await reader.readexactly(len(first))
+            writer.write(cloud_setting)
+            await writer.drain()
+            forwarded.put_nowait(await reader.readexactly(len(poll)))
+            writer.write(reply)
+            await writer.drain()
+            await reader.read()
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async with await asyncio.start_server(cloud_peer, "127.0.0.1", 0) as cloud:
+        config = make_config(proxy_mode="hybrid", cloud_port=cloud.sockets[0].getsockname()[1])
+        proxy, delivery, queue, _clock = _qualified_transport(config)
+        async with await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0) as listener:
+            try:
+                async with _live_box(listener.sockets[0].getsockname()[1]) as (reader, writer):
+                    writer.write(first)
+                    await writer.drain()
+                    assert await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2) == cloud_setting
+                    assert delivery.is_cloud_inflight(TEST_BOX)
+                    queued = queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+                    assert queued is not None
+
+                    writer.write(poll)
+                    await writer.drain()
+                    assert await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2) == reply
+                    assert forwarded.get_nowait() == poll
+                    assert queue.get_pending(device_id=TEST_BOX, unsent_only=True) == [queued]
+            finally:
+                await proxy.stop()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+@pytest.mark.parametrize("poll_result", SETTING_POLL_RESULTS)
+async def test_hybrid_recovery_forwards_poll_until_cloud_answers(make_config, poll_result) -> None:
+    poll = _setting_poll(poll_result)
+    next_poll = native(f"<Result>{poll_result}</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    response = build_frame("<Result>END</Result>").encode()
+    received = asyncio.Queue()
+
+    async def cloud_peer(reader, writer):
+        try:
+            received.put_nowait(await reader.readexactly(len(poll)))
+            writer.write(response)
+            await writer.drain()
+            await reader.read()
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async with await asyncio.start_server(cloud_peer, "127.0.0.1", 0) as cloud:
+        config = make_config(proxy_mode="hybrid", cloud_port=cloud.sockets[0].getsockname()[1])
+        proxy, delivery, queue, _clock = _qualified_transport(config)
+        proxy.mode_manager.record_failure("test setup")
+        queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
+        async with await asyncio.start_server(proxy._handle_box_connection, "127.0.0.1", 0) as listener:
+            try:
+                async with _live_box(listener.sockets[0].getsockname()[1]) as (reader, writer):
+                    writer.write(poll)
+                    await writer.drain()
+                    assert await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2) == response
+                    assert received.get_nowait() == poll
+                    assert not proxy.mode_manager.is_offline() and delivery.has_pending(TEST_BOX)
+
+                    writer.write(next_poll)
+                    await writer.drain()
+                    setting = native_frame_fields(await asyncio.wait_for(reader.readuntil(b"</Frame>\r\n"), 2))
+                    assert setting is not None and (setting["TblItem"], setting["NewValue"]) == ("MODE", "3")
+            finally:
+                await proxy.stop()
 
 
 @pytest.mark.enable_socket

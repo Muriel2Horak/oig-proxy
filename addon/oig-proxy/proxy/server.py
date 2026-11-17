@@ -27,7 +27,7 @@ try:
     from ..protocol.frame import FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name
     from ..protocol.frames import build_end_time_frame, build_getactual_frame
     from ..protocol.parser import parse_xml_frame
-    from ..protocol.ver_profile import native_frame_fields, native_receipt_fields
+    from ..protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields
     from ..twin.ack_parser import parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
     from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
@@ -42,7 +42,7 @@ except ImportError:
     )
     from protocol.frames import build_end_time_frame, build_getactual_frame  # type: ignore[no-redef]
     from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
-    from protocol.ver_profile import native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
+    from protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
     from twin.ack_parser import parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
     from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
@@ -62,8 +62,7 @@ logger = logging.getLogger(__name__)
 
 TRACE_LEVEL = 5
 TRANSPORT_RESULT_VALUES = frozenset({"ACK", "END"})
-POLL_RESULT_VALUES = frozenset({"IsNewSet", "IsNewWeather", "IsNewFW"})
-SETTING_POLL_TAG = b"<Result>IsNewSet</Result>"
+SETTING_POLL_TAGS = tuple(f"<Result>{result}</Result>".encode("ascii") for result in BOX_POLL_RESULTS)
 # NOTE: kept in sync with sensor/processor.py:TRANSPORT_METADATA_KEYS. Not extracted
 # to a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
 # new untracked file before the image is built.
@@ -136,6 +135,10 @@ def _box_frame_spans(data: bytes, oversized: bool) -> tuple[list[tuple[int, int]
 def _may_acknowledge_setting(frame: bytes) -> bool:
     return (b"<Result>ACK</Result>" in frame or b"<Result>NACK</Result>" in frame
             or b"<TblName>tbl_events</TblName>" in frame and b"<Type>Setting</Type>" in frame)
+
+
+def _may_offer_setting_slot(frame: bytes) -> bool:
+    return any(tag in frame for tag in SETTING_POLL_TAGS)
 
 
 def _buffered_box_bytes(reader: asyncio.StreamReader) -> int:
@@ -680,15 +683,16 @@ class ProxyServer:
             if eof:
                 ready = len(data)
             frames = [data[start:end] for start, end in spans]
-            poll_count = sum(SETTING_POLL_TAG in frame for frame in frames)
+            poll_candidates = [_may_offer_setting_slot(frame) for frame in frames]
+            poll_count = sum(poll_candidates)
             last_reply_start = max((start for frame, (start, _) in zip(frames, spans)
                                     if _may_acknowledge_setting(frame)), default=-1)
             send_from = 0
             local_write_failed = False
             forwarded_frames: list[bytes] = []
             readback_fields: list[dict[str, str]] = []
-            for frame, (start, end) in zip(frames, spans):
-                is_poll = box_writer is not None and SETTING_POLL_TAG in frame
+            for frame, (start, end), poll_candidate in zip(frames, spans, poll_candidates):
+                is_poll = box_writer is not None and poll_candidate
                 ambiguous = poll_count > 1
                 if is_poll and not ambiguous and send_from < start:
                     if not await self._forward_box_bytes(
@@ -705,7 +709,7 @@ class ProxyServer:
                 )
                 if box_writer is not None and is_poll:
                     try:
-                        replaced = await self._deliver_pending_for_isnewset(
+                        replaced = await self._deliver_pending_for_poll(
                             frame, box_writer, session_id, conn_id=pipe_id, peer=peer_str,
                             transport_block="ambiguous_box_batch" if ambiguous else None,
                             buffered_reply=bool(tail) or start < last_reply_start or bool(_buffered_box_bytes(box_reader)),
@@ -1066,7 +1070,7 @@ class ProxyServer:
                 exc,
             )
 
-    async def _deliver_pending_for_isnewset(
+    async def _deliver_pending_for_poll(
         self,
         poll: bytes,
         box_writer: asyncio.StreamWriter,
@@ -1083,7 +1087,7 @@ class ProxyServer:
         delivery = self.twin_delivery
         device_id = self._bound_box_device(session_id)
         writer_id = id(box_writer)
-        if delivery is None or SETTING_POLL_TAG not in poll:
+        if delivery is None:
             return False
         if device_id is None:
             expected = self._device_id_provider() if self._device_id_provider is not None else None
@@ -1097,6 +1101,8 @@ class ProxyServer:
             transport_block = "offline_exchange_active"
         elif offline and not self.mode_manager.is_offline():
             transport_block = "offline_mode_changed"
+        elif not offline and session_id is not None and session_id == self._hybrid_probe:
+            transport_block = "cloud_recovery_probe"
         elif any(self._bound_box_device(flow) == device_id for flow in self._cloud_partial_sessions):
             transport_block = "cloud_partial_frame"
         if not delivery.valid_local_poll(poll, device_id):
@@ -1253,7 +1259,7 @@ class ProxyServer:
     @staticmethod
     def _effective_table_name(parsed: dict[str, Any], payload: str) -> str:
         result = str(parsed.get("Result") or "")
-        if result in POLL_RESULT_VALUES | TRANSPORT_RESULT_VALUES:
+        if result in BOX_POLL_RESULTS | TRANSPORT_RESULT_VALUES:
             return result
         return str(parsed.get("_table") or infer_table_name(payload) or "")
 
@@ -1263,7 +1269,7 @@ class ProxyServer:
         if result in TRANSPORT_RESULT_VALUES:
             return True
 
-        if result in POLL_RESULT_VALUES:
+        if result in BOX_POLL_RESULTS:
             publishable_keys = [
                 key
                 for key in parsed
@@ -1355,8 +1361,8 @@ class ProxyServer:
                 await self._process_frame(frame_bytes)
                 await self._handle_twin_frames(frame_bytes, session_id, received_at=received_at)
                 # A reply buffered before the Setting cannot acknowledge it.
-                sent = (table == "IsNewSet" and not buf.strip()
-                        and await self._deliver_pending_for_isnewset(
+                sent = (table in BOX_POLL_RESULTS and not buf.strip()
+                        and await self._deliver_pending_for_poll(
                             frame_bytes, box_writer, session_id, conn_id=conn_id, peer=peer, offline=True,
                         ))
                 if not sent and not box_writer.is_closing():

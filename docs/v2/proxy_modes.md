@@ -21,10 +21,11 @@ s cloudem, proxy zapíše chybu do protokolu a spojení boxu uzavře. Box může
 pokus zopakovat při dalším připojení. Přímé přepnutí do offline režimu
 při chybě je součástí režimu `hybrid`.
 
-V běžícím spojení může proxy odeslat místní zápis po samostatném,
-ověřeném dotazu boxu `IsNewSet`. Při probíhající změně z cloudu místní
-požadavek čeká na další vhodnou příležitost. Ovládání vyžaduje povolené
-zápisy a připravený profil boxu.
+V běžícím spojení může proxy odeslat místní zápis po ověřeném dotazu boxu
+`IsNewSet`, `IsNewFW` nebo `IsNewWeather`. Vybraný dotaz použije k zápisu
+na tomtéž spojení. Zbylé rámce předá cloudu. Při probíhající změně z
+cloudu místní požadavek čeká na další vhodný dotaz. Ovládání vyžaduje
+povolené zápisy a připravený profil boxu.
 
 ## Hybrid
 
@@ -61,7 +62,8 @@ režimu přes proxy nedoručují. Pro další místní zápisy musí profil odpo
 aktuálnímu boxu a firmwaru. Po startu s dosud neověřeným profilem je potřeba
 nejprve navázat komunikaci s cloudem v režimu `online` nebo `hybrid`.
 
-Při místním zápisu proxy čeká na vhodný `IsNewSet` a odpoví rámcem `Setting`.
+Při místním zápisu proxy čeká na vhodný `IsNewSet`, `IsNewFW` nebo
+`IsNewWeather` a odpoví rámcem `Setting`.
 Po odpovídajícím `ACK` na stejném spojení pošle `END` s časem a spojení
 ukončí. Samotné `ACK` potvrzuje přijetí rámce. Použitou hodnotu ověřte v HA
 ze zprávy boxu. U `NACK` nebo vypršení lhůty spojení skončí a stav ověřte
@@ -70,8 +72,8 @@ před dalším pokusem.
 <!-- markdownlint-disable MD013 -->
 | Příchozí rámec v offline režimu | Běžná místní odpověď |
 | --- | --- |
-| `IsNewSet` s připraveným příkazem a vhodným dotazem | `Setting`, po potvrzení boxem `END` s časem. |
-| `IsNewSet` bez vhodného příkazu, `IsNewWeather`, `IsNewFW`, běžný `END` | `END` s časem a `GetActual`. |
+| `IsNewSet`, `IsNewFW` nebo `IsNewWeather` s připraveným příkazem a vhodným dotazem | `Setting`, po potvrzení boxem `END` s časem. |
+| `IsNewSet`, `IsNewFW` nebo `IsNewWeather` bez vhodného příkazu, běžný `END` | `END` s časem a `GetActual`. |
 | `tbl_actual` | `ACK` s požadavkem `GetActual`. |
 | Ostatní `tbl_*` | `ACK`. |
 <!-- markdownlint-enable MD013 -->

@@ -865,7 +865,7 @@ class TwinDelivery:
         if len(self._poll_skip_logs) > _POLL_SKIP_LOG_KEYS:
             self._poll_skip_logs.popitem(last=False)
         logger.info(
-            "IsNewSet skipped stage=%s reason=%s box_id=%s session=%s target=%s inflight=%s",
+            "Setting poll skipped stage=%s reason=%s box_id=%s session=%s target=%s inflight=%s",
             stage, reason, self._poll_log_label(device_id), self._poll_log_label(session_id or "-"),
             self._poll_log_label(pending.table, pending.key) if pending is not None else "-",
             self._poll_inflight_label(device_id, local),

@@ -28,7 +28,7 @@ class _FrozenDateTime(datetime):
 
 def _skip_messages(caplog):
     return [record.getMessage() for record in caplog.records
-            if record.levelno == logging.INFO and record.getMessage().startswith("IsNewSet skipped ")]
+            if record.levelno == logging.INFO and record.getMessage().startswith("Setting poll skipped ")]
 
 
 @pytest.fixture

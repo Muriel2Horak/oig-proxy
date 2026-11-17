@@ -15,7 +15,7 @@ import sqlite3
 import xml.etree.ElementTree as ET  # nosec B405
 
 from .ver_profile import (
-    VerProfile, _FIRMWARE_ID, _POLLS, _SESSION_WINDOW, _SETTING_REPLY_ECHOES, _Wire,
+    BOX_POLL_RESULTS, VerProfile, _FIRMWARE_ID, _SESSION_WINDOW, _SETTING_REPLY_ECHOES, _Wire,
     _parse, _receipt_fields, _setting_layout, recent_protocol_timestamp,
 )
 
@@ -322,7 +322,7 @@ class _Scan:  # pylint: disable=too-few-public-methods
             changed_model = packet.wire.ver is not None and not packet.wire.matches(self.profile)
             if packet.conn_id != bracket.ack.conn_id or changed_model:
                 self.brackets.pop(peer, None)
-            elif fields.get("Result") in _POLLS:
+            elif fields.get("Result") in BOX_POLL_RESULTS:
                 self.brackets.pop(peer, None)
                 setting = bracket.setting
                 if (setting is not None and packet.wire.matches(self.profile)
