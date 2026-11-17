@@ -2,6 +2,15 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.8] - Unreleased
+
+V hybridním režimu proxy při výpadku cloudu před výměnou dat zachová
+spojení s boxem a obslouží ho místně. Během obnovy ověřuje cloud vždy
+na jednom spojení a současně dál přijímá místní data.
+Lokální ovládání zůstává experimentální.
+
+[Poznámky k verzi pro uživatele Home Assistantu](addon/oig-proxy/CHANGELOG.md)
+
 ## [2.2.0-rc.7] - Unreleased
 
 Experimentální lokální ovládání lépe využívá dotazy boxu na otevřeném

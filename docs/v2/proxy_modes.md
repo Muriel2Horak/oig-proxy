@@ -28,11 +28,19 @@ zápisy a připravený profil boxu.
 
 ## Hybrid
 
-Hybrid po startu zkouší cloud. Po `hybrid_fail_threshold` zaznamenaných
-neúspěších přejde na místní odpovědi. Výchozí práh aplikace je jedna chyba.
-Po době `hybrid_retry_interval` proxy vyzkouší cloud při příštím připojení
-boxu. Výchozí interval je 60 sekund. Úspěšné připojení obnoví předávání
-rámců do cloudu. Pokud další pokus selže, prodleva začne znovu.
+Hybrid po startu zkouší cloud. Pokud připojení selže před výměnou dat,
+proxy zachová spojení boxu a odpovídá místně. Pokud už výměna začala a
+cloud se odpojí, proxy rozpracované spojení ukončí bez opakování dat.
+V protokolu uvede důvod ukončení. Selhání před první platnou odpovědí
+se počítá do `hybrid_fail_threshold`. Po dosažení prahu přejde proxy
+do offline režimu. Výchozí práh aplikace je jedna chyba.
+
+Po době `hybrid_retry_interval` zkusí proxy cloud při příštím připojení
+boxu. Výchozí interval je 60 sekund. Než zkouška skončí, obslouží další
+spojení místně. Na první platnou odpověď zkouška čeká nejvýše
+`cloud_ack_timeout`. Platný rámec z cloudu předaný boxu potvrdí návrat
+do online provozu. Proxy uzavře nečinná místní spojení a rozpracované
+lokální zápisy nechá doběhnout. Když pokus selže, prodleva začne znovu.
 
 ```yaml
 proxy_mode: hybrid

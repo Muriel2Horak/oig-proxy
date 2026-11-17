@@ -1509,8 +1509,9 @@ async def test_handle_box_connection_online_session_cleans_up_local_getactual_ta
     async def fake_pipe_box_to_cloud(*args, **kwargs) -> None:
         await asyncio.Event().wait()
 
-    async def fake_pipe_cloud_to_box(*args, **kwargs) -> None:
+    async def fake_pipe_cloud_to_box(*args, **kwargs) -> str:
         await asyncio.wait_for(loop_started.wait(), timeout=1.0)
+        return "eof"
 
     server._pipe_box_to_cloud = AsyncMock(side_effect=fake_pipe_box_to_cloud)
     server._pipe_cloud_to_box = AsyncMock(side_effect=fake_pipe_cloud_to_box)
@@ -1533,7 +1534,7 @@ async def test_handle_box_connection_online_session_cleans_up_local_getactual_ta
 
     assert loop_started.is_set()
     assert loop_cancelled.is_set()
-    server.mode_manager.record_success.assert_called_once_with()
+    server.mode_manager.record_success.assert_not_called()
     server._pipe_box_to_cloud.assert_awaited_once()
     server._pipe_cloud_to_box.assert_awaited_once()
     twin_delivery.clear_session.assert_called_once()

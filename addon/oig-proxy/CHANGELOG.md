@@ -1,5 +1,22 @@
 <!-- markdownlint-disable MD025 -->
 
+# 2.2.0-rc.8
+
+> **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
+> odpovědnost. Před aktualizací zálohujte aplikaci. Než zapnete automatizace,
+> vyzkoušejte změnu ručně a ověřte její skutečný dopad na svém boxu.
+> Home Assistant se zapnutými automatickými aktualizacemi může tuto verzi
+> nainstalovat po vydání sám.
+
+- Když v hybridním režimu selže spojení s cloudem před výměnou dat, proxy
+  ponechá box připojený a odpovídá mu místně. Pokud už výměna začala,
+  probíhající spojení uzavře bez opakování jeho dat.
+- Během obnovy zkouší cloud na jednom spojení. Další spojení boxu během
+  zkoušky dál obsluhuje místně. Návrat potvrdí platná odpověď z cloudu
+  a box se pak může znovu připojit přes cloud.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.8/docs/v2/local-control.md)
+
 # 2.2.0-rc.7
 
 > **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní

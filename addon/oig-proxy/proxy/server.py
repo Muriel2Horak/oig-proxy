@@ -15,6 +15,7 @@ import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from typing import TYPE_CHECKING
@@ -85,6 +86,17 @@ TRANSPORT_METADATA_KEYS = frozenset(
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
 ConfirmedSettingCallback = Callable[..., Awaitable[None]]
+
+
+@dataclass
+class _SessionTraffic:
+    box_started: bool = False
+    cloud_started: bool = False
+    cloud_verified: bool = False
+
+    @property
+    def started(self) -> bool:
+        return self.box_started or self.cloud_started
 
 
 def _before_partial_marker(data: bytes, marker: bytes, start: int) -> int:
@@ -164,6 +176,9 @@ class ProxyServer:
         self._readback = ParameterReadbackRefresh()
         self._server: asyncio.Server | None = None
         self._active_connections: set[asyncio.Task[None]] = set()
+        self._box_peers: dict[str, str] = {}
+        self._cloud_sessions: set[str] = set()
+        self._hybrid_probe: str | None = None
         self._cloud_partial_sessions: set[str | None] = set()
         self._box_devices: dict[str, str | None] = {}
         self._offline_writers: set[asyncio.StreamWriter] = set()
@@ -177,9 +192,6 @@ class ProxyServer:
         self.cloud_disconnects: int = 0
         self.cloud_timeouts: int = 0
         self.cloud_errors: int = 0
-        self._box_connected: bool = False
-        self.box_peer: str | None = None
-        self._cloud_connected: bool = False
         self._active_connection_count: int = 0
         self._cloud_ip: str = self.config.cloud_host
 
@@ -231,20 +243,27 @@ class ProxyServer:
         logger.info("OIG Proxy v2 zastavena")
 
     def is_box_connected(self) -> bool:
-        return self._box_connected
+        return bool(self._box_peers)
+
+    @property
+    def box_peer(self) -> str | None:
+        return next(reversed(self._box_peers.values()), None)
 
     async def apply_configured_mode(self, configured_mode: str) -> bool:
         """Apply the mode and reconnect idle offline BOX sockets to cloud."""
         if not await self.mode_manager.apply_configured_mode(configured_mode):
             return False
         if not self.mode_manager.is_offline():
-            for writer in self._offline_writers:
-                if id(writer) not in self._offline_reply_deadlines:
-                    writer.close()
+            self._close_idle_offline_connections()
         return True
 
+    def _close_idle_offline_connections(self) -> None:
+        for writer in self._offline_writers:
+            if id(writer) not in self._offline_reply_deadlines:
+                writer.close()
+
     def is_cloud_connected(self) -> bool:
-        return self._cloud_connected
+        return bool(self._cloud_sessions)
 
     def uptime_s(self) -> float:
         return time.time() - self._start_time
@@ -369,51 +388,18 @@ class ProxyServer:
             )
             await asyncio.sleep(interval_s)
 
-    async def _run_box_offline_session(
-        self,
-        box_reader: asyncio.StreamReader,
-        box_writer: asyncio.StreamWriter,
-        peer: Any,
-        *,
-        session_id: str,
-        conn_id: int,
-        peer_str: str,
-        box_connected_since_epoch: float,
-        box_disconnect_reason: str,
-        cloud_disconnect_reason: str,
-        current: asyncio.Task[Any] | None,
-    ) -> None:
-        self._offline_writers.add(box_writer)
-        local_getactual_task = self._start_local_getactual_task(
-            box_writer,
-            conn_id=conn_id,
-            peer=peer_str,
-        )
-        try:
-            await self._pipe_box_offline(
-                box_reader,
-                box_writer,
-                peer,
-                session_id=session_id,
-            )
-        finally:
-            self._offline_writers.discard(box_writer)
-            self._box_devices.pop(session_id, None)
-            await self._stop_local_getactual_task(local_getactual_task)
-            if self.twin_delivery is not None:
-                self.twin_delivery.clear_session(session_id)
-            self._record_telemetry_connection_end(
-                box_connected_since_epoch=box_connected_since_epoch,
-                box_reason=box_disconnect_reason,
-                box_peer=peer_str,
-                cloud_connected_since_epoch=None,
-                cloud_reason=cloud_disconnect_reason,
-            )
-            self._active_connection_count -= 1
-            self._box_connected = False
-            self.box_peer = None
-            if current is not None:
-                self._active_connections.discard(current)
+    def _claim_cloud_attempt(self, session_id: str) -> bool:
+        if not self.mode_manager.should_try_cloud():
+            return False
+        if self.mode_manager.is_hybrid_mode() and self.mode_manager.is_offline():
+            if self._hybrid_probe is not None:
+                return False
+            self._hybrid_probe = session_id
+        return True
+
+    def _release_cloud_probe(self, session_id: str | None) -> None:
+        if self._hybrid_probe == session_id:
+            self._hybrid_probe = None
 
     async def _handle_box_connection(
         self,
@@ -453,198 +439,121 @@ class ProxyServer:
         import uuid
         session_id = str(uuid.uuid4())
 
-        self._box_connected = True
-        self.box_peer = peer_str
+        self._box_peers[session_id] = peer_str
         box_connected_since_epoch = time.time()
         cloud_connected_since_epoch: float | None = None
         cloud_disconnect_reason = "not_connected"
         box_disconnect_reason = "eof"
+        cloud_writer: asyncio.StreamWriter | None = None
+        local_getactual_task: asyncio.Task[None] | None = None
         logger.info("📦 BOX připojen z %s:%s (session=%s)", *peer[:2], session_id)
 
-        # Check if we should try cloud connection
-        if not self.mode_manager.should_try_cloud():
-            logger.info("☁️ Skipping cloud connection (mode=%s)", self.mode_manager.configured_mode)
-            box_disconnect_reason = "offline_mode"
-            if self.telemetry_collector is not None:
-                self.telemetry_collector.record_offline_event(
-                    reason="configured_offline_mode",
-                    local_ack=True,
-                    mode=str(self.mode_manager.runtime_mode.value),
-                )
-            await self._run_box_offline_session(
-                box_reader,
-                box_writer,
-                peer,
-                session_id=session_id,
-                conn_id=session_conn_id,
-                peer_str=peer_str,
-                box_connected_since_epoch=box_connected_since_epoch,
-                box_disconnect_reason=box_disconnect_reason,
-                cloud_disconnect_reason=cloud_disconnect_reason,
-                current=current,
-            )
-            return
-
-        # Otevřeme spojení do cloudu
-        cloud_reader: asyncio.StreamReader | None = None
-        cloud_writer: asyncio.StreamWriter | None = None
         try:
-            cloud_reader, cloud_writer = await asyncio.wait_for(
-                asyncio.open_connection(self._cloud_ip, self.config.cloud_port),
-                timeout=self.config.cloud_connect_timeout,
-            )
-            logger.info(
-                "☁️ Cloud spojen: %s:%s (session=%s)",
-                self.config.cloud_host,
-                self.config.cloud_port,
-                session_id,
-            )
-            self.cloud_connects += 1
-            self._cloud_connected = True
-            cloud_connected_since_epoch = time.time()
-            cloud_disconnect_reason = "eof"
-            self.mode_manager.record_success()
-        except asyncio.TimeoutError as exc:
-            self.cloud_timeouts += 1
-            logger.error("❌ Cloud nedostupný: %s", exc)
-            self.mode_manager.record_failure(reason=str(exc))
-            self._record_cloud_connect_failure(
-                conn_id=session_conn_id,
-                failure_type="timeout",
-                failure_detail=str(exc),
-                peer=peer_str,
-                will_go_offline=self.mode_manager.is_offline(),
-            )
-            if self.mode_manager.is_offline():
-                box_disconnect_reason = "offline_fallback_timeout"
-                await self._run_box_offline_session(
-                    box_reader,
-                    box_writer,
-                    peer,
-                    session_id=session_id,
-                    conn_id=session_conn_id,
-                    peer_str=peer_str,
-                    box_connected_since_epoch=box_connected_since_epoch,
-                    box_disconnect_reason=box_disconnect_reason,
-                    cloud_disconnect_reason=cloud_disconnect_reason,
-                    current=current,
-                )
-                return
-            box_disconnect_reason = "cloud_connect_timeout"
-            box_writer.close()
-            await box_writer.wait_closed()
-            self._record_telemetry_connection_end(
-                box_connected_since_epoch=box_connected_since_epoch,
-                box_reason=box_disconnect_reason,
-                box_peer=peer_str,
-                cloud_connected_since_epoch=None,
-                cloud_reason=cloud_disconnect_reason,
-            )
-            self._active_connection_count -= 1
-            self._box_connected = False
-            self.box_peer = None
-            if current is not None:
-                self._active_connections.discard(current)
-            return
-        except OSError as exc:
-            self.cloud_errors += 1
-            logger.error("❌ Cloud nedostupný: %s", exc)
-            self.mode_manager.record_failure(reason=str(exc))
-            self._record_cloud_connect_failure(
-                conn_id=session_conn_id,
-                failure_type="oserror",
-                failure_detail=str(exc),
-                peer=peer_str,
-                will_go_offline=self.mode_manager.is_offline(),
-            )
-            if self.mode_manager.is_offline():
-                box_disconnect_reason = "offline_fallback_oserror"
-                await self._run_box_offline_session(
-                    box_reader,
-                    box_writer,
-                    peer,
-                    session_id=session_id,
-                    conn_id=session_conn_id,
-                    peer_str=peer_str,
-                    box_connected_since_epoch=box_connected_since_epoch,
-                    box_disconnect_reason=box_disconnect_reason,
-                    cloud_disconnect_reason=cloud_disconnect_reason,
-                    current=current,
-                )
-                return
-            box_disconnect_reason = "cloud_connect_oserror"
-            box_writer.close()
-            await box_writer.wait_closed()
-            self._record_telemetry_connection_end(
-                box_connected_since_epoch=box_connected_since_epoch,
-                box_reason=box_disconnect_reason,
-                box_peer=peer_str,
-                cloud_connected_since_epoch=None,
-                cloud_reason=cloud_disconnect_reason,
-            )
-            self._active_connection_count -= 1
-            self._box_connected = False
-            self.box_peer = None
-            if current is not None:
-                self._active_connections.discard(current)
-            return
+            if self._claim_cloud_attempt(session_id):
+                try:
+                    cloud_reader, cloud_writer = await asyncio.wait_for(
+                        asyncio.open_connection(self._cloud_ip, self.config.cloud_port),
+                        timeout=self.config.cloud_connect_timeout,
+                    )
+                except OSError as exc:
+                    failure_type = "timeout" if isinstance(exc, TimeoutError) else "oserror"
+                    if failure_type == "timeout":
+                        self.cloud_timeouts += 1
+                    else:
+                        self.cloud_errors += 1
+                    logger.error("Cloud connect failed (%s): %s (session=%s)", failure_type, exc, session_id)
+                    self.mode_manager.record_failure(reason=str(exc))
+                    fallback = self.mode_manager.is_hybrid_mode() or self.mode_manager.is_offline()
+                    self._record_cloud_connect_failure(
+                        conn_id=session_conn_id,
+                        failure_type=failure_type,
+                        failure_detail=str(exc),
+                        peer=peer_str,
+                        will_go_offline=fallback,
+                    )
+                    box_disconnect_reason = f"cloud_connect_{failure_type}"
+                    if not fallback:
+                        return
+                    box_disconnect_reason = f"offline_fallback_{failure_type}"
+                else:
+                    if cloud_reader is None or cloud_writer is None:
+                        box_disconnect_reason = "cloud_connect_missing_stream"
+                        return
+                    logger.info(
+                        "☁️ Cloud spojen: %s:%s (session=%s)",
+                        self.config.cloud_host, self.config.cloud_port, session_id,
+                    )
+                    self.cloud_connects += 1
+                    self._cloud_sessions.add(session_id)
+                    cloud_connected_since_epoch = time.time()
+                    cloud_disconnect_reason = "box_closed"
+                    local_getactual_task = self._start_local_getactual_task(
+                        box_writer, conn_id=session_conn_id, peer=peer_str,
+                    )
+                    traffic = _SessionTraffic()
+                    reply_timeout = (
+                        self.config.cloud_ack_timeout if self._hybrid_probe == session_id else None
+                    )
+                    cloud_reason = await self._run_cloud_pipes(
+                        box_reader, box_writer, cloud_reader, cloud_writer, peer, session_id,
+                        session_conn_id, traffic, reply_timeout,
+                    )
+                    if cloud_reason is None:
+                        return
 
-        if cloud_reader is None or cloud_writer is None:
-            logger.error("❌ Cloud connection missing stream endpoints after successful connect")
-            box_writer.close()
-            await box_writer.wait_closed()
-            self._record_telemetry_connection_end(
-                box_connected_since_epoch=box_connected_since_epoch,
-                box_reason="cloud_connect_missing_stream",
-                box_peer=peer_str,
-                cloud_connected_since_epoch=None,
-                cloud_reason=cloud_disconnect_reason,
-            )
-            self._active_connection_count -= 1
-            self._box_connected = False
-            self.box_peer = None
-            if current is not None:
-                self._active_connections.discard(current)
-            return
+                    cloud_disconnect_reason = cloud_reason
+                    box_disconnect_reason = f"cloud_{cloud_reason}"
+                    upstream_failed = cloud_reason in {"eof", "read_error", "reply_timeout"}
+                    if (upstream_failed and not traffic.cloud_verified
+                            and (not traffic.started or self.mode_manager.is_hybrid_mode())):
+                        phase = "before_valid_reply" if traffic.started else "before_exchange"
+                        cloud_disconnect_reason = f"{cloud_reason}_{phase}"
+                        if cloud_reason == "reply_timeout":
+                            self.cloud_timeouts += 1
+                        else:
+                            self.cloud_errors += 1
+                        self.mode_manager.record_failure(reason=cloud_disconnect_reason)
+                    elif cloud_reason == "read_error":
+                        self.cloud_errors += 1
 
-        local_getactual_task = self._start_local_getactual_task(
-            box_writer,
-            conn_id=session_conn_id,
-            peer=peer_str,
-        )
+                    if (not upstream_failed or traffic.started or box_writer.is_closing()
+                            or not self.mode_manager.is_hybrid_mode()):
+                        return
+                    box_disconnect_reason = f"offline_fallback_{cloud_disconnect_reason}"
+                    logger.info(
+                        "Cloud disconnected before relaying data; handling BOX locally "
+                        "(session=%s, reason=%s, failures=%d)",
+                        session_id, cloud_disconnect_reason, self.mode_manager.fail_count,
+                    )
+                    cloud_writer.close()
+                    self._cloud_sessions.discard(session_id)
+                    self.cloud_disconnects += 1
+                    if self.telemetry_collector is not None:
+                        self.telemetry_collector.record_cloud_session_end(
+                            connected_since_epoch=cloud_connected_since_epoch,
+                            reason=cloud_disconnect_reason,
+                        )
+                    cloud_connected_since_epoch = None
+            else:
+                logger.info("☁️ Skipping cloud connection (mode=%s)", self.mode_manager.configured_mode)
+                box_disconnect_reason = "offline_mode"
+                if self.telemetry_collector is not None:
+                    self.telemetry_collector.record_offline_event(
+                        reason="configured_offline_mode",
+                        local_ack=True,
+                        mode=str(self.mode_manager.runtime_mode.value),
+                    )
 
-        # Spustíme obousměrný forward.
-        # Používáme FIRST_COMPLETED + cancel, aby po odpojení jedné strany
-        # byl okamžitě uvolněn i druhý socket (jinak hrozí FD leak – každých
-        # ~15 s přibude jeden "stuck" cloud socket dokud systém nevyčerpá FDs).
-        pipe_tasks = [
-            asyncio.ensure_future(
-                self._pipe_box_to_cloud(
-                    box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id, conn_id=session_conn_id,
+            self._release_cloud_probe(session_id)
+            self._offline_writers.add(box_writer)
+            if local_getactual_task is None:
+                local_getactual_task = self._start_local_getactual_task(
+                    box_writer, conn_id=session_conn_id, peer=peer_str,
                 )
-            ),
-            asyncio.ensure_future(
-                self._pipe_cloud_to_box(
-                    cloud_reader, box_writer, peer=peer, session_id=session_id, conn_id=session_conn_id,
-                )
-            ),
-        ]
-        try:
-            _done, _pending = await asyncio.wait(
-                pipe_tasks,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for _t in _pending:
-                _t.cancel()
-            if _pending:
-                await asyncio.gather(*_pending, return_exceptions=True)
-        except asyncio.CancelledError:
-            for _t in pipe_tasks:
-                if not _t.done():
-                    _t.cancel()
-            await asyncio.gather(*pipe_tasks, return_exceptions=True)
-            raise
+            await self._pipe_box_offline(box_reader, box_writer, peer, session_id=session_id)
         finally:
+            self._release_cloud_probe(session_id)
+            self._offline_writers.discard(box_writer)
             await self._stop_local_getactual_task(local_getactual_task)
             if self.twin_delivery is not None:
                 self.twin_delivery.clear_session(session_id)
@@ -653,11 +562,11 @@ class ProxyServer:
             if self.telemetry_collector is not None:
                 self.telemetry_collector.discard_requests(session_conn_id)
             for writer in (box_writer, cloud_writer):
-                if writer and not writer.is_closing():
+                if writer is not None and not writer.is_closing():
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except Exception as exc:  # noqa: BLE001
+                    except OSError as exc:
                         logger.debug("wait_closed error in pipe cleanup: %s", exc)
             self._record_telemetry_connection_end(
                 box_connected_since_epoch=box_connected_since_epoch,
@@ -667,13 +576,44 @@ class ProxyServer:
                 cloud_reason=cloud_disconnect_reason,
             )
             self._active_connection_count -= 1
-            self._box_connected = False
-            self._cloud_connected = False
-            self.box_peer = None
-            self.cloud_disconnects += 1
+            self._box_peers.pop(session_id, None)
+            self._cloud_sessions.discard(session_id)
+            if cloud_connected_since_epoch is not None:
+                self.cloud_disconnects += 1
             if current is not None:
                 self._active_connections.discard(current)
-            logger.info("🔌 BOX odpojen: %s:%s (session=%s)", *peer[:2], session_id)
+            logger.info(
+                "🔌 BOX odpojen: %s:%s (session=%s) reason=%s cloud_reason=%s",
+                *peer[:2], session_id, box_disconnect_reason, cloud_disconnect_reason,
+            )
+
+    async def _run_cloud_pipes(
+        self,
+        box_reader: asyncio.StreamReader, box_writer: asyncio.StreamWriter,
+        cloud_reader: asyncio.StreamReader, cloud_writer: asyncio.StreamWriter,
+        peer: tuple, session_id: str, conn_id: int, traffic: _SessionTraffic,
+        reply_timeout: float | None,
+    ) -> str | None:
+        """Return the Cloud closure reason if the Cloud pipe ended first."""
+        box_pipe = asyncio.create_task(self._pipe_box_to_cloud(
+            box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id, conn_id=conn_id,
+            traffic=traffic,
+        ))
+        cloud_pipe = asyncio.create_task(self._pipe_cloud_to_box(
+            cloud_reader, box_writer, peer=peer, session_id=session_id, conn_id=conn_id,
+            traffic=traffic, reply_timeout=reply_timeout,
+        ))
+        try:
+            done, _ = await asyncio.wait((box_pipe, cloud_pipe), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (box_pipe, cloud_pipe):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(box_pipe, cloud_pipe, return_exceptions=True)
+
+        if box_pipe in done:
+            return "write_error" if box_pipe.result() == "cloud_write_error" else None
+        return cloud_pipe.result()
 
     async def _pipe_box_to_cloud(
         self,
@@ -684,7 +624,8 @@ class ProxyServer:
         session_id: str | None = None,
         *,
         conn_id: int | None = None,
-    ) -> None:
+        traffic: _SessionTraffic | None = None,
+    ) -> str:
         """Forward original bytes, substituting at most one eligible poll in a read."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
         pipe_id = id(asyncio.current_task())
@@ -720,6 +661,8 @@ class ProxyServer:
                 incoming = b""
                 eof = True
 
+            if incoming and traffic is not None:
+                traffic.box_started = True
             received_at = time.monotonic()
             # The optional line ending belongs to the previous replaced frame, even
             # when either delimiter byte arrives in a later read.
@@ -750,9 +693,9 @@ class ProxyServer:
                 if is_poll and not ambiguous and send_from < start:
                     if not await self._forward_box_bytes(
                         data[send_from:start], forwarded_frames, readback_fields, cloud_writer,
-                        box_writer, session_id, conn_id,
+                        session_id, conn_id,
                     ):
-                        return
+                        return "cloud_write_error"
                     send_from = start
                     forwarded_frames.clear()
                     readback_fields.clear()
@@ -784,16 +727,18 @@ class ProxyServer:
             if not await self._forward_box_bytes(
                 data[send_from:len(data) if local_write_failed else ready],
                 forwarded_frames, readback_fields, cloud_writer,
-                box_writer, session_id, conn_id,
-            ) or local_write_failed:
-                break
+                session_id, conn_id,
+            ):
+                return "cloud_write_error"
+            if local_write_failed:
+                return "box_write_error"
             if eof:
                 self._write_eof(cloud_writer)
-                break
+                return "box_closed"
 
     async def _forward_box_bytes(
         self, data: bytes, frames: list[bytes], observed: list[dict[str, str]],
-        cloud_writer: asyncio.StreamWriter, box_writer: asyncio.StreamWriter | None,
+        cloud_writer: asyncio.StreamWriter,
         session_id: str | None, conn_id: int,
     ) -> bool:
         if not data:
@@ -813,11 +758,9 @@ class ProxyServer:
         except OSError as exc:
             if delivery is not None:
                 delivery.note_forwarded_clock_poll(None, session_id)
-            self.mode_manager.record_failure(reason=str(exc))
-            if self.mode_manager.is_offline() and box_writer is not None and frames:
-                await self._handle_offline_frames(
-                    bytearray(b"".join(frames)), box_writer, session_id, allow_settings=False,
-                )
+            self.cloud_errors += 1
+            self.mode_manager.record_failure(reason="cloud_write_error")
+            logger.info("Cloud write failed after BOX traffic: %s (session=%s)", exc, session_id)
             return False
         self.frames_forwarded += len(frames)
         for fields in observed:
@@ -866,42 +809,69 @@ class ProxyServer:
         session_id: str | None = None,
         *,
         conn_id: int | None = None,
-    ) -> None:
+        traffic: _SessionTraffic | None = None,
+        reply_timeout: float | None = None,
+    ) -> str:
         """Forward unchanged cloud bytes; no private transform or injection path."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
         if conn_id is None:
             conn_id = id(asyncio.current_task())
         buf = bytearray()
+        deadline = None if reply_timeout is None else time.monotonic() + reply_timeout
         while True:
             try:
-                data = await cloud_reader.read(4096)
-            except (asyncio.IncompleteReadError, ConnectionResetError, OSError):
-                break
+                remaining = None if deadline is None else deadline - time.monotonic()
+                data = await asyncio.wait_for(cloud_reader.read(4096), remaining)
+            except asyncio.TimeoutError:
+                return "reply_timeout"
+            except (asyncio.IncompleteReadError, OSError):
+                return "read_error"
             if not data:
-                self._write_eof(box_writer)
-                break
+                # The connection handler can still reuse an untouched BOX socket.
+                if traffic is None or traffic.started:
+                    self._write_eof(box_writer)
+                return "eof"
+            if traffic is not None:
+                traffic.cloud_started = True
+            verify_response = (
+                traffic is not None and self.mode_manager.is_hybrid_mode()
+                and (not traffic.cloud_verified or self.mode_manager.fail_count > 0)
+            )
             try:
                 box_writer.write(data)
                 buf.extend(data)
                 self._cloud_partial_sessions.add(session_id)
-                self._observe_cloud_buffer(buf, peer_str, session_id, conn_id)
+                verified = self._observe_cloud_buffer(
+                    buf, peer_str, session_id, conn_id, verify_response=verify_response,
+                )
                 if not buf:
                     self._cloud_partial_sessions.discard(session_id)
-                await box_writer.drain()
-            except (OSError, ConnectionResetError):
-                break
+                remaining = None if deadline is None else deadline - time.monotonic()
+                await asyncio.wait_for(box_writer.drain(), remaining)
+            except (asyncio.TimeoutError, OSError):
+                return "box_write_error"
+            if verified and traffic is not None:
+                traffic.cloud_verified = True
+                deadline = None
+                self._release_cloud_probe(session_id)
+                self.mode_manager.record_success()
+                self._close_idle_offline_connections()
 
     def _observe_cloud_buffer(
         self, buf: bytearray,
         peer: str | None, session_id: str | None, conn_id: int,
-    ) -> None:
+        *, verify_response: bool = False,
+    ) -> bool:
         """Parse only complete output frames without changing their byte order."""
+        verified = False
         while True:
             # A TCP read can split the delimiter after a complete XML frame.
             buf[:] = buf.lstrip(b"\r\n")
             frame = extract_frame_from_buffer(buf)
             if frame is None:
-                return
+                return verified
+            if verify_response and not verified:
+                verified = native_frame_fields(frame, allow_repeated_identity=False) is not None
             self._observe_cloud_frame(frame, peer, session_id, conn_id)
 
     def _bound_box_device(self, session_id: str | None) -> str | None:
@@ -1366,7 +1336,6 @@ class ProxyServer:
         *,
         conn_id: int | None = None,
         peer: str | None = None,
-        allow_settings: bool = True,
         received_at: float | None = None,
     ) -> bool:
         """Process offline frames and close the socket after a terminal Setting response."""
@@ -1378,14 +1347,6 @@ class ProxyServer:
             text = frame_bytes.decode("utf-8", errors="replace")
             parsed = parse_xml_frame(text)
             table = self._effective_table_name(parsed, text)
-            if not allow_settings:
-                # Hybrid fallback has no reader left for a Setting acknowledgment.
-                try:
-                    box_writer.write(build_local_ack(table))
-                    await box_writer.drain()
-                except OSError:
-                    return True
-                continue
             self._capture_frame(frame_bytes, "box_to_proxy", conn_id=conn_id, peer=peer)
             if box_writer.is_closing():
                 return True

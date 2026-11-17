@@ -279,7 +279,7 @@ async def _prepare_mode_receipt(config, clock, source, writer):
 
     proxy._readback = ParameterReadbackRefresh(clock=clock)
     proxy._request_readback = lambda: app._admit_parameter_refresh("missing native readback")
-    proxy._box_connected = True
+    proxy._box_peers["box-flow"] = "127.0.0.1:5710"
 
     if source == "local":
         assert app.twin_handler.admit_message(f"oig_local/{TEST_BOX}/set/tbl_box_prms/MODE", b"1") is not None
