@@ -133,7 +133,7 @@ class ModeManager:
                     self.on_hybrid_transition("offline", self.last_offline_time, reason)
 
     def record_success(self) -> None:
-        """Zaznamená úspěšné připojení k cloudu pro HYBRID režim."""
+        """Reset hybrid failure tracking after forwarding a valid Cloud frame."""
         if not self.is_hybrid_mode():
             return
 
