@@ -16,10 +16,15 @@ import tempfile
 from typing import Any
 from uuid import uuid4
 
+from settings_constraints import PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value
+
 logger = logging.getLogger(__name__)
 OBSERVATION_PROFILE = "oig-confirmed-observations-v1"
 ORIGINS = frozenset({"direct", "confirmed_event", "actual_mirror"})
 EXCLUDED_TABLES = frozenset({"tbl_events", "tbl_actions", "tbl_device"})
+_PHASE_TABLE = "tbl_invertor_prm1"
+_PHASE_EVIDENCE = frozenset({"setting_event", "ack_and_table"})
+_PHASE_ENCODING = PowerControlLimits(phase_calibration_enabled=True)
 
 
 def observation_table(table: str) -> bool:
@@ -40,25 +45,28 @@ def finite_json(value: Any) -> bool:
     return False
 
 
-def valid_timestamp(value: Any) -> bool:
-    """Validate original device timestamps without assigning a timezone or freshness."""
+def _parse_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
-        return False
+        return None
     try:
-        datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         try:
-            datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
+            return datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
         except ValueError:
-            return False
-    return True
+            return None
+
+
+def valid_timestamp(value: Any) -> bool:
+    """Validate original device timestamps without assigning a timezone or freshness."""
+    return _parse_timestamp(value) is not None
 
 
 class ConfirmedStateStore:
     """Own a validated cache; replay never implies a fresh or online device."""
 
-    def __init__(self, path: Path, device_id: str, namespace: str = "oig_local") -> None:
-        self.path = Path(path)
+    def __init__(self, path: Path | None, device_id: str, namespace: str = "oig_local") -> None:
+        self.path = Path(path) if path is not None else None
         self.device_id = device_id
         self.namespace = namespace
         self._dirty = False
@@ -76,6 +84,8 @@ class ConfirmedStateStore:
         self._load()
 
     def _load(self) -> None:
+        if self.path is None:
+            return
         try:
             document = json.loads(self.path.read_text(encoding="utf-8"))
             if not self._valid_document(document):
@@ -134,7 +144,26 @@ class ConfirmedStateStore:
                 for key, field in record["fields"].items()
             ):
                 return False
-        return True
+        phase_writes = document.get("phase_calibration_writes", {})
+        return isinstance(phase_writes, dict) and all(
+            self._valid_phase_write(key, field, document["ordering_epoch"])
+            for key, field in phase_writes.items()
+        )
+
+    @staticmethod
+    def _valid_phase_write(key: str, field: Any, epoch: int) -> bool:
+        if (_PHASE_TABLE, key) not in PHASE_CALIBRATION_CONTROLS or not isinstance(field, dict):
+            return False
+        source = _parse_timestamp(field.get("sourceDT"))
+        received = _parse_timestamp(field.get("confirmed_at"))
+        return (
+            type(field.get("value")) is int
+            and validate_setting_value(_PHASE_TABLE, key, field["value"], power_limits=_PHASE_ENCODING)[0]
+            and type(field.get("evidence")) is str and field["evidence"] in _PHASE_EVIDENCE
+            and type(field.get("ordering_epoch")) is int and 0 <= field["ordering_epoch"] <= epoch
+            and source is not None and source.year > 1970
+            and received is not None and received.tzinfo is not None
+        )
 
     @staticmethod
     def _valid_field(field: Any, epoch: int) -> bool:
@@ -174,6 +203,32 @@ class ConfirmedStateStore:
     def snapshot(self) -> dict[str, Any]:
         """Return isolated provenance and values; callers cannot mutate cache state."""
         return deepcopy(self._document)
+
+    def phase_calibration_writes(self) -> dict[str, Any]:
+        """Expose only confirmed values and their provenance to MQTT."""
+        return {
+            key: {name: field[name] for name in ("value", "confirmed_at", "evidence")}
+            for key, field in self._document.get("phase_calibration_writes", {}).items()
+        }
+
+    def record_phase_calibration_write(self, key: str, value: int, *, source_dt: str, evidence: str) -> bool:
+        """Record an explicit BOX-confirmed write independently of effective telemetry."""
+        epoch = self._document["ordering_epoch"]
+        field = {"value": value, "sourceDT": source_dt, "evidence": evidence,
+                 "confirmed_at": datetime.now(timezone.utc).isoformat(), "ordering_epoch": epoch}
+        if not self._valid_phase_write(key, field, epoch):
+            return False
+        writes = self._document.setdefault("phase_calibration_writes", {})
+        previous = writes.get(key)
+        if previous is not None and previous["ordering_epoch"] == epoch:
+            stamp = _parse_timestamp(source_dt)
+            old_stamp = _parse_timestamp(previous["sourceDT"])
+            if stamp is None or old_stamp is None or (stamp.tzinfo is None) != (old_stamp.tzinfo is None) or stamp <= old_stamp:
+                return False
+        writes[key] = field
+        self._dirty = True
+        self.flush()
+        return True
 
     def record(  # pylint: disable=too-many-arguments
         self,
@@ -258,6 +313,9 @@ class ConfirmedStateStore:
 
     def flush(self) -> bool:
         """Replace a fully written finite JSON file atomically; keep failed writes dirty."""
+        if self.path is None:
+            self._dirty = False
+            return True
         if not self._writable:
             return False
         if not self._dirty:

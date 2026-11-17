@@ -47,7 +47,7 @@ from sensor.loader import SensorMapLoader
 from sensor.processor import FrameProcessor
 from sensor.confirmed_store import ConfirmedStateStore
 from parameter_refresh import ParameterRefreshScheduler
-from settings_constraints import PowerControlLimits
+from settings_constraints import PHASE_CALIBRATION_WRITE_TABLE, PowerControlLimits, validate_setting_value
 from telemetry.collector import TelemetryCollector
 from twin import TwinControlHandler, TwinQueue
 from twin.state import TwinSetting
@@ -320,6 +320,7 @@ class ProxyApp:
             telemetry_collector=self.telemetry_collector,
             device_id_provider=lambda: device_id_manager.device_id,
             request_readback=lambda: self._admit_parameter_refresh("missing native readback"),
+            on_phase_confirmation=self._on_phase_confirmation,
         )
         if self.telemetry_collector is not None:
             self.proxy.mode_manager.on_hybrid_transition = self._on_hybrid_transition
@@ -426,13 +427,13 @@ class ProxyApp:
         if self.mqtt is None or self.sensor_loader is None:
             return
         path = self._confirmed_state_path
-        if device_id and device_id != "unknown" and path:
+        if device_id and device_id != "unknown" and (path or self._power_limits.phase_calibration_enabled):
             self.confirmed_store = ConfirmedStateStore(
-                Path(path), device_id=device_id, namespace=self.config.mqtt_namespace)
+                Path(path) if path else None, device_id=device_id, namespace=self.config.mqtt_namespace)
         self.frame_processor = FrameProcessor(
             self.mqtt, self.sensor_loader,
             proxy_device_id=self.config.proxy_device_id,
-            state_store=self.confirmed_store,
+            state_store=self.confirmed_store if path else None,
             maxfg_as_export_limit_readback=getattr(self.config, "maxfg_as_export_limit_readback", False) is True,
         )
 
@@ -491,11 +492,42 @@ class ProxyApp:
             return False
         discovery_ok = self.frame_processor.publish_all_discovery(device_id)
         state_ok = self.frame_processor.replay_confirmed_states()
+        phase_ok = self._publish_phase_calibration_writes(device_id)
         if discovery_ok:
             self._controls_discovery_marker = (device_id, self.mqtt.discovery_generation)
-        if discovery_ok and state_ok:
+        if discovery_ok and state_ok and phase_ok:
             logger.info("Restored confirmed MQTT states for device_id=%s", device_id)
-        return bool(discovery_ok and state_ok and status_ok)
+        return bool(discovery_ok and state_ok and status_ok and phase_ok)
+
+    def _publish_phase_calibration_writes(self, device_id: str) -> bool:
+        if not self._power_limits.phase_calibration_enabled:
+            return True
+        store = self.confirmed_store
+        if self.mqtt is None or store is None or store.device_id != device_id:
+            return False
+        persisted = store.flush()
+        published = self.mqtt.publish_confirmed_state(device_id, PHASE_CALIBRATION_WRITE_TABLE,
+                                                      store.phase_calibration_writes())
+        return persisted and published
+
+    async def _on_phase_confirmation(
+        self, device_id: str, key: str, value: str, source_dt: str, evidence: str,
+    ) -> None:
+        store = self.confirmed_store
+        if store is None or store.device_id != device_id:
+            return
+        allowed, numeric, _ = validate_setting_value("tbl_invertor_prm1", key, value, power_limits=self._power_limits)
+        if not allowed or not isinstance(numeric, int) or not store.record_phase_calibration_write(
+            key, numeric, source_dt=source_dt, evidence=evidence,
+        ):
+            return
+        if self.parameter_refresh is not None and evidence == "setting_event":
+            table = store.snapshot()["tables"].get("tbl_invertor_prm1", {})
+            previous = table.get("fields", {}).get(key)
+            if previous is not None and previous["value"] != numeric:
+                self.parameter_refresh.note_operation("tbl_invertor_prm1", key)
+        if not self._publish_phase_calibration_writes(device_id):
+            self._request_state_recovery()
 
     def _parameter_refresh_idle(self) -> bool:
         """Daily reads yield to local/cloud writes and require a connected BOX."""
@@ -715,7 +747,7 @@ class ProxyApp:
         await self._ensure_control_handler(frame_device_id)
         self._start_parameter_refresh()
         if (self.confirmed_store is None
-                and self._confirmed_state_path
+                and (self._confirmed_state_path or self._power_limits.phase_calibration_enabled)
                 and self.device_id_manager is not None
                 and self.device_id_manager.device_id):
             self._create_frame_processor(self.device_id_manager.device_id)

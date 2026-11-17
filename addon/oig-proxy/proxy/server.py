@@ -16,6 +16,8 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from math import floor
 from typing import Any
 
 from typing import TYPE_CHECKING
@@ -23,11 +25,12 @@ from typing import TYPE_CHECKING
 try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
-    from ..parameter_refresh import ParameterReadbackRefresh
+    from ..parameter_refresh import PARAMETER_READBACK_EVIDENCE_MAX_AGE_S, ParameterReadbackRefresh
     from ..protocol.frame import FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name
     from ..protocol.frames import build_end_time_frame, build_getactual_frame
     from ..protocol.parser import parse_mode_start, parse_xml_frame
     from ..protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields
+    from ..settings_constraints import PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value
     from ..twin.ack_parser import parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
     from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
@@ -36,13 +39,18 @@ try:
 except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
-    from parameter_refresh import ParameterReadbackRefresh  # type: ignore[no-redef]
+    from parameter_refresh import (  # type: ignore[no-redef]
+        PARAMETER_READBACK_EVIDENCE_MAX_AGE_S, ParameterReadbackRefresh,
+    )
     from protocol.frame import (  # type: ignore[no-redef]
         FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name,
     )
     from protocol.frames import build_end_time_frame, build_getactual_frame  # type: ignore[no-redef]
     from protocol.parser import parse_mode_start, parse_xml_frame  # type: ignore[no-redef]
     from protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
+    from settings_constraints import (  # type: ignore[no-redef]
+        PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value,
+    )
     from twin.ack_parser import parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
     from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
@@ -85,6 +93,27 @@ TRANSPORT_METADATA_KEYS = frozenset(
 # Typ callbacku volaného při parsování frame
 FrameCallback = Callable[[dict[str, Any]], Awaitable[None]]
 ConfirmedSettingCallback = Callable[..., Awaitable[None]]
+PhaseConfirmationCallback = Callable[[str, str, str, str, str], Awaitable[None]]
+
+_PHASE_TABLE = "tbl_invertor_prm1"
+_PHASE_KEYS = frozenset(key for _, key in PHASE_CALIBRATION_CONTROLS)
+_PHASE_LIMITS = PowerControlLimits(phase_calibration_enabled=True)
+
+
+@dataclass
+class _PhaseWrite:
+    wire_identity: str | tuple[int, int]
+    nonzero_baseline: tuple[int, float] | None = None
+    receipt: tuple[int, float] | None = None
+    pending_value: str | None = None
+    expires_at: float = 0
+
+
+@dataclass(frozen=True)
+class _PhaseObservation:
+    timing: tuple[int, float]
+    value: str
+    received_at: float
 
 
 @dataclass
@@ -167,16 +196,21 @@ class ProxyServer:
         *,
         device_id_provider: Callable[[], str | None] | None = None,
         request_readback: Callable[[], TwinSetting | None] | None = None,
+        on_phase_confirmation: PhaseConfirmationCallback | None = None,
     ) -> None:
         self.config = config
         self.on_frame = on_frame
         self.on_confirmed_setting = on_confirmed_setting
+        self.on_phase_confirmation = on_phase_confirmation
         self.twin_delivery = twin_delivery
         self.frame_capture = frame_capture
         self.telemetry_collector = telemetry_collector
         self._device_id_provider = device_id_provider
         self._request_readback = request_readback
         self._readback = ParameterReadbackRefresh()
+        self._phase_writes: dict[tuple[str, str], _PhaseWrite] = {}
+        self._phase_confirmations: dict[tuple[str, str], tuple[int, float]] = {}
+        self._phase_observations: dict[tuple[str, str], _PhaseObservation] = {}
         self._server: asyncio.Server | None = None
         self._active_connections: set[asyncio.Task[None]] = set()
         self._box_peers: dict[str, str] = {}
@@ -925,21 +959,22 @@ class ProxyServer:
         elif fields.get("Result") == "END":
             delivery.clear_cloud_inflight(session_id)
 
-    @staticmethod
     def _track_cloud_setting(
-        delivery: TwinDelivery, fields: dict[str, str], frame_text: str,
+        self, delivery: TwinDelivery, fields: dict[str, str], frame_text: str,
         device_id: str, session_id: str,
     ) -> None:
         table, key, value = fields.get("TblName"), fields.get("TblItem"), fields.get("NewValue")
         if not table or not key or value is None or fields.get("ID_Device") != device_id:
             delivery.set_cloud_inflight(session_id)
             return
+        msg_id = self._wire_counter(fields.get("ID", ""))
+        id_set = self._wire_counter(fields.get("ID_Set", ""))
         delivery.begin_cloud_setting(
             device_id=device_id, table=table, key=key, value=value, raw_text=frame_text,
-            msg_id=ProxyServer._wire_counter(fields.get("ID", "")),
-            id_set=ProxyServer._wire_counter(fields.get("ID_Set", "")),
+            msg_id=msg_id, id_set=id_set,
             confirm=fields.get("Confirm", "New"), session_id=session_id,
         )
+        self._track_phase_write(device_id, table, key, (msg_id, id_set))
 
     @staticmethod
     def _wire_counter(value: str) -> int:
@@ -966,6 +1001,8 @@ class ProxyServer:
                 received_at=received_at,
             )
         result = fields.get("Result")
+        if result is None and fields.get("TblName") == _PHASE_TABLE:
+            await self._observe_phase_table(delivery, device_id, fields)
         if result not in {"ACK", "NACK"}:
             return None
         receipt = native_receipt_fields(frame_bytes)
@@ -977,7 +1014,7 @@ class ProxyServer:
             )
             if acknowledged is not None:
                 setting, _ = acknowledged
-                self._note_ack_readback(delivery, setting, device_id, receipt.get("Rdt", ""))
+                self._note_ack_readback(delivery, setting, device_id, receipt.get("Rdt", ""), cloud=True)
                 return None
         elif result == "NACK" and delivery.acknowledge_cloud(
             device_id, session_id=session_id, result="nack", evidence="protocol_nack", reply_fields=receipt,
@@ -1013,7 +1050,10 @@ class ProxyServer:
         # A matching event cannot supply its own pre-wire counter baseline.
         delivery.observe_box_frame(device_id, counter, source_dt, session_id=session_id, received_at=received_at)
         if event is not None:
-            await self._publish_confirmed_setting(device_id, table, key, value, source_dt=source_dt)
+            if (table, key) in PHASE_CALIBRATION_CONTROLS:
+                await self._observe_phase_event(delivery, device_id, fields, key, value)
+            else:
+                await self._publish_confirmed_setting(device_id, table, key, value, source_dt=source_dt)
 
     def _accept_local_reply(
         self, delivery: TwinDelivery, frame_bytes: bytes, device_id: str, session_id: str,
@@ -1047,12 +1087,132 @@ class ProxyServer:
 
     def _note_ack_readback(
         self, delivery: TwinDelivery, setting: TwinSetting, device_id: str, received_dt: str,
+        *, cloud: bool = False,
     ) -> None:
-        if self._request_readback is not None and not self.mode_manager.is_offline():
-            self._readback.note_ack(
-                setting.table, setting.key, setting.value,
-                box_time=delivery.box_readback_time(device_id, received_dt),
-            )
+        readback_enabled = self._request_readback is not None and not self.mode_manager.is_offline()
+        phase_tracked = (setting.table == _PHASE_TABLE and (device_id, setting.key) in self._phase_writes)
+        if not (readback_enabled or phase_tracked):
+            return
+        box_time = delivery.box_readback_time(device_id, received_dt)
+        if phase_tracked:
+            self._note_phase_ack(setting, device_id, received_dt, box_time, cloud=cloud)
+        if readback_enabled:
+            self._readback.note_ack(setting.table, setting.key, setting.value, box_time=box_time)
+
+    def _track_phase_write(
+        self, device_id: str, table: str, key: str, wire_identity: str | tuple[int, int],
+    ) -> None:
+        if self.on_phase_confirmation is None or (table, key) not in PHASE_CALIBRATION_CONTROLS:
+            return
+        lookup = device_id, key
+        current = self._phase_writes.get(lookup)
+        if current is not None and current.wire_identity == wire_identity and current.receipt is not None:
+            return
+        observation = self._phase_observations.get(lookup)
+        baseline = None
+        if (observation is not None and observation.value != "0"
+                and time.monotonic() - observation.received_at < PARAMETER_READBACK_EVIDENCE_MAX_AGE_S):
+            baseline = observation.timing
+        self._phase_writes[lookup] = _PhaseWrite(wire_identity, nonzero_baseline=baseline)
+
+    @staticmethod
+    def _phase_value(key: str, value: Any) -> str | None:
+        valid, normalized, _ = validate_setting_value(_PHASE_TABLE, key, value, power_limits=_PHASE_LIMITS)
+        return str(normalized) if valid else None
+
+    def _note_phase_ack(
+        self, setting: TwinSetting, device_id: str, received_dt: str, box_time: tuple[int, float | None],
+        *, cloud: bool,
+    ) -> None:
+        current = self._phase_writes.get((device_id, setting.key))
+        wire_identity = (setting.msg_id, setting.id_set) if cloud else setting.audit_id
+        if current is None or current.wire_identity != wire_identity or current.receipt is not None:
+            return
+        epoch, stamp = box_time
+        if stamp is None and received_dt:
+            return
+        value = self._phase_value(setting.key, setting.value)
+        if value is None:
+            return
+        stamp = stamp if stamp is not None else floor(time.time())
+        baseline = current.nonzero_baseline
+        if value == "0" and (
+            baseline is None or baseline[0] != epoch
+            or not 0 <= stamp - baseline[1] < PARAMETER_READBACK_EVIDENCE_MAX_AGE_S
+        ):
+            # A pre-existing effective zero also matches this write's value.
+            return
+        current.receipt = (epoch, stamp)
+        current.pending_value = value
+        current.expires_at = time.monotonic() + PARAMETER_READBACK_EVIDENCE_MAX_AGE_S
+
+    @staticmethod
+    def _phase_box_time(
+        delivery: TwinDelivery, device_id: str, fields: dict[str, str],
+    ) -> tuple[int, float] | None:
+        if (fields.get("ID_Device") != device_id or fields.get("ID_SubD", "0") != "0"
+                or fields.get("Reason") != "Table"):
+            return None
+        epoch, stamp = delivery.box_readback_time(device_id, fields.get("DT", ""))
+        return (epoch, stamp) if stamp is not None else None
+
+    async def _observe_phase_event(
+        self, delivery: TwinDelivery, device_id: str, fields: dict[str, str], key: str, value: str,
+    ) -> None:
+        if self.on_phase_confirmation is None:
+            return
+        timing = self._phase_box_time(delivery, device_id, fields)
+        normalized = self._phase_value(key, value)
+        if timing is None or normalized is None:
+            return
+        await self._publish_phase_confirmation(device_id, key, normalized, timing, "setting_event")
+
+    async def _observe_phase_table(
+        self, delivery: TwinDelivery, device_id: str, fields: dict[str, str],
+    ) -> None:
+        if self.on_phase_confirmation is None:
+            return
+        timing = self._phase_box_time(delivery, device_id, fields)
+        if timing is None:
+            return
+        received_at = time.monotonic()
+        for key in _PHASE_KEYS.intersection(fields):
+            lookup = device_id, key
+            value = self._phase_value(key, fields[key])
+            previous = self._phase_observations.get(lookup)
+            if value is None:
+                continue
+            if previous is None or timing >= previous.timing:
+                self._phase_observations[lookup] = _PhaseObservation(timing, value, received_at)
+            elif value == "0":
+                continue
+            pending = self._phase_writes.get(lookup)
+            if (pending is None or pending.receipt is None or pending.pending_value is None
+                    or received_at >= pending.expires_at
+                    or timing[0] != pending.receipt[0] or timing[1] <= pending.receipt[1]
+                    or pending.pending_value != value):
+                continue
+            pending.pending_value = None
+            await self._publish_phase_confirmation(device_id, key, value, timing, "ack_and_table")
+
+    async def _publish_phase_confirmation(
+        self, device_id: str, key: str, value: str, timing: tuple[int, float], evidence: str,
+    ) -> None:
+        callback = self.on_phase_confirmation
+        lookup = device_id, key
+        previous = self._phase_confirmations.get(lookup)
+        if callback is None or previous is not None and timing <= previous:
+            return
+        self._phase_confirmations[lookup] = timing
+        if evidence == "setting_event":
+            pending = self._phase_writes.get(lookup)
+            if pending is not None and pending.receipt is not None and timing >= pending.receipt:
+                pending.pending_value = None
+        source_dt = datetime.fromtimestamp(timing[1], timezone.utc).isoformat()
+        try:
+            await callback(device_id, key, value, source_dt, evidence)
+        except Exception:  # noqa: BLE001
+            logger.exception("Confirmed phase publish failed for %s:%s", device_id, key)
 
     async def _publish_confirmed_setting(
         self,
@@ -1149,6 +1309,7 @@ class ProxyServer:
         if before_write is not None:
             before_write()
         box_writer.write(frame)
+        self._track_phase_write(device_id, setting.table, setting.key, setting.audit_id)
         delivery.record_injected_box(setting, device_id, session_id=session_id or "")
         if (not offline and self._readback.is_due()
                 and (setting.table, setting.key, setting.value) == ("tbl_box_prms", "SA", 1)):

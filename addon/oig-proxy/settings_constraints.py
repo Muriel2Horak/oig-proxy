@@ -70,6 +70,7 @@ class SettingConstraint:
 PHASE_CALIBRATION_CONTROLS = frozenset(
     ("tbl_invertor_prm1", key) for key in ("P_CAL_R", "P_CAL_S", "P_CAL_T")
 )
+PHASE_CALIBRATION_WRITE_TABLE = "phase_calibration_write"
 # The vendor workbook specifies U16 for all three calibration parameters.
 _PHASE_CALIBRATION_U16 = SettingConstraint(0, 0xFFFF, 1, integer_only=True)
 _NUMERIC_POWER_CONTROLS = frozenset({AC_CHARGE_CONTROL, EXPORT_LIMIT_CONTROL}) | PHASE_CALIBRATION_CONTROLS

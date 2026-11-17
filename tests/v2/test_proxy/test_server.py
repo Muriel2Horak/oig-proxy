@@ -6,7 +6,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import time
 from types import SimpleNamespace
@@ -822,6 +822,203 @@ async def test_readback_survives_failed_send_and_existing_sa_covers_batch(dummy_
         assert b"<TblItem>SA</TblItem>" in sent
         assert not proxy._readback.is_due()
         assert request.call_count == (0 if existing_sa else 2)
+
+
+def _phase_table(stamp, value, *, subdevice=0, device=TEST_BOX):
+    return native(
+        f"<TblName>tbl_invertor_prm1</TblName><ID_Device>{device}</ID_Device>"
+        f"<ID_SubD>{subdevice}</ID_SubD><DT>{stamp}</DT><Reason>Table</Reason>"
+        f"<P_CAL_R>{value}</P_CAL_R>", MODEL,
+    )
+
+
+def _phase_event(stamp, value, *, subdevice=0):
+    return native(
+        f"<TblName>tbl_events</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+        f"<ID_SubD>{subdevice}</ID_SubD><ID_Set>1234100</ID_Set><DT>{stamp}</DT>"
+        "<Reason>Table</Reason><Type>Setting</Type>"
+        f"<Content>Remotely : tbl_invertor_prm1 / P_CAL_R: [75]->[{value}]</Content>", MODEL,
+    )
+
+
+def _utc_phase_stamp(clock, offset=0):
+    return datetime.fromtimestamp(int(clock.now) + offset, timezone.utc).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_phase_setting_event_confirms_zero_without_changing_raw_state(dummy_writer_factory):
+    regular, confirmed = AsyncMock(), AsyncMock()
+    proxy, _delivery, _queue, clock = _qualified_transport(make_config(), callback=regular)
+    proxy.on_phase_confirmation = confirmed
+    clock.now = time.time()
+    writer = dummy_writer_factory()
+    await _send_poll(proxy, writer, poll=_phase_event(clock.stamp(offset=-3600), 0))
+    await _send_poll(proxy, writer, poll=_phase_event(clock.stamp(), 0, subdevice=1))
+    confirmed.assert_not_awaited()
+    await _send_poll(proxy, writer, poll=_phase_event(clock.stamp(), 0))
+    confirmed.assert_awaited_once_with(TEST_BOX, "P_CAL_R", "0", _utc_phase_stamp(clock), "setting_event")
+    regular.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_phase_confirmation_uses_normalized_clock_across_raw_box_time_shift(dummy_writer_factory, monkeypatch):
+    proxy, delivery, _queue, clock = _qualified_transport(make_config())
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    clock.now = int(time.time())
+    writer = dummy_writer_factory()
+    # Simulate a clock offset being removed while the qualified UTC proof advances.
+    first_raw, first_utc = clock.stamp(offset=2), _utc_phase_stamp(clock)
+    monkeypatch.setattr(delivery, "box_readback_time", lambda _device, _stamp: (1, clock.now))
+    await _send_poll(proxy, writer, poll=_phase_event(first_raw, 90))
+    clock.step()
+    second_raw = clock.stamp()
+    assert second_raw < first_raw
+    monkeypatch.setattr(delivery, "box_readback_time", lambda _device, _stamp: (2, clock.now))
+    await _send_poll(proxy, writer, poll=_phase_event(second_raw, 92))
+    assert [call.args[3] for call in confirmed.await_args_list] == [first_utc, _utc_phase_stamp(clock)]
+
+
+@pytest.mark.asyncio
+async def test_stale_phase_event_cannot_clear_pending_ack_readback(dummy_writer_factory, monkeypatch):
+    proxy, delivery, queue, clock = _qualified_transport(make_config())
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(phase_calibration_enabled=True))
+    clock.now = int(time.time())
+    writer = dummy_writer_factory()
+    await _send_poll(proxy, writer, poll=_phase_event(clock.stamp(offset=2), 90))
+    assert confirmed.await_count == 1
+    queue.enqueue("tbl_invertor_prm1", "P_CAL_R", 92, device_id=TEST_BOX, require_profile=True)
+    await _send_poll(proxy, writer)
+    ack = native(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{clock.stamp()}</Rdt>", MODEL)
+    await _send_poll(proxy, writer, poll=ack)
+    assert queue.size() == 0
+    await _send_poll(proxy, writer, poll=_phase_event(clock.stamp(offset=1), 75))
+    assert confirmed.await_count == 1
+
+    clock.step(3)
+    await _send_poll(proxy, writer, poll=_phase_table(clock.stamp(), 92))
+    assert [call.args[2:5] for call in confirmed.await_args_list] == [
+        ("90", _utc_phase_stamp(clock, -1), "setting_event"),
+        ("92", _utc_phase_stamp(clock), "ack_and_table"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offline", [False, True], ids=["hybrid", "offline"])
+async def test_phase_write_needs_fresh_matching_table_after_ack(dummy_writer_factory, monkeypatch, offline):
+    proxy, delivery, queue, clock = _qualified_transport(make_config(proxy_mode="offline" if offline else "hybrid"))
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(phase_calibration_enabled=True))
+    queue.enqueue("tbl_invertor_prm1", "P_CAL_R", 92, device_id=TEST_BOX, require_profile=True)
+    writer = dummy_writer_factory()
+
+    async def receive(data, *, session_id="box-flow", active_writer=writer):
+        if offline:
+            await proxy._handle_offline_frames(bytearray(data), active_writer, session_id)
+        else:
+            await _send_poll(proxy, active_writer, session_id=session_id, poll=data)
+
+    await receive(POLL)
+    assert b"<TblItem>P_CAL_R</TblItem>" in writer.written[0]
+    clock.now = time.time()
+    # The recorded ACK's Rdt precedes receipt by 9 s, and TBL arrives 36 s later.
+    receipt_dt = clock.stamp()
+    clock.step(9)
+    ack = native(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{receipt_dt}</Rdt>", MODEL)
+    await receive(_phase_table(clock.stamp(), 92) + ack)
+    assert queue.size() == 0
+    confirmed.assert_not_awaited()
+
+    clock.step(36)
+    other = dummy_writer_factory()
+    await receive(_phase_table(clock.stamp(offset=-46), 92), session_id="readback-flow", active_writer=other)
+    await receive(_phase_table(clock.stamp(), 0), session_id="readback-flow", active_writer=other)
+    await receive(_phase_table(clock.stamp(), 92, subdevice=1), session_id="readback-flow", active_writer=other)
+    confirmed.assert_not_awaited()
+    table_dt = clock.stamp(offset=-26)
+    table = _phase_table(table_dt, 92)
+    await receive(table + table, session_id="readback-flow", active_writer=other)
+    confirmed.assert_awaited_once_with(TEST_BOX, "P_CAL_R", "92", _utc_phase_stamp(clock, -26), "ack_and_table")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delay_s", [2, 151], ids=["fresh", "expired"])
+async def test_phase_undated_ack_is_bound_to_the_readback_window(dummy_writer_factory, monkeypatch, delay_s):
+    proxy, delivery, queue, clock = _qualified_transport(make_config())
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(phase_calibration_enabled=True))
+    writer = dummy_writer_factory()
+    clock.now = time.time() - 1
+    await _send_poll(proxy, writer, poll=_phase_table(clock.stamp(), 75))
+    queue.enqueue("tbl_invertor_prm1", "P_CAL_R", 0, device_id=TEST_BOX, require_profile=True)
+    await _send_poll(proxy, writer)
+    assert b"<TblItem>P_CAL_R</TblItem>" in writer.written[0]
+    clock.now = time.time()
+    await _send_poll(proxy, writer, poll=ACK)
+    assert queue.size() == 0
+    confirmed.assert_not_awaited()
+
+    monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: monotonic() + delay_s)
+    clock.step(delay_s)
+    await _send_poll(proxy, writer, session_id="readback-flow", poll=_phase_table(clock.stamp(), 0))
+    if delay_s == 2:
+        confirmed.assert_awaited_once_with(TEST_BOX, "P_CAL_R", "0", _utc_phase_stamp(clock), "ack_and_table")
+    else:
+        confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("baseline", [None, 0], ids=["no-baseline", "already-zero"])
+async def test_zero_phase_ack_and_table_require_prior_native_nonzero(dummy_writer_factory, monkeypatch, baseline):
+    proxy, delivery, queue, clock = _qualified_transport(make_config())
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(phase_calibration_enabled=True))
+    writer = dummy_writer_factory()
+    clock.now = time.time() - 1
+    if baseline is not None:
+        await _send_poll(proxy, writer, poll=_phase_table(clock.stamp(), baseline))
+    queue.enqueue("tbl_invertor_prm1", "P_CAL_R", 0, device_id=TEST_BOX, require_profile=True)
+    await _send_poll(proxy, writer)
+    clock.now = time.time()
+    await _send_poll(proxy, writer, poll=ACK)
+    assert queue.size() == 0
+    clock.step(2)
+    await _send_poll(proxy, writer, poll=_phase_table(clock.stamp(), 0))
+    confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_new_cloud_phase_write_supersedes_prior_unconfirmed_readback(dummy_writer_factory):
+    proxy, _delivery, _queue, clock = _qualified_transport(make_config())
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    clock.now = time.time()
+    writer = dummy_writer_factory()
+
+    async def write_from_cloud(value, session_id):
+        await proxy._handle_twin_frames(POLL, session_id)
+        frame = native(
+            f"<ID>{14800000 + value}</ID><ID_Device>{TEST_BOX}</ID_Device><ID_Set>{int(clock.now)}</ID_Set>"
+            f"<ID_SubD>0</ID_SubD><DT>{clock.stamp()}</DT><NewValue>{value}</NewValue><Confirm>New</Confirm>"
+            "<TblName>tbl_invertor_prm1</TblName><TblItem>P_CAL_R</TblItem><TTO_P>0,000</TTO_P><TTO_E>0,000</TTO_E>"
+            "<ID_Server>9</ID_Server><mytimediff>0</mytimediff><Reason>Setting</Reason>"
+            f"<TSec>{clock.stamp(True)}</TSec>", MODEL,
+        )
+        reader = asyncio.StreamReader()
+        reader.feed_data(frame)
+        reader.feed_eof()
+        await proxy._pipe_cloud_to_box(reader, writer, session_id=session_id)
+        receipt = native(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{clock.stamp()}</Rdt>", MODEL)
+        await _send_poll(proxy, writer, session_id=session_id, poll=receipt)
+
+    await write_from_cloud(92, "first-flow")
+    clock.step()
+    await write_from_cloud(75, "second-flow")
+    clock.step()
+    await _send_poll(proxy, writer, poll=_phase_table(clock.stamp(), 92))
+    confirmed.assert_not_awaited()
+    await _send_poll(proxy, writer, poll=_phase_table(clock.stamp(), 75))
+    confirmed.assert_awaited_once_with(TEST_BOX, "P_CAL_R", "75", _utc_phase_stamp(clock), "ack_and_table")
 
 
 @pytest.mark.enable_socket

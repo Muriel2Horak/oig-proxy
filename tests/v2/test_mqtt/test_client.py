@@ -454,7 +454,7 @@ def test_opted_in_power_controls_keep_private_ids_and_confirmed_state(
 
 
 @pytest.mark.parametrize("key", ["P_CAL_R", "P_CAL_S", "P_CAL_T"])
-def test_phase_cfg_discovery_keeps_experimental_number_ids_and_u16_domain(key):
+def test_phase_cfg_discovery_uses_confirmed_write_state(key):
     client = make_client(power_limits=PowerControlLimits(phase_calibration_enabled=True))
     broker = inject_mock_paho(client)
     table = "tbl_invertor_prm1"
@@ -464,12 +464,13 @@ def test_phase_cfg_discovery_keeps_experimental_number_ids_and_u16_domain(key):
     base = f"oig_local_box01_{table}_{key.lower()}"
     assert ro["unique_id"] == base and cfg["unique_id"] == base + "_cfg"
     assert cfg["default_entity_id"] == f"number.{base}_cfg"
-    assert cfg["name"] == f"{key} – experimentální"
-    assert cfg["state_topic"] == ro["state_topic"] == f"oig_local/BOX01/{table}/state"
-    assert cfg["value_template"] == ro["value_template"]
+    assert "poslední potvrzený zápis" in cfg["name"] and "experimentální" in cfg["name"]
+    assert ro["state_topic"] == f"oig_local/BOX01/{table}/state"
+    assert cfg["state_topic"] == "oig_local/BOX01/phase_calibration_write/state"
+    assert ro["value_template"] == f"{{{{ value_json.get('{key}') }}}}"
     assert (cfg["min"], cfg["max"], cfg["step"]) == (0, 65535, 1)
     assert cfg["json_attributes_topic"] == cfg["state_topic"]
-    assert json.loads(cfg["json_attributes_template"]) == {}
+    assert cfg["optimistic"] is False and cfg["retain"] is False
     assert cfg["command_topic"] == f"oig_local/BOX01/set/{table}/{key}"
 
 

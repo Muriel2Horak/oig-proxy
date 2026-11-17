@@ -11,6 +11,35 @@ import pytest
 from sensor.confirmed_store import ConfirmedStateStore
 
 
+def test_phase_write_history_is_independent_of_a_later_native_zero(tmp_path):
+    path = tmp_path / "confirmed.json"
+    store = ConfirmedStateStore(path, "1234567890")
+    assert store.phase_calibration_writes() == {}
+    assert store.record_phase_calibration_write(
+        "P_CAL_R", 90, source_dt="2026-11-05 18:00:00", evidence="setting_event",
+    )
+    confirmed = store.phase_calibration_writes()["P_CAL_R"]
+    assert confirmed == {"value": 90, "confirmed_at": confirmed["confirmed_at"], "evidence": "setting_event"}
+    assert confirmed["confirmed_at"].endswith("+00:00")
+    assert store.record(
+        "tbl_invertor_prm1", {"P_CAL_R": 0}, source_dt="2026-11-05 19:00:00",
+        priority=0, origin="direct", baseline=True,
+    )
+
+    restored = ConfirmedStateStore(path, "1234567890")
+    assert restored.phase_calibration_writes() == {"P_CAL_R": confirmed}
+    assert restored.snapshot()["tables"]["tbl_invertor_prm1"]["fields"]["P_CAL_R"]["value"] == 0
+    assert not restored.record_phase_calibration_write(
+        "P_CAL_R", 75, source_dt="2026-11-05 17:00:00", evidence="setting_event",
+    )
+    assert restored.record_phase_calibration_write(
+        "P_CAL_R", 0, source_dt="2026-11-05 20:00:00", evidence="ack_and_table",
+    )
+    latest = ConfirmedStateStore(path, "1234567890").phase_calibration_writes()["P_CAL_R"]
+    assert latest["value"] == 0 and latest["evidence"] == "ack_and_table"
+    assert ConfirmedStateStore(path, "1234567890").phase_calibration_writes()["P_CAL_R"] == latest
+
+
 
 def test_roundtrip_preserves_original_provenance_and_baseline(tmp_path):
     path = tmp_path / "confirmed.json"

@@ -38,7 +38,7 @@ from protocol.ver_profile import native_frame_fields  # noqa: E402  # pylint: di
 from settings_constraints import PowerControlLimits  # noqa: E402  # pylint: disable=wrong-import-position
 from twin import delivery as delivery_module  # noqa: E402  # pylint: disable=wrong-import-position
 from tests.v2.test_integration import (  # noqa: E402  # pylint: disable=wrong-import-position
-    MODEL, POLL, TEST_BOX, _qualified_transport, _send_poll,
+    MODEL, TEST_BOX, _qualified_transport, _send_poll,
 )
 from tests.v2.test_wire_profile_qualification import native  # noqa: E402  # pylint: disable=wrong-import-position
 
@@ -153,6 +153,28 @@ class TestProxyAppInitialization:
 
 
 class TestConfirmedSettingHandling:
+    @pytest.mark.asyncio
+    async def test_phase_write_publishes_only_separate_config_state(self, mock_config, tmp_path):
+        mock_config.power_limits = PowerControlLimits(phase_calibration_enabled=True)
+        mock_config.confirmed_state_path = str(tmp_path / "confirmed.json")
+        app = ProxyApp(mock_config)
+        app.device_id_manager = Mock(device_id="DEV01")
+        app.sensor_loader = Mock()
+        app.sensor_loader.iter_sensors.return_value = []
+        app.mqtt = Mock()
+        app._create_frame_processor("DEV01")
+        app.frame_processor = AsyncMock()
+
+        await app._on_phase_confirmation("FOREIGN", "P_CAL_R", "20", "2026-11-05 18:00:00", "setting_event")
+        app.mqtt.publish_confirmed_state.assert_not_called()
+        await app._on_phase_confirmation("DEV01", "P_CAL_R", "90", "2026-11-05 18:00:00", "setting_event")
+
+        app.frame_processor.process.assert_not_awaited()
+        args = app.mqtt.publish_confirmed_state.call_args.args
+        assert args[:2] == ("DEV01", "phase_calibration_write")
+        assert args[2]["P_CAL_R"]["value"] == 90
+        assert args[2]["P_CAL_R"]["evidence"] == "setting_event"
+
     @pytest.mark.asyncio
     async def test_on_confirmed_setting_routes_through_frame_processor(self, mock_config) -> None:
         app = ProxyApp(mock_config)

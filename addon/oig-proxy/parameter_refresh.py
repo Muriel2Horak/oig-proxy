@@ -24,6 +24,8 @@ _OPERATION_DEBOUNCE_S = 60.0
 _FUTURE_SKEW_S = 5.0
 _READBACK_WAIT_S = 60.0
 _READBACK_RESPONSE_S = 90.0
+# Passive confirmation uses the base readback window without scheduling a request.
+PARAMETER_READBACK_EVIDENCE_MAX_AGE_S = _READBACK_WAIT_S + _READBACK_RESPONSE_S
 _COMMAND_ONLY_FIELDS = frozenset({
     ("tbl_box_prms", "SA"), ("tbl_box_prms", "RQRESET"), ("tbl_box_prm2", "APP"),
 })

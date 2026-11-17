@@ -21,6 +21,7 @@ from typing import Any, Callable
 from settings_constraints import (
     AC_CHARGE_CONTROL,
     PHASE_CALIBRATION_CONTROLS,
+    PHASE_CALIBRATION_WRITE_TABLE,
     POWER_CONTROLS,
     PowerControlLimits,
     SettingConstraint,
@@ -511,11 +512,17 @@ class MQTTClient:
                     if constraint.step is not None:
                         control_payload["step"] = constraint.step
                     if setting_identity in PHASE_CALIBRATION_CONTROLS:
-                        # HA retains old custom attributes until it receives a replacement.
+                        write_topic = f"{self.namespace}/{device_id}/{PHASE_CALIBRATION_WRITE_TABLE}/state"
+                        write_template = f"{{% set write = value_json.get('{sensor_key}') %}}"
                         control_payload.update(
-                            name=f"{sensor_name} – experimentální",
-                            json_attributes_topic=state_topic,
-                            json_attributes_template="{}",
+                            name=f"{sensor_name} – poslední potvrzený zápis (experimentální)",
+                            state_topic=write_topic,
+                            value_template=write_template + "{{ write.get('value') if write is mapping else none }}",
+                            json_attributes_topic=write_topic,
+                            json_attributes_template=write_template + (
+                                "{{ ({'confirmed_at': write.confirmed_at, 'evidence': write.evidence} "
+                                "if write is mapping else {}) | tojson }}"
+                            ),
                         )
                 elif control_component == "switch":
                     control_payload["payload_on"] = 1
