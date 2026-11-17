@@ -26,7 +26,7 @@ try:
     from ..parameter_refresh import ParameterReadbackRefresh
     from ..protocol.frame import FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name
     from ..protocol.frames import build_end_time_frame, build_getactual_frame
-    from ..protocol.parser import parse_xml_frame
+    from ..protocol.parser import parse_mode_start, parse_xml_frame
     from ..protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields
     from ..twin.ack_parser import parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
@@ -41,7 +41,7 @@ except ImportError:
         FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name,
     )
     from protocol.frames import build_end_time_frame, build_getactual_frame  # type: ignore[no-redef]
-    from protocol.parser import parse_xml_frame  # type: ignore[no-redef]
+    from protocol.parser import parse_mode_start, parse_xml_frame  # type: ignore[no-redef]
     from protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
     from twin.ack_parser import parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
@@ -1001,6 +1001,14 @@ class ProxyServer:
                 delivery.acknowledge_local_event(
                     device_id, table, key, value, session_id=session_id,
                     source_dt=source_dt, event_id_set=counter, previous_value=event["previous_value"],
+                    received_at=received_at,
+                )
+        elif allow_local_receipt and fields.get("TblName") == "tbl_events":
+            mode = parse_mode_start(fields.get("Type"), fields.get("Content"))
+            if mode is not None:
+                delivery.acknowledge_local_mode_start(
+                    device_id, mode, source_dt, event_id_set=counter,
+                    session_id=session_id, received_at=received_at,
                 )
         # A matching event cannot supply its own pre-wire counter baseline.
         delivery.observe_box_frame(device_id, counter, source_dt, session_id=session_id, received_at=received_at)
