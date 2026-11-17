@@ -59,8 +59,9 @@ V hybridním režimu proxy po potvrzení příkazu nebo události změny čeká
 dalším vhodném dotazu požádá box jednou o parametry přes `SA`.
 Chybějící potvrzení příkazu řeší samostatně. Po 30 sekundách bez ACK
 nebo jednoznačné události změny zkusí běžný zápis nejvýš jednou znovu na
-vhodném dotazu boxu. Pokud čekající požadavek při dotazu `IsNewSet`
-neodešle, důvod najdete v protokolu add-onu.
+vhodném dotazu boxu. K zápisu může použít `IsNewSet`, `IsNewFW` i
+`IsNewWeather`. Pokud proxy čekající požadavek při dotazu přeskočí, důvod
+najdete v protokolu add-onu pod `Setting poll skipped`.
 
 ## Změna režimu
 

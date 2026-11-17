@@ -2,6 +2,14 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.9] - Unreleased
+
+Proxy může odeslat čekající místní příkaz `Setting` při ověřených dotazech
+`IsNewSet`, `IsNewFW` a `IsNewWeather` na stávajícím TCP spojení s boxem.
+Lokální ovládání zůstává experimentální.
+
+[Poznámky k verzi pro uživatele Home Assistantu](addon/oig-proxy/CHANGELOG.md)
+
 ## [2.2.0-rc.8] - Unreleased
 
 V hybridním režimu proxy při výpadku cloudu před výměnou dat zachová

@@ -383,22 +383,26 @@ async def test_pipe_cloud_to_box_stops_on_empty_read():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind, delivers", [
-    ("setting", True), ("setting_with_actual", True), ("weather", False),
-    ("table_only", False), ("foreign", False), ("bad_crc", False), ("with_ack", True),
+    ("setting", True), ("setting_with_actual", True), ("weather", True), ("firmware", True),
+    ("table_only", False), ("other_poll", False), ("foreign_weather", False), ("bad_fw_crc", False),
+    ("changed_firmware", False), ("with_ack", True),
 ])
 async def test_only_a_qualified_unambiguous_setting_poll_can_use_online_slot(
     dummy_writer_factory, kind, delivers, caplog,
 ):
-    server, _delivery, queue, _clock = _qualified_transport(make_config())
+    server, delivery, queue, _clock = _qualified_transport(make_config())
     queue.enqueue("tbl_box_prms", "MODE", 1, device_id=TEST_BOX, require_profile=True)
     identity = f"<ID_Device>{TEST_BOX}</ID_Device>"
     inputs = {
         "setting": POLL,
         "setting_with_actual": native(f"<Result>IsNewSet</Result>{identity}<TblName>tbl_actual</TblName>", MODEL),
         "weather": native(f"<Result>IsNewWeather</Result>{identity}", MODEL),
+        "firmware": native(f"<Result>IsNewFW</Result>{identity}", MODEL),
+        "changed_firmware": native(f"<Result>IsNewFW</Result>{identity}<Fw>v.4.15.26.0518</Fw>", MODEL),
         "table_only": native(f"<TblName>IsNewSet</TblName>{identity}", MODEL),
-        "foreign": native("<Result>IsNewSet</Result><ID_Device>99999</ID_Device>", MODEL),
-        "bad_crc": POLL.replace(b"12345", b"12346"),
+        "other_poll": native(f"<Result>IsNewOther</Result>{identity}", MODEL),
+        "foreign_weather": native("<Result>IsNewWeather</Result><ID_Device>99999</ID_Device>", MODEL),
+        "bad_fw_crc": native(f"<Result>IsNewFW</Result>{identity}", MODEL).replace(b"12345", b"12346"),
         "with_ack": POLL + ACK,
     }
     writer = dummy_writer_factory()
@@ -414,9 +418,14 @@ async def test_only_a_qualified_unambiguous_setting_poll_can_use_online_slot(
     else:
         assert not writer.written
         cloud.write.assert_called_once_with(inputs[kind])
-    reason = {"foreign": "box_identity_unbound", "bad_crc": "poll_malformed"}.get(kind)
+    reason = {
+        "foreign_weather": "box_identity_unbound",
+        "bad_fw_crc": "poll_malformed",
+    }.get(kind)
     if reason is not None:
-        assert f"IsNewSet skipped stage=transport reason={reason}" in caplog.text
+        assert f"Setting poll skipped stage=transport reason={reason}" in caplog.text
+    if kind == "changed_firmware":
+        assert delivery.profile_status(TEST_BOX).profile is None
 
 
 @pytest.mark.asyncio
@@ -464,19 +473,22 @@ async def test_coalesced_setting_poll_preserves_ordinary_frames_and_delimiters(d
 
 
 @pytest.mark.asyncio
-async def test_coalesced_competing_setting_polls_both_reach_cloud(dummy_writer_factory, caplog):
+@pytest.mark.parametrize("poll_results", [("IsNewSet", "IsNewSet"), ("IsNewWeather", "IsNewFW")])
+async def test_coalesced_competing_setting_polls_both_reach_cloud(dummy_writer_factory, caplog, poll_results):
     proxy, delivery, queue, _clock = _qualified_transport(make_config())
     queue.enqueue("tbl_box_prms", "MODE", 3, device_id=TEST_BOX, require_profile=True)
     writer = dummy_writer_factory()
-    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    first = native(f"<Result>{poll_results[0]}</Result><ID_Device>{TEST_BOX}</ID_Device>", MODEL)
+    next_poll = native(f"<Result>{poll_results[1]}</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    batch = first + next_poll
 
     with caplog.at_level(logging.INFO, logger="twin.delivery"):
-        cloud = await _send_poll(proxy, writer, poll=POLL + next_poll)
+        cloud = await _send_poll(proxy, writer, poll=batch)
 
     assert not writer.written
-    assert b"".join(call.args[0] for call in cloud.write.call_args_list) == POLL + next_poll
+    assert b"".join(call.args[0] for call in cloud.write.call_args_list) == batch
     assert delivery.has_pending(TEST_BOX)
-    assert "IsNewSet skipped stage=transport reason=ambiguous_box_batch" in caplog.text
+    assert "Setting poll skipped stage=transport reason=ambiguous_box_batch" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -684,7 +696,7 @@ async def test_incomplete_cloud_frame_blocks_local_setting_without_interleaving(
             cloud = await _send_poll(proxy, box_writer)
         cloud.write.assert_called_once_with(POLL)
         assert delivery.has_pending(TEST_BOX)
-        assert "IsNewSet skipped stage=transport reason=cloud_partial_frame" in caplog.text
+        assert "Setting poll skipped stage=transport reason=cloud_partial_frame" in caplog.text
     finally:
         complete_cloud.set()
         await cloud_pipe
@@ -694,8 +706,9 @@ async def test_incomplete_cloud_frame_blocks_local_setting_without_interleaving(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("coalesced_ack", [False, True])
+@pytest.mark.parametrize("next_poll_result", ["IsNewSet", "IsNewFW", "IsNewWeather"])
 async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(
-    dummy_writer_factory, monkeypatch, coalesced_ack,
+    dummy_writer_factory, monkeypatch, coalesced_ack, next_poll_result,
 ):
     proxy, delivery, queue, _clock = _qualified_transport(make_config())
     monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(ac_charge_max_a=75))
@@ -716,7 +729,7 @@ async def test_online_socket_drains_two_queued_settings_at_separate_box_polls(
         assert len(writer.written) == 1 and queue.size() == 1
 
     wire_epoch += 10
-    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    next_poll = native(f"<Result>{next_poll_result}</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
     forwarded = await _send_poll(proxy, writer, poll=first_ack + next_poll if coalesced_ack else next_poll)
     assert b"".join(call.args[0] for call in forwarded.write.call_args_list) == (first_ack if coalesced_ack else b"")
     aac = native_frame_fields(writer.written[1])

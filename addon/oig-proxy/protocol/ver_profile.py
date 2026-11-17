@@ -32,7 +32,7 @@ _CLOUD_CLOCK_ORDER = ("Result", "Time", "UTCTime", "CRC")
 _MAX_DEVICES = 128
 _CRC_PERIOD = 32_767
 _LOCAL_ZONE = ZoneInfo("Europe/Prague")
-_POLLS = {"IsNewFW", "IsNewSet", "IsNewWeather"}
+BOX_POLL_RESULTS = frozenset({"IsNewFW", "IsNewSet", "IsNewWeather"})
 _DEVICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 _FIRMWARE_ID = re.compile(r"[!-~]{1,64}")
 _TAIL = re.compile(rb"(?:(<ver>)([0-9]{1,5})</ver>)?<CRC>([0-9]{1,5})</CRC></Frame>$")
@@ -190,7 +190,7 @@ def native_frame_identity(raw: bytes) -> str | None:
 def matches_setting_poll(raw: bytes, device_id: str, profile: VerProfile) -> bool:
     """Accept only an exact native poll carrying the selected ver profile."""
     wire = _parse(raw, allow_repeated_identity=False)
-    return (wire is not None and wire.fields.get("Result") == "IsNewSet"
+    return (wire is not None and wire.fields.get("Result") in BOX_POLL_RESULTS
             and wire.fields.get("ID_Device") == device_id and wire.matches(profile))
 
 
@@ -850,7 +850,7 @@ class VerProfiles:
             self._proofs[device_id] = _DeviceProof()
         proof = self._proofs[device_id]
         self.status(device_id)
-        if result in _POLLS:
+        if result in BOX_POLL_RESULTS:
             if proof.candidate is not None and not wire.matches(proof.candidate):
                 self._retire(device_id, proof, "profile_changed")
             sample = _Sample(wire, now, session_id)

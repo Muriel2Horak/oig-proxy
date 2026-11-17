@@ -49,12 +49,17 @@ Check `control_ver_ready` and `control_ver_reason` in the proxy status.
 ## Offline and hybrid delivery
 
 When offline, the proxy sends a qualified Setting in response to
-`IsNewSet`. It waits for the Box ACK on that connection and responds with a
-timed `END`. Returning to hybrid closes offline connections so the Box can
+`IsNewSet`, `IsNewFW`, or `IsNewWeather`. It waits for the Box ACK on that
+connection and responds with a timed `END`. Returning to hybrid closes
+offline connections so the Box can
 reconnect through the Cloud path. A Setting already on the wire can reach
 its bounded terminal outcome.
 
-In hybrid mode, each qualified `IsNewSet` can carry one queued command.
+In hybrid mode, each qualified `IsNewSet`, `IsNewFW`, or `IsNewWeather`
+can carry one queued command. The proxy substitutes the selected poll
+with a local Setting. A Cloud write already in progress retains priority.
+During Cloud recovery, the probe forwards polls until it gets a valid
+Cloud reply.
 Following a matched ACK, a distinct qualified poll can carry the next
 command on that connection. If a normal command receives no ACK within
 30 seconds of transmission, it can be replayed once on the next eligible
