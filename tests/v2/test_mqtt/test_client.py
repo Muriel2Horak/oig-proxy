@@ -474,6 +474,23 @@ def test_phase_cfg_discovery_uses_confirmed_write_state(key):
     assert cfg["command_topic"] == f"oig_local/BOX01/set/{table}/{key}"
 
 
+@pytest.mark.parametrize("key", ["ERR_PV", "ERR_AC", "ERR_BATT", "ERR_ELSE", "ERR_GRID"])
+def test_inverter_warning_sensor_preserves_raw_state_and_shows_decoded_attributes(key):
+    client = make_client()
+    broker = inject_mock_paho(client)
+    assert client.send_discovery(
+        device_id="BOX01", table="tbl_invertor_prms", sensor_key=key, sensor_name=key,
+    )
+
+    payload = json.loads(broker.publish.call_args.args[1])
+    assert payload["value_template"] == f"{{{{ value_json.get('{key}') }}}}"
+    assert payload["json_attributes_topic"] == payload["state_topic"]
+    template = payload["json_attributes_template"]
+    assert f"'warnings': value_json.get('{key}_warnings_cs', [])" in template
+    assert f"'warning_codes': value_json.get('{key}_warning_codes', [])" in template
+    assert f"'operating_status': value_json.get('{key}_status_cs', [])" in template
+
+
 def test_box_mode_discovery_retries_failed_select_without_republishing_sensor():
     """Retry the command entity after the matching state entity was accepted."""
     client = make_client()

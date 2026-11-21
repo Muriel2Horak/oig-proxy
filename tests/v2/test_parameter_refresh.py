@@ -220,6 +220,21 @@ def test_ignores_actions_no_op_replayed_and_invalid_events():
     assert not send_if_due(readback, lambda: pytest.fail("no persistent setting change"))
 
 
+@pytest.mark.parametrize("key", ["ERR_PV", "ERR_ELSE", "ERR_AC", "ERR_GRID", "ERR_BATT"])
+def test_warning_transitions_and_ack_do_not_schedule_parameter_refresh(key):
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(native("tbl_events", 0, Type="Change",
+                            Content=f"Input : tbl_invertor_prms / {key}: [0]->[4]"))
+    boundary.now += 60
+    assert not readback.is_due()
+    readback.observe(native("tbl_events", 60, Type="Change",
+                            Content=f"Input : tbl_invertor_prms / {key}: [4]->[0]"))
+    readback.note_ack("tbl_invertor_prms", key, 0, box_time=(1, START + 60))
+    boundary.now += 60
+    assert not readback.is_due()
+
+
 def test_same_target_rearms_after_fresh_contradictory_table():
     boundary = Boundary()
     readback = readback_for(boundary)

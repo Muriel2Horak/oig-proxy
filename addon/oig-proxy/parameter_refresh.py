@@ -124,7 +124,7 @@ class ParameterReadbackRefresh:
         self, table: str, key: str, value: str | int, stamp: float, *, acknowledged: bool = False,
     ) -> None:
         identity = table, key
-        if not observation_table(table) or identity in _COMMAND_ONLY_FIELDS:
+        if not observation_table(table) or identity in _COMMAND_ONLY_FIELDS or key.upper().startswith("ERR_"):
             return
         previous = self._expected.get(identity)
         seen = self._tables.get(table)
@@ -341,7 +341,7 @@ class ParameterRefreshScheduler:  # pylint: disable=too-many-instance-attributes
         """Debounce only explicitly configured, confirmed exceptional operations."""
         operation = (table.strip().lower(), key.strip().upper())
         if (
-            operation[1] == "SA" or operation in _EXCLUDED_OPERATIONS
+            operation[1] == "SA" or operation in _EXCLUDED_OPERATIONS or operation[1].startswith("ERR_")
             or operation not in self._after_operations or operation in self._operations
         ):
             return

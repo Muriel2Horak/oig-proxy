@@ -447,6 +447,15 @@ class MQTTClient:
         if (table, sensor_key) == ("proxy_status", "control_last_result"):
             payload["json_attributes_topic"] = state_topic
             payload["json_attributes_template"] = "{{ value_json.get('control_result', {}) | tojson }}"
+        if table == "tbl_invertor_prms" and sensor_key in {"ERR_PV", "ERR_AC", "ERR_BATT", "ERR_ELSE", "ERR_GRID"}:
+            payload["json_attributes_topic"] = state_topic
+            payload["json_attributes_template"] = (
+                "{{ {"
+                f"'warnings': value_json.get('{sensor_key}_warnings_cs', []), "
+                f"'warning_codes': value_json.get('{sensor_key}_warning_codes', []), "
+                f"'operating_status': value_json.get('{sensor_key}_status_cs', [])"
+                "} | tojson }}"
+            )
 
         discovery_topic = f"homeassistant/{component}/{unique_id}/config"
 

@@ -8,7 +8,7 @@ from typing import Any
 
 from sensor.confirmed_store import ConfirmedStateStore, finite_json, observation_table
 from sensor.loader import SensorMapLoader
-from sensor.warnings import decode_warning_details, decode_warnings
+from sensor.warnings import warning_state
 from mqtt.client import MQTTClient
 from protocol.parser import parse_mode_start
 
@@ -89,9 +89,14 @@ class FrameProcessor:
         snapshot = self._state_store.snapshot()
         device = self._state_store.device_id
         for table, record in snapshot["tables"].items():
-            self._last_table_values[(device, table)] = {
+            values = {
                 key: field["value"] for key, field in record["fields"].items()
             }
+            for key, field in record["fields"].items():
+                metadata = self._sensor_loader.lookup(table, key)
+                if isinstance(metadata, dict):
+                    values.update(warning_state(key, field["value"], metadata.get("warnings_3f")))
+            self._last_table_values[(device, table)] = values
             if record["baseline"]:
                 self._table_baselines.add((device, table))
             for key, field in record["fields"].items():
@@ -556,27 +561,7 @@ class FrameProcessor:
             else:
                 pub_data[key] = value
 
-            # Check for warnings_3f and decode if present
-            warnings_list = metadata.get("warnings_3f", [])
-            if warnings_list and isinstance(value, int):
-                warnings = decode_warnings(value, warnings_list)
-                if warnings:
-                    pub_data[f"{key}_warnings"] = warnings
-                    details = decode_warning_details(value, warnings_list)
-                    warnings_cs = [
-                        item.get("remark_cs") or item.get("remark") or item.get("key")
-                        for item in details
-                    ]
-                    warning_codes = [
-                        item.get("warning_code")
-                        for item in details
-                        if item.get("warning_code") is not None
-                    ]
-                    if warnings_cs:
-                        pub_data[f"{key}_warnings_cs"] = warnings_cs
-                    if warning_codes:
-                        pub_data[f"{key}_warning_codes"] = warning_codes
-                    logger.debug("Decoded warnings for %s:%s -> %s", table, key, warnings)
+            pub_data.update(warning_state(key, value, metadata.get("warnings_3f")))
 
         # Publish state if we have any data
         if pub_data:
@@ -609,15 +594,18 @@ class FrameProcessor:
                         key.endswith("_warnings")
                         or key.endswith("_warnings_cs")
                         or key.endswith("_warning_codes")
+                        or key.endswith("_status_cs")
                     ):
                         continue
                     mirror_table = self._actual_mirror_targets.get(key)
-                    if (
-                        mirror_table
-                        and self._sensor_loader.lookup(mirror_table, key) is not None
-                        and self._accept_field_time(device_id, mirror_table, key, stamp, priority)
-                    ):
-                        mirror_payloads.setdefault(mirror_table, {})[key] = value
+                    if not mirror_table:
+                        continue
+                    mirror_metadata = self._sensor_loader.lookup(mirror_table, key)
+                    if mirror_metadata is None or not self._accept_field_time(device_id, mirror_table, key, stamp, priority):
+                        continue
+                    mirrored = mirror_payloads.setdefault(mirror_table, {})
+                    mirrored[key] = value
+                    mirrored.update(warning_state(key, value, mirror_metadata.get("warnings_3f")))
 
                 if (
                     native_actual

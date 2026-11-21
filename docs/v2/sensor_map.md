@@ -49,15 +49,18 @@ state.
 
 ## Warning definitions
 
-The bundled map includes a top-level `warnings_3f` reference list. For MQTT
-warning decoding, `FrameProcessor` reads the `warnings_3f` list on the
-individual sensor entry. Define the bit index and warning key there. For
-example, `bit: 3` tests `value & (1 << 3)`. Entries may also provide
-`remark`, `remark_cs` and `warning_code`.
+The loader groups the top-level `warnings_3f` definitions under the matching
+`tbl_invertor_prms` fields. The vendor's top-level `bit` column contains masks,
+so `bit: 8` there tests `value & 8`. A per-field `warnings_3f` list overrides
+the top-level group and uses bit indices. For example, `bit: 3` tests
+`value & (1 << 3)`. An explicit `mask` takes precedence in either location.
+Entries may also provide `remark`, `remark_cs` and `warning_code`.
 
-For an integer field with active bits, the processor adds `<field>_warnings`
-with the active keys and `<field>_warnings_cs` with their display text.
-It also adds `<field>_warning_codes` for active entries that define codes.
+The MQTT state retains the original integer and includes `<field>_warnings`,
+`<field>_warnings_cs` and `<field>_warning_codes`. Entries marked `kind: status`
+appear in `<field>_status_cs`. The bundled PV masks for unavailable inputs use
+that status list. The PV overvoltage masks use the warning list. Each new mask
+replaces the derived lists, including empty lists when no entries are active.
 
 ## Unmapped fields and changes
 

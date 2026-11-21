@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -700,20 +700,84 @@ async def test_process_decodes_multiple_warnings(processor: FrameProcessor, mock
 
 
 @pytest.mark.asyncio
-async def test_process_no_warnings_when_value_is_zero(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
-    """Should not add warnings field when no warnings are set."""
+async def test_process_clears_merged_warnings_when_value_is_zero(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
+    """A zero mask replaces the previous retained alerts, including custom index definitions."""
     mock_loader.lookup.return_value = {
         "name_cs": "Stav FVE",
         "warnings_3f": [
-            {"bit": 8, "key": "ERR_PV", "remark_cs": "Výpadek FV vstupu 1"},
+            {"bit": 8, "key": "ERR_PV", "remark_cs": "Přepětí FV vstupu 1", "warning_code": 17},
         ],
     }
 
+    await processor.process("DEV01", "tbl_actual", {"ERR_PV": 256})
+    assert mock_mqtt.publish_state.call_args.args[2]["ERR_PV_warning_codes"] == [17]
     await processor.process("DEV01", "tbl_actual", {"ERR_PV": 0})
 
     pub_data = mock_mqtt.publish_state.call_args[0][2]
-    # When no warnings, the _warnings key should not be present
-    assert "ERR_PV_warnings" not in pub_data
+    assert pub_data["ERR_PV_warnings"] == []
+    assert pub_data["ERR_PV_warnings_cs"] == []
+    assert pub_data["ERR_PV_warning_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_stock_warning_masks_keep_pv_input_state_separate(mock_mqtt, tmp_path):
+    map_path = Path(__file__).parents[2] / "addon/oig-proxy/sensor_map.json"
+    loader = SensorMapLoader(str(map_path))
+    loader.load()
+    table = "tbl_invertor_prms"
+    store_path = tmp_path / "confirmed.json"
+    store = ConfirmedStateStore(store_path, "BOX01")
+    # Cache from before this decoder had only the raw numeric fields.
+    assert store.record(table, {"ERR_PV": 12, "ERR_GRID": 5}, source_dt=None,
+                        priority=0, origin="direct", baseline=True)
+    processor = FrameProcessor(mock_mqtt, loader, state_store=store)
+
+    assert processor.replay_confirmed_states()
+    replay = mock_mqtt.publish_confirmed_state.call_args.args[2]
+    assert replay["ERR_PV"] == 12
+    assert replay["ERR_PV_warning_codes"] == []
+    assert len(replay["ERR_PV_status_cs"]) == 2
+    assert replay["ERR_GRID_warning_codes"] == [2, 4]
+
+    await processor.process("BOX01", table, {"ERR_PV": 14, "ERR_ELSE": 4, "ERR_AC": 13, "ERR_BATT": 16})
+    current = mock_mqtt.publish_state.call_args.args[2]
+    assert current["ERR_PV"] == 14
+    assert current["ERR_PV_warnings_cs"] == ["Příliš vysoké napětí FV1"]
+    assert current["ERR_PV_warning_codes"] == [17]
+    assert current["ERR_PV_status_cs"] == replay["ERR_PV_status_cs"]
+    assert current["ERR_ELSE_warnings_cs"] == ["Přetížení"]
+    assert current["ERR_AC_warning_codes"] == [9]
+    assert current["ERR_BATT_warning_codes"] == [14]
+
+    await processor.process("BOX01", table, {"ERR_PV": 0, "ERR_GRID": 0, "ERR_ELSE": 0})
+    cleared = mock_mqtt.publish_state.call_args.args[2]
+    for key in ("ERR_PV", "ERR_GRID", "ERR_ELSE"):
+        for suffix in ("warnings", "warnings_cs", "warning_codes", "status_cs"):
+            assert cleared[f"{key}_{suffix}"] == []
+    assert cleared["ERR_AC_warning_codes"] == [9]
+    restarted = FrameProcessor(mock_mqtt, loader, state_store=ConfirmedStateStore(store_path, "BOX01"))
+    assert restarted.replay_confirmed_states()
+    assert mock_mqtt.publish_confirmed_state.call_args.args[2] == cleared
+
+
+@pytest.mark.asyncio
+async def test_actual_mirror_rebuilds_retained_warning_attributes(mock_mqtt):
+    map_path = Path(__file__).parents[2] / "addon/oig-proxy/sensor_map.json"
+    loader = SensorMapLoader(str(map_path))
+    loader.load()
+    processor = FrameProcessor(mock_mqtt, loader)
+    table = "tbl_invertor_prms"
+    await processor.process("BOX01", table, {"ERR_PV": 2, "ERR_ELSE": 4})
+    assert mock_mqtt.publish_state.call_args.args[2]["ERR_ELSE_warning_codes"] == [11]
+
+    await processor.process("BOX01", "tbl_actual", {"ERR_PV": 12, "ERR_ELSE": 0})
+
+    device, table, mirrored = mock_mqtt.publish_state.call_args.args
+    assert (device, table) == ("BOX01", "tbl_invertor_prms")
+    assert mirrored["ERR_PV"] == 12 and mirrored["ERR_ELSE"] == 0
+    assert mirrored["ERR_PV_warnings_cs"] == []
+    assert len(mirrored["ERR_PV_status_cs"]) == 2
+    assert mirrored["ERR_ELSE_warning_codes"] == []
 
 
 @pytest.mark.asyncio
