@@ -2,6 +2,16 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.10] - Unreleased
+
+Proxy lépe rozpozná potvrzenou změnu režimu a potvrzení korekce fází při
+pozdějším vyžádání parametrů. Fázové ovladače ukazují potvrzený zápis s časem
+a zdrojem, senzory ukazují korekci, kterou box právě používá. Diagnostika OIG
+zobrazuje aktivní varování a historii chyb s čitelnými popisy.
+Lokální ovládání zůstává experimentální.
+
+[Poznámky k verzi pro uživatele Home Assistantu](addon/oig-proxy/CHANGELOG.md)
+
 ## [2.2.0-rc.9] - Unreleased
 
 Proxy může odeslat čekající místní příkaz `Setting` při ověřených dotazech

@@ -161,6 +161,19 @@ class ParameterReadbackRefresh:
                 expected.due = None
                 expected.response_deadline = deadline
 
+    def response_deadline_for(self, table: str, key: str, value: str | int, *, box_epoch: int) -> float | None:
+        """Return the active sent-SA deadline for this value and BOX clock epoch."""
+        expected = self._expected.get((table, key))
+        if (
+            box_epoch == self._box_clock_epoch
+            and expected is not None
+            and expected.response_deadline is not None
+            and self._clock() < expected.response_deadline
+            and same_setting_value(expected.value, value)
+        ):
+            return expected.response_deadline
+        return None
+
     def poll_timeouts(self) -> None:
         """Report unresolved SA readbacks even while the BOX sends no data."""
         now = self._clock()

@@ -942,6 +942,58 @@ async def test_phase_write_needs_fresh_matching_table_after_ack(dummy_writer_fac
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("response_s", [20, 90], ids=["within-sa-window", "at-deadline"])
+async def test_phase_ack_uses_response_window_after_delayed_sa(dummy_writer_factory, monkeypatch, response_s):
+    proxy, delivery, queue, clock = _qualified_transport(make_config())
+    proxy.on_phase_confirmation = confirmed = AsyncMock()
+    monkeypatch.setattr(delivery, "_power_limits", PowerControlLimits(phase_calibration_enabled=True))
+    handler = TwinControlHandler(MagicMock(), queue, TEST_BOX, require_profile=True)
+    proxy._request_readback = MagicMock(side_effect=lambda: handler.admit_message(
+        f"oig_local/{TEST_BOX}/set/tbl_box_prms/SA", b"1", only_if_empty=True,
+    ))
+    monotonic = time.monotonic
+    elapsed = 0
+
+    def clock_with_delay():
+        return monotonic() + elapsed
+
+    monkeypatch.setattr(time, "monotonic", clock_with_delay)
+    proxy._readback = ParameterReadbackRefresh(clock=clock_with_delay)
+    writer = dummy_writer_factory()
+    queue.enqueue("tbl_invertor_prm1", "P_CAL_R", 92, device_id=TEST_BOX, require_profile=True)
+    await _send_poll(proxy, writer)
+    assert b"<TblItem>P_CAL_R</TblItem>" in writer.written[0]
+    clock.now = time.time()
+    ack_time = clock.stamp()
+    clock.step(4)
+    ack = native(f"<Result>ACK</Result><Reason>Setting</Reason><Rdt>{ack_time}</Rdt>", MODEL)
+    await _send_poll(proxy, writer, poll=ack)
+    assert queue.size() == 0
+    confirmed.assert_not_awaited()
+
+    elapsed += 160
+    clock.step(160)
+    next_poll = native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>17</Lat>", MODEL)
+    await _send_poll(proxy, writer, session_id="readback-send-flow", poll=next_poll)
+    assert len(writer.written) == 2
+    sa = native_frame_fields(writer.written[1])
+    assert sa is not None and (sa.get("TblItem"), sa.get("NewValue")) == ("SA", "1")
+
+    elapsed += response_s
+    clock.step(response_s)
+    response_writer = dummy_writer_factory()
+    for table in (_phase_table(ack_time, 92), _phase_table(clock.stamp(), 91),
+                  _phase_table(clock.stamp(), 92, subdevice=1)):
+        await _send_poll(proxy, response_writer, session_id="readback-flow", poll=table)
+    confirmed.assert_not_awaited()
+    await _send_poll(proxy, response_writer, session_id="readback-flow", poll=_phase_table(clock.stamp(), 92))
+    if response_s == 20:
+        confirmed.assert_awaited_once_with(TEST_BOX, "P_CAL_R", "92", _utc_phase_stamp(clock), "ack_and_table")
+    else:
+        confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("delay_s", [2, 151], ids=["fresh", "expired"])
 async def test_phase_undated_ack_is_bound_to_the_readback_window(dummy_writer_factory, monkeypatch, delay_s):
     proxy, delivery, queue, clock = _qualified_transport(make_config())

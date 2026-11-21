@@ -1195,6 +1195,18 @@ class ProxyServer:
             pending.pending_value = None
             await self._publish_phase_confirmation(device_id, key, value, timing, "ack_and_table")
 
+    def _note_parameter_readback_sent(self, device_id: str) -> None:
+        self._readback.mark_sent()
+        for key in _PHASE_KEYS:
+            phase = self._phase_writes.get((device_id, key))
+            if phase is None or phase.receipt is None or phase.pending_value is None:
+                continue
+            deadline = self._readback.response_deadline_for(
+                _PHASE_TABLE, key, phase.pending_value, box_epoch=phase.receipt[0],
+            )
+            if deadline is not None:
+                phase.expires_at = max(phase.expires_at, deadline)
+
     async def _publish_phase_confirmation(
         self, device_id: str, key: str, value: str, timing: tuple[int, float], evidence: str,
     ) -> None:
@@ -1313,7 +1325,7 @@ class ProxyServer:
         delivery.record_injected_box(setting, device_id, session_id=session_id or "")
         if (not offline and self._readback.is_due()
                 and (setting.table, setting.key, setting.value) == ("tbl_box_prms", "SA", 1)):
-            self._readback.mark_sent()
+            self._note_parameter_readback_sent(device_id)
         self._capture_frame(frame, "proxy_to_box", conn_id=conn_id, peer=peer)
         deadline = delivery.local_wire_deadline(session_id) if offline else None
         if deadline is None:
