@@ -41,6 +41,24 @@ class SensorMapLoader:
         sensors = self._data.get("sensors")
         if not isinstance(sensors, dict):
             self._data["sensors"] = {}
+            return
+        self._attach_warning_masks(sensors)
+
+    def _attach_warning_masks(self, sensors: dict[str, Any]) -> None:
+        definitions = self._data.get("warnings_3f")
+        if not isinstance(definitions, list):
+            return
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for entry in definitions:
+            if not isinstance(entry, dict) or not isinstance(entry.get("key"), str):
+                continue
+            # The vendor's top-level bit column contains masks. A per-field
+            # override keeps its documented bit-index format.
+            groups.setdefault(entry["key"], []).append({**entry, "mask": entry.get("mask", entry.get("bit"))})
+        for key, group in groups.items():
+            metadata = sensors.get(f"tbl_invertor_prms:{key}")
+            if isinstance(metadata, dict):
+                metadata.setdefault("warnings_3f", group)
 
     def lookup(self, table: str, key: str) -> dict | None:
         """Look up sensor config by table:key.

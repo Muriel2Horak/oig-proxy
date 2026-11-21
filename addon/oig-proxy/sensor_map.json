@@ -1018,6 +1018,14 @@
       "todo": false,
       "entity_category": "diagnostic"
     },
+    "fault_summary:summary": {
+      "name": "Fault summary",
+      "name_cs": "Souhrn chyb",
+      "device_mapping": "proxy",
+      "sensor_type_category": "diagnostic",
+      "entity_category": "diagnostic",
+      "icon": "mdi:alert-box-outline"
+    },
     "proxy_status:status": {
       "name": "HB - Stav proxy",
       "name_cs": "HB - Stav proxy",
@@ -4559,16 +4567,18 @@
     {
       "bit": 8,
       "key": "ERR_PV",
+      "kind": "status",
       "warning_code": null,
       "remark": "Solar input 1 loss",
-      "remark_cs": "Výpadek FV vstupu 1"
+      "remark_cs": "FV vstup 1 nedostupný"
     },
     {
       "bit": 4,
       "key": "ERR_PV",
+      "kind": "status",
       "warning_code": null,
       "remark": "Solar input 2 loss",
-      "remark_cs": "Výpadek FV vstupu 2"
+      "remark_cs": "FV vstup 2 nedostupný"
     },
     {
       "bit": 2,

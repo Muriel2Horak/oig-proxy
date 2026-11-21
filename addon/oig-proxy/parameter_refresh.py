@@ -24,6 +24,8 @@ _OPERATION_DEBOUNCE_S = 60.0
 _FUTURE_SKEW_S = 5.0
 _READBACK_WAIT_S = 60.0
 _READBACK_RESPONSE_S = 90.0
+# Passive confirmation uses the base readback window without scheduling a request.
+PARAMETER_READBACK_EVIDENCE_MAX_AGE_S = _READBACK_WAIT_S + _READBACK_RESPONSE_S
 _COMMAND_ONLY_FIELDS = frozenset({
     ("tbl_box_prms", "SA"), ("tbl_box_prms", "RQRESET"), ("tbl_box_prm2", "APP"),
 })
@@ -122,7 +124,7 @@ class ParameterReadbackRefresh:
         self, table: str, key: str, value: str | int, stamp: float, *, acknowledged: bool = False,
     ) -> None:
         identity = table, key
-        if not observation_table(table) or identity in _COMMAND_ONLY_FIELDS:
+        if not observation_table(table) or identity in _COMMAND_ONLY_FIELDS or key.upper().startswith("ERR_"):
             return
         previous = self._expected.get(identity)
         seen = self._tables.get(table)
@@ -158,6 +160,19 @@ class ParameterReadbackRefresh:
             if expected.due is not None:
                 expected.due = None
                 expected.response_deadline = deadline
+
+    def response_deadline_for(self, table: str, key: str, value: str | int, *, box_epoch: int) -> float | None:
+        """Return the active sent-SA deadline for this value and BOX clock epoch."""
+        expected = self._expected.get((table, key))
+        if (
+            box_epoch == self._box_clock_epoch
+            and expected is not None
+            and expected.response_deadline is not None
+            and self._clock() < expected.response_deadline
+            and same_setting_value(expected.value, value)
+        ):
+            return expected.response_deadline
+        return None
 
     def poll_timeouts(self) -> None:
         """Report unresolved SA readbacks even while the BOX sends no data."""
@@ -339,7 +354,7 @@ class ParameterRefreshScheduler:  # pylint: disable=too-many-instance-attributes
         """Debounce only explicitly configured, confirmed exceptional operations."""
         operation = (table.strip().lower(), key.strip().upper())
         if (
-            operation[1] == "SA" or operation in _EXCLUDED_OPERATIONS
+            operation[1] == "SA" or operation in _EXCLUDED_OPERATIONS or operation[1].startswith("ERR_")
             or operation not in self._after_operations or operation in self._operations
         ):
             return

@@ -127,6 +127,23 @@ def test_a_later_acknowledged_write_can_rearm_a_timed_out_readback():
     assert send_if_due(readback, lambda: boundary.request("new write"))
 
 
+def test_response_deadline_requires_a_sent_sa_and_matching_expectation():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    table, key = "tbl_invertor_prm1", "P_CAL_R"
+    readback.note_ack(table, key, 92, box_time=(1, START))
+    boundary.now += 160
+    assert readback.is_due()
+    assert readback.response_deadline_for(table, key, 92, box_epoch=1) is None
+    readback.mark_sent()
+    assert readback.response_deadline_for(table, key, "92.0", box_epoch=1) == boundary.now + 90
+    assert readback.response_deadline_for(table, "P_CAL_S", 92, box_epoch=1) is None
+    assert readback.response_deadline_for(table, key, 91, box_epoch=1) is None
+    assert readback.response_deadline_for(table, key, 92, box_epoch=2) is None
+    boundary.now += 90
+    assert readback.response_deadline_for(table, key, 92, box_epoch=1) is None
+
+
 def test_qualified_box_clock_keeps_event_and_readback_in_same_epoch(caplog):
     caplog.set_level("INFO", logger="parameter_refresh")
     boundary = Boundary()
@@ -218,6 +235,21 @@ def test_ignores_actions_no_op_replayed_and_invalid_events():
     readback.observe(hg("I") | {"DT": "invalid"})
     boundary.now += 60
     assert not send_if_due(readback, lambda: pytest.fail("no persistent setting change"))
+
+
+@pytest.mark.parametrize("key", ["ERR_PV", "ERR_ELSE", "ERR_AC", "ERR_GRID", "ERR_BATT"])
+def test_warning_transitions_and_ack_do_not_schedule_parameter_refresh(key):
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(native("tbl_events", 0, Type="Change",
+                            Content=f"Input : tbl_invertor_prms / {key}: [0]->[4]"))
+    boundary.now += 60
+    assert not readback.is_due()
+    readback.observe(native("tbl_events", 60, Type="Change",
+                            Content=f"Input : tbl_invertor_prms / {key}: [4]->[0]"))
+    readback.note_ack("tbl_invertor_prms", key, 0, box_time=(1, START + 60))
+    boundary.now += 60
+    assert not readback.is_due()
 
 
 def test_same_target_rearms_after_fresh_contradictory_table():

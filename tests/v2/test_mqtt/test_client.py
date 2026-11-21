@@ -164,6 +164,22 @@ def test_publish_state_uses_qos_and_retain():
 # send_discovery()
 # ---------------------------------------------------------------------------
 
+def test_fault_summary_discovery_on_diagnostic_device():
+    c = make_client()
+    broker = inject_mock_paho(c)
+    c.send_discovery(
+        device_id="oig_proxy", table="fault_summary", sensor_key="summary",
+        sensor_name="Souhrn závad", device_mapping="proxy", entity_category="diagnostic",
+    )
+    topic, body = broker.publish.call_args.args[:2]
+    config = json.loads(body)
+    assert topic == "homeassistant/sensor/oig_local_oig_proxy_fault_summary_summary/config"
+    assert config["device"]["identifiers"] == ["oig_local_oig_proxy_proxy"]
+    assert config["entity_category"] == "diagnostic"
+    assert config["json_attributes_topic"] == config["state_topic"]
+    assert "'diagnostics'" in config["json_attributes_template"]
+
+
 def test_send_discovery_topic_format():
     """Discovery topic je homeassistant/sensor/{unique_id}/config."""
     c = make_client(namespace="oig_local")
@@ -454,7 +470,7 @@ def test_opted_in_power_controls_keep_private_ids_and_confirmed_state(
 
 
 @pytest.mark.parametrize("key", ["P_CAL_R", "P_CAL_S", "P_CAL_T"])
-def test_phase_cfg_discovery_keeps_experimental_number_ids_and_u16_domain(key):
+def test_phase_cfg_discovery_uses_confirmed_write_state(key):
     client = make_client(power_limits=PowerControlLimits(phase_calibration_enabled=True))
     broker = inject_mock_paho(client)
     table = "tbl_invertor_prm1"
@@ -464,13 +480,31 @@ def test_phase_cfg_discovery_keeps_experimental_number_ids_and_u16_domain(key):
     base = f"oig_local_box01_{table}_{key.lower()}"
     assert ro["unique_id"] == base and cfg["unique_id"] == base + "_cfg"
     assert cfg["default_entity_id"] == f"number.{base}_cfg"
-    assert cfg["name"] == f"{key} – experimentální"
-    assert cfg["state_topic"] == ro["state_topic"] == f"oig_local/BOX01/{table}/state"
-    assert cfg["value_template"] == ro["value_template"]
+    assert "poslední potvrzený zápis" in cfg["name"] and "experimentální" in cfg["name"]
+    assert ro["state_topic"] == f"oig_local/BOX01/{table}/state"
+    assert cfg["state_topic"] == "oig_local/BOX01/phase_calibration_write/state"
+    assert ro["value_template"] == f"{{{{ value_json.get('{key}') }}}}"
     assert (cfg["min"], cfg["max"], cfg["step"]) == (0, 65535, 1)
     assert cfg["json_attributes_topic"] == cfg["state_topic"]
-    assert json.loads(cfg["json_attributes_template"]) == {}
+    assert cfg["optimistic"] is False and cfg["retain"] is False
     assert cfg["command_topic"] == f"oig_local/BOX01/set/{table}/{key}"
+
+
+@pytest.mark.parametrize("key", ["ERR_PV", "ERR_AC", "ERR_BATT", "ERR_ELSE", "ERR_GRID"])
+def test_inverter_warning_sensor_preserves_raw_state_and_shows_decoded_attributes(key):
+    client = make_client()
+    broker = inject_mock_paho(client)
+    assert client.send_discovery(
+        device_id="BOX01", table="tbl_invertor_prms", sensor_key=key, sensor_name=key,
+    )
+
+    payload = json.loads(broker.publish.call_args.args[1])
+    assert payload["value_template"] == f"{{{{ value_json.get('{key}') }}}}"
+    assert payload["json_attributes_topic"] == payload["state_topic"]
+    template = payload["json_attributes_template"]
+    assert f"'warnings': value_json.get('{key}_warnings_cs', [])" in template
+    assert f"'warning_codes': value_json.get('{key}_warning_codes', [])" in template
+    assert f"'operating_status': value_json.get('{key}_status_cs', [])" in template
 
 
 def test_box_mode_discovery_retries_failed_select_without_republishing_sensor():

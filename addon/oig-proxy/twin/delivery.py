@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from protocol.archive_enrollment import scan_archive_enrollment
 from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch
-from protocol.parser import same_setting_value
+from protocol.parser import parse_parameter_change, same_setting_value
 from protocol.ver_profile import (
     ProfileStatus, VerProfile, VerProfiles, matches_setting_poll, native_frame_fields, parse_setting_reply,
 )
@@ -53,6 +53,7 @@ _LOCAL_ACK_TIMEOUT_S = 30.0
 _CLOUD_OBSERVATION_TIMEOUT_S = 60.0
 _POLL_SKIP_LOG_INTERVAL_S = 30.0
 _POLL_SKIP_LOG_KEYS = 128
+_MODE_SETTING = ("tbl_box_prms", "MODE")
 _TRIGGER_ONLY_SETTINGS = frozenset({("tbl_box_prms", "SA"), ("tbl_box_prms", "RQRESET")})
 
 
@@ -117,6 +118,18 @@ class _BoxObservation:
     received_at: float | None
     clock_epoch: int
     earlier_clock: tuple[datetime, float] | None = None
+    latest_shared_source_dt: datetime | None = None
+
+    @property
+    def latest_source_dt(self) -> datetime:
+        """Preserve the clock sample while ordering sources that share its counter."""
+        return self.latest_shared_source_dt or self.source_dt
+
+
+@dataclass(frozen=True)
+class _EarlyModeTransition:
+    stamp: datetime
+    counter: int
 
 
 @dataclass(frozen=True)
@@ -131,12 +144,14 @@ class _LocalInflight:
     wire_box: _BoxObservation | None = None
     box_clock_epoch: int = 0
     cloud_generation: int = 0
+    legacy_cloud_generation: int = 0
     injected_at: float | None = None
     injected_wall_dt: datetime | None = None
     reply_ambiguous: bool = False
     event_ambiguous: bool = False
     retain_receipt: bool = False
     online_poll: bytes | None = None
+    early_mode_transition: _EarlyModeTransition | None = None
 
 
 @dataclass(frozen=True)
@@ -228,6 +243,7 @@ class TwinDelivery:
         self._retry_pending: dict[str, _LocalInflight] = {}
         self._event_receipts: dict[str, _LocalInflight] = {}
         self._cloud_generations: dict[tuple[str, str, str], int] = defaultdict(int)
+        self._legacy_cloud_generation = 0
         self._poll_skip_logs: OrderedDict[tuple[str, str, str], tuple[str, float]] = OrderedDict()
         register_drop = getattr(self._twin_queue, "set_drop_callback", None)
         if callable(register_drop):
@@ -293,6 +309,8 @@ class TwinDelivery:
         """Update the gate before processing BOX event evidence or selecting a Setting."""
         counter = self._profiles.observe_box(raw, session_id)
         self._refresh_profile_status(device_id)
+        if counter is not None:
+            self._review_intervening_mode_frame(raw, device_id, session_id, counter)
         return counter
 
     def observe_cloud_profile(self, raw: bytes, session_id: str | None, device_id: str) -> None:
@@ -453,6 +471,8 @@ class TwinDelivery:
                               or clock_epoch != previous.clock_epoch
                               or (stamp.tzinfo is None) != (previous.source_dt.tzinfo is None))
             if id_set == previous.highwater and not changed_domain:
+                if stamp > previous.latest_source_dt:
+                    self._box_observations[device_id] = replace(previous, latest_shared_source_dt=stamp)
                 return
             if id_set < previous.highwater or changed_domain:
                 epoch += 1  # Invalidate current proof; never infer a safe clock/counter reset.
@@ -468,12 +488,17 @@ class TwinDelivery:
             id_set, epoch, session_id, stamp, clock_observed_at, clock_epoch, earlier_clock,
         )
 
-    def _fresh_local_event(self, context: _LocalInflight, event_id_set: int | None) -> bool:
+    def _local_event_epoch_current(self, context: _LocalInflight, event_id_set: int) -> bool:
         identity = self._cloud_pending_key(context.device_id, context.request.table, context.request.key)
-        if (type(event_id_set) is not int or event_id_set <= self._consumed_box_counters.get(context.device_id, 0)
-                or context.session_id in self._cloud_legacy_sessions
-                or self._profiles.box_clock_epoch(context.device_id) != context.box_clock_epoch
-                or self._cloud_generations[identity] != context.cloud_generation):
+        return (
+            event_id_set > self._consumed_box_counters.get(context.device_id, 0)
+            and context.session_id not in self._cloud_legacy_sessions
+            and self._profiles.box_clock_epoch(context.device_id) == context.box_clock_epoch
+            and self._cloud_generations[identity] == context.cloud_generation
+        )
+
+    def _fresh_local_event(self, context: _LocalInflight, event_id_set: int | None) -> bool:
+        if type(event_id_set) is not int or not self._local_event_epoch_current(context, event_id_set):
             return False
         baseline = context.wire_box
         current = self._box_observations.get(context.device_id)
@@ -1122,7 +1147,8 @@ class TwinDelivery:
         self._local_inflight = replace(context, wire_dt=stamp, retain_receipt=retain_receipt,
                                        wire_box=observation,
                                        box_clock_epoch=clock_epoch,
-                                       cloud_generation=self._cloud_generations[identity])
+                                       cloud_generation=self._cloud_generations[identity],
+                                       legacy_cloud_generation=self._legacy_cloud_generation)
         previous_attempt = self._retry_pending.get(context.device_id)
         if previous_attempt is not None and self._queued_retry(previous_attempt) is context.request.source:
             del self._retry_pending[context.device_id]
@@ -1265,7 +1291,8 @@ class TwinDelivery:
                                 value: Any, source_dt: str | None = None,
                                 *, event_id_set: int | None = None,
                                 session_id: str | None = None,
-                                previous_value: str | None = None) -> bool:
+                                previous_value: str | None = None,
+                                received_at: float | None = None) -> bool:
         """Accept only uniquely attributable, unconsumed value-bearing BOX evidence."""
         self.poll_timeouts()
         context = self._local_receipt_context(session_id)
@@ -1273,16 +1300,226 @@ class TwinDelivery:
         if context is None or stamp is None:
             return False
         owner = self._event_owner(device_id, table, key, value, stamp, event_id_set, session_id, previous_value)
+        if (table, key) == _MODE_SETTING and context is not self._local_inflight:
+            if context.device_id != device_id:
+                return False
+            if owner is not None and (owner.source != "local" or owner.request is not context):
+                return False
+            if owner is not None and received_at is None:
+                received_at = time.monotonic()
+            return self._acknowledge_late_mode_transition(
+                context, value, stamp, event_id_set, previous_value, received_at,
+            )
         if owner is None or owner.source != "local" or owner.request is not context:
+            if owner is None and (table, key) == _MODE_SETTING:
+                self._remember_early_mode_transition(
+                    device_id, value, stamp, event_id_set,
+                    session_id=session_id, previous_value=previous_value, received_at=received_at,
+                )
             return False
+        return self._finish_local_event(context, value, stamp, event_id_set)
+
+    def _mode_context_matches(
+        self, context: _LocalInflight, value: Any, session_id: str | None, received_at: float,
+    ) -> bool:
+        return (
+            session_id is not None and context.session_id == session_id and not context.event_ambiguous
+            and (context.request.table, context.request.key) == _MODE_SETTING
+            and not self._cloud_legacy_sessions and context.legacy_cloud_generation == self._legacy_cloud_generation
+            and context.injected_at is not None and context.injected_at <= received_at
+            and self.profile_status(context.device_id) == context.profile_status
+            and same_setting_value(context.request.value, value)
+        )
+
+    def _mode_attempt_for_event(
+        self, device_id: str, value: Any, event_id_set: int, *,
+        session_id: str | None, received_at: float | None,
+    ) -> _LocalInflight | None:
+        context = self._local_inflight
+        if (context is None or context.device_id != device_id or received_at is None
+                or received_at >= self._local_deadline(context)
+                or not self._mode_context_matches(context, value, session_id, received_at)
+                or not self._fresh_local_event(context, event_id_set)):
+            return None
+        return context
+
+    def _late_mode_time(
+        self, context: _LocalInflight, value: Any, stamp: datetime, counter: int | None,
+        *, received_at: float | None, allow_shared_counter: bool,
+    ) -> datetime | None:
+        """Qualify native evidence before the exact timed-out request reaches the wire again."""
+        device_id, session_id = context.device_id, context.session_id
+        if (self._local_inflight is not None or session_id not in self._used_local_sessions
+                or received_at is None or received_at < self._local_deadline(context)
+                or not self._mode_context_matches(context, value, session_id, received_at)
+                or self._queued_retry(context) is None):
+            return None
+        baseline, current = context.wire_box, self._box_observations.get(device_id)
+        if (baseline is None or current is None or current.session_id != session_id
+                or current.epoch != baseline.epoch or counter is None or counter <= baseline.highwater):
+            return None
+        if counter < current.highwater or (counter == current.highwater and not allow_shared_counter):
+            return None
+        if not self._local_event_epoch_current(context, counter):
+            return None
+        local_stamp = self._local_box_time(device_id, stamp.isoformat())
+        if (local_stamp is None or local_stamp.tzinfo is not None or current.source_dt.tzinfo is not None
+                or local_stamp <= current.latest_source_dt or local_stamp <= baseline.latest_source_dt):
+            return None
+        base, counter_token = self._event_tokens(device_id, *_MODE_SETTING, value, stamp, counter)
+        if base in self._consumed_event_bases or counter_token in self._consumed_event_counters:
+            return None
+        return local_stamp
+
+    def _acknowledge_late_mode_transition(
+        self, context: _LocalInflight, value: Any, stamp: datetime, counter: int | None,
+        previous_value: str | None, received_at: float | None,
+    ) -> bool:
+        if context.wire_dt is None or context.wire_dt.tzinfo is not None:
+            return False
+        valid_old, old_mode, _ = validate_setting_value(*_MODE_SETTING, previous_value)
+        if not valid_old or same_setting_value(old_mode, value):
+            return False
+        shown = self._late_mode_time(
+            context, value, stamp, counter, received_at=received_at, allow_shared_counter=True,
+        )
+        if shown is None:
+            return False
+        # The wider historical allowance still requires independent BOX clock samples
+        # and a strictly advancing counter. Shared-counter evidence cannot use it.
+        if shown < context.wire_dt - _RECEIPT_CLOCK_SKEW and not (
+            self._fresh_local_event(context, counter)
+            and self._qualified_early_event(context, shown, previous_value, value)
+        ):
+            return False
+        return self._finish_local_event(context, value, stamp, counter)
+
+    def _remember_early_mode_transition(
+        self, device_id: str, value: Any, stamp: datetime, event_id_set: int | None, *,
+        session_id: str | None, previous_value: str | None, received_at: float | None,
+    ) -> None:
+        if (event_id_set is None or previous_value is None or not previous_value.strip()
+                or same_setting_value(previous_value, value)):
+            return
+        context = self._mode_attempt_for_event(
+            device_id, value, event_id_set, session_id=session_id, received_at=received_at,
+        )
+        if context is None:
+            return
+        baseline = context.wire_box
+        local_stamp = self._local_box_time(device_id, stamp.isoformat())
+        if (baseline is None or baseline.session_id != session_id or baseline.source_dt.tzinfo is not None
+                or context.injected_wall_dt is None or context.wire_dt is None
+                or local_stamp is None or local_stamp.tzinfo is not None
+                or local_stamp <= baseline.source_dt
+                or not context.injected_wall_dt - _NATIVE_EVENT_CLOCK_LAG <= local_stamp < context.wire_dt):
+            return
+        base, _ = self._event_tokens(device_id, *_MODE_SETTING, value, stamp, event_id_set)
+        if base not in self._consumed_unqualified_events:
+            self._local_inflight = replace(context, early_mode_transition=_EarlyModeTransition(stamp, event_id_set))
+
+    def _review_intervening_mode_frame(
+        self, raw: bytes, device_id: str, session_id: str | None, counter: int,
+    ) -> None:
+        """Invalidate a remembered transition on newer conflicting BOX evidence."""
+        context = self._local_inflight
+        if context is None or (context.request.table, context.request.key) != _MODE_SETTING:
+            context = self._retry_pending.get(device_id)
+        if (context is None or context.device_id != device_id or context.session_id != session_id
+                or context.wire_box is None or context.wire_dt is None or context.event_ambiguous):
+            return
+        current = self._box_observations.get(device_id)
+        if (current is None or current.session_id != session_id
+                or counter < current.highwater or counter <= context.wire_box.highwater):
+            return
+        fields = native_frame_fields(raw)
+        if fields is None:
+            return
+        stamp = self._local_box_time(device_id, fields.get("DT"))
+        if stamp is None or (stamp.tzinfo is None) != (current.source_dt.tzinfo is None):
+            return
+        if counter == current.highwater and stamp <= current.latest_source_dt:
+            return
+        value = self._native_mode_value(fields)
+        conflicts = value is not None and not same_setting_value(context.request.value, value)
+        transition = context.early_mode_transition
+        cutoff: datetime | None = context.wire_dt
+        if transition is not None:
+            cutoff = self._local_box_time(device_id, transition.stamp.isoformat())
+        elif fields.get("TblName") == "tbl_events":
+            cutoff = context.wire_dt - _RECEIPT_CLOCK_SKEW
+        if stamp < current.latest_source_dt or (conflicts and cutoff is not None and stamp >= cutoff):
+            invalidated = replace(context, early_mode_transition=None, event_ambiguous=True)
+            if context is self._local_inflight:
+                self._local_inflight = invalidated
+            else:
+                self._retry_pending[device_id] = invalidated
+
+    @staticmethod
+    def _native_mode_value(fields: dict[str, str]) -> str | int | None:
+        """Extract an explicit MODE readback or native transition, if carried by this frame."""
+        table, key = _MODE_SETTING
+        if fields.get("ID_SubD", "0") != "0":
+            return None
+        if fields.get("TblName") == table:
+            return fields.get(key)
+        if fields.get("TblName") == "tbl_events":
+            change = parse_parameter_change(fields.get("Type", ""), fields.get("Content", ""))
+            if change is not None and change[:2] == _MODE_SETTING:
+                return change[2]
+        return None
+
+    def acknowledge_local_mode_start(
+        self, device_id: str, mode: int, source_dt: str | None, *,
+        event_id_set: int, session_id: str | None, received_at: float | None,
+    ) -> bool:
+        """Use a matching native Factory start as active corroboration or late BOX mode evidence."""
+        self.poll_timeouts()
+        queued_attempt = self._retry_pending.get(device_id)
+        if self._local_inflight is None and queued_attempt is not None:
+            if queued_attempt.session_id != session_id or queued_attempt.injected_wall_dt is None:
+                return False
+            stamp = self._device_time(source_dt)
+            if stamp is None:
+                return False
+            shown = self._late_mode_time(
+                queued_attempt, mode, stamp, event_id_set,
+                received_at=received_at, allow_shared_counter=False,
+            )
+            if shown is None or shown < queued_attempt.injected_wall_dt:
+                return False
+            return self._finish_local_event(queued_attempt, mode, stamp, event_id_set, evidence="mode_start")
+        context = self._mode_attempt_for_event(
+            device_id, mode, event_id_set, session_id=session_id, received_at=received_at,
+        )
+        if context is None or context.early_mode_transition is None:
+            return False
+        transition = context.early_mode_transition
+        current = self._box_observations.get(device_id)
+        started = self._local_box_time(device_id, source_dt)
+        if current is None or current.session_id != session_id or current.highwater < transition.counter:
+            return False
+        if (context.injected_wall_dt is None or started is None or started.tzinfo is not None
+                or current.source_dt.tzinfo is not None):
+            return False
+        if started < max(context.injected_wall_dt, current.latest_source_dt):
+            return False
+        return self._finish_local_event(context, mode, transition.stamp, transition.counter)
+
+    def _finish_local_event(
+        self, context: _LocalInflight, value: Any, stamp: datetime, event_id_set: int | None,
+        *, evidence: str = "setting_event",
+    ) -> bool:
         late = context is not self._local_inflight
         if late and not self._cancel_queued_retry(context):
             return False
-        self._consume_event(device_id, table, key, value, stamp, event_id_set)
-        self._record_audit_step(context.request.as_setting(), device_id,
+        request = context.request
+        setting = request.as_setting()
+        self._consume_event(context.device_id, request.table, request.key, value, stamp, event_id_set)
+        self._record_audit_step(setting, context.device_id,
                                 SettingStep.ACK_TBL_EVENTS, confirmed_value=value,
                                 session_id=context.session_id or "")
-        self._emit_result(context.request.as_setting(), "ack", source="local", evidence="setting_event")
+        self._emit_result(setting, "ack", source="local", evidence=evidence)
         if context.session_id is not None:
             self._generic_reply_quarantine.add(context.session_id)
             if context.retain_receipt:
@@ -1636,6 +1873,7 @@ class TwinDelivery:
 
     def set_cloud_inflight(self, session_id: str | None = None) -> None:
         """Mark the legacy cloud handling flag for a single transport session."""
+        self._legacy_cloud_generation += 1
         self._cloud_legacy_sessions.add(session_id)
 
     def clear_cloud_inflight(self, session_id: str | None = None) -> None:

@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sensor.confirmed_store import ConfirmedStateStore, finite_json, observation_table
+from sensor.fault_summary import FaultSummary
 from sensor.loader import SensorMapLoader
-from sensor.warnings import decode_warning_details, decode_warnings
+from sensor.warnings import warning_state
 from mqtt.client import MQTTClient
 from protocol.parser import parse_mode_start
 
@@ -19,6 +20,9 @@ _EXPORT_LIMIT_TABLE = "tbl_invertor_prm1"
 _EXPORT_LIMIT_KEY = "P_MAX_FEED_GRID"
 _MAX_EXPORT_LIMIT_WATTS = (1 << 32) - 1  # Canonical field encoding, independent of write policy.
 _BOX_MODE_TABLE = "tbl_box_prms"
+_FAULT_SUMMARY_TABLE = "fault_summary"
+_FAULT_MASK_TABLE = "tbl_invertor_prms"
+_FAULT_INPUT_TABLES = {_FAULT_MASK_TABLE, "tbl_invertor_prm2", "tbl_events"}
 # NOTE: kept in sync with proxy/server.py:TRANSPORT_METADATA_KEYS. Not extracted to
 # a shared module: the HAOS git-addon rebuild runs `git clean`, which deletes any
 # new untracked file before the image is built.
@@ -81,6 +85,15 @@ class FrameProcessor:
         self._maxfg_as_export_limit_readback = maxfg_as_export_limit_readback
         self._direct_export_limits: dict[str, datetime] = {}
         self._export_limit_firmware: dict[str, str] = {}
+        self._fault_summaries: dict[str, FaultSummary] = {}
+        self._fault_summary_enabled = False
+        self._fault_warning_definitions: dict[str, list[dict[str, Any]]] = {}
+        for table, key, metadata in self._sensor_loader.iter_sensors():
+            if (table, key) == (_FAULT_SUMMARY_TABLE, "summary"):
+                self._fault_summary_enabled = metadata.get("device_mapping") == "proxy"
+            definitions = metadata.get("warnings_3f")
+            if table == _FAULT_MASK_TABLE and isinstance(definitions, list):
+                self._fault_warning_definitions[key] = definitions
         self._restore_confirmed_states()
 
     def _restore_confirmed_states(self) -> None:
@@ -89,9 +102,14 @@ class FrameProcessor:
         snapshot = self._state_store.snapshot()
         device = self._state_store.device_id
         for table, record in snapshot["tables"].items():
-            self._last_table_values[(device, table)] = {
+            values = {
                 key: field["value"] for key, field in record["fields"].items()
             }
+            for key, field in record["fields"].items():
+                metadata = self._sensor_loader.lookup(table, key)
+                if isinstance(metadata, dict):
+                    values.update(warning_state(key, field["value"], metadata.get("warnings_3f")))
+            self._last_table_values[(device, table)] = values
             if record["baseline"]:
                 self._table_baselines.add((device, table))
             for key, field in record["fields"].items():
@@ -112,12 +130,63 @@ class FrameProcessor:
         banks = self._last_table_values.get((device, "tbl_batt_prms"), {}).get("BAT_N")
         if isinstance(banks, (int, float)) and not isinstance(banks, bool):
             self._battery_bank_count_by_device[device] = int(banks)
+        if self._fault_summary_enabled:
+            self._restore_fault_summary(device, snapshot)
 
-    def replay_confirmed_states(self) -> bool:
-        """Republish historical BOX values without availability, commands or freshness."""
+    def _restore_fault_summary(self, device: str, snapshot: dict[str, Any]) -> None:
+        summary = FaultSummary()
+        self._fault_summaries[device] = summary
         if self._state_store is None:
+            return
+        saved = self._state_store.fault_diagnostics()
+        summary.restore(saved.get("recent_records", []), saved.get("last_code"))
+        code = snapshot["tables"].get("tbl_invertor_prm2", {}).get("fields", {}).get("CODE_ERR")
+        if code and not saved.get("last_code") and code["origin"] != "confirmed_event":
+            stamp = self._parse_device_time(code["received_at"])
+            if stamp is not None and stamp.tzinfo is not None:
+                summary.observe("tbl_invertor_prm2", {"CODE_ERR": code["value"]},
+                                received_at=stamp, source_at=code["sourceDT"])
+
+    def _publish_fault_summary(self, device: str) -> bool:
+        if not self._fault_summary_enabled:
             return True
-        complete = True
+        if device not in self._fault_summaries:
+            self._fault_summaries[device] = FaultSummary()
+        snapshot = self._fault_summaries[device].snapshot()
+        return self._mqtt.publish_confirmed_state(
+            self._proxy_device_id, _FAULT_SUMMARY_TABLE,
+            {"summary": snapshot["summary"], "diagnostics": {"box_id": device, **snapshot}},
+        )
+
+    def _save_fault_summary(self, device: str) -> None:
+        if self._state_store is not None and self._state_store.device_id == device:
+            self._state_store.record_fault_diagnostics(self._fault_summaries[device].persisted())
+
+    def mark_fault_summary_unavailable(self, device: str) -> None:
+        """Expire live mask evidence on the existing BOX availability boundary."""
+        summary = self._fault_summaries.get(device)
+        if summary is not None and summary.mark_unavailable():
+            self._save_fault_summary(device)
+            self._publish_fault_summary(device)
+
+    def _observe_fault_inputs(
+        self, device: str, table: str, values: dict[str, Any], *, source: str, source_at: str | None,
+    ) -> bool:
+        if not self._fault_summary_enabled or table not in _FAULT_INPUT_TABLES or device == "unknown":
+            return False
+        if device not in self._fault_summaries:
+            self._fault_summaries[device] = FaultSummary()
+        return self._fault_summaries[device].observe(
+            table, values, received_at=datetime.now(timezone.utc), source_at=source_at,
+            source_table=source, warning_definitions=self._fault_warning_definitions,
+        )
+
+    def replay_confirmed_states(self, device_id: str | None = None) -> bool:
+        """Republish historical BOX values without availability, commands or freshness."""
+        identity = device_id or (self._state_store.device_id if self._state_store else None)
+        complete = self._publish_fault_summary(identity) if identity is not None else True
+        if self._state_store is None:
+            return complete
         device = self._state_store.device_id
         snapshot = self._state_store.snapshot()
         for (source, table), values in self._last_table_values.items():
@@ -152,6 +221,7 @@ class FrameProcessor:
             if identity[0] != device_id
         }
         self._direct_export_limits.pop(device_id, None)
+        self.mark_fault_summary_unavailable(device_id)
         if self._state_store is not None and self._state_store.device_id == device_id:
             self._state_store.reset_ordering_epoch(reason)
 
@@ -247,6 +317,7 @@ class FrameProcessor:
             if previous is not None and previous != firmware:
                 self._direct_export_limits.pop(device_id, None)
         elif self._state_store.set_context(firmware=firmware):
+            self.mark_fault_summary_unavailable(device_id)
             self._direct_export_limits.pop(device_id, None)
             self._field_device_times = {
                 identity: value
@@ -315,7 +386,7 @@ class FrameProcessor:
         return True
 
     def _target_device_id(self, source_device_id: str, table: str) -> str:
-        if table in ("tbl_events", "proxy_status", "twin_state"):
+        if table in ("tbl_events", "proxy_status", "twin_state", _FAULT_SUMMARY_TABLE):
             return self._proxy_device_id
         return source_device_id
 
@@ -489,6 +560,11 @@ class FrameProcessor:
             data = {**deduped, **{key: value for key, value in data.items() if key.startswith("_")}}
 
         transport_metadata_frame = self._is_transport_metadata_frame(data)
+        physical = not confirmed_event and not transport_metadata_frame
+        event_dt = data.get("_dt")
+        fault_changed = physical and table == "tbl_events" and self._observe_fault_inputs(
+            device_id, table, data, source=table, source_at=event_dt if isinstance(event_dt, str) else None,
+        )
         if stamp is None:
             logger.debug(
                 "BOX observation for %s:%s has no usable device DT; temporal ordering unproven",
@@ -556,27 +632,7 @@ class FrameProcessor:
             else:
                 pub_data[key] = value
 
-            # Check for warnings_3f and decode if present
-            warnings_list = metadata.get("warnings_3f", [])
-            if warnings_list and isinstance(value, int):
-                warnings = decode_warnings(value, warnings_list)
-                if warnings:
-                    pub_data[f"{key}_warnings"] = warnings
-                    details = decode_warning_details(value, warnings_list)
-                    warnings_cs = [
-                        item.get("remark_cs") or item.get("remark") or item.get("key")
-                        for item in details
-                    ]
-                    warning_codes = [
-                        item.get("warning_code")
-                        for item in details
-                        if item.get("warning_code") is not None
-                    ]
-                    if warnings_cs:
-                        pub_data[f"{key}_warnings_cs"] = warnings_cs
-                    if warning_codes:
-                        pub_data[f"{key}_warning_codes"] = warning_codes
-                    logger.debug("Decoded warnings for %s:%s -> %s", table, key, warnings)
+            pub_data.update(warning_state(key, value, metadata.get("warnings_3f")))
 
         # Publish state if we have any data
         if pub_data:
@@ -593,6 +649,10 @@ class FrameProcessor:
                     self._battery_bank_count_by_device[device_id] = int(accepted_banks)
             source_dt = data.get("_dt") if stamp is not None else None
             origin = "confirmed_event" if confirmed_event else "direct"
+            if physical and table != "tbl_events":
+                fault_changed = self._observe_fault_inputs(
+                    device_id, table, pub_data, source=table, source_at=source_dt,
+                )
             merged = self._remember_observation(
                 device_id, table, pub_data, source_dt=source_dt, priority=priority, origin=origin
             )
@@ -609,15 +669,18 @@ class FrameProcessor:
                         key.endswith("_warnings")
                         or key.endswith("_warnings_cs")
                         or key.endswith("_warning_codes")
+                        or key.endswith("_status_cs")
                     ):
                         continue
                     mirror_table = self._actual_mirror_targets.get(key)
-                    if (
-                        mirror_table
-                        and self._sensor_loader.lookup(mirror_table, key) is not None
-                        and self._accept_field_time(device_id, mirror_table, key, stamp, priority)
-                    ):
-                        mirror_payloads.setdefault(mirror_table, {})[key] = value
+                    if not mirror_table:
+                        continue
+                    mirror_metadata = self._sensor_loader.lookup(mirror_table, key)
+                    if mirror_metadata is None or not self._accept_field_time(device_id, mirror_table, key, stamp, priority):
+                        continue
+                    mirrored = mirror_payloads.setdefault(mirror_table, {})
+                    mirrored[key] = value
+                    mirrored.update(warning_state(key, value, mirror_metadata.get("warnings_3f")))
 
                 if (
                     native_actual
@@ -646,6 +709,14 @@ class FrameProcessor:
                         mirror_table,
                         target_device_id,
                     )
+
+                    if physical and native_actual:
+                        fault_changed |= self._observe_fault_inputs(
+                            device_id, mirror_table, mirror_data, source=table, source_at=source_dt,
+                        )
+        if fault_changed:
+            self._save_fault_summary(device_id)
+            self._publish_fault_summary(device_id)
 
     @staticmethod
     def _is_transport_metadata_frame(data: dict[str, Any]) -> bool:

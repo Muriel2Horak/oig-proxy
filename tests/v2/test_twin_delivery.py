@@ -834,6 +834,267 @@ async def test_signed_box_transition_uses_independent_timing_samples(
     assert queue.size() == int(coalesced)
 
 
+def _captured_mode_frame(source_epoch, counter, *, event_type=None, content=""):
+    stamp = czech_local_datetime_from_epoch(source_epoch).isoformat(sep=" ")
+    table = "tbl_events" if event_type else "tbl_actual"
+    event = f"<Type>{event_type}</Type><Content>{content}</Content>" if event_type else ""
+    return native(
+        f"<TblName>{table}</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+        f"<ID_Set>{counter}</ID_Set><DT>{stamp}</DT><Reason>Table</Reason>{event}", MODEL,
+    )
+
+
+async def _start_captured_mode_write(make_config, writer, monkeypatch, *, mode=0):
+    proxy, delivery, queue, clock = _qualified_transport(make_config(), timeout=30)
+    sender_epoch = int(clock.now) + 60
+    outcomes = []
+
+    class DeliveryClock(datetime):
+        """Use the capture timeline for wire serialization."""
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock.now + 0.55, tz)
+
+    monkeypatch.setattr(delivery_module, "datetime", DeliveryClock)
+    monkeypatch.setattr(delivery_module, "time", SimpleNamespace(
+        time=lambda: clock.now + 0.55, monotonic=lambda: clock.now,
+    ))
+    monkeypatch.setattr("proxy.server.time", SimpleNamespace(time=time.time, monotonic=lambda: clock.now))
+    monkeypatch.setattr(delivery, "_on_result", outcomes.append)
+
+    clock.now = sender_epoch - 40
+    await _send_poll(proxy, writer, poll=_captured_mode_frame(sender_epoch - 53, 1234099))
+    clock.now = sender_epoch - 33
+    latest = _captured_mode_frame(sender_epoch - 51, 1234100)
+    await _send_poll(proxy, writer, poll=latest)
+    clock.now = sender_epoch - 1
+    await _send_poll(proxy, writer, poll=latest)
+
+    clock.now = sender_epoch
+    queued = queue.enqueue("tbl_box_prms", "MODE", mode, device_id=TEST_BOX, require_profile=True)
+    assert queued is not None
+    await _send_poll(proxy, writer, poll=native(f"<Result>IsNewFW</Result><ID_Device>{TEST_BOX}</ID_Device>", MODEL))
+    assert len(writer.written) == 1
+    fields = native_frame_fields(writer.written[0])
+    expected_dt = czech_local_datetime_from_epoch(sender_epoch - 2).strftime("%d.%m.%Y %H:%M:%S")
+    assert fields is not None
+    assert (fields["Reason"], fields["TblItem"], fields["NewValue"], fields["DT"]) == ("Setting", "MODE", str(mode), expected_dt)
+    return proxy, queue, clock, sender_epoch, outcomes, queued.audit_id
+
+
+async def _send_captured_mode_transition(proxy, writer, clock, sender_epoch, *, source_offset=-5):
+    clock.now = sender_epoch + 9
+    transition = _captured_mode_frame(
+        sender_epoch + source_offset, 1234101, event_type="Setting", content="Remotely : tbl_box_prms / MODE: [3]->[0]",
+    )
+    await _send_poll(proxy, writer, poll=transition)
+
+
+def _next_captured_mode_poll():
+    return native(f"<Result>IsNewSet</Result><ID_Device>{TEST_BOX}</ID_Device><Lat>48</Lat>", MODEL)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", ["factory-start", "same-counter-setting"])
+async def test_captured_late_mode_evidence_cancels_only_the_still_unsent_retry(
+    make_config, dummy_writer_factory, monkeypatch, confirmation,
+):
+    writer = dummy_writer_factory()
+    factory = confirmation == "factory-start"
+    proxy, queue, clock, sender, outcomes, audit_id = await _start_captured_mode_write(
+        make_config, writer, monkeypatch, mode=3 if factory else 0,
+    )
+    clock.now = sender + 31
+    proxy.twin_delivery.poll_timeouts()
+    pending, = queue.get_pending(device_id=TEST_BOX)
+    assert pending.retried and pending.audit_id == audit_id
+    assert len(writer.written) == 1 and not outcomes
+
+    clock.now = sender + 43
+    await _send_poll(proxy, writer, poll=_captured_mode_frame(sender - 5, 1234101))
+    clock.now = sender + (64 if factory else 57)
+    proof = _captured_mode_frame(
+        sender + (3 if factory else -3), 1234102 if factory else 1234101,
+        event_type="Factory" if factory else "Setting",
+        content="HG IV-UPS  Start (Load:11445W)" if factory else "Remotely : tbl_box_prms / MODE: [3]->[0]",
+    )
+    await _send_poll(proxy, writer, poll=proof)
+    assert [(item["audit_id"], item["result"], item["evidence"]) for item in outcomes] == [
+        (audit_id, "ack", "mode_start" if factory else "setting_event"),
+    ]
+    assert queue.size() == 0
+
+    await _send_poll(proxy, writer, poll=proof)
+    clock.now = sender + 135
+    await _send_poll(proxy, writer, poll=_next_captured_mode_poll())
+    assert len(writer.written) == len(outcomes) == 1
+
+
+def _late_mode_negative_evidence(scenario, sender):
+    if scenario.startswith("same-counter") or scenario == "wire-baseline-counter":
+        offset = {"same-counter-not-newer": -6, "same-counter-outside-skew": -5}.get(scenario, -3)
+        counter = 1234100 if scenario == "wire-baseline-counter" else 1234101
+        old = 0 if scenario == "same-counter-no-transition" else 3
+        return _captured_mode_frame(
+            sender + offset, counter, event_type="Setting", content=f"Remotely : tbl_box_prms / MODE: [{old}]->[0]",
+        )
+    return _captured_mode_frame(
+        sender + (-3 if scenario == "factory-prewire" else 3), 1234103, event_type="Factory",
+        content="HG I (Load:11445W)" if scenario == "factory-no-start" else "HG I Start",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", [
+    "factory-prewire", "factory-no-start", "native-overlap", "cloud-overlap", "legacy-overlap",
+    "same-counter-not-newer", "same-counter-latest-source", "same-counter-outside-skew",
+    "same-counter-no-transition", "wire-baseline-counter",
+])
+async def test_captured_late_mode_evidence_preserves_retry_when_ambiguous_or_stale(
+    make_config, dummy_writer_factory, monkeypatch, scenario,
+):
+    writer = dummy_writer_factory()
+    proxy, queue, clock, sender, outcomes, audit_id = await _start_captured_mode_write(
+        make_config, writer, monkeypatch,
+    )
+    clock.now = sender + 31
+    delivery = proxy.twin_delivery
+    delivery.poll_timeouts()
+    clock.now = sender + 43
+    await _send_poll(proxy, writer, poll=_captured_mode_frame(sender - 6, 1234101))
+
+    if scenario == "native-overlap":
+        clock.now = sender + 45
+        contrary = _captured_mode_frame(sender + 1, 1234102, event_type="Factory", content="HG II Start")
+        await _send_poll(proxy, writer, poll=contrary)
+    elif scenario == "same-counter-latest-source":
+        clock.now = sender + 45
+        await _send_poll(proxy, writer, poll=_captured_mode_frame(sender - 3, 1234101))
+    elif scenario == "cloud-overlap":
+        delivery.begin_cloud_setting(device_id=TEST_BOX, table="tbl_box_prms", key="MODE", value=3,
+                                     raw_text="", msg_id=123456, id_set=123475, session_id="other-cloud-flow")
+        delivery.clear_cloud_inflight("other-cloud-flow")
+    elif scenario == "legacy-overlap":
+        delivery.set_cloud_inflight("other-cloud-flow")
+        delivery.clear_cloud_inflight("other-cloud-flow")
+
+    clock.now = sender + 64
+    await _send_poll(proxy, writer, poll=_late_mode_negative_evidence(scenario, sender))
+    assert not outcomes
+    pending, = queue.get_pending(device_id=TEST_BOX)
+    assert pending.retried and pending.audit_id == audit_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intervening_actual", [False, True], ids=["direct", "intervening-actual"])
+async def test_captured_early_mode_transition_and_hg_confirm_once_without_replay(
+    make_config, dummy_writer_factory, monkeypatch, intervening_actual,
+):
+    writer = dummy_writer_factory()
+    proxy, queue, clock, sender_epoch, outcomes, audit_id = await _start_captured_mode_write(make_config, writer, monkeypatch)
+    await _send_captured_mode_transition(proxy, writer, clock, sender_epoch)
+    assert not outcomes
+
+    counter = 1234102
+    if intervening_actual:
+        clock.now = sender_epoch + 11
+        await _send_poll(proxy, writer, poll=_captured_mode_frame(sender_epoch - 2, counter))
+        counter += 1
+
+    clock.now = sender_epoch + 14
+    hg = _captured_mode_frame(sender_epoch + 1, counter, event_type="Factory", content="HG I Start")
+    await _send_poll(proxy, writer, poll=hg)
+    assert [(item["audit_id"], item["result"], item["evidence"]) for item in outcomes] == [
+        (audit_id, "ack", "setting_event"),
+    ]
+    assert queue.size() == 0
+
+    await _send_poll(proxy, writer, poll=hg)
+    clock.now = sender_epoch + 31
+    await _send_poll(proxy, writer, poll=_next_captured_mode_poll())
+    assert len(writer.written) == len(outcomes) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intervening_evidence", ["mode-table", "mode-event", "clock-regression"])
+async def test_captured_early_mode_confirmation_rejects_conflicting_native_evidence(
+    make_config, dummy_writer_factory, monkeypatch, intervening_evidence,
+):
+    writer = dummy_writer_factory()
+    proxy, queue, clock, sender_epoch, outcomes, audit_id = await _start_captured_mode_write(make_config, writer, monkeypatch)
+    await _send_captured_mode_transition(proxy, writer, clock, sender_epoch)
+
+    clock.now = sender_epoch + 11
+    if intervening_evidence == "mode-table":
+        stamp = czech_local_datetime_from_epoch(sender_epoch - 2).isoformat(sep=" ")
+        frame = native(
+            f"<TblName>tbl_box_prms</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+            f"<ID_Set>1234102</ID_Set><DT>{stamp}</DT><Reason>Table</Reason><MODE>1</MODE>", MODEL,
+        )
+    elif intervening_evidence == "mode-event":
+        frame = _captured_mode_frame(sender_epoch - 2, 1234102, event_type="Factory", content="HG II Start")
+    else:
+        frame = _captured_mode_frame(sender_epoch - 6, 1234102)
+    await _send_poll(proxy, writer, poll=frame)
+
+    clock.now = sender_epoch + 14
+    await _send_poll(proxy, writer, poll=_captured_mode_frame(
+        sender_epoch + 1, 1234103, event_type="Factory", content="HG I Start",
+    ))
+    assert not outcomes
+
+    clock.now = sender_epoch + 31
+    await _send_poll(proxy, writer, session_id="retry-flow", poll=_next_captured_mode_poll())
+    assert len(writer.written) == 2
+    pending, = queue.get_pending(device_id=TEST_BOX)
+    assert pending.retried and pending.audit_id == audit_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_evidence", [
+    "early-only", "factory-only", "wrong-mode", "other-connection", "repeated-counter", "pre-wire-factory",
+    "too-old-transition", "legacy-cloud-active", "legacy-cloud-cleared",
+])
+async def test_captured_early_mode_transition_retries_without_matching_hg(
+    make_config, dummy_writer_factory, monkeypatch, invalid_evidence,
+):
+    writer = dummy_writer_factory()
+    proxy, queue, clock, sender_epoch, outcomes, audit_id = await _start_captured_mode_write(make_config, writer, monkeypatch)
+    if invalid_evidence != "factory-only":
+        await _send_captured_mode_transition(
+            proxy, writer, clock, sender_epoch, source_offset=-8 if invalid_evidence == "too-old-transition" else -5,
+        )
+    assert proxy.twin_delivery is not None
+    if invalid_evidence in {"legacy-cloud-active", "legacy-cloud-cleared"}:
+        proxy.twin_delivery.set_cloud_inflight("parallel-flow")
+        if invalid_evidence == "legacy-cloud-cleared":
+            proxy.twin_delivery.clear_cloud_inflight("parallel-flow")
+    if invalid_evidence != "early-only":
+        clock.now = sender_epoch + 14
+        hg = _captured_mode_frame(
+            sender_epoch + (-3 if invalid_evidence == "pre-wire-factory" else 1),
+            1234101 if invalid_evidence == "repeated-counter" else 1234102,
+            event_type="Factory", content="HG II Start" if invalid_evidence == "wrong-mode" else "HG I Start",
+        )
+        await _send_poll(
+            proxy, writer, session_id="other-flow" if invalid_evidence == "other-connection" else "box-flow", poll=hg,
+        )
+    assert not outcomes
+
+    if invalid_evidence == "legacy-cloud-active":
+        proxy.twin_delivery.clear_cloud_inflight("parallel-flow")
+    clock.now = sender_epoch + 31
+    await _send_poll(proxy, writer, session_id="retry-flow", poll=_next_captured_mode_poll())
+    first, retry = [native_frame_fields(frame) for frame in writer.written]
+    assert first is not None and retry is not None
+    assert (retry["Reason"], retry["TblItem"], retry["NewValue"]) == ("Setting", "MODE", "0")
+    assert retry["ID"] != first["ID"]
+    pending, = queue.get_pending(device_id=TEST_BOX)
+    assert pending.retried and pending.audit_id == audit_id
+    assert not outcomes
+
+
 @pytest.mark.asyncio
 async def test_wire_reply_checks_explicit_echoes_and_reuses_no_session():
     queue = TwinQueue()

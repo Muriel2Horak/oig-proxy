@@ -21,6 +21,7 @@ from typing import Any, Callable
 from settings_constraints import (
     AC_CHARGE_CONTROL,
     PHASE_CALIBRATION_CONTROLS,
+    PHASE_CALIBRATION_WRITE_TABLE,
     POWER_CONTROLS,
     PowerControlLimits,
     SettingConstraint,
@@ -446,6 +447,18 @@ class MQTTClient:
         if (table, sensor_key) == ("proxy_status", "control_last_result"):
             payload["json_attributes_topic"] = state_topic
             payload["json_attributes_template"] = "{{ value_json.get('control_result', {}) | tojson }}"
+        if (table, sensor_key) == ("fault_summary", "summary"):
+            payload["json_attributes_topic"] = state_topic
+            payload["json_attributes_template"] = "{{ value_json.get('diagnostics', {}) | tojson }}"
+        if table == "tbl_invertor_prms" and sensor_key in {"ERR_PV", "ERR_AC", "ERR_BATT", "ERR_ELSE", "ERR_GRID"}:
+            payload["json_attributes_topic"] = state_topic
+            payload["json_attributes_template"] = (
+                "{{ {"
+                f"'warnings': value_json.get('{sensor_key}_warnings_cs', []), "
+                f"'warning_codes': value_json.get('{sensor_key}_warning_codes', []), "
+                f"'operating_status': value_json.get('{sensor_key}_status_cs', [])"
+                "} | tojson }}"
+            )
 
         discovery_topic = f"homeassistant/{component}/{unique_id}/config"
 
@@ -511,11 +524,17 @@ class MQTTClient:
                     if constraint.step is not None:
                         control_payload["step"] = constraint.step
                     if setting_identity in PHASE_CALIBRATION_CONTROLS:
-                        # HA retains old custom attributes until it receives a replacement.
+                        write_topic = f"{self.namespace}/{device_id}/{PHASE_CALIBRATION_WRITE_TABLE}/state"
+                        write_template = f"{{% set write = value_json.get('{sensor_key}') %}}"
                         control_payload.update(
-                            name=f"{sensor_name} – experimentální",
-                            json_attributes_topic=state_topic,
-                            json_attributes_template="{}",
+                            name=f"{sensor_name} – poslední potvrzený zápis (experimentální)",
+                            state_topic=write_topic,
+                            value_template=write_template + "{{ write.get('value') if write is mapping else none }}",
+                            json_attributes_topic=write_topic,
+                            json_attributes_template=write_template + (
+                                "{{ ({'confirmed_at': write.confirmed_at, 'evidence': write.evidence} "
+                                "if write is mapping else {}) | tojson }}"
+                            ),
                         )
                 elif control_component == "switch":
                     control_payload["payload_on"] = 1

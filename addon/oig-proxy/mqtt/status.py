@@ -68,6 +68,11 @@ class ProxyStatusPublisher:
         self._last_frame_device_id = device_id
         self._last_frame_timestamp = time.time()
 
+    def box_data_recent(self, now: float | None = None) -> bool:
+        """Apply the existing BOX availability boundary."""
+        current = time.time() if now is None else now
+        return bool(self._last_frame_timestamp and current - self._last_frame_timestamp <= 90)
+
     def _publish(self) -> bool:
         """Publish proxy status to MQTT."""
         if not self._mqtt.is_ready():
@@ -106,9 +111,7 @@ class ProxyStatusPublisher:
 
         connection_status = "connected" if self._mqtt.connected else "disconnected"
         now = time.time()
-        box_connected = bool(
-            self._last_frame_timestamp and (now - self._last_frame_timestamp) <= 90
-        )
+        box_connected = self.box_data_recent(now)
         last_data_iso = ""
         last_data_age_s: int | None = None
         if self._last_frame_timestamp:

@@ -1,5 +1,27 @@
 <!-- markdownlint-disable MD025 -->
 
+# 2.2.0-rc.10
+
+> **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
+> odpovědnost. Před aktualizací si zazálohujte aplikaci. Každou změnu nejdřív
+> vyzkoušejte ručně a ověřte její dopad na svém boxu. Home Assistant se
+> zapnutými automatickými aktualizacemi může tuto verzi nainstalovat sám.
+
+- Při změně režimu počkejte na výsledek zápisu. Proxy teď pozná potvrzenou
+  změnu režimu i tehdy, když mezi potvrzovacími událostmi dorazí běžná data
+  z boxu. Když před opakováním přijde potvrzení požadovaného režimu, proxy
+  druhý zápis zruší.
+- U korekcí L1, L2 a L3 ukazuje ovladač `_cfg` poslední potvrzený zápis
+  s časem a zdrojem potvrzení. Senzor stejné fáze ukazuje korekci, kterou box
+  právě používá, včetně nuly. Když se dotaz na parametry podaří poslat později,
+  lhůta pro odpověď se počítá od jeho odeslání.
+- V **Diagnostika OIG → Souhrn chyb** najdete čitelné aktivní varování
+  a nedávné záznamy s časem a zdrojem. Nula v chybové masce varování uzavře.
+  Nepotvrzené kódy zůstávají v historii a tma bez výroby FVE se nehlásí jako
+  porucha.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.10/docs/v2/local-control.md)
+
 # 2.2.0-rc.9
 
 > **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní

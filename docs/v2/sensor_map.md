@@ -49,15 +49,41 @@ state.
 
 ## Warning definitions
 
-The bundled map includes a top-level `warnings_3f` reference list. For MQTT
-warning decoding, `FrameProcessor` reads the `warnings_3f` list on the
-individual sensor entry. Define the bit index and warning key there. For
-example, `bit: 3` tests `value & (1 << 3)`. Entries may also provide
-`remark`, `remark_cs` and `warning_code`.
+The loader groups the top-level `warnings_3f` definitions under the matching
+`tbl_invertor_prms` fields. The vendor's top-level `bit` column contains masks,
+so `bit: 8` there tests `value & 8`. A per-field `warnings_3f` list overrides
+the top-level group and uses bit indices. For example, `bit: 3` tests
+`value & (1 << 3)`. An explicit `mask` takes precedence in either location.
+Entries may also provide `remark`, `remark_cs` and `warning_code`.
 
-For an integer field with active bits, the processor adds `<field>_warnings`
-with the active keys and `<field>_warnings_cs` with their display text.
-It also adds `<field>_warning_codes` for active entries that define codes.
+The MQTT state retains the original integer and includes `<field>_warnings`,
+`<field>_warnings_cs` and `<field>_warning_codes`. Entries marked `kind: status`
+appear in `<field>_status_cs`. The bundled PV masks for unavailable inputs use
+that status list. The PV overvoltage masks use the warning list. Each new mask
+replaces the derived lists, including empty lists when no entries are active.
+
+### Fault summary in Home Assistant
+
+**OIG Diagnostika → Souhrn chyb** (`sensor.oig_local_oig_proxy_fault_summary_summary`)
+shows the state of the most recently accepted physical warning masks. Its
+`active_faults` attribute lists decoded active warnings. `unverified_signs`
+shows raw bits outside the verified mask definitions. A zero clears the
+corresponding warning and keeps its original occurrence in `recent_records`.
+The proxy waits for new mask observations after a restart or loss of BOX
+availability.
+
+`recent_records` holds up to ten records with Czech labels, source tables,
+original values and timestamps. A separate `last_code` carries the last nonzero
+`CODE_ERR`. A standalone code and a BOX warning event record what the BOX
+reported at a particular time. They provide no independent confirmation that
+the fault is still active. For an unset BOX clock, the record uses the proxy
+reception time and preserves the original timestamp.
+
+The code labels use the CBB Modbus table and the
+[FSP HySpirit fault table](https://www.fsp-group.com/download/user_manual/HySpiritThreePhase_UserManual.pdf).
+[OIG Easy](https://www.oigpower.cz/data/cbb-1f-easy-manual.pdf) and other
+inverter manuals differ on some assignments, so the summary uses general
+labels for codes 32, 34 and 35. Unverified values retain their code number.
 
 ## Unmapped fields and changes
 

@@ -123,7 +123,11 @@ po potvrzení předchozí změny.
 ## Fázové korekce L1, L2 a L3
 
 Vyhledejte `p_cal` pod zařízením **Střídač**. Zapisujte přes příslušnou
-entitu `number` s příponou `_cfg`. Po každé změně ověřte senzor stejné fáze.
+entitu `number` s příponou `_cfg`. Ta ukazuje poslední zápis potvrzený boxem.
+`confirmed_at` je čas, kdy proxy přijala potvrzení, a `evidence` rozlišuje
+událost boxu (`setting_event`) a ACK následované shodnou tabulkou (`ack_and_table`).
+Dokud proxy žádný zápis nepotvrdila, má ovladač neznámou hodnotu. Senzor stejné
+fáze ukazuje provozní korekci z boxu včetně nuly. Hodnoty se mohou dočasně lišit.
 
 ![MQTT ovladač korekce L1 s potvrzenou hodnotou 90](images/local-control/mqtt-phase.jpg)
 
