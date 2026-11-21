@@ -361,6 +361,9 @@ class ProxyApp:
                 if self.status_publisher is not None:
                     self.status_publisher.flush_setting_results()
                     self.status_publisher.publish_ver_profile_change()
+                    if (self.frame_processor is not None and self.device_id_manager is not None
+                            and self.device_id_manager.device_id and not self.status_publisher.box_data_recent()):
+                        self.frame_processor.mark_fault_summary_unavailable(self.device_id_manager.device_id)
                 if self.twin_delivery is not None and self.device_id_manager is not None:
                     device_id = self.device_id_manager.device_id
                     if device_id:
@@ -491,7 +494,7 @@ class ProxyApp:
         if self.frame_processor is None:
             return False
         discovery_ok = self.frame_processor.publish_all_discovery(device_id)
-        state_ok = self.frame_processor.replay_confirmed_states()
+        state_ok = self.frame_processor.replay_confirmed_states(device_id)
         phase_ok = self._publish_phase_calibration_writes(device_id)
         if discovery_ok:
             self._controls_discovery_marker = (device_id, self.mqtt.discovery_generation)

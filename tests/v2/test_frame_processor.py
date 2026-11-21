@@ -781,6 +781,75 @@ async def test_actual_mirror_rebuilds_retained_warning_attributes(mock_mqtt):
 
 
 @pytest.mark.asyncio
+async def test_fault_summary_reports_masks_and_preserves_records_on_clear_and_restart(mock_mqtt, tmp_path):
+    loader = SensorMapLoader(str(Path(__file__).parents[2] / "addon/oig-proxy/sensor_map.json"))
+    loader.load()
+    path = tmp_path / "confirmed.json"
+    box = "BOX01"
+    processor = FrameProcessor(mock_mqtt, loader, state_store=ConfirmedStateStore(path, box))
+    event = {"Type": "Warning", "Content": "Power on phase 2 exceeded the limit (5508W) 0x",
+             "_dt": "2026-11-21 11:09:44"}
+    await processor.process(box, "tbl_events", event)
+    await processor.process(box, "tbl_invertor_prm2", {"CODE_ERR": 23})
+    await processor.process(box, "tbl_invertor_prms", {"ERR_ELSE": 4, "ERR_PV": 12})
+    snapshots = [
+        call.args[2] for call in mock_mqtt.publish_confirmed_state.call_args_list
+        if call.args[:2] == ("oig_proxy", "fault_summary")
+    ]
+    assert snapshots, "The diagnostic device did not receive its fault summary"
+    active = snapshots[-1]["diagnostics"]
+    assert [entry["label"] for entry in active["active_faults"]] == ["Přetížení"]
+    assert {entry["kind"] for entry in active["recent_records"]} == {"box_event", "fault_code"}
+    assert active["last_code"]["value"] == 23
+    await processor.process(box, "tbl_actual", {"ERR_ELSE": 0})
+    cleared = mock_mqtt.publish_confirmed_state.call_args.args[2]["diagnostics"]
+    assert cleared["active_faults"] == []
+    assert any(record["kind"] == "warning_mask" for record in cleared["recent_records"])
+    restarted = FrameProcessor(mock_mqtt, loader, state_store=ConfirmedStateStore(path, box))
+    mock_mqtt.publish_confirmed_state.reset_mock()
+    assert restarted.replay_confirmed_states()
+    restored = next(call.args[2]["diagnostics"] for call in mock_mqtt.publish_confirmed_state.call_args_list
+                    if call.args[1] == "fault_summary")
+    assert restored["recent_records"] == cleared["recent_records"]
+    assert restored["active_faults"] == []
+    assert not restored["has_live_masks"]
+
+
+@pytest.mark.asyncio
+async def test_fault_summary_waits_for_physical_error_state_and_downgrades_after_outage(mock_mqtt):
+    loader = SensorMapLoader(str(Path(__file__).parents[2] / "addon/oig-proxy/sensor_map.json"))
+    loader.load()
+    processor = FrameProcessor(mock_mqtt, loader)
+    await processor.process("BOX01", "tbl_invertor_prms", {"ERR_ELSE": 4}, confirmed_event=True)
+    mock_mqtt.publish_confirmed_state.assert_not_called()
+    await processor.process("BOX01", "tbl_invertor_prms", {"ERR_ELSE": 4})
+    assert mock_mqtt.publish_confirmed_state.call_args.args[2]["diagnostics"]["active_faults"]
+    processor.mark_fault_summary_unavailable("BOX01")
+    offline = mock_mqtt.publish_confirmed_state.call_args.args[2]["diagnostics"]
+    assert offline["active_faults"] == []
+    assert not offline["has_live_masks"]
+    assert offline["recent_records"][0]["label"] == "Přetížení"
+
+
+@pytest.mark.asyncio
+async def test_fault_summary_keeps_distinct_late_events_without_making_them_active(mock_mqtt):
+    loader = SensorMapLoader(str(Path(__file__).parents[2] / "addon/oig-proxy/sensor_map.json"))
+    loader.load()
+    processor = FrameProcessor(mock_mqtt, loader)
+    for stamp, content in (
+        ("2026-11-21 11:09:44", "Power on phase 2 exceeded the limit (5508W) 0x"),
+        ("2026-11-21 11:08:00", "Earlier warning"),
+        ("1970-01-01 00:00:01", "Warning before clock sync"),
+    ):
+        await processor.process("BOX01", "tbl_events", {"Type": "Warning", "Content": content, "_dt": stamp})
+    snapshot = mock_mqtt.publish_confirmed_state.call_args.args[2]["diagnostics"]
+    assert snapshot["active_faults"] == []
+    assert len(snapshot["recent_records"]) == 3
+    assert snapshot["recent_records"][0]["time_basis"] == "proxy"
+    assert snapshot["recent_records"][0]["source_at"] == "1970-01-01 00:00:01"
+
+
+@pytest.mark.asyncio
 async def test_process_no_warnings_when_warnings_3f_empty(processor: FrameProcessor, mock_mqtt: MagicMock, mock_loader: MagicMock) -> None:
     """Should not add warnings field when warnings_3f is empty."""
     mock_loader.lookup.return_value = {

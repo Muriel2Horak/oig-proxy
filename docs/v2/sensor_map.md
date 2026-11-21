@@ -62,6 +62,29 @@ appear in `<field>_status_cs`. The bundled PV masks for unavailable inputs use
 that status list. The PV overvoltage masks use the warning list. Each new mask
 replaces the derived lists, including empty lists when no entries are active.
 
+### Fault summary in Home Assistant
+
+**OIG Diagnostika → Souhrn chyb** (`sensor.oig_local_oig_proxy_fault_summary_summary`)
+shows the state of the most recently accepted physical warning masks. Its
+`active_faults` attribute lists decoded active warnings. `unverified_signs`
+shows raw bits outside the verified mask definitions. A zero clears the
+corresponding warning and keeps its original occurrence in `recent_records`.
+The proxy waits for new mask observations after a restart or loss of BOX
+availability.
+
+`recent_records` holds up to ten records with Czech labels, source tables,
+original values and timestamps. A separate `last_code` carries the last nonzero
+`CODE_ERR`. A standalone code and a BOX warning event record what the BOX
+reported at a particular time. They provide no independent confirmation that
+the fault is still active. For an unset BOX clock, the record uses the proxy
+reception time and preserves the original timestamp.
+
+The code labels use the CBB Modbus table and the
+[FSP HySpirit fault table](https://www.fsp-group.com/download/user_manual/HySpiritThreePhase_UserManual.pdf).
+[OIG Easy](https://www.oigpower.cz/data/cbb-1f-easy-manual.pdf) and other
+inverter manuals differ on some assignments, so the summary uses general
+labels for codes 32, 34 and 35. Unverified values retain their code number.
+
 ## Unmapped fields and changes
 
 The processor logs a `Missing sensor_map entry` warning once per unmapped

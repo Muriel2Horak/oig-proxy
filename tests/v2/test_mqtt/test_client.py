@@ -164,6 +164,22 @@ def test_publish_state_uses_qos_and_retain():
 # send_discovery()
 # ---------------------------------------------------------------------------
 
+def test_fault_summary_discovery_on_diagnostic_device():
+    c = make_client()
+    broker = inject_mock_paho(c)
+    c.send_discovery(
+        device_id="oig_proxy", table="fault_summary", sensor_key="summary",
+        sensor_name="Souhrn závad", device_mapping="proxy", entity_category="diagnostic",
+    )
+    topic, body = broker.publish.call_args.args[:2]
+    config = json.loads(body)
+    assert topic == "homeassistant/sensor/oig_local_oig_proxy_fault_summary_summary/config"
+    assert config["device"]["identifiers"] == ["oig_local_oig_proxy_proxy"]
+    assert config["entity_category"] == "diagnostic"
+    assert config["json_attributes_topic"] == config["state_topic"]
+    assert "'diagnostics'" in config["json_attributes_template"]
+
+
 def test_send_discovery_topic_format():
     """Discovery topic je homeassistant/sensor/{unique_id}/config."""
     c = make_client(namespace="oig_local")

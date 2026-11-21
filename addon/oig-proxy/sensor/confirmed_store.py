@@ -204,6 +204,31 @@ class ConfirmedStateStore:
         """Return isolated provenance and values; callers cannot mutate cache state."""
         return deepcopy(self._document)
 
+    def fault_diagnostics(self) -> dict[str, Any]:
+        """Return saved diagnostic records, independently of BOX value freshness."""
+        saved = self._document.get("fault_diagnostics", {})
+        return deepcopy(saved) if self._valid_fault_diagnostics(saved) else {}
+
+    @staticmethod
+    def _valid_fault_diagnostics(saved: Any) -> bool:
+        if not isinstance(saved, dict) or not finite_json(saved):
+            return False
+        records = saved.get("recent_records")
+        last_code = saved.get("last_code")
+        return (
+            isinstance(records, list) and len(records) <= 10
+            and all(isinstance(entry, dict) for entry in records)
+            and (last_code is None or isinstance(last_code, dict))
+        )
+
+    def record_fault_diagnostics(self, records: dict[str, Any]) -> None:
+        """Persist bounded fault records with the established atomic BOX cache."""
+        if not self._valid_fault_diagnostics(records) or self._document.get("fault_diagnostics") == records:
+            return
+        self._document["fault_diagnostics"] = deepcopy(records)
+        self._dirty = True
+        self.flush()
+
     def phase_calibration_writes(self) -> dict[str, Any]:
         """Expose only confirmed values and their provenance to MQTT."""
         return {

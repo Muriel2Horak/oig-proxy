@@ -447,6 +447,9 @@ class MQTTClient:
         if (table, sensor_key) == ("proxy_status", "control_last_result"):
             payload["json_attributes_topic"] = state_topic
             payload["json_attributes_template"] = "{{ value_json.get('control_result', {}) | tojson }}"
+        if (table, sensor_key) == ("fault_summary", "summary"):
+            payload["json_attributes_topic"] = state_topic
+            payload["json_attributes_template"] = "{{ value_json.get('diagnostics', {}) | tojson }}"
         if table == "tbl_invertor_prms" and sensor_key in {"ERR_PV", "ERR_AC", "ERR_BATT", "ERR_ELSE", "ERR_GRID"}:
             payload["json_attributes_topic"] = state_topic
             payload["json_attributes_template"] = (
