@@ -21,6 +21,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Changed-functions quality check
+        if: github.event_name == 'pull_request'
+        run: python scripts/quality/changed-functions-check --base ${{ github.event.pull_request.base.sha }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

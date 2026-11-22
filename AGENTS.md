@@ -32,6 +32,10 @@ Use explicit wrappers (server-global):
 - If uncertain about target account, inspect remote origin first:
   - `git remote get-url origin`
 
+## Code quality
+- `scripts/quality/changed-functions-check --base <rev>` blocks a PR (CI) when a Python function it adds or modifies breaks the Sonar-mirroring rules: cognitive complexity <= 15, nested conditional expression, parameters <= 13, unused parameter/local/dead store. Cite its output in author, fix and review slices.
+- Ratchet: a NEW function must pass; a MODIFIED function may not get worse than at the merge-base; untouched functions are never checked. File scope = `.sonar/local.properties` (main code only). Exit 0 clean, 1 findings, 2 usage/git/scope error.
+
 ## SonarQube via oh-my-opencode
 - Sonar is configured in `oh-my-opencode.json` (server-level).
 - Use tool calls such as:
