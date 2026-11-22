@@ -1,3 +1,4 @@
+# pylint: disable=missing-function-docstring,missing-class-docstring,too-many-lines,too-many-arguments
 """Behavior tests for scripts/quality/changed-functions-check (changed-function ratchet).
 
 Each test builds a real temporary git repository (branch `main`, then a `feature` branch),
@@ -84,6 +85,7 @@ class Finding:
             if self.rule in ids:
                 return n
         pytest.fail(f"unknown rule id in finding: {self.raw!r}")
+        return None
 
     def __repr__(self):
         return self.raw
@@ -170,7 +172,7 @@ class Repo:
     def run(self, *args):
         # A missing checker must fail loudly: python itself would exit 2 for a missing script.
         assert CHECKER.is_file(), f"checker not present: {CHECKER}"
-        res = subprocess.run([sys.executable, str(CHECKER), *args], cwd=self.root, env=self.env,
+        res = subprocess.run([sys.executable, str(CHECKER), *args], cwd=self.root, env=self.env, check=False,
                              capture_output=True, text=True, timeout=CHECK_TIMEOUT)
         return res
 
@@ -211,7 +213,7 @@ def scenario(repo, base_src, head_src, path="pkg/mod.py"):
 
 
 def assert_clean(repo, base="main"):
-    code, findings, res = repo.check(base)
+    code, _findings, res = repo.check(base)
     assert code == 0, (res.stdout, res.stderr)
     assert not [ln for ln in res.stdout.splitlines() if FINDING_RE.match(ln)]
 
@@ -605,7 +607,7 @@ def test_modified_function_retained_nested_ternary_shifted_by_unrelated_edit_pas
 
 
 def test_modified_function_removing_nested_ternary_with_added_body_line_passes(repo):
-    head = ("def pick(a, b):\n    note = 1\n    return a if b else note\n")
+    head = "def pick(a, b):\n    note = 1\n    return a if b else note\n"
     scenario(repo, NESTED_TERNARY, head)
     assert_clean(repo)
 
@@ -930,7 +932,7 @@ def test_no_changes_against_base_is_clean(repo):
 def test_finding_line_format_and_multiple_findings(repo):
     src = "X = 1\n\n\n" + branchy("bad", 16) + "\n\n" + NESTED_TERNARY
     scenario(repo, "X = 1\n", src)
-    code, findings, res = repo.check()
+    code, findings, _res = repo.check()
     assert code == 1
     assert_finding(repo, findings, "bad", 1, new=16)
     assert_finding(repo, findings, "pick", 2)
@@ -940,7 +942,7 @@ def test_finding_line_format_and_multiple_findings(repo):
 
 def test_clean_run_prints_no_finding_lines(repo):
     scenario(repo, "X = 1\n", "X = 2\n")
-    code, findings, res = repo.check()
+    code, findings, _res = repo.check()
     assert code == 0 and findings == []
 
 
@@ -958,7 +960,7 @@ def test_outside_git_repository_exits_2(tmp_path):
     plain.mkdir()
     env = clean_env(tmp_path / "home")
     env["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
-    res = subprocess.run([sys.executable, str(CHECKER), "--base", "main"], cwd=plain, env=env,
+    res = subprocess.run([sys.executable, str(CHECKER), "--base", "main"], cwd=plain, env=env, check=False,
                          capture_output=True, text=True, timeout=CHECK_TIMEOUT)
     assert res.returncode == 2, (res.stdout, res.stderr)
     assert res.stderr.strip() != "" or res.stdout.strip() != ""
@@ -1010,7 +1012,7 @@ def test_hostile_ambient_git_environment_does_not_leak_into_fixture(tmp_path, mo
     assert not (decoy / "index-hostile").exists()
     head = subprocess.run(["git", "--git-dir", str(decoy / ".git"), "rev-parse", "--verify", "-q",
                            "HEAD"], capture_output=True, text=True, timeout=GIT_TIMEOUT,
-                          env=clean_env(tmp_path / "decoyhome"))
+                          env=clean_env(tmp_path / "decoyhome"), check=False)
     assert head.returncode != 0  # decoy repository never received a commit
 
 

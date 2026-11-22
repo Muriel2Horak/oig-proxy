@@ -1,3 +1,4 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,protected-access
 import ast
 from pathlib import Path
 import subprocess
@@ -7,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "quality"))
 
-import changed_functions as check
+import changed_functions as check  # pylint: disable=import-error,wrong-import-position
 
 
 class Regressions(unittest.TestCase):
@@ -86,7 +87,7 @@ class BomRegressions(unittest.TestCase):
                 return subprocess.run(['git', '-C', repo, *args], check=True, capture_output=True, text=True).stdout.strip()
 
             Path(repo, '.sonar').mkdir()
-            Path(repo, '.sonar', 'local.properties').write_text('sonar.sources=.\n')
+            Path(repo, '.sonar', 'local.properties').write_text('sonar.sources=.\n', encoding='utf-8')
             git('init', '-q')
             git('config', 'user.email', 'test@example.invalid')
             git('config', 'user.name', 'Test')
@@ -140,7 +141,7 @@ class ScopeRegressions(unittest.TestCase):
     def scope(self, text):
         with tempfile.TemporaryDirectory() as repo:
             Path(repo, '.sonar').mkdir()
-            Path(repo, '.sonar', 'local.properties').write_text(text)
+            Path(repo, '.sonar', 'local.properties').write_text(text, encoding='utf-8')
             return check.load_scope(repo)
 
     def test_properties_comments_continuations_and_lists(self):

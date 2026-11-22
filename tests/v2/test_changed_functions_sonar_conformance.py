@@ -1,3 +1,4 @@
+# pylint: disable=missing-function-docstring
 """Offline exact conformance of scripts/quality/changed_functions.cognitive_complexity
 against the Sonar python:S3776 baseline of local:oig-proxy (analysis cd805b34, source 9fc94237).
 
