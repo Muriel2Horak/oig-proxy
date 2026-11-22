@@ -207,6 +207,42 @@ async def test_maxfg_export_limit_readback_is_opt_in(
     assert published[1:] == (expected if enabled else [])
     field = store.snapshot()["tables"]["tbl_invertor_prm1"]["fields"]["P_MAX_FEED_GRID"]
     assert field["origin"] == ("actual_mirror" if enabled else "direct")
+    native = {
+        "TblName": "tbl_actual", "Reason": "Table", "ID_Device": "BOX01",
+        "DT": "12.11.2026 14:01:00", "MAXFG": "2000.0",
+    }
+    evidence = {("tbl_invertor_prm1", "P_MAX_FEED_GRID"): "2000"} if enabled else {}
+    assert processor.accepted_actual_readbacks("BOX01", native) == evidence
+    assert processor.accepted_actual_readbacks("BOX01", native) == evidence
+    for key, value in (
+        ("ID_Device", "BOX02"), ("ID_SubD", "1"), ("TblName", "IsNewSet"),
+        ("Reason", "Setting"), ("DT", "2026-11-12 14:00:00"), ("MAXFG", "2001"),
+    ):
+        assert not processor.accepted_actual_readbacks("BOX01", {**native, key: value})
+
+    # The previously accepted alias is still stored, but the duplicate did not advance it.
+    await processor.process("BOX01", "tbl_actual", {"MAXFG": 2000.0, "_dt": "2026-11-12 14:01:00"})
+    assert not processor.accepted_actual_readbacks("BOX01", native)
+
+
+@pytest.mark.asyncio
+async def test_actual_readback_excludes_the_generic_same_name_mirror(
+    mock_mqtt: MagicMock, mock_loader: MagicMock,
+) -> None:
+    mock_loader.iter_sensors.return_value = [("tbl_invertor_prm1", "P_MAX_FEED_GRID", {})]
+    processor = FrameProcessor(mock_mqtt, mock_loader, maxfg_as_export_limit_readback=True)
+    await processor.process("BOX01", "tbl_invertor_prm1", {
+        "P_MAX_FEED_GRID": 5333, "_dt": "2026-11-12 14:00:00",
+    })
+    await processor.process("BOX01", "tbl_actual", {
+        "MAXFG": 2000, "P_MAX_FEED_GRID": 2000, "_dt": "2026-11-12 14:01:00",
+    })
+
+    mock_mqtt.publish_state.assert_any_call("BOX01", "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 2000})
+    assert not processor.accepted_actual_readbacks("BOX01", {
+        "TblName": "tbl_actual", "Reason": "Table", "ID_Device": "BOX01",
+        "DT": "2026-11-12 14:01:00", "MAXFG": "2000", "P_MAX_FEED_GRID": "2000",
+    })
 
 
 @pytest.mark.asyncio
@@ -337,6 +373,10 @@ async def test_maxfg_restart_replays_history_without_reusing_unproven_baseline(
         maxfg_as_export_limit_readback=True,
     )
     assert restarted.replay_confirmed_states()
+    assert not restarted.accepted_actual_readbacks(device, {
+        "TblName": "tbl_actual", "Reason": "Table", "ID_Device": device,
+        "DT": "2026-11-12 14:01:00", "MAXFG": "2000",
+    })
     mock_mqtt.publish_confirmed_state.assert_any_call(device, "tbl_invertor_prm1", {"P_MAX_FEED_GRID": 2000})
     mock_mqtt.publish_state.reset_mock()
 

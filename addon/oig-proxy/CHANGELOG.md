@@ -1,5 +1,31 @@
 <!-- markdownlint-disable MD025 -->
 
+# 2.2.0-rc.11
+
+> **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní
+> odpovědnost. Před aktualizací si zazálohujte doplněk. Každou změnu nejdřív
+> vyzkoušejte ručně a ověřte výsledek na svém boxu. Home Assistant se
+> zapnutými automatickými aktualizacemi může tuto verzi nainstalovat sám.
+
+- **Hybrid a grafy v OIG Cloudu.** Při výpadku cloudu proxy ukládá podporované
+  archivní tabulky do trvalé fronty. Po obnovení spojení je doposílá v pořadí
+  s původními časy měření. Graf se proto může doplňovat postupně.
+- **Synchronizace po změně nastavení.** Proxy počká na obvyklou tabulku boxu.
+  Když v ní potvrzenou hodnotu nedostane, spojí čekající změny do jednoho
+  vyžádání parametrů. Zobrazení režimu nebo nabíjecího proudu v HA a OIG
+  Cloudu se tak může aktualizovat s různým odstupem.
+- **Denní obnova parametrů.** Volba `full_refresh_interval_hours` určuje,
+  po jak dlouhé době bez potvrzené obnovy se proxy pokusí parametry vyžádat.
+  Po upgradu se započítá i hodnota uložená v nastavení doplňku. Výchozí
+  hodnota je 24 hodin. Po odeslaném denním dotazu bez potvrzení proxy s
+  dalším denním pokusem počká stejnou dobu. Nastavení na 0 vypne denní obnovu.
+- **Ověření lokálního zápisu.** Proxy při obnově ověřeného profilu z archivu
+  zohlední posunuté hodiny boxu. V Diagnostice OIG ověřte stav entity
+  **Lokální zápis – ověřený profil ver** před použitím místního ovládání.
+
+[Návod k ovládání v Home Assistantu](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.11/docs/v2/local-control.md)
+[Konfigurace doplňku](https://github.com/Muriel2Horak/oig-proxy/blob/2.2.0-rc.11/docs/v2/configuration.md)
+
 # 2.2.0-rc.10
 
 > **Experimentální lokální ovládání OIG Boxu.** Nastavení měníte na vlastní

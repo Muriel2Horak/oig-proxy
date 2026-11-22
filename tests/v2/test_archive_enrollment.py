@@ -7,12 +7,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from protocol.archive_enrollment import scan_archive_enrollment
+from protocol.archive_enrollment import scan_archive_enrollment, scan_archive_enrollment_with_clock
 from protocol.frames import build_frame
 from protocol.ver_profile import VerProfile
+from twin.delivery import TwinDelivery
+from twin.state import TwinQueue
 from tests.v2.test_wire_profile_qualification import (
     BOX_A, FW_A, FW_B, Clock, box_proof, cloud_setting, cloud_transaction, learner,
-    legacy_actual_receipt, native, observation,
+    legacy_actual_receipt, native, observation, shifted_actuals,
 )
 
 
@@ -123,6 +125,10 @@ def test_original_box_poll_and_ack_bracket_proves_cloud_layout_and_counters(data
     assert evidence.accepted_at == BASE.timestamp() + 4
     assert evidence.firmware is None
     assert scan(path, OTHER_MODEL) is None
+    cutoff = (BASE + timedelta(seconds=30)).timestamp()
+    assert scan_archive_enrollment_with_clock(
+        path, BOX, MODEL, cutoff=cutoff, box_clock_offset=281,
+    ) == evidence
 
 
 @pytest.mark.parametrize("dated", [False, True])
@@ -309,6 +315,95 @@ def test_historical_clock_advance_without_live_proof_is_not_an_archive_witness(d
     insert(1, 0, "box_to_cloud", BOX_TASK, poll(), device=BOX)
     insert(2, 1, "cloud_to_box", CLOUD_TASK, setting(150), device=BOX)
     insert(3, 4, "box_to_cloud", BOX_TASK, ack(153))
+    assert scan(path) is None
+
+
+@pytest.mark.asyncio
+async def test_restarted_proxy_recovers_shifted_receipt_and_releases_local_queue(database):
+    """Restore durable layout and counters against newly learned native clock evidence."""
+    path, insert = database
+    insert(1, 0, "box_to_cloud", BOX_TASK, poll(), device=BOX)
+    insert(2, 1, "cloud_to_box", CLOUD_TASK, setting(290), device=BOX)
+    insert(3, 14, "box_to_cloud", BOX_TASK, ack(294))
+    queue = TwinQueue()
+    delivery = TwinDelivery(queue, None, archive_path=path)
+    clock = Clock()
+    clock.now = (BASE + timedelta(seconds=30)).timestamp()
+    delivery._archive_cutoff = clock.now  # pylint: disable=protected-access
+    profiles = learner(clock)
+    delivery._profiles = profiles  # pylint: disable=protected-access
+    shifted_actuals(profiles, clock, BOX, (MODEL.zero_count, MODEL.xor_key), 281)
+    assert profiles.status(BOX).reason == "cloud_evidence_pending"
+
+    assert await delivery.restore_archived_control(BOX)
+    assert delivery.profile_status(BOX).reason == "ready"
+    admitted, _ = queue.admit("tbl_box_prms", "MODE", 1, device_id=BOX, require_profile=True)
+    assert admitted is not None
+
+
+@pytest.mark.parametrize(("cloud_advance", "ack_advance"), [(0, 280), (289, 280)])
+def test_archived_ack_uses_qualified_box_clock(database, cloud_advance, ack_advance):
+    """Recover the confirmed same-model write with either observed Cloud clock format."""
+    path, insert = database
+    insert(1, 0, "box_to_cloud", BOX_TASK, poll(), device=BOX)
+    insert(2, 1, "cloud_to_box", CLOUD_TASK, setting(1 + cloud_advance), device=BOX)
+    insert(3, 14, "box_to_cloud", BOX_TASK, ack(14 + ack_advance))
+    assert scan(path) is None
+
+    cutoff = (BASE + timedelta(seconds=30)).timestamp()
+    evidence = scan_archive_enrollment_with_clock(
+        path, BOX, MODEL, cutoff=cutoff, box_clock_offset=281,
+    )
+    assert evidence is not None
+    assert evidence.msg_id == 14800012
+    assert evidence.id_set == int(BASE.timestamp()) + 1 + cloud_advance
+    assert evidence.accepted_at == BASE.timestamp() + 14
+    assert scan_archive_enrollment_with_clock(
+        path, BOX, OTHER_MODEL, cutoff=cutoff, box_clock_offset=281,
+    ) is None
+
+
+@pytest.mark.parametrize(("cloud_advance", "ack_advance", "box_clock_offset"), [
+    (320, 280, 281),  # Cloud clock outside the supported bound.
+    (249, 280, 281),  # Future Cloud stamp incompatible with the qualified Box clock.
+    (289, 270, 281),  # ACK source time precedes the Cloud Setting.
+    (289, 280, 250),  # ACK source time ahead of the qualified Box clock.
+    (-40, 240, 281),  # Old normal TSec must not admit an ACK dated before the captured command.
+])
+def test_shifted_archive_still_requires_coherent_clock_order(database, cloud_advance, ack_advance, box_clock_offset):
+    """Reject a shifted transaction without timing evidence for the qualified clock."""
+    path, insert = database
+    insert(1, 0, "box_to_cloud", BOX_TASK, poll(), device=BOX)
+    insert(2, 1, "cloud_to_box", CLOUD_TASK, setting(1 + cloud_advance), device=BOX)
+    insert(3, 14, "box_to_cloud", BOX_TASK, ack(14 + ack_advance))
+    cutoff = (BASE + timedelta(seconds=30)).timestamp()
+    assert scan_archive_enrollment_with_clock(
+        path, BOX, MODEL, cutoff=cutoff, box_clock_offset=box_clock_offset,
+    ) is None
+
+
+def test_shifted_firmware_report_still_fences_archive_after_change(database):
+    """Apply the existing firmware fence to positively shifted native reports."""
+    path, insert = database
+    insert(1, -3, "box_to_cloud", 95, firmware_report(FW_A, second=277), device=BOX)
+    insert(2, 0, "box_to_cloud", BOX_TASK, poll(), device=BOX)
+    insert(3, 1, "cloud_to_box", CLOUD_TASK, setting(290), device=BOX)
+    insert(4, 14, "box_to_cloud", BOX_TASK, ack(294))
+    insert(5, 17, "box_to_cloud", 96, firmware_report(FW_B, second=297), device=BOX)
+    cutoff = (BASE + timedelta(seconds=30)).timestamp()
+    assert scan_archive_enrollment_with_clock(
+        path, BOX, MODEL, cutoff=cutoff, box_clock_offset=280,
+    ) is None
+
+
+def test_malformed_setting_with_ack_echo_cannot_restore_profile(database):
+    """Fence a CRC-valid Setting missing the identity that its ACK echoes."""
+    path, insert = database
+    incomplete = setting().removeprefix("<Frame>").split("<ver>", 1)[0]
+    incomplete = incomplete.replace("<ID>14800012</ID>", "").replace("2026-11-05 06:30:01", "bad")
+    insert(1, 0, "box_to_cloud", BOX_TASK, poll(), device=BOX)
+    insert(2, 1, "cloud_to_box", CLOUD_TASK, wire(incomplete), device=BOX)
+    insert(3, 4, "box_to_cloud", BOX_TASK, ack(echoes="<ID>14800012</ID>"))
     assert scan(path) is None
 
 

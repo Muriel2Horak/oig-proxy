@@ -37,6 +37,7 @@ def make_config():
         cfg.proxy_mode = "online"
         cfg.hybrid_fail_threshold = 1
         cfg.hybrid_retry_interval = 0.0
+        cfg.hybrid_box_first_frame_timeout = 1.0
 
         cfg.mqtt_host = "127.0.0.1"
         cfg.mqtt_port = 1883

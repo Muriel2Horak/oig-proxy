@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import floor
 from typing import Any
@@ -25,35 +26,51 @@ from typing import TYPE_CHECKING
 try:
     from ..capture.frame_capture import FrameCapture
     from ..config import Config
-    from ..parameter_refresh import PARAMETER_READBACK_EVIDENCE_MAX_AGE_S, ParameterReadbackRefresh
+    from ..parameter_refresh import (
+        PARAMETER_READBACK_EVIDENCE_MAX_AGE_S, SA_READBACK_RESPONSE_S, ParameterReadbackRefresh,
+    )
     from ..protocol.frame import FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name
     from ..protocol.frames import build_end_time_frame, build_getactual_frame
-    from ..protocol.parser import parse_mode_start, parse_xml_frame
+    from ..protocol.parser import parse_mode_start, parse_parameter_change, parse_xml_frame, same_setting_value
     from ..protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields
-    from ..settings_constraints import PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value
+    from ..settings_constraints import (
+        CONTROL_WRITE_WHITELIST, PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value,
+    )
     from ..twin.ack_parser import parse_tbl_events_ack
     from ..twin.delivery import TwinDelivery
+    from .cloud_backlog import CloudBacklog
     from .dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record
+    from .history_replay import (
+        HISTORY_TABLES, HISTORY_TAGS, REPLY_TIMEOUT_S, acknowledges_history, history_device, upload_history,
+    )
     from .mode import ModeManager
     from .local_ack import build_local_ack
 except ImportError:
     from capture.frame_capture import FrameCapture  # type: ignore[no-redef]
     from config import Config  # type: ignore[no-redef]
     from parameter_refresh import (  # type: ignore[no-redef]
-        PARAMETER_READBACK_EVIDENCE_MAX_AGE_S, ParameterReadbackRefresh,
+        PARAMETER_READBACK_EVIDENCE_MAX_AGE_S, SA_READBACK_RESPONSE_S, ParameterReadbackRefresh,
     )
     from protocol.frame import (  # type: ignore[no-redef]
         FRAME_END, FRAME_START, MAX_FRAME_BYTES, extract_frame_from_buffer, infer_table_name,
     )
     from protocol.frames import build_end_time_frame, build_getactual_frame  # type: ignore[no-redef]
-    from protocol.parser import parse_mode_start, parse_xml_frame  # type: ignore[no-redef]
-    from protocol.ver_profile import BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields  # type: ignore[no-redef]
+    from protocol.parser import (  # type: ignore[no-redef]
+        parse_mode_start, parse_parameter_change, parse_xml_frame, same_setting_value,
+    )
+    from protocol.ver_profile import (  # type: ignore[no-redef]
+        BOX_POLL_RESULTS, native_frame_fields, native_receipt_fields,
+    )
     from settings_constraints import (  # type: ignore[no-redef]
-        PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value,
+        CONTROL_WRITE_WHITELIST, PHASE_CALIBRATION_CONTROLS, PowerControlLimits, validate_setting_value,
     )
     from twin.ack_parser import parse_tbl_events_ack  # type: ignore[no-redef]
     from twin.delivery import TwinDelivery  # type: ignore[no-redef]
+    from proxy.cloud_backlog import CloudBacklog  # type: ignore[no-redef]
     from proxy.dns_resolve import DEFAULT_DNS_SERVER, resolve_a_record  # type: ignore[no-redef]
+    from proxy.history_replay import (  # type: ignore[no-redef]
+        HISTORY_TABLES, HISTORY_TAGS, REPLY_TIMEOUT_S, acknowledges_history, history_device, upload_history,
+    )
     from proxy.mode import ModeManager  # type: ignore[no-redef]
     from proxy.local_ack import build_local_ack  # type: ignore[no-redef]
 
@@ -69,6 +86,7 @@ logger = logging.getLogger(__name__)
 
 
 TRACE_LEVEL = 5
+CLOUD_REPLAY_INTERVAL_S = 10.0
 TRANSPORT_RESULT_VALUES = frozenset({"ACK", "END"})
 SETTING_POLL_TAGS = tuple(f"<Result>{result}</Result>".encode("ascii") for result in BOX_POLL_RESULTS)
 # NOTE: kept in sync with sensor/processor.py:TRANSPORT_METADATA_KEYS. Not extracted
@@ -98,6 +116,27 @@ PhaseConfirmationCallback = Callable[[str, str, str, str, str], Awaitable[None]]
 _PHASE_TABLE = "tbl_invertor_prm1"
 _PHASE_KEYS = frozenset(key for _, key in PHASE_CALIBRATION_CONTROLS)
 _PHASE_LIMITS = PowerControlLimits(phase_calibration_enabled=True)
+_SA_TARGET = ("tbl_box_prms", "SA", 1)
+_READBACK_KEYS = {
+    table: keys - {"SA", "RQRESET"}
+    for table, keys in CONTROL_WRITE_WHITELIST.items() if table.startswith("tbl_")
+}
+
+
+@dataclass
+class _SentParameterRefresh:
+    device_id: str
+    clock_epoch: int
+    source_stamp: float | None
+    deadline: float
+    accepted: bool = False
+    has_parameters: bool = False
+
+
+@dataclass(frozen=True)
+class _BoxFrameObservation:
+    fields: dict[str, str]
+    actual_aliases: dict[tuple[str, str], str] | None = None
 
 
 @dataclass
@@ -116,15 +155,63 @@ class _PhaseObservation:
     received_at: float
 
 
+class _CloudProbe:
+    """One recovery probe with distinct BOX and Cloud deadlines."""
+
+    def __init__(self, first_frame_timeout: float, reply_timeout: float) -> None:
+        self._loop = asyncio.get_running_loop()
+        self.expiry: asyncio.Future[str] = self._loop.create_future()
+        self._reply_timeout = reply_timeout
+        self._awaiting_box = True
+        self._timer = self._loop.call_later(first_frame_timeout, self.expiry.set_result, "box_first_frame_timeout")
+
+    def note_box_frame(self) -> None:
+        if self._awaiting_box and not self.expiry.done():
+            self.stop_waiting()
+            self._timer = self._loop.call_later(self._reply_timeout, self.expiry.set_result, "reply_timeout")
+
+    def stop_waiting(self) -> None:
+        self._awaiting_box = False
+        self._timer.cancel()
+
+
 @dataclass
 class _SessionTraffic:
     box_started: bool = False
     cloud_started: bool = False
     cloud_verified: bool = False
+    probe: _CloudProbe | None = None
+    archive_reply_barrier: asyncio.Event = field(default_factory=asyncio.Event)
+    cloud_requests: int = 0
 
     @property
     def started(self) -> bool:
         return self.box_started or self.cloud_started
+
+    def note_requests(self, count: int) -> None:
+        if count:
+            self.cloud_requests += count
+            self.archive_reply_barrier.clear()
+
+    def note_reply(self) -> None:
+        self.cloud_requests = max(0, self.cloud_requests - 1)
+
+    def note_cloud_progress(self, *, partial: bool) -> None:
+        if self.cloud_requests or partial:
+            self.archive_reply_barrier.clear()
+        else:
+            self.archive_reply_barrier.set()
+
+
+@dataclass(frozen=True)
+class _BoxCloudFlow:
+    cloud_writer: asyncio.StreamWriter
+    box_writer: asyncio.StreamWriter | None
+    session_id: str | None
+    peer: str | None
+    capture_id: int
+    conn_id: int
+    traffic: _SessionTraffic | None
 
 
 def _before_partial_marker(data: bytes, marker: bytes, start: int) -> int:
@@ -170,10 +257,21 @@ def _may_offer_setting_slot(frame: bytes) -> bool:
     return any(tag in frame for tag in SETTING_POLL_TAGS)
 
 
+def _expects_cloud_reply(frame: bytes) -> bool:
+    return (b"<TblName>" in frame or _may_offer_setting_slot(frame)
+            or b"<Reason>Setting</Reason>" in frame and _may_acknowledge_setting(frame))
+
+
 def _buffered_box_bytes(reader: asyncio.StreamReader) -> int:
     # StreamReader exposes no public count for bytes already received before a write.
     buffer = getattr(reader, "_buffer", None)
     return len(buffer) if isinstance(buffer, bytearray) else 0
+
+
+def _pending_replacement_delimiter(frame: bytes) -> bytes:
+    if frame.endswith(b"\n"):
+        return b""
+    return b"\n" if frame.endswith(b"\r") else b"\r\n"
 
 
 class ProxyServer:
@@ -207,6 +305,9 @@ class ProxyServer:
         self.telemetry_collector = telemetry_collector
         self._device_id_provider = device_id_provider
         self._request_readback = request_readback
+        self._on_sa_confirmed: Callable[[float], None] | None = None
+        self._actual_readbacks: Callable[[str, dict[str, str]], dict[tuple[str, str], str]] | None = None
+        self._sent_parameter_refresh: _SentParameterRefresh | None = None
         self._readback = ParameterReadbackRefresh()
         self._phase_writes: dict[tuple[str, str], _PhaseWrite] = {}
         self._phase_confirmations: dict[tuple[str, str], tuple[int, float]] = {}
@@ -221,6 +322,10 @@ class ProxyServer:
         self._offline_writers: set[asyncio.StreamWriter] = set()
         self._offline_reply_deadlines: dict[int, float] = {}
         self.mode_manager = ModeManager(config)
+        self._cloud_backlog = self._make_cloud_backlog()
+        self._archive_order = asyncio.Lock()
+        self._archive_ready = asyncio.Event()
+        self._replay_task: asyncio.Task[None] | None = None
 
         self._start_time: float = time.time()
         self.frames_received: int = 0
@@ -231,6 +336,25 @@ class ProxyServer:
         self.cloud_errors: int = 0
         self._active_connection_count: int = 0
         self._cloud_ip: str = self.config.cloud_host
+
+    def configure_parameter_readback(
+        self, *, on_sa_confirmed: Callable[[float], None],
+        actual_readbacks: Callable[[str, dict[str, str]], dict[tuple[str, str], str]] | None = None,
+    ) -> None:
+        """Connect the owner's readback evidence callbacks before listening for BOX traffic."""
+        self._on_sa_confirmed = on_sa_confirmed
+        self._actual_readbacks = actual_readbacks
+
+    def _make_cloud_backlog(self) -> CloudBacklog | None:
+        path = getattr(self.config, "cloud_backlog_path", None)
+        return CloudBacklog(path) if path and self._device_id_provider is not None else None
+
+    async def _open_cloud_backlog(self) -> None:
+        if self._cloud_backlog is not None:
+            try:
+                await self._cloud_backlog.open()
+            except (sqlite3.Error, OSError):
+                logger.exception("Cloud history storage unavailable; offline history will receive no local ACK")
 
     async def start(self) -> None:
         """Spustí TCP server."""
@@ -248,6 +372,7 @@ class ProxyServer:
                 "⚠️ Could not resolve %s via %s, using hostname directly",
                 self.config.cloud_host, dns_upstream,
             )
+        await self._open_cloud_backlog()
         self._server = await asyncio.start_server(
             self._handle_box_connection,
             self.config.proxy_host,
@@ -255,6 +380,7 @@ class ProxyServer:
         )
         addr = self._server.sockets[0].getsockname() if self._server.sockets else "?"
         logger.info("🚀 OIG Proxy v2 naslouchá na %s:%s", *addr[:2])
+        self._start_cloud_replay()
 
     async def serve_forever(self) -> None:
         """Blokuje dokud není server zastaven."""
@@ -275,6 +401,7 @@ class ProxyServer:
             task.cancel()
         if self._active_connections:
             await asyncio.gather(*self._active_connections, return_exceptions=True)
+        await self._close_cloud_backlog()
         if self.twin_delivery is not None:
             self.twin_delivery.shutdown()
         logger.info("OIG Proxy v2 zastavena")
@@ -290,9 +417,106 @@ class ProxyServer:
         """Apply the mode and reconnect idle offline BOX sockets to cloud."""
         if not await self.mode_manager.apply_configured_mode(configured_mode):
             return False
-        if not self.mode_manager.is_offline():
-            self._close_idle_offline_connections()
+        await self._refresh_history_replay_mode()
         return True
+
+    async def _refresh_history_replay_mode(self) -> None:
+        if self.mode_manager.force_offline_enabled():
+            await self._stop_cloud_replay()
+        else:
+            self._close_idle_offline_connections()
+            self._start_cloud_replay()
+
+    def _start_cloud_replay(self) -> None:
+        backlog = self._cloud_backlog
+        if (backlog is None or not backlog.available or self.mode_manager.force_offline_enabled()
+                or self._replay_task is not None):
+            return
+        if backlog.pending:
+            self._archive_ready.set()
+        self._replay_task = asyncio.create_task(self._drain_cloud_backlog(backlog), name="cloud-history-replay")
+
+    async def _stop_cloud_replay(self) -> None:
+        task = self._replay_task
+        if task is not None:
+            self._replay_task = None
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _close_cloud_backlog(self) -> None:
+        await self._stop_cloud_replay()
+        if self._cloud_backlog is not None:
+            await self._cloud_backlog.close()
+
+    async def _store_history(self, backlog: CloudBacklog, frame: bytes) -> bool:
+        if not backlog.available:
+            return False
+        device = history_device(frame)
+        expected = self._device_id_provider() if self._device_id_provider is not None else None
+        if device is None or device != expected:
+            logger.warning("Cloud history table rejected: invalid native frame or box identity")
+            return False
+        try:
+            await backlog.put(device, frame)
+        except (sqlite3.Error, OSError):
+            logger.exception("Cloud history table could not be committed; BOX will receive no ACK")
+            return False
+        finally:
+            # SQLite may finish a commit after cancellation of the BOX task.
+            self._archive_ready.set()
+        return True
+
+    async def _drain_cloud_backlog(self, backlog: CloudBacklog) -> None:
+        provider = self._device_id_provider
+        if provider is None:
+            return
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        next_attempt = loop.time()
+        # A reply can complete as cancellation reaches a socket await.
+        while self._replay_task is task:
+            await self._archive_ready.wait()
+            await asyncio.sleep(max(0, next_attempt - loop.time()))
+            expected = provider()
+            if expected is not None and not backlog.pending_for(expected):
+                self._archive_ready.clear()
+                continue
+            # During hybrid fallback, the archived measurement can itself prove
+            # recovery even if all BOX history is still being routed to the queue.
+            if expected is None or not self.mode_manager.should_try_cloud():
+                next_attempt = loop.time() + CLOUD_REPLAY_INTERVAL_S
+                continue
+            try:
+                await self._replay_oldest_history(backlog, expected)
+            except (sqlite3.Error, OSError, asyncio.TimeoutError, asyncio.IncompleteReadError,
+                    asyncio.LimitOverrunError) as exc:
+                logger.info("Cloud history remains queued: %s", type(exc).__name__)
+            finally:
+                next_attempt = loop.time() + CLOUD_REPLAY_INTERVAL_S
+
+    async def _replay_oldest_history(self, backlog: CloudBacklog, expected: str) -> None:
+        row = await backlog.oldest(expected)
+        if row is None:
+            return
+        provider = self._device_id_provider
+        if provider is None or row.device_id != provider():
+            logger.warning("Cloud history item %s deferred: box identity not available", row.sequence)
+            return
+        reply = await upload_history(
+            self._cloud_ip, self.config.cloud_port, row.frame, self.config.cloud_connect_timeout,
+        )
+        if not acknowledges_history(reply):
+            logger.warning("Cloud history item %s retained: no measurement ACK", row.sequence)
+            return
+        if await backlog.acknowledge(row.device_id, row.sequence):
+            table = infer_table_name(row.frame.decode("utf-8", errors="replace"))
+            logger.info("Cloud ACK confirmed history item %s (%s)", row.sequence, table)
+        if self._replay_task is not asyncio.current_task():
+            return
+        was_offline = self.mode_manager.is_offline()
+        self.mode_manager.record_success()
+        if was_offline:
+            self._close_idle_offline_connections()
 
     def _close_idle_offline_connections(self) -> None:
         for writer in self._offline_writers:
@@ -438,6 +662,26 @@ class ProxyServer:
         if self._hybrid_probe == session_id:
             self._hybrid_probe = None
 
+    def _record_cloud_connect_error(
+        self, exc: OSError, conn_id: int, peer: str, session_id: str,
+    ) -> tuple[str, bool]:
+        failure_type = "timeout" if isinstance(exc, TimeoutError) else "oserror"
+        if failure_type == "timeout":
+            self.cloud_timeouts += 1
+        else:
+            self.cloud_errors += 1
+        logger.error("Cloud connect failed (%s): %s (session=%s)", failure_type, exc, session_id)
+        self.mode_manager.record_failure(reason=str(exc))
+        fallback = self.mode_manager.is_hybrid_mode() or self.mode_manager.is_offline()
+        self._record_cloud_connect_failure(
+            conn_id=conn_id,
+            failure_type=failure_type,
+            failure_detail=str(exc),
+            peer=peer,
+            will_go_offline=fallback,
+        )
+        return failure_type, fallback
+
     async def _handle_box_connection(
         self,
         box_reader: asyncio.StreamReader,
@@ -493,20 +737,8 @@ class ProxyServer:
                         timeout=self.config.cloud_connect_timeout,
                     )
                 except OSError as exc:
-                    failure_type = "timeout" if isinstance(exc, TimeoutError) else "oserror"
-                    if failure_type == "timeout":
-                        self.cloud_timeouts += 1
-                    else:
-                        self.cloud_errors += 1
-                    logger.error("Cloud connect failed (%s): %s (session=%s)", failure_type, exc, session_id)
-                    self.mode_manager.record_failure(reason=str(exc))
-                    fallback = self.mode_manager.is_hybrid_mode() or self.mode_manager.is_offline()
-                    self._record_cloud_connect_failure(
-                        conn_id=session_conn_id,
-                        failure_type=failure_type,
-                        failure_detail=str(exc),
-                        peer=peer_str,
-                        will_go_offline=fallback,
+                    failure_type, fallback = self._record_cloud_connect_error(
+                        exc, session_conn_id, peer_str, session_id,
                     )
                     box_disconnect_reason = f"cloud_connect_{failure_type}"
                     if not fallback:
@@ -540,14 +772,19 @@ class ProxyServer:
 
                     cloud_disconnect_reason = cloud_reason
                     box_disconnect_reason = f"cloud_{cloud_reason}"
-                    upstream_failed = cloud_reason in {"eof", "read_error", "reply_timeout"}
+                    timed_out = cloud_reason in {"box_first_frame_timeout", "reply_timeout"}
+                    upstream_failed = timed_out or cloud_reason in {"eof", "read_error"}
+                    if (upstream_failed and not traffic.cloud_verified and traffic.probe is not None
+                            and not self.mode_manager.is_offline()):
+                        # A different session already proved that the Cloud recovered.
+                        return
                     if (upstream_failed and not traffic.cloud_verified
                             and (not traffic.started or self.mode_manager.is_hybrid_mode())):
                         phase = "before_valid_reply" if traffic.started else "before_exchange"
                         cloud_disconnect_reason = f"{cloud_reason}_{phase}"
                         if cloud_reason == "reply_timeout":
                             self.cloud_timeouts += 1
-                        else:
+                        elif not timed_out:
                             self.cloud_errors += 1
                         self.mode_manager.record_failure(reason=cloud_disconnect_reason)
                     elif cloud_reason == "read_error":
@@ -632,22 +869,37 @@ class ProxyServer:
         reply_timeout: float | None,
     ) -> str | None:
         """Return the Cloud closure reason if the Cloud pipe ended first."""
+        if reply_timeout is not None:
+            traffic.probe = _CloudProbe(self.config.hybrid_box_first_frame_timeout, reply_timeout)
         box_pipe = asyncio.create_task(self._pipe_box_to_cloud(
             box_reader, cloud_writer, box_writer, peer=peer, session_id=session_id, conn_id=conn_id,
             traffic=traffic,
         ))
         cloud_pipe = asyncio.create_task(self._pipe_cloud_to_box(
             cloud_reader, box_writer, peer=peer, session_id=session_id, conn_id=conn_id,
-            traffic=traffic, reply_timeout=reply_timeout,
+            traffic=traffic,
         ))
+        return await self._wait_cloud_pipes(box_pipe, cloud_pipe, traffic.probe)
+
+    @staticmethod
+    async def _wait_cloud_pipes(
+        box_pipe: asyncio.Task[str], cloud_pipe: asyncio.Task[str], probe: _CloudProbe | None,
+    ) -> str | None:
+        """Stop both directions after the first pipe or recovery deadline ends."""
+        pending: set[asyncio.Future[str]] = {box_pipe, cloud_pipe}
+        if probe is not None:
+            pending.add(probe.expiry)
         try:
-            done, _ = await asyncio.wait((box_pipe, cloud_pipe), return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
         finally:
+            if probe is not None:
+                probe.stop_waiting()
             for task in (box_pipe, cloud_pipe):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(box_pipe, cloud_pipe, return_exceptions=True)
-
+        if probe is not None and probe.expiry in done:
+            return probe.expiry.result()
         if box_pipe in done:
             return "write_error" if box_pipe.result() == "cloud_write_error" else None
         return cloud_pipe.result()
@@ -668,6 +920,7 @@ class ProxyServer:
         pipe_id = id(asyncio.current_task())
         if conn_id is None:
             conn_id = pipe_id
+        flow = _BoxCloudFlow(cloud_writer, box_writer, session_id, peer_str, pipe_id, conn_id, traffic)
         tail = b""
         prewire_end = 0
         oversized = False
@@ -678,25 +931,7 @@ class ProxyServer:
             prewire_end = len(data) + _buffered_box_bytes(box_reader)
 
         while True:
-            try:
-                # Positive reads return the bytes currently available, subject to
-                # StreamReader/transport backpressure; avoid an artificial frame boundary.
-                incoming = await box_reader.read(sys.maxsize)
-                eof = not incoming
-            except asyncio.CancelledError:
-                # Cloud may half-close while it can still read the withheld BOX tail.
-                if tail and not cloud_writer.is_closing():
-                    try:
-                        cloud_writer.write(tail)
-                    except OSError:
-                        pass
-                raise
-            except asyncio.IncompleteReadError as exc:
-                incoming = exc.partial
-                eof = True
-            except OSError:
-                incoming = b""
-                eof = True
+            incoming, eof = await self._read_box_for_cloud(box_reader, cloud_writer, tail)
 
             if incoming and traffic is not None:
                 traffic.box_started = True
@@ -718,35 +953,48 @@ class ProxyServer:
                 ready = len(data)
             frames = [data[start:end] for start, end in spans]
             poll_candidates = [_may_offer_setting_slot(frame) for frame in frames]
-            poll_count = sum(poll_candidates)
+            ambiguous = sum(poll_candidates) > 1
             last_reply_start = max((start for frame, (start, _) in zip(frames, spans)
                                     if _may_acknowledge_setting(frame)), default=-1)
             send_from = 0
             local_write_failed = False
             forwarded_frames: list[bytes] = []
-            readback_fields: list[dict[str, str]] = []
+            readback_fields: list[_BoxFrameObservation] = []
             for frame, (start, end), poll_candidate in zip(frames, spans, poll_candidates):
                 is_poll = box_writer is not None and poll_candidate
-                ambiguous = poll_count > 1
-                if is_poll and not ambiguous and send_from < start:
+                backlog = self._cloud_backlog
+                is_archive = backlog is not None and box_writer is not None and any(
+                    tag in frame for tag in HISTORY_TAGS
+                )
+                if (is_archive or is_poll and not ambiguous) and send_from < start:
                     if not await self._forward_box_bytes(
-                        data[send_from:start], forwarded_frames, readback_fields, cloud_writer,
-                        session_id, conn_id,
+                        data[send_from:start], forwarded_frames, readback_fields, flow,
                     ):
                         return "cloud_write_error"
                     send_from = start
                     forwarded_frames.clear()
                     readback_fields.clear()
-                fields = await self._observe_box_stream_frame(
-                    frame, session_id, pipe_id, peer_str, allow_local_receipt=start >= prewire_end,
-                    received_at=received_at,
+                if is_archive and backlog is not None and box_writer is not None:
+                    failure, parked = await self._forward_history_frame(
+                        backlog, frame, flow,
+                        allow_local_receipt=start >= prewire_end, received_at=received_at,
+                    )
+                    if failure is not None:
+                        return failure
+                    send_from = end
+                    if parked and end == len(data):
+                        dropped_delimiter = _pending_replacement_delimiter(frame)
+                    continue
+                observed = await self._observe_box_stream_frame(
+                    frame, flow, allow_local_receipt=start >= prewire_end, received_at=received_at,
                 )
                 if box_writer is not None and is_poll:
                     try:
                         replaced = await self._deliver_pending_for_poll(
                             frame, box_writer, session_id, conn_id=pipe_id, peer=peer_str,
                             transport_block="ambiguous_box_batch" if ambiguous else None,
-                            buffered_reply=bool(tail) or start < last_reply_start or bool(_buffered_box_bytes(box_reader)),
+                            buffered_reply=(bool(tail) or start < last_reply_start
+                                            or bool(_buffered_box_bytes(box_reader))),
                             before_write=record_local_write,
                         )
                     except OSError:
@@ -755,17 +1003,16 @@ class ProxyServer:
                         replaced = local_write_failed = True
                     if replaced:
                         send_from = end
-                        if end == len(data) and not frame.endswith(b"\n"):
-                            dropped_delimiter = b"\n" if frame.endswith(b"\r") else b"\r\n"
+                        if end == len(data):
+                            dropped_delimiter = _pending_replacement_delimiter(frame)
                         continue
                 forwarded_frames.append(frame)
-                if fields is not None and fields.get("TblName") != "tbl_events":
-                    readback_fields.append(fields)
+                if observed is not None and observed.fields.get("TblName") != "tbl_events":
+                    readback_fields.append(observed)
             prewire_end = max(0, prewire_end - ready)
             if not await self._forward_box_bytes(
                 data[send_from:len(data) if local_write_failed else ready],
-                forwarded_frames, readback_fields, cloud_writer,
-                session_id, conn_id,
+                forwarded_frames, readback_fields, flow,
             ):
                 return "cloud_write_error"
             if local_write_failed:
@@ -774,17 +1021,91 @@ class ProxyServer:
                 self._write_eof(cloud_writer)
                 return "box_closed"
 
+    @staticmethod
+    async def _read_box_for_cloud(
+        box_reader: asyncio.StreamReader, cloud_writer: asyncio.StreamWriter, tail: bytes,
+    ) -> tuple[bytes, bool]:
+        try:
+            # Use the bytes already available without imposing a frame boundary.
+            incoming = await box_reader.read(sys.maxsize)
+            return incoming, not incoming
+        except asyncio.CancelledError:
+            # Cloud may half-close while it can still read the withheld BOX tail.
+            if tail and not cloud_writer.is_closing():
+                try:
+                    cloud_writer.write(tail)
+                except OSError:
+                    pass
+            raise
+        except asyncio.IncompleteReadError as exc:
+            return exc.partial, True
+        except OSError:
+            return b"", True
+
+    async def _forward_history_frame(
+        self, backlog: CloudBacklog, frame: bytes, flow: _BoxCloudFlow,
+        *, allow_local_receipt: bool, received_at: float,
+    ) -> tuple[str | None, bool]:
+        async with self._archive_order:
+            bound = self._device_id_provider() if self._device_id_provider is not None else None
+            park = backlog.available and (backlog.pending_for(bound) or self.mode_manager.is_offline())
+            if park:
+                if not await self._store_history(backlog, frame):
+                    return "box_archive_error", park
+            elif not self._write_box_bytes(
+                frame, [frame], flow.cloud_writer, flow.session_id, flow.conn_id, flow.traffic,
+            ):
+                return "cloud_write_error", park
+        observed = await self._observe_box_stream_frame(
+            frame, flow, allow_local_receipt=allow_local_receipt, received_at=received_at,
+            direction="box_to_proxy" if park else "box_to_cloud",
+        )
+        if park:
+            try:
+                await self._ack_parked_history(frame, flow)
+            except (OSError, asyncio.TimeoutError):
+                return "box_write_error", park
+        elif not await self._drain_box_bytes(
+            flow.cloud_writer, flow.session_id, [frame], [observed] if observed is not None else [],
+        ):
+            return "cloud_write_error", park
+        return None, park
+
+    async def _ack_parked_history(self, frame: bytes, flow: _BoxCloudFlow) -> None:
+        box_writer = flow.box_writer
+        if box_writer is None:
+            raise OSError("Cannot acknowledge queued history without a BOX connection")
+        traffic = flow.traffic
+        # Keep local history replies behind preceding Cloud replies on this socket.
+        if traffic is not None:
+            until = time.monotonic() + REPLY_TIMEOUT_S
+            while traffic.cloud_requests or flow.session_id in self._cloud_partial_sessions:
+                await asyncio.wait_for(traffic.archive_reply_barrier.wait(), max(0, until - time.monotonic()))
+        await self._ack_box_history(frame, box_writer, flow.capture_id, flow.peer)
+
     async def _forward_box_bytes(
-        self, data: bytes, frames: list[bytes], observed: list[dict[str, str]],
-        cloud_writer: asyncio.StreamWriter,
-        session_id: str | None, conn_id: int,
+        self, data: bytes, frames: list[bytes], observed: list[_BoxFrameObservation],
+        flow: _BoxCloudFlow,
     ) -> bool:
         if not data:
             return True
+        if not self._write_box_bytes(data, frames, flow.cloud_writer, flow.session_id, flow.conn_id, flow.traffic):
+            return False
+        return await self._drain_box_bytes(flow.cloud_writer, flow.session_id, frames, observed)
+
+    def _write_box_bytes(
+        self, data: bytes, frames: list[bytes], cloud_writer: asyncio.StreamWriter,
+        session_id: str | None, conn_id: int, traffic: _SessionTraffic | None,
+    ) -> bool:
         delivery = self.twin_delivery
         try:
             self._record_cloud_requests(frames, conn_id)
+            if traffic is not None and self._cloud_backlog is not None:
+                traffic.note_requests(sum(_expects_cloud_reply(frame) for frame in frames))
             cloud_writer.write(data)
+            if frames and traffic is not None and traffic.probe is not None:
+                # A reply may already arrive while the upstream drain yields.
+                traffic.probe.note_box_frame()
             forwarded = data.strip(b"\r\n")
             if delivery is not None and self._bound_box_device(session_id) is not None and forwarded:
                 poll = frames[0] if (len(frames) == 1 and session_id not in self._cloud_partial_sessions
@@ -792,33 +1113,55 @@ class ProxyServer:
                                      and forwarded == frames[0].rstrip(b"\r\n")) else None
                 # The response can arrive while drain yields to the Cloud pipe.
                 delivery.note_forwarded_clock_poll(poll, session_id)
-            await cloud_writer.drain()
         except OSError as exc:
-            if delivery is not None:
-                delivery.note_forwarded_clock_poll(None, session_id)
-            self.cloud_errors += 1
-            self.mode_manager.record_failure(reason="cloud_write_error")
-            logger.info("Cloud write failed after BOX traffic: %s (session=%s)", exc, session_id)
+            self._note_cloud_write_error(session_id, exc)
             return False
-        self.frames_forwarded += len(frames)
-        for fields in observed:
-            self._observe_parameter_readback(fields, session_id)
         return True
 
+    async def _drain_box_bytes(
+        self, cloud_writer: asyncio.StreamWriter, session_id: str | None,
+        frames: list[bytes], observed: list[_BoxFrameObservation],
+    ) -> bool:
+        try:
+            await cloud_writer.drain()
+        except OSError as exc:
+            self._note_cloud_write_error(session_id, exc)
+            return False
+        self.frames_forwarded += len(frames)
+        for frame in observed:
+            self._observe_parameter_readback(frame, session_id)
+        return True
+
+    def _note_cloud_write_error(self, session_id: str | None, exc: OSError) -> None:
+        if self.twin_delivery is not None:
+            self.twin_delivery.note_forwarded_clock_poll(None, session_id)
+        self.cloud_errors += 1
+        self.mode_manager.record_failure(reason="cloud_write_error")
+        logger.info("Cloud write failed after BOX traffic: %s (session=%s)", exc, session_id)
+
     async def _observe_box_stream_frame(
-        self, frame: bytes, session_id: str | None, conn_id: int, peer: str | None,
-        *, allow_local_receipt: bool, received_at: float,
-    ) -> dict[str, str] | None:
-        self._capture_frame(frame, "box_to_cloud", conn_id=conn_id, peer=peer)
-        fields = await self._process_frame(frame)
+        self, frame: bytes, flow: _BoxCloudFlow,
+        *, allow_local_receipt: bool, received_at: float, direction: str = "box_to_cloud",
+    ) -> _BoxFrameObservation | None:
+        self._capture_frame(frame, direction, conn_id=flow.capture_id, peer=flow.peer)
+        observed = await self._process_frame(frame)
         await self._handle_twin_frames(
-            frame, session_id, allow_local_receipt=allow_local_receipt, received_at=received_at,
+            frame, flow.session_id, allow_local_receipt=allow_local_receipt, received_at=received_at,
         )
-        if fields is not None and fields.get("TblName") == "tbl_events":
-            self._observe_parameter_readback(fields, session_id)
+        if observed is not None and observed.fields.get("TblName") == "tbl_events":
+            self._observe_parameter_readback(observed, flow.session_id)
         if self.telemetry_collector is not None:
             self.telemetry_collector.record_frame_direction("box_to_proxy")
-        return fields
+        return observed
+
+    async def _ack_box_history(
+        self, frame: bytes, box_writer: asyncio.StreamWriter, conn_id: int, peer: str | None,
+    ) -> None:
+        table = infer_table_name(frame.decode("utf-8", errors="replace")) or ""
+        ack = build_local_ack(table)
+        box_writer.write(ack)
+        self._capture_frame(ack, "proxy_to_box", conn_id=conn_id, peer=peer)
+        await box_writer.drain()
 
     def _record_cloud_requests(self, frames: list[bytes], conn_id: int) -> None:
         collector = self.telemetry_collector
@@ -848,20 +1191,15 @@ class ProxyServer:
         *,
         conn_id: int | None = None,
         traffic: _SessionTraffic | None = None,
-        reply_timeout: float | None = None,
     ) -> str:
         """Forward unchanged cloud bytes; no private transform or injection path."""
         peer_str = f"{peer[0]}:{peer[1]}" if peer and len(peer) >= 2 else None
         if conn_id is None:
             conn_id = id(asyncio.current_task())
         buf = bytearray()
-        deadline = None if reply_timeout is None else time.monotonic() + reply_timeout
         while True:
             try:
-                remaining = None if deadline is None else deadline - time.monotonic()
-                data = await asyncio.wait_for(cloud_reader.read(4096), remaining)
-            except asyncio.TimeoutError:
-                return "reply_timeout"
+                data = await cloud_reader.read(4096)
             except (asyncio.IncompleteReadError, OSError):
                 return "read_error"
             if not data:
@@ -871,36 +1209,52 @@ class ProxyServer:
                 return "eof"
             if traffic is not None:
                 traffic.cloud_started = True
-            verify_response = (
-                traffic is not None and self.mode_manager.is_hybrid_mode()
-                and (not traffic.cloud_verified or self.mode_manager.fail_count > 0)
-            )
             try:
                 box_writer.write(data)
                 buf.extend(data)
                 self._cloud_partial_sessions.add(session_id)
                 verified = self._observe_cloud_buffer(
-                    buf, peer_str, session_id, conn_id, verify_response=verify_response,
+                    buf, peer_str, session_id, conn_id, traffic=traffic,
                 )
                 if not buf:
                     self._cloud_partial_sessions.discard(session_id)
-                remaining = None if deadline is None else deadline - time.monotonic()
-                await asyncio.wait_for(box_writer.drain(), remaining)
-            except (asyncio.TimeoutError, OSError):
+                if traffic is not None and self._cloud_backlog is not None:
+                    traffic.note_cloud_progress(partial=bool(buf))
+                await box_writer.drain()
+            except OSError:
                 return "box_write_error"
             if verified and traffic is not None:
-                traffic.cloud_verified = True
-                deadline = None
-                self._release_cloud_probe(session_id)
-                self.mode_manager.record_success()
-                self._close_idle_offline_connections()
+                self._accept_cloud_recovery(traffic, session_id)
+
+    def _needs_cloud_verification(self, traffic: _SessionTraffic | None) -> bool:
+        return (
+            traffic is not None and self.mode_manager.is_hybrid_mode()
+            and (not traffic.cloud_verified or self.mode_manager.fail_count > 0)
+        )
+
+    def _accept_cloud_recovery(self, traffic: _SessionTraffic, session_id: str | None) -> None:
+        if traffic.probe is not None:
+            if traffic.probe.expiry.done():
+                return
+            traffic.probe.stop_waiting()
+        traffic.cloud_verified = True
+        self._release_cloud_probe(session_id)
+        self.mode_manager.record_success()
+        self._close_idle_offline_connections()
+
+    @staticmethod
+    def _record_cloud_reply(traffic: _SessionTraffic | None, frame: bytes) -> None:
+        # The barrier also orders legacy replies the strict native parser cannot observe.
+        if traffic is not None and frame.startswith(FRAME_START):
+            traffic.note_reply()
 
     def _observe_cloud_buffer(
         self, buf: bytearray,
         peer: str | None, session_id: str | None, conn_id: int,
-        *, verify_response: bool = False,
+        *, traffic: _SessionTraffic | None = None,
     ) -> bool:
         """Parse only complete output frames without changing their byte order."""
+        verify_response = self._needs_cloud_verification(traffic)
         verified = False
         while True:
             # A TCP read can split the delimiter after a complete XML frame.
@@ -908,6 +1262,7 @@ class ProxyServer:
             frame = extract_frame_from_buffer(buf)
             if frame is None:
                 return verified
+            self._record_cloud_reply(traffic, frame)
             if verify_response and not verified:
                 verified = native_frame_fields(frame, allow_repeated_identity=False) is not None
             self._observe_cloud_frame(frame, peer, session_id, conn_id)
@@ -975,6 +1330,7 @@ class ProxyServer:
             confirm=fields.get("Confirm", "New"), session_id=session_id,
         )
         self._track_phase_write(device_id, table, key, (msg_id, id_set))
+        self._track_possible_sa(fields, device_id)
 
     @staticmethod
     def _wire_counter(value: str) -> int:
@@ -1071,6 +1427,7 @@ class ProxyServer:
             if delivery.acknowledge(
                 setting.table, setting.key, session_id=session_id,
                 result="nack", evidence="protocol_nack",
+                receipt_echoed=reply.get("wire_echo") == "true",
             ):
                 return "nack"
         elif delivery.acknowledge(
@@ -1089,8 +1446,28 @@ class ProxyServer:
         self, delivery: TwinDelivery, setting: TwinSetting, device_id: str, received_dt: str,
         *, cloud: bool = False,
     ) -> None:
+        if self._accept_sa_ack(setting, delivery, device_id, received_dt):
+            return
+        self._expect_readback(delivery, setting, device_id, received_dt, cloud=cloud)
+
+    def _accept_sa_ack(
+        self, setting: TwinSetting, delivery: TwinDelivery, device_id: str, received_dt: str,
+    ) -> bool:
+        if (setting.table, setting.key) != _SA_TARGET[:2] or not same_setting_value(setting.value, _SA_TARGET[2]):
+            return False
+        refresh = self._pending_parameter_refresh()
+        epoch, _ = delivery.box_readback_time(device_id, received_dt)
+        if refresh is not None and refresh.device_id == device_id and refresh.clock_epoch == epoch:
+            refresh.accepted = True
+            self._finish_parameter_refresh(refresh)
+        return True
+
+    def _expect_readback(
+        self, delivery: TwinDelivery, setting: TwinSetting, device_id: str, received_dt: str,
+        *, cloud: bool,
+    ) -> None:
         readback_enabled = self._request_readback is not None and not self.mode_manager.is_offline()
-        phase_tracked = (setting.table == _PHASE_TABLE and (device_id, setting.key) in self._phase_writes)
+        phase_tracked = setting.table == _PHASE_TABLE and (device_id, setting.key) in self._phase_writes
         if not (readback_enabled or phase_tracked):
             return
         box_time = delivery.box_readback_time(device_id, received_dt)
@@ -1195,8 +1572,39 @@ class ProxyServer:
             pending.pending_value = None
             await self._publish_phase_confirmation(device_id, key, value, timing, "ack_and_table")
 
+    def _pending_parameter_refresh(self) -> _SentParameterRefresh | None:
+        refresh = self._sent_parameter_refresh
+        if refresh is not None and time.monotonic() >= refresh.deadline:
+            self._sent_parameter_refresh = None
+        return self._sent_parameter_refresh
+
+    def parameter_refresh_in_flight(self) -> bool:
+        """An existing SA covers both daily and reactive scheduling."""
+        return self._pending_parameter_refresh() is not None or self._readback.has_active_batch()
+
+    def _finish_parameter_refresh(self, refresh: _SentParameterRefresh) -> None:
+        if refresh.accepted and refresh.has_parameters:
+            self._sent_parameter_refresh = None
+            if self._on_sa_confirmed is not None:
+                self._on_sa_confirmed(time.time())
+
+    def _track_possible_sa(self, fields: dict[str, str], device_id: str) -> None:
+        if (fields.get("TblName"), fields.get("TblItem")) == _SA_TARGET[:2] and same_setting_value(
+            fields.get("NewValue", ""), _SA_TARGET[2],
+        ):
+            self._track_sa_sent(device_id, fields.get("DT", ""))
+
+    def _track_sa_sent(self, device_id: str, wire_dt: str) -> None:
+        delivery = self.twin_delivery
+        if delivery is not None and self._pending_parameter_refresh() is None:
+            epoch, source_stamp = delivery.box_readback_time(device_id, wire_dt)
+            self._sent_parameter_refresh = _SentParameterRefresh(
+                device_id, epoch, source_stamp, time.monotonic() + SA_READBACK_RESPONSE_S,
+            )
+        if self._readback.mark_sent():
+            self._note_parameter_readback_sent(device_id)
+
     def _note_parameter_readback_sent(self, device_id: str) -> None:
-        self._readback.mark_sent()
         for key in _PHASE_KEYS:
             phase = self._phase_writes.get((device_id, key))
             if phase is None or phase.receipt is None or phase.pending_value is None:
@@ -1269,11 +1677,13 @@ class ProxyServer:
         writer_id = id(box_writer)
         if delivery is None:
             return False
+        request_readback = self._request_readback
+        automatic = self._automatic_readback_due(offline)
         if device_id is None:
             expected = self._device_id_provider() if self._device_id_provider is not None else None
-            if expected is not None and delivery.has_pending(expected):
+            if expected is not None and (automatic or delivery.has_pending(expected)):
                 reason = "poll_malformed" if native_frame_fields(poll) is None else "box_identity_unbound"
-                delivery.record_poll_skip(expected, session_id, reason, stage="transport")
+                self._record_transport_skip(delivery, (expected, session_id), reason, automatic=automatic)
             return False
         if box_writer.is_closing():
             transport_block = "box_socket_closing"
@@ -1286,13 +1696,11 @@ class ProxyServer:
         elif any(self._bound_box_device(flow) == device_id for flow in self._cloud_partial_sessions):
             transport_block = "cloud_partial_frame"
         if not delivery.valid_local_poll(poll, device_id):
-            delivery.record_poll_skip(device_id, session_id, "poll_unqualified", stage="transport")
+            self._record_transport_skip(delivery, (device_id, session_id), "poll_unqualified", automatic=automatic)
             return False
         if transport_block is not None:
-            delivery.record_poll_skip(device_id, session_id, transport_block, stage="transport")
+            self._record_transport_skip(delivery, (device_id, session_id), transport_block, automatic=automatic)
             return False
-        request_readback = self._request_readback
-        automatic = not offline and request_readback is not None and self._readback.is_due()
         admitted: TwinSetting | None = None
 
         def admit_readback() -> bool:
@@ -1323,9 +1731,7 @@ class ProxyServer:
         box_writer.write(frame)
         self._track_phase_write(device_id, setting.table, setting.key, setting.audit_id)
         delivery.record_injected_box(setting, device_id, session_id=session_id or "")
-        if (not offline and self._readback.is_due()
-                and (setting.table, setting.key, setting.value) == ("tbl_box_prms", "SA", 1)):
-            self._note_parameter_readback_sent(device_id)
+        self._track_local_sa(setting, device_id, frame)
         self._capture_frame(frame, "proxy_to_box", conn_id=conn_id, peer=peer)
         deadline = delivery.local_wire_deadline(session_id) if offline else None
         if deadline is None:
@@ -1335,42 +1741,114 @@ class ProxyServer:
             await asyncio.wait_for(box_writer.drain(), max(0, deadline - time.monotonic()))
         return True
 
+    def _automatic_readback_due(self, offline: bool) -> bool:
+        return (not offline and self._request_readback is not None
+                and self._readback.is_due() and not self.parameter_refresh_in_flight())
+
+    @staticmethod
+    def _record_transport_skip(
+        delivery: TwinDelivery, endpoint: tuple[str, str | None], reason: str, *, automatic: bool,
+    ) -> None:
+        record = delivery.record_readback_poll_skip if automatic else delivery.record_poll_skip
+        record(*endpoint, reason, stage="transport")
+
+    def _track_local_sa(self, setting: TwinSetting, device_id: str, frame: bytes) -> None:
+        if (setting.table, setting.key, setting.value) == _SA_TARGET:
+            wire_fields = native_frame_fields(frame, allow_repeated_identity=False)
+            self._track_sa_sent(device_id, (wire_fields or {}).get("DT", ""))
+
     def poll_readback_timeouts(self) -> None:
         """Expire outstanding synchronization reads while the BOX is quiet."""
         self._readback.poll_timeouts()
 
-    def _observe_parameter_readback(self, fields: dict[str, str], session_id: str | None) -> None:
+    def _parameter_readback_context(
+        self, fields: dict[str, str], session_id: str | None,
+    ) -> tuple[str, tuple[int, float | None]] | None:
         device_id = self._bound_box_device(session_id)
         delivery = self.twin_delivery
-        if (self._request_readback is not None and delivery is not None and device_id
+        if ((self._request_readback is not None or self._on_sa_confirmed is not None)
+                and delivery is not None and device_id
                 and fields.get("ID_Device") == device_id
                 and fields.get("ID_SubD", "0") == "0"):
-            self._readback.observe(fields, box_time=delivery.box_readback_time(device_id, fields.get("DT", "")))
+            return device_id, delivery.box_readback_time(device_id, fields.get("DT", ""))
+        return None
 
-    async def _process_frame(self, frame_bytes: bytes) -> dict[str, str] | None:
+    def _observe_parameter_readback(self, frame: _BoxFrameObservation, session_id: str | None) -> None:
+        context = self._parameter_readback_context(frame.fields, session_id)
+        if context is not None:
+            device_id, box_time = context
+            self._readback.observe_with_aliases(frame.fields, box_time=box_time, actual_aliases=frame.actual_aliases)
+            self._observe_sa_response(frame.fields, device_id, box_time)
+
+    def _observe_local_sa_response(
+        self, frame: _BoxFrameObservation | None, session_id: str | None,
+    ) -> None:
+        if frame is None:
+            return
+        context = self._parameter_readback_context(frame.fields, session_id)
+        if context is not None:
+            self._observe_sa_response(frame.fields, *context)
+
+    def _observe_sa_response(
+        self, fields: dict[str, str], device_id: str, box_time: tuple[int, float | None],
+    ) -> None:
+        refresh = self._pending_parameter_refresh()
+        epoch, stamp = box_time
+        if (refresh is None or refresh.device_id != device_id or refresh.clock_epoch != epoch
+                or stamp is None or refresh.source_stamp is None or stamp < refresh.source_stamp
+                or fields.get("Reason") != "Table" or fields.get("Result") is not None):
+            return
+        table = fields.get("TblName", "")
+        if table == "tbl_events":
+            change = parse_parameter_change(fields.get("Type", ""), fields.get("Content", ""))
+            if (change is not None and change[:2] == _SA_TARGET[:2]
+                    and same_setting_value(change[2], _SA_TARGET[2])):
+                refresh.accepted = True
+        elif _READBACK_KEYS.get(table, set()).intersection(fields):
+            refresh.has_parameters = True
+        self._finish_parameter_refresh(refresh)
+
+    async def _process_frame(self, frame_bytes: bytes) -> _BoxFrameObservation | None:
         """Publish only native BOX frames whose outer checksum validates."""
         self.frames_received += 1
-        if self.on_frame is None and self._request_readback is None:
+        if self.on_frame is None and self._request_readback is None and self._on_sa_confirmed is None:
             return None
         fields = native_frame_fields(frame_bytes)
         if fields is None:
             return None
+        actual_aliases = None
         try:
             if self.on_frame is None:
-                return fields
-            text = frame_bytes.decode("utf-8", errors="replace")
-            parsed = parse_xml_frame(text)
-            if fields.get("Result") == "ACK" and fields.get("Reason") == "Table":
-                receipt = native_receipt_fields(frame_bytes)
-                if receipt is not None and receipt.get("Reason") == "Setting":
-                    # A qualified combined envelope carries an independent actual table.
-                    parsed.pop("Result", None)
-                    parsed.pop("Rdt", None)
+                return _BoxFrameObservation(fields)
+            fields, parsed = self._observation_payload(frame_bytes, fields)
             if parsed and not self._is_transport_frame(parsed):
                 await self.on_frame(parsed)
+                actual_aliases = self._accepted_actual_aliases(fields)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Frame parse error: %s", exc)
-        return fields
+        return _BoxFrameObservation(fields, actual_aliases)
+
+    @staticmethod
+    def _observation_payload(
+        frame: bytes, fields: dict[str, str],
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        parsed = parse_xml_frame(frame.decode("utf-8", errors="replace"))
+        if fields.get("Result") == "ACK" and fields.get("Reason") == "Table":
+            receipt = native_receipt_fields(frame)
+            if receipt is not None and receipt.get("Reason") == "Setting":
+                # The native combined receipt contains an independent Actual table.
+                parsed.pop("Result", None)
+                parsed.pop("Rdt", None)
+                if fields.get("TblName") == "tbl_actual":
+                    fields = {key: value for key, value in fields.items() if key not in {"Result", "Rdt"}}
+        return fields, parsed
+
+    def _accepted_actual_aliases(self, fields: dict[str, str]) -> dict[tuple[str, str], str] | None:
+        device_id = fields.get("ID_Device")
+        if self._actual_readbacks is not None and fields.get("TblName") == "tbl_actual" and device_id:
+            # Snapshot before another BOX callback can supersede processor evidence.
+            return self._actual_readbacks(device_id, fields)
+        return None
 
     def _capture_frame(
         self,
@@ -1539,18 +2017,11 @@ class ProxyServer:
                 return True
             deadline = self._offline_reply_deadlines.get(id(box_writer))
             if deadline is None:
-                await self._process_frame(frame_bytes)
-                await self._handle_twin_frames(frame_bytes, session_id, received_at=received_at)
-                # A reply buffered before the Setting cannot acknowledge it.
-                sent = (table in BOX_POLL_RESULTS and not buf.strip()
-                        and await self._deliver_pending_for_poll(
-                            frame_bytes, box_writer, session_id, conn_id=conn_id, peer=peer, offline=True,
-                        ))
-                if not sent and not box_writer.is_closing():
-                    ack = build_local_ack(table)
-                    box_writer.write(ack)
-                    self._capture_frame(ack, "proxy_to_box", conn_id=conn_id, peer=peer)
-                    await box_writer.drain()
+                if not await self._handle_regular_offline_frame(
+                    frame_bytes, table, box_writer, session_id, conn_id=conn_id, peer=peer,
+                    received_at=received_at, buffered=bool(buf.strip()),
+                ):
+                    return True
                 continue
 
             # Keep the existing terminal deadline through receipt processing and END drain.
@@ -1567,4 +2038,39 @@ class ProxyServer:
                 return True
             if reply == "nack":
                 return True
-            await asyncio.wait_for(self._process_frame(frame_bytes), max(0, deadline - time.monotonic()))
+            box_observation = await asyncio.wait_for(
+                self._process_frame(frame_bytes), max(0, deadline - time.monotonic()),
+            )
+            self._observe_local_sa_response(box_observation, session_id)
+
+    async def _handle_regular_offline_frame(
+        self, frame: bytes, table: str, box_writer: asyncio.StreamWriter, session_id: str | None,
+        *, conn_id: int | None, peer: str | None, received_at: float | None, buffered: bool,
+    ) -> bool:
+        persisted, observed = await self._persist_offline_history(frame, table)
+        if not persisted:
+            return False
+        box_observation = None if observed else await self._process_frame(frame)
+        await self._handle_twin_frames(frame, session_id, received_at=received_at)
+        self._observe_local_sa_response(box_observation, session_id)
+        # A reply buffered before the Setting cannot acknowledge it.
+        sent = (table in BOX_POLL_RESULTS and not buffered and await self._deliver_pending_for_poll(
+            frame, box_writer, session_id, conn_id=conn_id, peer=peer, offline=True,
+        ))
+        if not sent and not box_writer.is_closing():
+            ack = build_local_ack(table)
+            box_writer.write(ack)
+            self._capture_frame(ack, "proxy_to_box", conn_id=conn_id, peer=peer)
+            await box_writer.drain()
+        return True
+
+    async def _persist_offline_history(self, frame: bytes, table: str) -> tuple[bool, bool]:
+        backlog = self._cloud_backlog
+        if backlog is None or table not in HISTORY_TABLES:
+            return True, False
+        async with self._archive_order:
+            observed = self._device_id_provider is not None and self._device_id_provider() is None
+            if observed:
+                # The application callback binds the first observed BOX.
+                await self._process_frame(frame)
+            return await self._store_history(backlog, frame), observed

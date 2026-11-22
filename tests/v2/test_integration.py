@@ -300,6 +300,111 @@ async def test_hybrid_recovery_waits_for_cloud_reply_after_retry_handshake(make_
 
 @pytest.mark.enable_socket
 @pytest.mark.asyncio
+async def test_hybrid_recovery_waits_for_delayed_complete_box_frame(make_config) -> None:
+    request = _frame("tbl_actual", TEST_BOX, Temp=25)
+    response = build_frame("<Result>ACK</Result>").encode()
+    connected = asyncio.Event()
+    forwarded = asyncio.Queue()
+
+    async def cloud_peer(reader, writer):
+        try:
+            connected.set()
+            frame = await reader.readuntil(b"</Frame>\r\n")
+            forwarded.put_nowait(frame)
+            writer.write(response)
+            await writer.drain()
+            await reader.read()
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async with _live_proxy(make_config, cloud_peer, cloud_ack_timeout=0.08,
+                           hybrid_box_first_frame_timeout=1) as (proxy, port):
+        proxy.mode_manager.record_failure("test setup")
+        async with _live_box(port) as (reader, writer):
+            await asyncio.wait_for(connected.wait(), 1)
+            await asyncio.sleep(0.1)
+            writer.write(request[:30])
+            await writer.drain()
+            await asyncio.sleep(0.1)
+            assert forwarded.empty()
+            writer.write(request[30:])
+            await writer.drain()
+            assert await asyncio.wait_for(reader.readexactly(len(response)), 1) == response
+            assert await asyncio.wait_for(forwarded.get(), 1) == request
+            assert proxy.mode_manager.runtime_mode.value == "online"
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+async def test_hybrid_recovery_first_frame_timeout_preserves_idle_box_for_local_ack(make_config) -> None:
+    cloud_closed = asyncio.Event()
+    cloud_data = asyncio.Queue()
+
+    async def cloud_peer(reader, writer):
+        try:
+            cloud_data.put_nowait(await reader.read())
+            cloud_closed.set()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async with _live_proxy(make_config, cloud_peer, cloud_ack_timeout=2,
+                           hybrid_box_first_frame_timeout=0.05) as (proxy, port):
+        proxy.mode_manager.record_failure("test setup")
+        async with _live_box(port) as box:
+            await asyncio.wait_for(cloud_closed.wait(), 0.5)
+            assert cloud_data.get_nowait() == b""
+            await _expect_local_table_ack(*box, temp=26)
+            assert proxy.mode_manager.runtime_mode.value == "offline"
+            assert proxy.cloud_timeouts == 0
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
+async def test_hybrid_idle_probe_expiry_keeps_recovery_confirmed_on_another_session(make_config) -> None:
+    response = build_frame("<Result>ACK</Result>").encode()
+    send_reply = asyncio.Event()
+    online_connected = asyncio.Event()
+    probe_connected = asyncio.Event()
+    connection_count = 0
+
+    async def cloud_peer(reader, writer):
+        nonlocal connection_count
+        connection_count += 1
+        try:
+            if connection_count == 1:
+                online_connected.set()
+                await send_reply.wait()
+                writer.write(response)
+                await writer.drain()
+            else:
+                probe_connected.set()
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async with _live_proxy(make_config, cloud_peer, hybrid_box_first_frame_timeout=0.3) as (proxy, port):
+        async with _live_box(port) as (reader, _writer):
+            await asyncio.wait_for(online_connected.wait(), 1)
+            proxy.mode_manager.record_failure("test setup")
+            async with _live_box(port) as (idle_reader, _idle_writer):
+                try:
+                    await asyncio.wait_for(probe_connected.wait(), 1)
+                    send_reply.set()
+                    assert await asyncio.wait_for(reader.readexactly(len(response)), 1) == response
+                    assert await asyncio.wait_for(idle_reader.read(), 1) == b""
+                    assert proxy.mode_manager.runtime_mode.value == "online"
+                    assert proxy.mode_manager.fail_count == 0
+                finally:
+                    send_reply.set()
+
+
+@pytest.mark.enable_socket
+@pytest.mark.asyncio
 async def test_hybrid_unanswered_recovery_probe_keeps_other_box_connection_local(make_config) -> None:
     request = _frame("tbl_actual", TEST_BOX, Temp=25)
     forwarded = asyncio.get_running_loop().create_future()

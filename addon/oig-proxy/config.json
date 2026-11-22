@@ -1,6 +1,6 @@
 {
   "name": "OIG Proxy",
-  "version": "2.2.0-rc.10",
+  "version": "2.2.0-rc.11",
   "slug": "oig_proxy",
   "description": "OIG TCP proxy v2 – async architektura, MQTT, HA discovery",
   "arch": ["amd64", "aarch64"],
@@ -19,6 +19,7 @@
     "local_getactual_enabled": false,
     "local_getactual_interval_s": 10,
     "hybrid_retry_interval": 60,
+    "hybrid_box_first_frame_timeout": 30.0,
     "hybrid_fail_threshold": 1,
     "mqtt_host": "core-mosquitto",
     "mqtt_port": 1883,
@@ -51,6 +52,7 @@
     "local_getactual_enabled": "bool?",
     "local_getactual_interval_s": "int?",
     "hybrid_retry_interval": "int",
+    "hybrid_box_first_frame_timeout": "float?",
     "hybrid_fail_threshold": "int",
     "mqtt_host": "str",
     "mqtt_port": "int",

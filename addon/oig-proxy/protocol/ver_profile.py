@@ -238,6 +238,17 @@ def recent_protocol_timestamp(value: str, now: float, utc: bool = False) -> floa
     return _unique_stamp(_protocol_stamps(value, utc), now - _MAX_AGE, now + 2)
 
 
+def _future_cloud_timestamp(value: str, captured_at: float, box_clock_offset: float) -> float | None:
+    """Resolve a future UTC stamp consistent with independently qualified BOX time."""
+    if not 0 < box_clock_offset <= _MAX_CLOCK_ADVANCE:
+        return None
+    stamp = _unique_stamp(_protocol_stamps(value, utc=True), captured_at + 3,
+                          captured_at + _MAX_CLOCK_ADVANCE)
+    if stamp is not None and abs(stamp - captured_at - box_clock_offset) <= _CLOUD_CLOCK_DIFFERENCE:
+        return stamp
+    return None
+
+
 def _positive_counter(value: str) -> int | None:
     return (int(value) or None) if len(value) <= 19 and value.isascii() and value.isdecimal() else None
 
@@ -1017,10 +1028,8 @@ class VerProfiles:
         """Retain a future UTC candidate only for same-flow corroboration by the BOX."""
         if not proof.clock_offset or not -2 <= now - proof.latest_box <= _MAX_AGE or now < proof.cutoff:
             return None
-        stamp = _unique_stamp(_protocol_stamps(fields.get("TSec", ""), utc=True), now + 3,
-                              now + _MAX_CLOCK_ADVANCE)
-        if (stamp is None or stamp <= proof.future_cloud_highwater
-                or abs((stamp - now) - proof.clock_offset) > _CLOUD_CLOCK_DIFFERENCE):
+        stamp = _future_cloud_timestamp(fields.get("TSec", ""), now, proof.clock_offset)
+        if stamp is None or stamp <= proof.future_cloud_highwater:
             return None
         return stamp
 

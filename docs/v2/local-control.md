@@ -40,6 +40,8 @@ Stropy v aplikaci omezují hodnoty příkazů. Hodnotu uloženou v boxu nastaví
 příslušnou entitou `_cfg`. Po restartu nebo aktualizaci proxy ověří kontrolní
 součet `ver` z čerstvých rámců boxu. Formát a počítadlo zápisů může využít
 ze zachovaných dat nebo obnovit z doloženého cloudového zápisu v archivu rámců.
+Při obnově z archivu použije i časový posun ověřený z čerstvých rámců.
+Po změně profilu potřebuje potvrzený zápis odpovídající novému profilu.
 V hybridním režimu může proxy při posunutém čase použít čas z běžných
 odpovědí cloudu. Profil `ver` dál ověřuje z čerstvých rámců boxu.
 Pokud diagnostika dál hlásí `cloud_evidence_pending`, proveďte jednu běžnou
@@ -54,9 +56,17 @@ Vlastní názvy v registru nebo na panelu se mohou lišit od ukázek.
 Pokud po snížení stropu nebo vypnutí zápisů zůstane na panelu starší
 ovladač, platí omezení z nastavení proxy.
 
-V hybridním režimu proxy po potvrzení příkazu nebo události změny čeká
-60 sekund na tabulku se správnou hodnotou. Pokud tabulka nepřijde, při
-dalším vhodném dotazu požádá box jednou o parametry přes `SA`.
+Při připojení ke cloudu proxy po potvrzení změny čeká na čerstvou hodnotu.
+Pro `tbl_batt_prms` a `tbl_invertor_prms` použije nejbližší očekávaný vzorek
+po změně (obvyklá perioda 5 a 10 minut) a minutu rezervy na doručení.
+Čerstvá ověřená hodnota z `tbl_actual` může čekání ukončit dřív.
+Pro nepravidelné tabulky, včetně režimu a nabíjecího limitu, čeká 60 sekund.
+U `tbl_boiler_prms` může požádat o tabulku hned na dalším vhodném dotazu.
+Pokud očekávaná hodnota nepřišla, jedno `SA` pokryje všechny změny,
+které už v okamžiku odeslání čekají na ověření. Od odeslání má každá
+tabulka 120 sekund na doručení.
+Automatické `SA` může použít i stejné otevřené spojení po změně potvrzené
+událostí boxu.
 Chybějící potvrzení příkazu řeší samostatně. Po 30 sekundách bez ACK
 nebo jednoznačné události změny zkusí běžný zápis nejvýš jednou znovu na
 vhodném dotazu boxu. K zápisu může použít `IsNewSet`, `IsNewFW` i

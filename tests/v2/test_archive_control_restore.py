@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from tests.v2.test_wire_profile_qualification import (
-    BOX_A, FW_A, FW_B, Clock, box_proof, cloud_setting, cloud_transaction, learner,
+    BOX_A, FW_A, FW_B, Clock, box_proof, cloud_setting, cloud_transaction, learner, shifted_actuals,
 )
 from twin.delivery import TwinDelivery
 from twin.state import TwinQueue
@@ -18,11 +18,11 @@ MODEL = (39, 0xBB59)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("live_setting_raced", [False, True])
-async def test_archive_restore_persists_maximum_counters_and_fences_live_setting(
-    tmp_path, monkeypatch, live_setting_raced,
+@pytest.mark.parametrize("race", [None, "live_setting", "box_clock"])
+async def test_archive_restore_persists_maximum_counters_and_fences_new_evidence(
+    tmp_path, monkeypatch, race,
 ):
-    """Publish a restored profile only after saving counters with no concurrent Cloud write."""
+    """Save counters and publish the profile only if the worker's proof is still current."""
     clock = Clock()
     capture_path = tmp_path / "payloads.db"
     counter_path = tmp_path / "counters.json"
@@ -37,22 +37,26 @@ async def test_archive_restore_persists_maximum_counters_and_fences_live_setting
     def archived(*_args, **_kwargs):
         return SimpleNamespace(msg_id=12500001, id_set=1700000003, include_tto=True, firmware=None)
 
-    async def read_on_worker(scan, path, device_id, profile, *, cutoff):
-        assert scan is archived and path == capture_path and device_id == BOX_A and cutoff > 0
+    async def read_on_worker(scan, path, device_id, profile, **options):
+        assert scan is archived and path == capture_path and device_id == BOX_A
         assert profile.zero_count == MODEL[0]
-        if live_setting_raced:
+        assert options == {"cutoff": delivery._archive_cutoff, "box_clock_offset": 0}
+        if race == "live_setting":
             raw = cloud_setting(clock, BOX_A, MODEL, include_tto=True, server_id=9)
             delivery.begin_cloud_setting(
                 device_id=BOX_A, table="tbl_box_prms", key="MODE", value=1, raw_text=raw.decode(),
             )
+        elif race == "box_clock":
+            shifted_actuals(delivery._profiles, clock, BOX_A, MODEL, 281)
+            assert delivery._profiles.box_clock_offset(BOX_A) == 281
         return scan()
 
-    monkeypatch.setattr("twin.delivery.scan_archive_enrollment", archived)
+    monkeypatch.setattr("twin.delivery.scan_archive_enrollment_with_clock", archived)
     monkeypatch.setattr("twin.delivery.asyncio.to_thread", read_on_worker)
-    assert await delivery.restore_archived_control(BOX_A) is not live_setting_raced
-    expected_reason = "cloud_evidence_pending" if live_setting_raced else "ready"
+    assert await delivery.restore_archived_control(BOX_A) is (race is None)
+    expected_reason = "cloud_evidence_pending" if race else "ready"
     assert delivery.profile_status(BOX_A).reason == expected_reason
-    expected_id_set = 1700000002 if live_setting_raced else 1700000003
+    expected_id_set = 1700000002 if race else 1700000003
     assert json.loads(counter_path.read_text(encoding="utf-8"))["devices"][BOX_A] == {
         "msg_id": 12500002, "id_set": expected_id_set,
     }

@@ -2,6 +2,16 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.2.0-rc.11] - Unreleased
+
+Hybridní režim lépe obnovuje spojení s OIG Cloudem a po výpadku postupně
+doposílá uložená měření. Proxy při změně nastavení počká na obvyklou tabulku
+boxu a chybějící údaje si dovyžádá společně. Obnova ověřeného profilu
+místního zápisu lépe pracuje s posunutými hodinami boxu.
+Lokální ovládání zůstává experimentální.
+
+[Poznámky k verzi pro uživatele Home Assistantu](addon/oig-proxy/CHANGELOG.md)
+
 ## [2.2.0-rc.10] - Unreleased
 
 Proxy lépe rozpozná potvrzenou změnu režimu a potvrzení korekce fází při
