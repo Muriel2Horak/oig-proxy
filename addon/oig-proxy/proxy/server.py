@@ -1072,14 +1072,16 @@ class ProxyServer:
         return None, park
 
     async def _ack_parked_history(self, frame: bytes, flow: _BoxCloudFlow) -> None:
+        box_writer = flow.box_writer
+        if box_writer is None:
+            raise OSError("Cannot acknowledge queued history without a BOX connection")
         traffic = flow.traffic
         # Keep local history replies behind preceding Cloud replies on this socket.
         if traffic is not None:
             until = time.monotonic() + REPLY_TIMEOUT_S
             while traffic.cloud_requests or flow.session_id in self._cloud_partial_sessions:
                 await asyncio.wait_for(traffic.archive_reply_barrier.wait(), max(0, until - time.monotonic()))
-        assert flow.box_writer is not None
-        await self._ack_box_history(frame, flow.box_writer, flow.capture_id, flow.peer)
+        await self._ack_box_history(frame, box_writer, flow.capture_id, flow.peer)
 
     async def _forward_box_bytes(
         self, data: bytes, frames: list[bytes], observed: list[_BoxFrameObservation],
