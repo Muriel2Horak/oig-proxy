@@ -30,7 +30,6 @@ import math
 import signal
 import sys
 import time
-from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -322,6 +321,10 @@ class ProxyApp:
             request_readback=lambda: self._admit_parameter_refresh("missing native readback"),
             on_phase_confirmation=self._on_phase_confirmation,
         )
+        self.proxy.configure_parameter_readback(
+            on_sa_confirmed=self._on_sa_confirmed,
+            actual_readbacks=self._actual_readbacks,
+        )
         if self.telemetry_collector is not None:
             self.proxy.mode_manager.on_hybrid_transition = self._on_hybrid_transition
         await self.proxy.start()
@@ -577,7 +580,7 @@ class ProxyApp:
             return
         self.parameter_refresh = ParameterRefreshScheduler(
             Path(path), manager.device_id,
-            request=self._queue_parameter_refresh, idle=self._parameter_refresh_idle,
+            request=self._queue_parameter_refresh, idle=self._daily_refresh_idle,
             interval_s=interval,
             after_operations=getattr(self.config, "parameter_refresh_after_operations", frozenset()),
         )
@@ -594,6 +597,18 @@ class ProxyApp:
                 except Exception:
                     logger.exception("Parameter refresh deferred after scheduler error")
 
+    def _daily_refresh_idle(self) -> bool:
+        return (self._parameter_refresh_idle() and self.proxy is not None
+                and not self.proxy.parameter_refresh_in_flight())
+
+    def _on_sa_confirmed(self, received_at: float) -> None:
+        if self.parameter_refresh is not None:
+            self.parameter_refresh.note_sa_confirmed(received_at)
+
+    def _actual_readbacks(self, device_id: str, fields: dict[str, str]) -> dict[tuple[str, str], str]:
+        processor = self.frame_processor
+        return processor.accepted_actual_readbacks(device_id, fields) if processor is not None else {}
+
     def _notify_parameter_confirmation(self, table: str, key: str, value: Any,
                                        source_dt: str | None, previous: dict[str, Any] | None) -> None:
         """Notify timer only from an accepted observation, never from cache replay."""
@@ -603,13 +618,7 @@ class ProxyApp:
         current = self.confirmed_store.snapshot()["tables"].get(table, {}).get("fields", {}).get(key)
         if current is None or current["sourceDT"] != source_dt or current["value"] != value:
             return
-        if (table, key) == ("tbl_box_prms", "SA") and value == 1:
-            stamp = FrameProcessor._parse_device_time(source_dt)
-            if stamp is not None:
-                if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=ZoneInfo("Europe/Prague"))
-                scheduler.note_sa_confirmed(stamp.timestamp())
-        elif previous is not None and previous.get("value") != value:
+        if previous is not None and previous.get("value") != value:
             scheduler.note_operation(table, key)
 
     def _handle_proxy_control(self, table: str, key: str, value: Any) -> bool:

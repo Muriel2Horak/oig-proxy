@@ -402,7 +402,7 @@ class TestStartupSequence:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     await app.startup()
 
@@ -436,7 +436,7 @@ class TestStartupSequence:
             status.run = AsyncMock()
             mock_status_class.return_value = status
 
-            proxy = AsyncMock()
+            proxy = AsyncMock(configure_parameter_readback=Mock())
             proxy.cloud_connects = 7
             proxy.cloud_disconnects = 3
             proxy.cloud_timeouts = 2
@@ -477,7 +477,7 @@ class TestStartupSequence:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     await app.startup()
 
@@ -506,7 +506,7 @@ class TestStartupSequence:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     await app.startup()
 
@@ -545,7 +545,7 @@ class TestStartupSequence:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     await app.startup()
 
@@ -569,7 +569,7 @@ class TestStartupSequence:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     await app.startup()
 
@@ -610,7 +610,7 @@ class TestStartupSequence:
                         mock_twin_delivery_class.return_value = Mock()
 
                         with patch("main.ProxyServer") as mock_proxy_class:
-                            mock_proxy = AsyncMock()
+                            mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                             mock_proxy.mode_manager = Mock()
                             mock_proxy_class.return_value = mock_proxy
                             await app.startup()
@@ -650,7 +650,7 @@ class TestStartupSequence:
                     mock_handler_class.return_value = mock_handler
 
                     with patch("main.ProxyServer") as mock_proxy_class:
-                        mock_proxy = AsyncMock()
+                        mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                         mock_proxy_class.return_value = mock_proxy
                         await app.startup()
 
@@ -678,7 +678,7 @@ class TestStartupSequence:
 
                 with patch("main.TwinControlHandler") as mock_handler_class:
                     with patch("main.ProxyServer") as mock_proxy_class:
-                        mock_proxy = AsyncMock()
+                        mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                         mock_proxy_class.return_value = mock_proxy
                         await app.startup()
 
@@ -943,7 +943,7 @@ class TestIntegrationFlow:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
 
                     with patch("main.TwinControlHandler") as mock_handler_class:
@@ -1064,7 +1064,7 @@ class TestErrorHandling:
                 mock_mqtt_class.return_value = mock_mqtt
 
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     result = await app.startup()
 
@@ -1083,7 +1083,7 @@ class TestErrorHandling:
 
             with patch("main.MQTTClient", return_value=None):
                 with patch("main.ProxyServer") as mock_proxy_class:
-                    mock_proxy = AsyncMock()
+                    mock_proxy = AsyncMock(configure_parameter_readback=Mock())
                     mock_proxy_class.return_value = mock_proxy
                     result = await app.startup()
 

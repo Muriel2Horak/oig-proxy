@@ -18,7 +18,7 @@ from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
-from protocol.archive_enrollment import scan_archive_enrollment
+from protocol.archive_enrollment import scan_archive_enrollment_with_clock
 from protocol.frames import build_setting_frame, czech_local_datetime_from_epoch
 from protocol.parser import parse_parameter_change, same_setting_value
 from protocol.ver_profile import (
@@ -54,7 +54,8 @@ _CLOUD_OBSERVATION_TIMEOUT_S = 60.0
 _POLL_SKIP_LOG_INTERVAL_S = 30.0
 _POLL_SKIP_LOG_KEYS = 128
 _MODE_SETTING = ("tbl_box_prms", "MODE")
-_TRIGGER_ONLY_SETTINGS = frozenset({("tbl_box_prms", "SA"), ("tbl_box_prms", "RQRESET")})
+_READBACK_SETTING = ("tbl_box_prms", "SA")
+_TRIGGER_ONLY_SETTINGS = frozenset({_READBACK_SETTING, ("tbl_box_prms", "RQRESET")})
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,7 @@ class _LocalInflight:
     retain_receipt: bool = False
     online_poll: bytes | None = None
     early_mode_transition: _EarlyModeTransition | None = None
+    readback_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,16 @@ class _OnlineReceipt:
     stamp: datetime
     retry_audit_id: str | None = None
     replayed_targets: frozenset[tuple[str, str]] = frozenset()
+    readback_only: bool = False
+
+
+@dataclass(frozen=True)
+class _PollSlot:
+    """Bind poll ownership to the socket and its permitted readback use."""
+
+    session_id: str | None
+    previous: _OnlineReceipt | None
+    readback_only: bool
 
 
 @dataclass(frozen=True)
@@ -266,9 +278,11 @@ class TwinDelivery:
             return False
         self._archive_attempts[device_id] = basis
         model, epoch = basis
+        box_clock_offset = self._profiles.box_clock_offset(device_id)
         revision = self._archive_cloud_revision[device_id]
         historical = await asyncio.to_thread(
-            scan_archive_enrollment, path, device_id, model, cutoff=self._archive_cutoff,
+            scan_archive_enrollment_with_clock, path, device_id, model, cutoff=self._archive_cutoff,
+            box_clock_offset=box_clock_offset,
         )
         if historical is None or self._archive_cloud_revision[device_id] != revision:
             return False
@@ -869,17 +883,27 @@ class TwinDelivery:
     def record_poll_skip(
         self, device_id: str, session_id: str | None, reason: str, *, stage: str = "delivery",
     ) -> None:
+        """Log a blocked manual request while preserving idle poll silence."""
+        self._record_poll_skip(device_id, session_id, reason, stage=stage)
+
+    def record_readback_poll_skip(
+        self, device_id: str, session_id: str | None, reason: str, *, stage: str = "delivery",
+    ) -> None:
+        """Explain a due automatic readback even before it enters the queue."""
+        self._record_poll_skip(device_id, session_id, reason, stage=stage, readback_due=True)
+
+    def _record_poll_skip(
+        self, device_id: str, session_id: str | None, reason: str, *, stage: str = "delivery",
+        readback_due: bool = False,
+    ) -> None:
         """Log the blocker while local work exists, without expiring or selecting anything."""
         if not logger.isEnabledFor(logging.INFO):
             return
         pending = next(iter(self._twin_queue.get_pending(device_id=device_id, unsent_only=True)), None)
         local = self._local_inflight
-        if pending is None:
-            if local is None or local.device_id != device_id:
-                return
-            audit_id = local.request.audit_id
-        else:
-            audit_id = pending.audit_id
+        audit_id = self._poll_skip_audit_id(device_id, pending, local, readback_due)
+        if audit_id is None:
+            return
         key = (device_id, stage, reason)
         now = time.monotonic()
         previous = self._poll_skip_logs.get(key)
@@ -892,9 +916,24 @@ class TwinDelivery:
         logger.info(
             "Setting poll skipped stage=%s reason=%s box_id=%s session=%s target=%s inflight=%s",
             stage, reason, self._poll_log_label(device_id), self._poll_log_label(session_id or "-"),
-            self._poll_log_label(pending.table, pending.key) if pending is not None else "-",
+            self._poll_target_label(pending, readback_due),
             self._poll_inflight_label(device_id, local),
         )
+
+    @staticmethod
+    def _poll_skip_audit_id(
+        device_id: str, pending: TwinSetting | None, local: _LocalInflight | None, readback_due: bool,
+    ) -> str | None:
+        if pending is not None:
+            return pending.audit_id
+        if local is not None and local.device_id == device_id:
+            return local.request.audit_id
+        return "readback" if readback_due else None
+
+    def _poll_target_label(self, pending: TwinSetting | None, readback_due: bool) -> str:
+        if pending is not None:
+            return self._poll_log_label(pending.table, pending.key)
+        return self._poll_log_label(*_READBACK_SETTING) if readback_due else "-"
 
     @staticmethod
     def _poll_log_label(*parts: str) -> str:
@@ -910,7 +949,7 @@ class TwinDelivery:
         return "cloud:legacy" if self._cloud_legacy_sessions else "-"
 
     def _poll_ownership_blocker(
-        self, device_id: str, session_id: str | None, previous: _OnlineReceipt | None,
+        self, device_id: str, slot: _PollSlot,
     ) -> str | None:
         if not self._box_writes_enabled:
             return "writes_disabled"
@@ -918,11 +957,12 @@ class TwinDelivery:
             return "local_setting_inflight"
         if self.is_cloud_inflight(device_id):
             return "cloud_setting_inflight"
-        if session_id is not None:
-            if session_id in self._generic_reply_quarantine:
-                return "reply_quarantine"
-            if session_id in self._used_local_sessions and previous is None:
-                return "missing_session_receipt"
+        if slot.session_id is None:
+            return None
+        if slot.session_id in self._generic_reply_quarantine and not slot.readback_only:
+            return "reply_quarantine"
+        if slot.session_id in self._used_local_sessions and slot.previous is None:
+            return "missing_session_receipt"
         return None
 
     @staticmethod
@@ -931,11 +971,15 @@ class TwinDelivery:
     ) -> str | None:
         if online_poll is None:
             return "receipt_requires_online_poll"
-        if online_poll == previous.poll:
+        if TwinDelivery._poll_repeats_receipt(previous, online_poll):
             return "duplicate_poll"
         if previous.device_id != device_id or previous.profile_status != status:
             return "receipt_context_changed"
         return None
+
+    @staticmethod
+    def _poll_repeats_receipt(previous: _OnlineReceipt, online_poll: bytes) -> bool:
+        return online_poll == previous.poll and not previous.readback_only
 
     @staticmethod
     def _counter_poll_blocker(counters: _CounterState) -> str:
@@ -958,17 +1002,20 @@ class TwinDelivery:
         self._expire_local_inflight()
         self._expire_waiting()
         previous = self._online_receipts.get(session_id) if session_id is not None else None
-        blocker = self._poll_ownership_blocker(device_id, session_id, previous)
+        pending = self._twin_queue.get_pending(device_id=device_id, unsent_only=True)
+        readback_due = admit_if_idle is not None
+        readback_only = bool(readback_due and not pending and previous is not None and previous.readback_only)
+        slot = _PollSlot(session_id, previous, readback_only)
+        blocker = self._poll_ownership_blocker(device_id, slot)
         if blocker is not None:
-            self.record_poll_skip(device_id, session_id, blocker)
+            self._record_poll_skip(device_id, session_id, blocker, readback_due=readback_due)
             return []
         status = self._refresh_profile_status(device_id)
         if previous is not None:
             blocker = self._receipt_poll_blocker(previous, online_poll, device_id, status)
             if blocker is not None:
-                self.record_poll_skip(device_id, session_id, blocker)
+                self._record_poll_skip(device_id, session_id, blocker, readback_due=readback_due)
                 return []
-        pending = self._twin_queue.get_pending(device_id=device_id, unsent_only=True)
         if previous is not None and previous.retry_audit_id is not None and buffered_reply:
             self.record_poll_skip(device_id, session_id, "buffered_previous_receipt")
             return []
@@ -980,16 +1027,12 @@ class TwinDelivery:
         offset = timedelta(seconds=self._profiles.box_clock_offset(device_id))
         wire_epoch = int((datetime.now(timezone.utc) + offset).timestamp())
         if not pending and admit_if_idle is not None and status.profile is not None:
-            try:
-                self._allocate_msg_id(counters)
-                self._allocate_id_set(counters, wire_epoch)
-            except ValueError:
-                return []
-            if admit_if_idle():
-                pending = self._twin_queue.get_pending(device_id=device_id, unsent_only=True)
+            pending = self._admit_pending_readback(device_id, session_id, counters, wire_epoch, admit_if_idle)
         if not pending:
             return []
         source = pending[0]
+        if readback_only and (source.table, source.key, source.value) != (*_READBACK_SETTING, 1):
+            return []
         if source.table == "proxy_control" or not is_setting_allowed(
             source.table, source.key, power_limits=self._power_limits,
         ):
@@ -1028,7 +1071,9 @@ class TwinDelivery:
             return []
         request = _SelectedRequest.capture(source, normalized)
         now = time.monotonic()
-        self._local_inflight = _LocalInflight(request, device_id, now, session_id, status, online_poll=online_poll)
+        self._local_inflight = _LocalInflight(
+            request, device_id, now, session_id, status, online_poll=online_poll, readback_only=readback_only,
+        )
         self._inflight_key = (request.table, request.key)
         self._inflight_device_id = device_id
         self._inflight_since = now
@@ -1040,6 +1085,22 @@ class TwinDelivery:
         logger.info("TwinDelivery: selected %s:%s=%s (device=%s, session=%s)",
                     request.table, request.key, request.value, device_id, session_id)
         return [selected]
+
+    def _admit_pending_readback(
+        self, device_id: str, session_id: str | None, counters: _CounterState, wire_epoch: int,
+        admit_if_idle: Callable[[], bool],
+    ) -> list[TwinSetting]:
+        """Check outbound counter capacity before asking the scheduler to enqueue."""
+        try:
+            self._allocate_msg_id(counters)
+            self._allocate_id_set(counters, wire_epoch)
+        except ValueError:
+            self.record_readback_poll_skip(device_id, session_id, self._counter_poll_blocker(counters))
+            return []
+        if admit_if_idle():
+            return self._twin_queue.get_pending(device_id=device_id, unsent_only=True)
+        self.record_readback_poll_skip(device_id, session_id, "readback_admission_deferred")
+        return []
 
     @staticmethod
     def _device_time(value: Any) -> datetime | None:
@@ -1137,8 +1198,7 @@ class TwinDelivery:
         if not self._twin_queue.mark_sent(context.request.source):
             self._finish_local()
             raise ValueError("Selected manual request was replaced or cleared before send")
-        if session_id is not None:
-            self._used_local_sessions.add(session_id)
+        self._consume_poll_slot(context, previous)
         identity = self._cloud_pending_key(context.device_id, setting.table, setting.key)
         clock_epoch = self._profiles.box_clock_epoch(context.device_id)
         observation = self._box_observations.get(context.device_id)
@@ -1155,6 +1215,13 @@ class TwinDelivery:
         for cloud in self._iter_cloud_pending():
             self._quarantine_overlaps(cloud)
         self._profiles.note_local_send(session_id)
+
+    def _consume_poll_slot(self, context: _LocalInflight, previous: _OnlineReceipt | None) -> None:
+        if context.session_id is None:
+            return
+        if previous is not None and context.readback_only:
+            self._online_receipts[context.session_id] = replace(previous, readback_only=False)
+        self._used_local_sessions.add(context.session_id)
 
     def valid_local_poll(self, raw: bytes, device_id: str) -> bool:
         """Qualify the poll with the current proof before opening a write slot."""
@@ -1175,12 +1242,8 @@ class TwinDelivery:
         retained = self._event_receipts.get(session_id) if session_id is not None else None
         self._expire_local_inflight()
         self._expire_waiting()
-        context = retained or self._local_receipt_context(session_id)
-        if (context is None or context.wire_dt is None or context.session_id != session_id
-                or context.reply_ambiguous
-                or (retained is None and session_id in self._generic_reply_quarantine)
-                or (retained is not None and time.monotonic() >= self._local_deadline(context))
-                or self.profile_status(context.device_id) != context.profile_status):
+        context = self._reply_receipt_context(session_id, retained)
+        if context is None or context.wire_dt is None:
             return None
         profile = context.profile_status.profile
         fields = parse_setting_reply(raw, context.device_id, profile) if profile is not None else None
@@ -1192,13 +1255,14 @@ class TwinDelivery:
         result = fields["Result"]
         if retained is not None and result != "ACK":
             return None
-        named = fields.get("TblName") == table and (
-            fields.get("ToDo") == key or fields.get("TblItem") == key
-        )
+        named = self._reply_names_setting(fields, table, key)
         if fields.get("Reason") != "Setting" and not named:
             return None
         previous = self._online_receipts.get(session_id) if session_id is not None else None
         has_wire_echo = "ID" in fields or "ID_Set" in fields
+        if context.readback_only and not has_wire_echo:
+            # The preceding confirmed Setting can still produce an anonymous reply.
+            return None
         stamp = self._local_box_time(context.device_id, fields.get("Rdt"))
         if "Rdt" in fields and (stamp is None or stamp.tzinfo != context.wire_dt.tzinfo
                                 or stamp < context.wire_dt - _RECEIPT_CLOCK_SKEW):
@@ -1229,7 +1293,7 @@ class TwinDelivery:
         reply = {"result": result, "reason": fields.get("Reason", "")}
         if stamp is not None:
             reply["rdt"] = fields["Rdt"]
-        if result == "ACK" and replay_fence and has_wire_echo:
+        if has_wire_echo and (context.readback_only or result == "ACK" and replay_fence):
             reply["wire_echo"] = "true"
         if named:
             reply.update(table=table, todo=key)
@@ -1237,6 +1301,31 @@ class TwinDelivery:
             self._event_receipts.pop(session_id, None)
             reply["event_confirmed"] = "true"
         return reply
+
+    @staticmethod
+    def _reply_names_setting(fields: dict[str, str], table: str, key: str) -> bool:
+        return fields.get("TblName") == table and (fields.get("ToDo") == key or fields.get("TblItem") == key)
+
+    def _valid_receipt_context(self, context: _LocalInflight | None, session_id: str | None) -> bool:
+        return (
+            context is not None and context.wire_dt is not None and context.session_id == session_id
+            and not context.reply_ambiguous
+        )
+
+    def _reply_receipt_context(
+        self, session_id: str | None, retained: _LocalInflight | None,
+    ) -> _LocalInflight | None:
+        context = retained or self._local_receipt_context(session_id)
+        if context is None or not self._valid_receipt_context(context, session_id):
+            return None
+        if retained is not None:
+            if time.monotonic() >= self._local_deadline(context):
+                return None
+        elif session_id in self._generic_reply_quarantine and not context.readback_only:
+            return None
+        if self.profile_status(context.device_id) != context.profile_status:
+            return None
+        return context
 
     def acknowledge(self, table: str, key: str, session_id: str | None = None,
                     *, result: str = "ack", evidence: str = "protocol_ack", reason: str = "",
@@ -1246,9 +1335,10 @@ class TwinDelivery:
             raise ValueError("Acknowledgment result must be ack or nack")
         self._expire_local_inflight()
         context = self._local_receipt_context(session_id)
-        if (context is None or context.wire_dt is None or context.session_id != session_id
+        if (not self._valid_receipt_context(context, session_id) or context is None
                 or (context.request.table, context.request.key) != (table, key)
-                or context.reply_ambiguous or context.session_id in self._generic_reply_quarantine
+                or (context.readback_only and not receipt_echoed)
+                or (context.session_id in self._generic_reply_quarantine and not context.readback_only)
                 or self.profile_status(context.device_id) != context.profile_status):
             return False
         late = context is not self._local_inflight
@@ -1268,24 +1358,42 @@ class TwinDelivery:
             logger.info("BOX rejected %s:%s; waiting to try once on another connection", table, key)
         else:
             self._emit_result(setting, result, source="local", evidence=evidence, reason=reason)
-        if session_id is not None:
-            stamp = self._local_box_time(context.device_id, receipt_dt)
-            previous = self._online_receipts.get(session_id)
-            replayed_targets = previous.replayed_targets if previous is not None else frozenset()
-            if previous is not None and not late and previous.retry_audit_id == setting.audit_id:
-                replayed_targets |= {(table, key)}
-            if stamp is None and replayed_targets and receipt_echoed:
-                stamp = context.wire_dt
-            if (result == "ack" and context.online_poll is not None and stamp is not None
-                    and stamp.tzinfo is None and context.wire_dt.tzinfo is None
-                    and stamp >= context.wire_dt - _RECEIPT_CLOCK_SKEW):
-                self._online_receipts[session_id] = _OnlineReceipt(
-                    context.online_poll, context.device_id, context.profile_status,
-                    max(stamp, context.wire_dt) if replayed_targets else stamp, replayed_targets=replayed_targets,
-                )
-            else:
-                self._generic_reply_quarantine.add(session_id)
+        self._remember_protocol_receipt(context, result, receipt_dt, receipt_echoed, late)
         return True if late else self._finish_local()
+
+    def _protocol_receipt_state(
+        self, context: _LocalInflight, receipt_dt: str | None, receipt_echoed: bool, late: bool,
+    ) -> tuple[datetime | None, frozenset[tuple[str, str]]]:
+        stamp = self._local_box_time(context.device_id, receipt_dt)
+        previous = self._online_receipts.get(context.session_id or "")
+        replayed_targets = previous.replayed_targets if previous is not None else frozenset()
+        if previous is not None and not late and previous.retry_audit_id == context.request.audit_id:
+            replayed_targets |= {(context.request.table, context.request.key)}
+        if stamp is None and replayed_targets and receipt_echoed:
+            stamp = context.wire_dt
+        return stamp, replayed_targets
+
+    def _remember_protocol_receipt(
+        self, context: _LocalInflight, result: str, receipt_dt: str | None, receipt_echoed: bool, late: bool,
+    ) -> None:
+        session_id = context.session_id
+        if session_id is None:
+            return
+        stamp, replayed_targets = self._protocol_receipt_state(context, receipt_dt, receipt_echoed, late)
+        if context.readback_only:
+            self._remember_readback_slot(context)
+            return
+        if (result == "ack" and context.online_poll is not None and stamp is not None
+                and stamp.tzinfo is None and context.wire_dt is not None and context.wire_dt.tzinfo is None
+                and stamp >= context.wire_dt - _RECEIPT_CLOCK_SKEW):
+            self._online_receipts[session_id] = _OnlineReceipt(
+                context.online_poll, context.device_id, context.profile_status,
+                max(stamp, context.wire_dt) if replayed_targets else stamp, replayed_targets=replayed_targets,
+            )
+            return
+        self._generic_reply_quarantine.add(session_id)
+        if result == "ack" and (context.request.table, context.request.key) not in _TRIGGER_ONLY_SETTINGS:
+            self._remember_readback_slot(context)
 
     def acknowledge_local_event(self, device_id: str, table: str, key: str,
                                 value: Any, source_dt: str | None = None,
@@ -1520,11 +1628,24 @@ class TwinDelivery:
                                 SettingStep.ACK_TBL_EVENTS, confirmed_value=value,
                                 session_id=context.session_id or "")
         self._emit_result(setting, "ack", source="local", evidence=evidence)
-        if context.session_id is not None:
-            self._generic_reply_quarantine.add(context.session_id)
-            if context.retain_receipt:
-                self._event_receipts[context.session_id] = context
+        self._remember_event_receipt(context)
         return True if late else self._finish_local()
+
+    def _remember_event_receipt(self, context: _LocalInflight) -> None:
+        if context.session_id is None:
+            return
+        self._generic_reply_quarantine.add(context.session_id)
+        if context.retain_receipt:
+            self._event_receipts[context.session_id] = context
+        if context.readback_only or (context.request.table, context.request.key) not in _TRIGGER_ONLY_SETTINGS:
+            self._remember_readback_slot(context)
+
+    def _remember_readback_slot(self, context: _LocalInflight) -> None:
+        """Let automatic SA follow confirmed writes while ordinary writes stay fenced."""
+        if context.session_id is not None and context.online_poll is not None and context.wire_dt is not None:
+            self._online_receipts[context.session_id] = _OnlineReceipt(
+                context.online_poll, context.device_id, context.profile_status, context.wire_dt, readback_only=True,
+            )
 
     def _clear_global_inflight(self) -> None:
         self._inflight_key = None

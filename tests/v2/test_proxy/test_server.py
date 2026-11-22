@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
+from pathlib import Path
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,6 +22,8 @@ from parameter_refresh import ParameterReadbackRefresh
 from protocol.frame import MAX_FRAME_BYTES, build_frame
 from protocol.frames import czech_local_datetime_from_epoch
 from protocol.ver_profile import native_frame_fields
+from sensor.loader import SensorMapLoader
+from sensor.processor import FrameProcessor
 from settings_constraints import PowerControlLimits
 from twin.handler import TwinControlHandler
 from tests.v2.test_integration import (
@@ -824,6 +827,52 @@ async def test_readback_survives_failed_send_and_existing_sa_covers_batch(dummy_
         assert request.call_count == (0 if existing_sa else 2)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("envelope, expected_sa", [
+    ("actual", False), ("combined", False), ("bad_combined_crc", True), ("isnew", True),
+])
+async def test_maxfg_readback_survives_a_following_native_frame(
+    dummy_writer_factory, envelope, expected_sa,
+):
+    proxy, delivery, _queue, wire_clock = _qualified_transport(make_config())
+    sensor_map = SensorMapLoader(str(Path(__file__).parents[3] / "addon/oig-proxy/sensor_map.json"))
+    sensor_map.load()
+    processor = FrameProcessor(MagicMock(), sensor_map, maxfg_as_export_limit_readback=True)
+    target_table, target_key = "tbl_invertor_prm1", "P_MAX_FEED_GRID"
+    wire_clock.now = time.time() - 4
+    await processor.process(TEST_BOX, target_table, {target_key: 5333, "_dt": wire_clock.stamp()})
+    wire_clock.step()
+    elapsed = [0.0]
+    proxy._readback = ParameterReadbackRefresh(clock=lambda: elapsed[0])
+    proxy._readback.note_ack(
+        target_table, target_key, 5000, box_time=delivery.box_readback_time(TEST_BOX, wire_clock.stamp()),
+    )
+    proxy._request_readback = MagicMock(return_value=None)
+    proxy._actual_readbacks = processor.accepted_actual_readbacks
+    proxy.on_frame = lambda data: processor.process(TEST_BOX, data["_table"], data)
+
+    wire_clock.step()
+    if envelope in {"combined", "bad_combined_crc"}:
+        actual = _combined_ack(wire_clock)
+        if envelope == "bad_combined_crc":
+            actual = actual.replace(b"<LOAD>450</LOAD>", b"<LOAD>451</LOAD>")
+    else:
+        prefix = "<Result>IsNewSet</Result>" if envelope == "isnew" else "<TblName>tbl_actual</TblName>"
+        actual = native(
+            f"{prefix}<ID_Device>{TEST_BOX}</ID_Device><DT>{wire_clock.stamp()}</DT>"
+            "<Reason>Table</Reason><MAXFG>5000</MAXFG>", MODEL,
+        )
+    following = native(
+        f"<TblName>tbl_box_prms</TblName><ID_Device>{TEST_BOX}</ID_Device>"
+        f"<DT>{wire_clock.stamp()}</DT><Reason>Table</Reason><MODE>3</MODE>", MODEL,
+    )
+    writer = dummy_writer_factory()
+    result = await _send_poll(proxy, writer, poll=actual + following)
+    assert b"".join(call.args[0] for call in result.write.call_args_list) == actual + following
+    elapsed[0] = 60.0
+    assert proxy._readback.is_due() is expected_sa
+
+
 def _phase_table(stamp, value, *, subdevice=0, device=TEST_BOX):
     return native(
         f"<TblName>tbl_invertor_prm1</TblName><ID_Device>{device}</ID_Device>"
@@ -942,7 +991,7 @@ async def test_phase_write_needs_fresh_matching_table_after_ack(dummy_writer_fac
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response_s", [20, 90], ids=["within-sa-window", "at-deadline"])
+@pytest.mark.parametrize("response_s", [100, 120], ids=["within-sa-window", "at-deadline"])
 async def test_phase_ack_uses_response_window_after_delayed_sa(dummy_writer_factory, monkeypatch, response_s):
     proxy, delivery, queue, clock = _qualified_transport(make_config())
     proxy.on_phase_confirmation = confirmed = AsyncMock()
@@ -987,7 +1036,7 @@ async def test_phase_ack_uses_response_window_after_delayed_sa(dummy_writer_fact
         await _send_poll(proxy, response_writer, session_id="readback-flow", poll=table)
     confirmed.assert_not_awaited()
     await _send_poll(proxy, response_writer, session_id="readback-flow", poll=_phase_table(clock.stamp(), 92))
-    if response_s == 20:
+    if response_s == 100:
         confirmed.assert_awaited_once_with(TEST_BOX, "P_CAL_R", "92", _utc_phase_stamp(clock), "ack_and_table")
     else:
         confirmed.assert_not_awaited()

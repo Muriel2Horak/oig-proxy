@@ -23,6 +23,18 @@ def _read_power_limit(variable: str, maximum: int) -> int:
     return value if 0 <= value <= maximum else 0
 
 
+def _parameter_refresh_interval() -> float:
+    explicit_interval = os.environ.get("PARAMETER_REFRESH_INTERVAL_S")
+    try:
+        if explicit_interval is not None:
+            interval = float(explicit_interval)
+        else:
+            interval = float(os.environ.get("FULL_REFRESH_INTERVAL_H", "0")) * 3600
+    except ValueError:
+        return 0.0
+    return interval if math.isfinite(interval) and interval >= 0 else 0.0
+
+
 class Config:
     """Konfigurace proxy nactena z env vars."""
 
@@ -35,6 +47,7 @@ class Config:
     cloud_port: int = 5710
     cloud_connect_timeout: float = 10.0
     cloud_ack_timeout: float = 30.0
+    cloud_backlog_path: str = "/data/cloud_history.db"
     local_getactual_enabled: bool = False
     local_getactual_interval_s: int = 10
 
@@ -62,6 +75,7 @@ class Config:
     proxy_mode: str = "online"
     hybrid_retry_interval: int = 60
     hybrid_fail_threshold: int = 3
+    hybrid_box_first_frame_timeout: float = 30.0
 
     # Logging
     log_level: str = "INFO"
@@ -148,11 +162,7 @@ class Config:
             "HA_MQTT_BIRTH_TOPIC", "homeassistant/status")
         self.ha_mqtt_birth_payload = os.environ.get(
             "HA_MQTT_BIRTH_PAYLOAD", "online")
-        try:
-            interval = float(os.environ.get("PARAMETER_REFRESH_INTERVAL_S", "0"))
-        except ValueError:
-            interval = 0.0
-        self.parameter_refresh_interval_s = interval if math.isfinite(interval) and interval >= 0 else 0.0
+        self.parameter_refresh_interval_s = _parameter_refresh_interval()
         self.parameter_refresh_state_path = os.environ.get(
             "PARAMETER_REFRESH_STATE_PATH", "/data/parameter_refresh.json")
 
@@ -182,6 +192,7 @@ class Config:
         self.proxy_mode = os.environ.get("PROXY_MODE", "online").strip().lower()
         self.hybrid_retry_interval = int(os.environ.get("HYBRID_RETRY_INTERVAL", "60"))
         self.hybrid_fail_threshold = int(os.environ.get("HYBRID_FAIL_THRESHOLD", "3"))
+        self.hybrid_box_first_frame_timeout = float(os.environ.get("HYBRID_BOX_FIRST_FRAME_TIMEOUT", "30.0"))
 
         self.max_concurrent_connections = int(
             os.environ.get("MAX_CONCURRENT_CONNECTIONS", "5")

@@ -38,10 +38,31 @@ do offline režimu. Výchozí práh aplikace je jedna chyba.
 
 Po době `hybrid_retry_interval` zkusí proxy cloud při příštím připojení
 boxu. Výchozí interval je 60 sekund. Než zkouška skončí, obslouží další
-spojení místně. Na první platnou odpověď zkouška čeká nejvýše
-`cloud_ack_timeout`. Platný rámec z cloudu předaný boxu potvrdí návrat
+spojení místně. Po navázání TCP má box `hybrid_box_first_frame_timeout`
+na první celý rámec, ve výchozím nastavení 30 sekund. Po předání tohoto
+rámce začne běžet `cloud_ack_timeout` na odpověď cloudu. Platný rámec
+z cloudu předaný boxu potvrdí návrat
 do online provozu. Proxy uzavře nečinná místní spojení a rozpracované
 lokální zápisy nechá doběhnout. Když pokus selže, prodleva začne znovu.
+
+### Doposlání historie po výpadku
+
+Proxy při místní obsluze uloží archivní tabulky do trvalé fronty před
+odesláním potvrzení boxu. Ukládá původní rámec včetně času měření a fronta
+přežije restart doplňku. Při obnovení spojení posílá nejstarší položku
+jako první, s odstupem alespoň 10 sekund. Nově přijímané archivní tabulky
+se zařadí za dřívější položky, dokud se fronta nevyprázdní.
+
+Položku proxy odstraní po platném potvrzení od OIG Cloudu. Při přerušení
+spojení nebo chybě potvrzení zůstane ve frontě a další pokus pošle stejný
+rámec. Fronta obsahuje archivní data sítě, zátěže, FVE, baterie, boxu a
+střídače. Živá data `tbl_actual`, události a konfigurační příkazy procházejí
+běžnou cestou. Při ručním režimu `offline` se fronta pouze plní a doposílání
+začne po návratu do `hybrid` nebo `online`.
+
+Fronta je v `/data/cloud_history.db` a uchovává původní rámce včetně ID
+boxu. Funguje i s vypnutým záznamem rámců a telemetrií. Při delším výpadku
+může soubor růst, protože proxy čeká na potvrzení OIG Cloudu.
 
 ```yaml
 proxy_mode: hybrid
@@ -49,10 +70,11 @@ hybrid_fail_threshold: 1
 hybrid_retry_interval: 60
 ```
 
-Hybrid použijte při prvním ověření lokálního ovládání. Proxy potřebuje
-vidět běžné rámce boxu, firmware a potvrzenou změnu z cloudu. Po přechodu
-na místní odpovědi jsou místní příkazy dostupné po dobu, kdy profil zůstává
-připravený. Aktuální stav ověření najdete v diagnostice.
+Hybrid použijte při prvním ověření lokálního ovládání. Proxy ověřuje profil
+z čerstvých rámců boxu a může obnovit údaje o zápisu z dříve potvrzeného
+cloudového příkazu. Pokud je potřeba nový cloudový zápis, diagnostika
+zobrazí `cloud_evidence_pending`. Po přechodu na místní odpovědi jsou místní
+příkazy dostupné po dobu, kdy je profil připravený.
 
 ## Offline
 

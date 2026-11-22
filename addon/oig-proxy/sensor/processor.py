@@ -11,13 +11,14 @@ from sensor.fault_summary import FaultSummary
 from sensor.loader import SensorMapLoader
 from sensor.warnings import warning_state
 from mqtt.client import MQTTClient
-from protocol.parser import parse_mode_start
+from protocol.parser import parse_mode_start, same_setting_value
 
 logger = logging.getLogger(__name__)
 
 ISNEW_TABLES = {"IsNewFW", "IsNewSet", "IsNewWeather"}
 _EXPORT_LIMIT_TABLE = "tbl_invertor_prm1"
 _EXPORT_LIMIT_KEY = "P_MAX_FEED_GRID"
+_EXPORT_LIMIT_ALIAS = "MAXFG"
 _MAX_EXPORT_LIMIT_WATTS = (1 << 32) - 1  # Canonical field encoding, independent of write policy.
 _BOX_MODE_TABLE = "tbl_box_prms"
 _FAULT_SUMMARY_TABLE = "fault_summary"
@@ -84,6 +85,7 @@ class FrameProcessor:
         self._table_baselines: set[tuple[str, str]] = set()
         self._maxfg_as_export_limit_readback = maxfg_as_export_limit_readback
         self._direct_export_limits: dict[str, datetime] = {}
+        self._accepted_actual_export_limits: dict[str, tuple[datetime, int]] = {}
         self._export_limit_firmware: dict[str, str] = {}
         self._fault_summaries: dict[str, FaultSummary] = {}
         self._fault_summary_enabled = False
@@ -221,6 +223,7 @@ class FrameProcessor:
             if identity[0] != device_id
         }
         self._direct_export_limits.pop(device_id, None)
+        self._accepted_actual_export_limits.pop(device_id, None)
         self.mark_fault_summary_unavailable(device_id)
         if self._state_store is not None and self._state_store.device_id == device_id:
             self._state_store.reset_ordering_epoch(reason)
@@ -307,6 +310,35 @@ class FrameProcessor:
         if self._accept_field_time(device_id, _EXPORT_LIMIT_TABLE, _EXPORT_LIMIT_KEY, stamp, 0):
             return watts
         return None
+
+    def accepted_actual_readbacks(
+        self, device_id: str, fields: dict[str, str],
+    ) -> dict[tuple[str, str], str]:
+        """Return aliases accepted while processing this qualified native table."""
+        accepted = self._accepted_actual_export_limits.get(device_id)
+        if (
+            accepted is None or fields.get("TblName") != "tbl_actual"
+            or fields.get("Reason") != "Table" or fields.get("ID_Device") != device_id
+            or fields.get("ID_SubD", "0") != "0"
+        ):
+            return {}
+        stamp, watts = accepted
+        identity = (device_id, _EXPORT_LIMIT_TABLE, _EXPORT_LIMIT_KEY)
+        stored = self._last_table_values.get((device_id, _EXPORT_LIMIT_TABLE), {})
+        if (
+            self._parse_device_time(fields.get("DT")) != stamp
+            or not same_setting_value(watts, fields.get(_EXPORT_LIMIT_ALIAS))
+            or self._field_device_times.get(identity) != (stamp, 0)
+            or _positive_integer_watts(stored.get(_EXPORT_LIMIT_KEY)) != watts
+        ):
+            return {}
+        return {(_EXPORT_LIMIT_TABLE, _EXPORT_LIMIT_KEY): str(watts)}
+
+    def _remember_actual_export_limit(
+        self, device_id: str, stamp: datetime | None, watts: int | None,
+    ) -> None:
+        if watts is not None and stamp is not None:
+            self._accepted_actual_export_limits[device_id] = (stamp, watts)
 
     def _observe_firmware(
         self, device_id: str, firmware: str,
@@ -494,6 +526,7 @@ class FrameProcessor:
             table: Table name (e.g., "tbl_actual").
             data: Parsed frame data dictionary.
         """
+        self._accepted_actual_export_limits.pop(device_id, None)
         if not data:
             return
 
@@ -682,13 +715,16 @@ class FrameProcessor:
                     mirrored[key] = value
                     mirrored.update(warning_state(key, value, mirror_metadata.get("warnings_3f")))
 
+                export_limit = None
                 if (
                     native_actual
                     and not confirmed_event
                     and not transport_metadata_frame
                     and _EXPORT_LIMIT_KEY not in mirror_payloads.get(_EXPORT_LIMIT_TABLE, {})
                 ):
-                    export_limit = self._export_limit_readback(device_id, pub_data.get("MAXFG"), stamp)
+                    export_limit = self._export_limit_readback(
+                        device_id, pub_data.get(_EXPORT_LIMIT_ALIAS), stamp,
+                    )
                     if export_limit is not None:
                         mirror_payloads.setdefault(_EXPORT_LIMIT_TABLE, {})[_EXPORT_LIMIT_KEY] = export_limit
 
@@ -714,6 +750,7 @@ class FrameProcessor:
                         fault_changed |= self._observe_fault_inputs(
                             device_id, mirror_table, mirror_data, source=table, source_at=source_dt,
                         )
+                self._remember_actual_export_limit(device_id, stamp, export_limit)
         if fault_changed:
             self._save_fault_summary(device_id)
             self._publish_fault_summary(device_id)

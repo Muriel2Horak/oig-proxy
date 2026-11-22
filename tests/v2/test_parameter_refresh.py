@@ -14,9 +14,12 @@ from config import Config
 
 def test_unscheduled_sa_is_default_with_explicit_periodic_opt_in(monkeypatch):
     monkeypatch.delenv("PARAMETER_REFRESH_INTERVAL_S", raising=False)
+    monkeypatch.delenv("FULL_REFRESH_INTERVAL_H", raising=False)
     assert Config().parameter_refresh_interval_s == 0
-    monkeypatch.setenv("PARAMETER_REFRESH_INTERVAL_S", "86400")
+    monkeypatch.setenv("FULL_REFRESH_INTERVAL_H", "24")
     assert Config().parameter_refresh_interval_s == 86400
+    monkeypatch.setenv("PARAMETER_REFRESH_INTERVAL_S", "0")
+    assert Config().parameter_refresh_interval_s == 0
 
 START = 1_800_000_000.0
 
@@ -120,9 +123,9 @@ def test_a_later_acknowledged_write_can_rearm_a_timed_out_readback():
     readback.note_ack("tbl_box_prms", "MODE", 1, box_time=(1, START))
     boundary.now += 60
     assert send_if_due(readback, lambda: boundary.request("first write"))
-    boundary.now += 90
+    boundary.now += 120
     assert not readback.is_due()
-    readback.note_ack("tbl_box_prms", "MODE", 1, box_time=(1, START + 150))
+    readback.note_ack("tbl_box_prms", "MODE", 1, box_time=(1, START + 180))
     boundary.now += 60
     assert send_if_due(readback, lambda: boundary.request("new write"))
 
@@ -136,11 +139,11 @@ def test_response_deadline_requires_a_sent_sa_and_matching_expectation():
     assert readback.is_due()
     assert readback.response_deadline_for(table, key, 92, box_epoch=1) is None
     readback.mark_sent()
-    assert readback.response_deadline_for(table, key, "92.0", box_epoch=1) == boundary.now + 90
+    assert readback.response_deadline_for(table, key, "92.0", box_epoch=1) == boundary.now + 120
     assert readback.response_deadline_for(table, "P_CAL_S", 92, box_epoch=1) is None
     assert readback.response_deadline_for(table, key, 91, box_epoch=1) is None
     assert readback.response_deadline_for(table, key, 92, box_epoch=2) is None
-    boundary.now += 90
+    boundary.now += 120
     assert readback.response_deadline_for(table, key, 92, box_epoch=1) is None
 
 
@@ -274,7 +277,7 @@ def test_response_timeout_starts_when_sa_is_sent_and_reports_once(caplog):
     assert readback.is_due()
     boundary.now += 20
     assert send_if_due(readback, lambda: boundary.request("mode"))
-    boundary.now += 89
+    boundary.now += 119
     readback.poll_timeouts()
     assert not readback_outcomes(caplog)
     boundary.now += 1
@@ -282,12 +285,28 @@ def test_response_timeout_starts_when_sa_is_sent_and_reports_once(caplog):
     assert not readback.is_due()
     assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "timeout")]
 
-    readback.observe(native("tbl_box_prms", 170, MODE="1"))
-    readback.observe(hg("II", 170))
+    readback.observe(native("tbl_box_prms", 200, MODE="1"))
+    readback.observe(hg("II", 200))
     boundary.now += 60
     assert not readback.is_due()
     assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "timeout")]
     assert len(boundary.requests) == 1
+
+
+def test_mode_table_at_observed_100_second_sa_latency_does_not_time_out(caplog):
+    caplog.set_level("INFO", logger="parameter_refresh")
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.observe(hg("II"))
+    boundary.now += 60
+    assert send_if_due(readback, lambda: boundary.request("mode"))
+
+    boundary.now += 100
+    readback.observe(native("tbl_box_prms", 90, MODE="1"))
+    boundary.now += 20
+    readback.poll_timeouts()
+    assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "confirmed")]
+    assert not readback.is_due()
 
 
 def test_batch_records_matching_and_missing_fields_independently(caplog):
@@ -308,7 +327,7 @@ def test_batch_records_matching_and_missing_fields_independently(caplog):
     readback.observe(native("tbl_box_prms", 1, MODE="1"))
     assert readback_outcomes(caplog) == [("tbl_box_prms", "MODE", "confirmed")]
 
-    boundary.now += 60
+    boundary.now += 90
     assert not readback.is_due()
     assert readback_outcomes(caplog) == [
         ("tbl_box_prms", "MODE", "confirmed"),
@@ -340,6 +359,112 @@ def test_mode_a_b_a_starts_a_new_wait_and_cannot_reuse_an_older_table(caplog):
         ("tbl_box_prms", "MODE", "superseded"),
         ("tbl_box_prms", "MODE", "confirmed"),
     ]
+
+
+@pytest.mark.parametrize("table, latest_sample, change_at, due_at", [
+    ("tbl_batt_prms", 0, 100, 360),
+    ("tbl_invertor_prms", 0, 100, 660),
+    ("tbl_batt_prms", 0, 400, 660),
+    ("tbl_batt_prms", None, 100, 460),
+    ("tbl_invertor_prms", None, 100, 760),
+    ("tbl_boiler_prms", None, 100, 100),
+    ("tbl_invertor_prm1", 0, 100, 160),
+])
+def test_reactive_sa_due_tracks_native_table_cadence(table, latest_sample, change_at, due_at):
+    boundary = Boundary()
+    readback = ParameterReadbackRefresh(clock=lambda: boundary.now, wall_clock=lambda: boundary.now)
+    if latest_sample is not None:
+        readback.observe(native(table, latest_sample, LIMIT="1"), box_time=(1, START + latest_sample))
+    boundary.now = START + change_at
+    readback.note_ack(table, "LIMIT", 2, box_time=(1, boundary.now))
+    if due_at > change_at:
+        boundary.now = START + due_at - 1
+        readback.observe(native(table, due_at - 1, LIMIT="1"), box_time=(1, boundary.now))
+        assert not readback.is_due()
+    boundary.now = START + due_at
+    assert readback.is_due()
+
+
+def test_any_sent_sa_batches_early_fields_and_blocks_another_while_response_is_pending():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.note_ack("tbl_batt_prms", "LIMIT", 2, box_time=(1, START))
+    boundary.now += 10
+    assert not readback.is_due()
+    assert not readback.has_active_batch()
+    assert readback.mark_sent()
+    assert readback.has_active_batch()
+    assert readback.response_deadline_for("tbl_batt_prms", "LIMIT", 2, box_epoch=1) == START + 130
+
+    boundary.now += 10
+    readback.note_ack("tbl_boiler_prms", "HEAT", 1, box_time=(1, boundary.now))
+    assert not readback.is_due()
+    boundary.now += 30
+    assert readback.mark_sent()
+    assert readback.response_deadline_for("tbl_batt_prms", "LIMIT", 2, box_epoch=1) == START + 130
+    assert readback.response_deadline_for("tbl_boiler_prms", "HEAT", 1, box_epoch=1) == START + 170
+    boundary.now = START + 170
+    assert not readback.has_active_batch()
+    assert not readback.is_due()
+    assert not readback.mark_sent()
+
+
+def test_fresh_native_match_confirms_before_cadence_deadline():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    readback.note_ack("tbl_invertor_prms", "TO_GRID", 1, box_time=(1, START))
+    boundary.now += 400
+    readback.observe(native("tbl_invertor_prms", 395, TO_GRID="1"), box_time=(1, START + 395))
+    boundary.now += 400
+    assert not readback.is_due()
+
+
+@pytest.mark.parametrize("source, offset, aliases, expects_sa", [
+    ("tbl_actual", 1, None, True),
+    ("IsNewSet", 1, {("tbl_invertor_prm1", "P_MAX_FEED_GRID"): "2000"}, True),
+    ("tbl_actual", -1, {("tbl_invertor_prm1", "P_MAX_FEED_GRID"): "2000"}, True),
+    ("tbl_actual", 1, {("tbl_invertor_prm1", "P_MAX_FEED_GRID"): "2000"}, False),
+])
+def test_reactive_readback_accepts_only_explicit_fresh_native_actual_alias(source, offset, aliases, expects_sa):
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    table, key = "tbl_invertor_prm1", "P_MAX_FEED_GRID"
+    readback.note_ack(table, key, 2000, box_time=(1, START))
+    readback.observe_with_aliases(
+        native(source, offset, P_MAX_FEED_GRID="2000", MAXFG="2000"),
+        box_time=(1, START + offset), actual_aliases=aliases,
+    )
+    boundary.now += 60
+    assert readback.is_due() is expects_sa
+
+
+def test_older_alias_does_not_override_newer_direct_readback():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    table, key = "tbl_invertor_prm1", "P_MAX_FEED_GRID"
+    readback.note_ack(table, key, 2000, box_time=(1, START))
+    readback.observe(native(table, 30, P_MAX_FEED_GRID="5333"), box_time=(1, START + 30))
+    readback.observe_with_aliases(
+        native("tbl_actual", 10, MAXFG="2000"), box_time=(1, START + 10),
+        actual_aliases={(table, key): "2000"},
+    )
+    boundary.now += 60
+    assert readback.is_due()
+
+
+def test_missing_field_in_newer_native_table_does_not_admit_an_older_alias():
+    boundary = Boundary()
+    readback = readback_for(boundary)
+    table, key = "tbl_invertor_prm1", "P_MAX_FEED_GRID"
+    readback.note_ack(table, key, 2000, box_time=(1, START))
+    readback.observe(native(table, 30, P_MAX_FEED_GRID="5333"), box_time=(1, START + 30))
+    readback.observe(native(table, 40, AAC_MAX_CHRG="100"), box_time=(1, START + 40))
+    readback.observe_with_aliases(
+        native("tbl_actual", 20, MAXFG="2000"), box_time=(1, START + 20),
+        actual_aliases={(table, key): "2000"},
+    )
+    boundary.now += 60
+    assert readback.is_due()
 
 
 class Boundary:
@@ -374,8 +499,9 @@ def test_first_boot_requires_full_day_and_admission_is_not_confirmation(tmp_path
     assert boundary.requests == [(START + 86_400, "daily")]
     marker = json.loads(path.read_text())
     assert marker == {
-        "version": 1, "device_id": "1234567890", "baseline_at": START,
+        "version": 2, "device_id": "1234567890", "baseline_at": START,
         "last_confirmed_at": None, "last_attempt_at": START + 86_400,
+        "last_daily_attempt_at": START + 86_400,
     }
     assert not scheduler.poll()
 
@@ -408,13 +534,14 @@ def test_busy_or_offline_gate_postpones_daily_request(tmp_path):
     assert boundary.requests == [(START + 87_400, "daily")]
 
 
-@pytest.mark.parametrize("admit", [False, True])
-def test_attempt_retries_only_after_timeout_and_cooldown(tmp_path, admit):
+def test_rejected_daily_admission_retries_only_after_cooldown(tmp_path):
     boundary = Boundary()
-    boundary.admit = admit
-    scheduler = boundary.create(tmp_path / "schedule.json")
+    boundary.admit = False
+    path = tmp_path / "schedule.json"
+    scheduler = boundary.create(path)
     boundary.now += 86_400
-    assert scheduler.poll() is admit
+    assert not scheduler.poll()
+    assert json.loads(path.read_text())["last_daily_attempt_at"] is None
     for elapsed in (1, 179, 180, 299):
         boundary.now = START + 86_400 + elapsed
         assert not scheduler.poll()
@@ -423,8 +550,95 @@ def test_attempt_retries_only_after_timeout_and_cooldown(tmp_path, admit):
     boundary.is_idle = False
     assert not scheduler.poll()
     boundary.is_idle = True
-    assert scheduler.poll() is admit
+    boundary.admit = True
+    assert scheduler.poll()
     assert len(boundary.requests) == 2
+
+
+@pytest.mark.parametrize("interval", [900, 86_400])
+def test_unconfirmed_daily_admission_keeps_interval_across_restart(tmp_path, interval):
+    boundary = Boundary()
+    path = tmp_path / "schedule.json"
+    scheduler = boundary.create(path, interval_s=interval)
+    boundary.now += interval
+    assert scheduler.poll()
+    assert json.loads(path.read_text())["last_daily_attempt_at"] == START + interval
+    boundary.now += 300
+    assert not scheduler.poll()
+    scheduler = boundary.create(path, interval_s=interval)
+    boundary.now = START + 2 * interval - 1
+    assert not scheduler.poll()
+    boundary.now += 1
+    assert scheduler.poll()
+    assert boundary.requests == [(START + interval, "daily"), (START + 2 * interval, "daily")]
+
+
+def test_outcome_unknown_at_interrupted_admission_keeps_durable_daily_reservation(tmp_path):
+    boundary = Boundary()
+    path = tmp_path / "schedule.json"
+
+    class Interrupted(BaseException):
+        """Model loss of the process during an immediate admission callback."""
+
+    def interrupted(reason):
+        boundary.request(reason)
+        raise Interrupted
+
+    scheduler = ParameterRefreshScheduler(
+        path, "1234567890", request=interrupted,
+        idle=lambda: True, clock=lambda: boundary.now,
+    )
+    boundary.now += 86_400
+    with pytest.raises(Interrupted):
+        scheduler.poll()
+    scheduler = boundary.create(path)
+    boundary.now += 300
+    assert not scheduler.poll()
+    assert boundary.requests == [(START + 86_400, "daily")]
+
+
+def test_failed_reservation_rollback_keeps_durable_daily_limit(tmp_path, monkeypatch):
+    boundary = Boundary()
+    path = tmp_path / "schedule.json"
+
+    def fail_replace(_source, _target):
+        raise OSError("injected reservation rollback failure")
+
+    def reject(reason):
+        boundary.request(reason)
+        monkeypatch.setattr("os.replace", fail_replace)
+        return False
+
+    scheduler = ParameterRefreshScheduler(
+        path, "1234567890", request=reject,
+        idle=lambda: True, clock=lambda: boundary.now,
+    )
+    boundary.now += 86_400
+    assert not scheduler.poll()
+    assert json.loads(path.read_text())["last_daily_attempt_at"] == START + 86_400
+    boundary.now += 300
+    assert not scheduler.poll()
+    assert boundary.requests == [(START + 86_400, "daily")]
+
+
+@pytest.mark.parametrize("prior_attempt", [START + 600, START + 86_400])
+def test_legacy_marker_guards_possible_daily_admission(tmp_path, prior_attempt):
+    boundary = Boundary()
+    path = tmp_path / "schedule.json"
+    path.write_text(json.dumps({
+        "version": 1, "device_id": "1234567890", "baseline_at": START,
+        "last_confirmed_at": None, "last_attempt_at": prior_attempt,
+    }))
+    boundary.now += 86_400
+    scheduler = boundary.create(path)
+    boundary.now += 300
+    if prior_attempt >= START + 86_400:
+        assert not scheduler.poll()
+        boundary.now = prior_attempt + 86_400
+    assert scheduler.poll()
+    assert boundary.requests == [(boundary.now, "daily")]
+    assert json.loads(path.read_text())["version"] == 2
+    assert not list(tmp_path.glob("*.invalid-*"))
 
 
 def test_actual_confirmation_clears_pending_and_restarts_interval(tmp_path):
@@ -465,8 +679,8 @@ def test_confirmation_before_active_attempt_cannot_clear_pending_work(tmp_path):
     boundary.now += 60
     scheduler.note_sa_confirmed(START + 86_399)
     boundary.now = START + 86_700
-    assert scheduler.poll()
-    assert len(boundary.requests) == 2
+    assert not scheduler.poll()
+    assert len(boundary.requests) == 1
     assert json.loads(path.read_text())["last_confirmed_at"] is None
 
 
@@ -565,7 +779,8 @@ def test_defaults_ignore_all_operations_and_restart_discards_exception_intent(tm
     assert not scheduler.poll()
     assert not boundary.requests
     assert set(json.loads(path.read_text())) == {
-        "version", "device_id", "baseline_at", "last_confirmed_at", "last_attempt_at"
+        "version", "device_id", "baseline_at", "last_confirmed_at", "last_attempt_at",
+        "last_daily_attempt_at",
     }
 
 
@@ -617,7 +832,7 @@ def test_confirmation_older_than_attempt_is_rejected_after_pending_timeout(tmp_p
     assert not scheduler.poll()
     scheduler.note_sa_confirmed(START + 86_399)
     boundary.now += 120
-    assert scheduler.poll()
+    assert not scheduler.poll()
     assert json.loads(path.read_text())["last_confirmed_at"] is None
 
 
@@ -667,7 +882,9 @@ def test_admission_exception_uses_durable_retry_cooldown(tmp_path):
     )
     boundary.now += 86_400
     assert not scheduler.poll()
-    assert json.loads(path.read_text())["last_attempt_at"] == START + 86_400
+    marker = json.loads(path.read_text())
+    assert marker["last_attempt_at"] == START + 86_400
+    assert marker["last_daily_attempt_at"] is None
     scheduler = boundary.create(path)
     boundary.now += 299
     assert not scheduler.poll()
@@ -699,10 +916,26 @@ def test_exceptional_operation_obeys_startup_grace_idle_and_retry_gates(tmp_path
     assert boundary.requests[-1] == (START + 600, "after_operation")
 
 
+def test_unconfirmed_daily_attempt_does_not_suppress_exceptional_work(tmp_path):
+    boundary = Boundary()
+    path = tmp_path / "schedule.json"
+    operation = ("tbl_box_prms", "LIMIT")
+    scheduler = boundary.create(path, after_operations=frozenset({operation}))
+    boundary.now += 86_400
+    assert scheduler.poll()
+    boundary.now += 300
+    scheduler.note_operation(*operation)
+    boundary.now += 60
+    assert scheduler.poll()
+    assert boundary.requests == [(START + 86_400, "daily"), (START + 86_760, "after_operation")]
+    assert json.loads(path.read_text())["last_daily_attempt_at"] == START + 86_400
+
+
 @pytest.mark.parametrize("changes", [
     {"version": True}, {"baseline_at": None}, {"baseline_at": False},
     {"last_confirmed_at": START - 1}, {"last_attempt_at": True},
     {"last_confirmed_at": START + 100}, {"command": "forbidden intent"},
+    {"last_daily_attempt_at": START}, {"last_daily_attempt_at": False},
 ])
 def test_malformed_marker_cannot_supply_confirmation_or_command_intent(tmp_path, changes):
     boundary = Boundary()
