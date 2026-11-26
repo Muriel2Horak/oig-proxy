@@ -679,16 +679,15 @@ def test_modified_function_adding_second_nested_ternary_fails(repo):
     assert_finding(repo, findings, "pick", 2)
 
 
-def test_modified_function_replacing_nested_ternary_with_another_fails(repo):
-    # Same count (1 -> 1), but the finding moved to a different expression: it is a NEW finding.
+def test_modified_function_replacing_nested_ternary_with_another_passes(repo):
+    # Same count (1 -> 1): an equal-count replacement passes (spec: counts may not rise).
     base = ("def pick(a, b):\n    x = a if b else (2 if a else 3)\n"
             "    y = a if b else 0\n    return x + y\n")
     head = ("def pick(a, b):\n    x = a if b else 2\n"
             "    y = a if b else (b if a else 0)\n    return x + y\n")
     scenario(repo, base, head)
     code, findings, _ = repo.check()
-    assert code == 1
-    assert_finding(repo, findings, "pick", 2)
+    assert code == 0, findings
 
 
 def test_modified_function_retained_nested_ternary_shifted_by_unrelated_edit_passes(repo):
@@ -938,12 +937,11 @@ def test_per_function_rule_count_increase_fails(repo):
     assert_finding(repo, findings, "f", 4, old=1, new=2)
 
 
-def test_modified_function_replacing_unused_param_with_another_fails(repo):
-    # Same count (1 -> 1): `b` becomes used, `a` becomes unused => a different, new finding.
+def test_modified_function_replacing_unused_param_with_another_passes(repo):
+    # Same count (1 -> 1): `b` becomes used, `a` becomes unused; an equal-count replacement passes.
     scenario(repo, "def f(a, b):\n    return a\n", "def f(a, b):\n    return b\n")
     code, findings, _ = repo.check()
-    assert code == 1
-    assert_finding(repo, findings, "f", 4)
+    assert code == 0, findings
 
 
 def test_modified_function_retained_unused_param_shifted_by_unrelated_edit_passes(repo):
