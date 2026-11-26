@@ -686,10 +686,15 @@ def _assigned_name(node: ast.AST) -> ast.Name | None:
 def _unused_locals(func: FuncNode, loaded: set[str], stores: dict[str, int]) -> list[Q4Finding]:
     """S1481: local bound exactly once by plain `name = value` and never read."""
     param_names = {a.arg for a in ast.walk(func.args) if isinstance(a, ast.arg)}
+    declared_nonlocal = {
+        name for node in _own_nodes(func) if isinstance(node, (ast.Global, ast.Nonlocal))
+        for name in node.names
+    }
     findings = []
     for node in _own_nodes(func):
         target = _assigned_name(node)
-        if target is None or target.id.startswith("_") or target.id in param_names:
+        if (target is None or target.id.startswith("_") or target.id in param_names
+                or target.id in declared_nonlocal):
             continue
         if target.id not in loaded and stores.get(target.id) == 1:
             findings.append(Q4Finding("S1481", target.id, node.lineno))

@@ -12,6 +12,18 @@ import changed_functions as check  # pylint: disable=import-error,wrong-import-p
 
 
 class Regressions(unittest.TestCase):
+    def test_global_and_nonlocal_assignments_are_not_unused_locals(self):
+        global_func = check.analyze_module(
+            'def f(a):\n    global X\n    X = 2\n    return a\n'
+        )[0]
+        self.assertNotIn('S1481', {f.rule for f in check.check_unit('x.py', global_func, None)})
+
+        nested = check.analyze_module(
+            'def outer():\n    x = 1\n    def f(a):\n        nonlocal x\n'
+            '        x = 2\n        return a\n'
+        )
+        self.assertNotIn('S1481', {f.rule for f in check.check_unit('x.py', nested[1], None)})
+
     def test_changed_function_spec_records_per_rule_count_decision(self):
         spec = Path(__file__).resolve().parents[2] / "docs/quality/changed-functions-check.md"
         text = " ".join(spec.read_text(encoding="utf-8").split())
