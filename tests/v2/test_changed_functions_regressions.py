@@ -60,7 +60,7 @@ class Regressions(unittest.TestCase):
     def test_deletion_hunk_records_each_removed_base_line(self):
         for separator in ('\n', '# note\n'):
             with self.subTest(separator=separator), tempfile.TemporaryDirectory() as repo:
-                def git(*args):
+                def git(*args, repo=repo):
                     return subprocess.run(
                         ['git', '-C', repo, *args], check=True, capture_output=True, text=True,
                     ).stdout.strip()
