@@ -343,6 +343,33 @@ def test_decorator_only_change_selects_method(repo):  # F2
     assert code == 1 and "S107" in findings[0].raw
 
 
+def test_deleting_top_level_decorator_selects_function(repo):  # review P1
+    scenario(repo, "@decorator\ndef f(a, b):\n    return a\n", "def f(a, b):\n    return a\n")
+    code, findings, _ = repo.check()
+    assert code == 1 and any(f.qual == "f" and "S1172" in f.raw for f in findings), findings
+
+
+def test_deleting_method_decorator_selects_method(repo):  # review P1
+    base = "class C:\n    @decorator\n    def f(self, a, b):\n        return a\n"
+    head = "class C:\n    def f(self, a, b):\n        return a\n"
+    scenario(repo, base, head)
+    code, findings, _ = repo.check()
+    assert code == 1 and any(f.qual == "C.f" and "S1172" in f.raw for f in findings), findings
+
+
+def test_docstring_only_edit_adds_no_unused_param(repo):  # review P2
+    scenario(repo, 'def f(a, b):\n    """a and b docs"""\n    return a\n',
+             'def f(a, b):\n    """a docs"""\n    return a\n')
+    assert_clean(repo)
+
+
+def test_new_function_docstring_mention_is_not_a_use(repo):  # review P2
+    scenario(repo, "X = 1\n", 'def f(a, b):\n    """a and b docs"""\n    return a\n')
+    code, findings, _ = repo.check()
+    assert code == 1 and any(f.qual == "f" and "S1172" in f.raw and "0->1" in f.raw
+                             for f in findings), findings
+
+
 def test_signature_only_change_selects_function(repo):  # F1
     scenario(repo, "def f(a):\n    return a\n", "def f(a, extra):\n    return a\n")
     code, findings, _ = repo.check()

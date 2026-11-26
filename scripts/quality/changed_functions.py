@@ -756,8 +756,30 @@ def _referenced_function_names(tree: ast.AST) -> set[str]:
     return refs
 
 
+def _blank_span(row: str, start: int, end: int | None) -> str:
+    """Blank the columns [start, end) of one line. AST columns are UTF-8 byte offsets."""
+    raw = row.encode("utf-8")
+    stop = len(raw) if end is None else end
+    return (raw[:start] + b" " * (stop - start) + raw[stop:]).decode("utf-8", errors="replace")
+
+
+def _without_docstring(source_lines: list[str], func: FuncNode) -> list[str]:
+    """The function's source lines with its docstring blanked: prose never uses a parameter."""
+    rows = source_lines[func.lineno - 1 : func.end_lineno]
+    first = func.body[0]
+    if not (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)):
+        return rows
+    for lineno in range(first.lineno, first.end_lineno + 1):
+        start = first.col_offset if lineno == first.lineno else 0
+        end = first.end_col_offset if lineno == first.end_lineno else None
+        index = lineno - func.lineno
+        rows[index] = _blank_span(rows[index], start, end)
+    return rows
+
+
 def _mentions(source_lines: list[str], func: FuncNode) -> dict[str, int]:
-    text = "\n".join(source_lines[func.lineno - 1 : func.end_lineno])
+    text = "\n".join(_without_docstring(source_lines, func))
     counts: dict[str, int] = {}
     for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text):
         counts[word] = counts.get(word, 0) + 1
@@ -970,7 +992,7 @@ def changed_lines(repo: str, merge_base: str, head: str,
     result: dict[str, set[int]] = {}
     path = None
     rename_from = None
-    pending: set[int] | None = None
+    pending: int | None = None  # head line a deletion was removed after
     for line in out.splitlines():
         if line.startswith("diff --git "):
             path = rename_from = None
@@ -988,16 +1010,33 @@ def changed_lines(repo: str, merge_base: str, head: str,
         elif line.startswith("--- "):
             continue
         elif path is not None and line.startswith("@@"):
-            lines = _hunk_lines(line)
-            pending = lines if re.search(r"\+\d+,0 @@", line) else None
+            deletion = _DELETION_HUNK.search(line)
+            pending = int(deletion.group(1)) if deletion else None
             if pending is None:
-                result[path] |= lines
+                result[path] |= _hunk_lines(line)
         elif path is not None and pending is not None and line.startswith("-"):
-            # A deleted top-level (unindented) line sits outside any function, even right after one.
-            if line[1:2] in (" ", "\t"):
-                result[path] |= pending
+            result[path] |= _deletion_lines(line[1:], pending)
             pending = None
     return result
+
+
+_DELETION_HUNK = re.compile(r"\+(\d+),0 @@")
+
+
+def _deletion_lines(removed: str, before: int) -> set[int]:
+    """Head lines selected by one removed line. `before` is the head line it was removed after.
+
+    An indented line lies inside the function that contains it, so the line before selects it. A
+    removed decorator sits above its `def`, so the head line that now follows it selects the
+    decorated function (this also covers a top-level decorator, which has no indentation). Any
+    other top-level line sits outside every function, even right after one, so it selects nothing.
+    """
+    lines: set[int] = set()
+    if removed[:1] in (" ", "\t") and before > 0:
+        lines.add(before)
+    if removed.lstrip().startswith("@"):
+        lines.add(before + 1)
+    return lines
 
 
 def _show(repo: str, rev: str, path: str) -> str | None:

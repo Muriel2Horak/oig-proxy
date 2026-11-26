@@ -29,6 +29,22 @@ class Regressions(unittest.TestCase):
         self.assertEqual(check._hunk_lines('@@ -2,1 +1,0 @@'), {1})
         self.assertEqual(check._hunk_lines('@@ -1,1 +0,0 @@'), set())
 
+    def test_removed_decorator_selects_the_line_that_follows_it(self):
+        self.assertEqual(check._deletion_lines('@decorator', 0), {1})
+        self.assertEqual(check._deletion_lines('    @classmethod', 1), {1, 2})
+        self.assertEqual(check._deletion_lines('x = 1', 3), set())
+        self.assertEqual(check._deletion_lines('    x = 1', 0), set())
+
+    def test_docstring_is_not_counted_as_a_mention(self):
+        source = 'def f(a, b):\n    """a and b docs"""\n    return a\n'
+        func = ast.parse(source).body[0]
+        self.assertEqual(check._mentions(source.splitlines(), func).get('b'), 1)
+        self.assertEqual(check._mentions(source.splitlines(), func).get('a'), 2)
+        # AST columns are UTF-8 byte offsets: the docstring must still be blanked exactly.
+        source = 'def f(a, b): """é a b"""; return a\n'
+        func = ast.parse(source).body[0]
+        self.assertEqual(check._mentions(source.splitlines(), func).get('b'), 1)
+
     def test_decorator_header_and_body_all_select(self):
         source = '@decorator\ndef f(\n    a,\n):\n    # comment\n    return a\n'
         unit = check.analyze_module(source)[0]
