@@ -12,6 +12,28 @@ import changed_functions as check  # pylint: disable=import-error,wrong-import-p
 
 
 class Regressions(unittest.TestCase):
+    def test_global_and_nonlocal_assignments_are_not_unused_locals(self):
+        global_func = check.analyze_module(
+            'def f(a):\n    global X\n    X = 2\n    return a\n'
+        )[0]
+        self.assertNotIn('S1481', {f.rule for f in check.check_unit('x.py', global_func, None)})
+
+        nested = check.analyze_module(
+            'def outer():\n    x = 1\n    def f(a):\n        nonlocal x\n'
+            '        x = 2\n        return a\n'
+        )
+        self.assertNotIn('S1481', {f.rule for f in check.check_unit('x.py', nested[1], None)})
+
+    def test_changed_function_spec_records_per_rule_count_decision(self):
+        spec = Path(__file__).resolve().parents[2] / "docs/quality/changed-functions-check.md"
+        text = " ".join(spec.read_text(encoding="utf-8").split())
+        self.assertIn(
+            "and the per-function count of findings of each other rule key may not rise; "
+            "a replaced finding, one removed and one added in the same function, passes; "
+            "decided 2026-11-23",
+            text,
+        )
+
     def test_else_if_is_not_elif(self):
         node = ast.parse('def f(x):\n    if x:\n        pass\n    else:\n        if x:\n            pass\n').body[0]
         self.assertEqual(check.cognitive_complexity(node), 4)
@@ -25,15 +47,61 @@ class Regressions(unittest.TestCase):
         new = check.analyze_module('def f(a,b):\n    if a:\n        return b\n    return 0\n')[0]
         self.assertEqual({f.rule for f in check.check_unit('x.py', new, [old])}, {'S3776', 'S107'})
 
-    def test_deletion_has_no_head_lines(self):
-        self.assertEqual(check._hunk_lines('@@ -2,1 +1,0 @@'), set())
+    def test_deletion_is_recorded_at_preceding_head_line(self):
+        self.assertEqual(check._hunk_lines('@@ -2,1 +1,0 @@'), {1})
+        self.assertEqual(check._hunk_lines('@@ -1,1 +0,0 @@'), set())
 
-    def test_declaration_excluded_but_body_selected(self):
+    def test_removed_decorator_selects_the_line_that_follows_it(self):
+        self.assertEqual(check._deletion_lines('@decorator', 0), {1})
+        self.assertEqual(check._deletion_lines('    @classmethod', 1), {1, 2})
+        self.assertEqual(check._deletion_lines('x = 1', 3), set())
+        self.assertEqual(check._deletion_lines('    x = 1', 0), set())
+
+    def test_deletion_hunk_records_each_removed_base_line(self):
+        for separator in ('\n', '# note\n'):
+            with self.subTest(separator=separator), tempfile.TemporaryDirectory() as repo:
+                def git(*args, repo=repo):
+                    return subprocess.run(
+                        ['git', '-C', repo, *args], check=True, capture_output=True, text=True,
+                    ).stdout.strip()
+
+                git('init', '-q', '-b', 'main')
+                git('config', 'user.email', 'test@example.invalid')
+                git('config', 'user.name', 'Test')
+                source = Path(repo) / 'mod.py'
+                source.write_text(f'def f(b):\n{separator}    print(b)\n    return 1\n')
+                git('add', 'mod.py')
+                git('commit', '-qm', 'base')
+                base = git('rev-parse', 'HEAD')
+                source.write_text('def f(b):\n    return 1\n')
+                git('add', 'mod.py')
+                git('commit', '-qm', 'change')
+                deleted = {}
+                check.changed_lines(repo, base, 'HEAD', deleted_base_lines=deleted)
+                self.assertEqual(deleted['mod.py'], {2, 3})
+
+    def test_ast_name_loads_ignore_docstring_and_string_text(self):
+        source = 'def f(a, b):\n    """a and b docs"""\n    return a\n'
+        func = ast.parse(source).body[0]
+        loaded, _stores, dynamic = check._scan_names(func)
+        self.assertNotIn('b', loaded)
+        self.assertFalse(dynamic)
+        # An actual name load remains visible alongside non-ASCII docstring text.
+        source = 'def f(a, b): """é a b"""; return a\n'
+        func = ast.parse(source).body[0]
+        loaded, _stores, dynamic = check._scan_names(func)
+        self.assertIn('a', loaded)
+        self.assertNotIn('b', loaded)
+        self.assertFalse(dynamic)
+
+    def test_dynamic_name_access_remains_conservative(self):
+        unit = check.analyze_module('def f(b):\n    return locals()\n')[0]
+        self.assertFalse(unit.q4)
+
+    def test_decorator_header_and_body_all_select(self):
         source = '@decorator\ndef f(\n    a,\n):\n    # comment\n    return a\n'
         unit = check.analyze_module(source)[0]
-        self.assertFalse(any(check._body_line(unit, n) for n in (1, 2, 3, 4)))
-        self.assertTrue(check._body_line(unit, 5))
-        self.assertTrue(check._body_line(unit, 6))
+        self.assertTrue(all(check._selected(unit, n) for n in (1, 2, 3, 4, 5, 6)))
 
 class ConditionalRegressions(unittest.TestCase):
     def test_replacing_a_nested_conditional_is_a_new_finding(self):

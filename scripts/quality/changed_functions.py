@@ -360,7 +360,13 @@ def _conditional_children(node: ast.AST, path: tuple[str, ...]):
 
 def _visit_conditional_node(node: ast.AST, inside: bool, statement: ast.stmt | None,
                             path: tuple[str, ...], findings: Counter[str]) -> None:
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, *_COMPREHENSIONS)):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        # Decorators and default values are evaluated in the enclosing scope.
+        exprs = [*node.decorator_list, *node.args.defaults, *[d for d in node.args.kw_defaults if d]]
+        for index, expr in enumerate(exprs):
+            _visit_conditional_node(expr, False, node, (f"header[{index}]",), findings)
+        return
+    if isinstance(node, (ast.ClassDef, *_COMPREHENSIONS)):
         return
     if isinstance(node, ast.stmt):
         statement, path = node, ()
@@ -646,17 +652,16 @@ def _scan_names(func: FuncNode) -> tuple[set[str], dict[str, int], bool]:
         if isinstance(node, ast.Name):
             if isinstance(node.ctx, ast.Store):
                 stores[node.id] = stores.get(node.id, 0) + 1
-            else:
+            elif isinstance(node.ctx, ast.Load):
                 loaded.add(node.id)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            loaded.update(node.names)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _DYNAMIC_SCOPE:
+            # Dynamic scope can observe names without AST Name loads; conservatively skip Q4.
             return loaded, stores, True
     return loaded, stores, False
 
 
 def _unused_params(
-    func: FuncNode, is_method: bool, loaded: set[str], mentions: dict[str, int],
+    func: FuncNode, is_method: bool, loaded: set[str],
 ) -> list[Q4Finding]:
     args = func.args
     params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
@@ -666,7 +671,7 @@ def _unused_params(
     return [
         Q4Finding("S1172", p.arg, p.lineno)
         for p in params
-        if p.arg not in loaded and not p.arg.startswith("_") and mentions.get(p.arg, 1) <= 1
+        if p.arg not in loaded and not p.arg.startswith("_")
     ]
 
 
@@ -681,10 +686,15 @@ def _assigned_name(node: ast.AST) -> ast.Name | None:
 def _unused_locals(func: FuncNode, loaded: set[str], stores: dict[str, int]) -> list[Q4Finding]:
     """S1481: local bound exactly once by plain `name = value` and never read."""
     param_names = {a.arg for a in ast.walk(func.args) if isinstance(a, ast.arg)}
+    declared_nonlocal = {
+        name for node in _own_nodes(func) if isinstance(node, (ast.Global, ast.Nonlocal))
+        for name in node.names
+    }
     findings = []
     for node in _own_nodes(func):
         target = _assigned_name(node)
-        if target is None or target.id.startswith("_") or target.id in param_names:
+        if (target is None or target.id.startswith("_") or target.id in param_names
+                or target.id in declared_nonlocal):
             continue
         if target.id not in loaded and stores.get(target.id) == 1:
             findings.append(Q4Finding("S1481", target.id, node.lineno))
@@ -696,12 +706,10 @@ def unused_names(
     is_method: bool = False,
     class_has_bases: bool = False,
     referenced: frozenset[str] | set[str] = frozenset(),
-    name_mentions: dict[str, int] | None = None,
 ) -> list[Q4Finding]:
     """Conservative S1172 / S1481 / S1854: report only what Sonar certainly reports.
 
     `referenced`: function names used as a value in the module (callbacks keep their signature).
-    `name_mentions`: occurrences of each identifier in the function's source text.
     """
     loaded, stores, dynamic = _scan_names(func)
     if dynamic:
@@ -711,7 +719,7 @@ def unused_names(
         _is_stub(func) or func.decorator_list or func.name.startswith("__")
         or func.name in referenced or (is_method and class_has_bases)
     )
-    findings = [] if skip_params else _unused_params(func, is_method, loaded, name_mentions or {})
+    findings = [] if skip_params else _unused_params(func, is_method, loaded)
     findings.extend(_unused_locals(func, loaded, stores))
     findings.extend(_dead_stores(func, loaded))
     return findings
@@ -750,14 +758,6 @@ def _referenced_function_names(tree: ast.AST) -> set[str]:
     return refs
 
 
-def _mentions(source_lines: list[str], func: FuncNode) -> dict[str, int]:
-    text = "\n".join(source_lines[func.lineno - 1 : func.end_lineno])
-    counts: dict[str, int] = {}
-    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text):
-        counts[word] = counts.get(word, 0) + 1
-    return counts
-
-
 def _function_headers(source: str) -> dict[int, int]:
     headers: dict[int, int] = {}
     tokens = iter(tokenize.generate_tokens(io.StringIO(source).readline))
@@ -777,6 +777,12 @@ def _function_headers(source: str) -> dict[int, int]:
     return headers
 
 
+def _selected(unit: Unit, line: int) -> bool:
+    """A changed line selects the function it lies in: decorators, header (signature), body, and
+    nested headers. A deletion is recorded at the head line before it (see `_hunk_lines`)."""
+    return unit.first_line <= line <= unit.end_line
+
+
 def _body_line(unit: Unit, line: int) -> bool:
     return (unit.header_end <= line <= unit.end_line
             and (line > unit.header_end or unit.body_same_line)
@@ -787,7 +793,6 @@ class _Walker:
     def __init__(self, source: str) -> None:
         self.tree = ast.parse(source)
         mark_split_sequences(self.tree, source)
-        self.lines = source.splitlines()
         self.headers = _function_headers(source)
         self.referenced = _referenced_function_names(self.tree)
         self.units: list[Unit] = []
@@ -816,8 +821,7 @@ class _Walker:
         unit.q2 = _conditional_findings(node)
         unit.metrics["Q3"] = parameter_count(node, is_method)
         if not in_function:  # Sonar reports unused names on top-level functions and methods only
-            mentions = _mentions(self.lines, node)
-            for f in unused_names(node, is_method, has_bases, self.referenced, mentions):
+            for f in unused_names(node, is_method, has_bases, self.referenced):
                 key = (f.rule, f.name)
                 unit.q4[key] = unit.q4.get(key, 0) + 1
         self.units.append(unit)
@@ -869,6 +873,8 @@ def _hunk_lines(header: str) -> set[int]:
         return set()
     start = int(m.group(1))
     count = 1 if m.group(2) is None else int(m.group(2))
+    if count == 0:  # deletion-only hunk: `start` is the head line before the removed text
+        return {start} if start > 0 else set()
     return set(range(start, start + count))
 
 
@@ -929,20 +935,73 @@ def _header_path(header: str) -> str | None:
     return path[2:] if path.startswith("b/") else None
 
 
-def changed_lines(repo: str, merge_base: str, head: str) -> dict[str, set[int]]:
-    """Head-side line numbers added or modified per path."""
-    out = git(repo, "diff", "-U0", "--no-renames", "--no-color", "--diff-filter=AM",
+def _rename_path(line: str, prefix: str) -> str:
+    return _unquote_git_path(line[len(prefix):].rstrip("\t"))
+
+
+def changed_lines(repo: str, merge_base: str, head: str,
+                  renames: dict[str, str] | None = None,
+                  deleted_base_lines: dict[str, set[int]] | None = None) -> dict[str, set[int]]:
+    """Head-side line numbers added, modified or (as the preceding line) deleted per path.
+
+    `renames`, when given, is filled with head path -> base path for renamed files. Every removed
+    base-side line in a deletion-only hunk is collected in `deleted_base_lines`, when provided."""
+    out = git(repo, "diff", "-U0", "-M", "--no-color", "--diff-filter=AMR",
               merge_base, head, "--", "*.py")
     result: dict[str, set[int]] = {}
     path = None
+    rename_from = None
+    pending: tuple[int, int, int] | None = None  # head line, old line, remaining removed lines
     for line in out.splitlines():
-        if line.startswith("+++ "):
+        if line.startswith("diff --git "):
+            path = rename_from = None
+        elif line.startswith("rename from "):
+            rename_from = _rename_path(line, "rename from ")
+        elif line.startswith("rename to "):
+            path = _rename_path(line, "rename to ")
+            result.setdefault(path, set())
+            if renames is not None and rename_from is not None:
+                renames[path] = rename_from
+        elif line.startswith("+++ "):
             path = _header_path(line)
             if path is not None:
                 result.setdefault(path, set())
-        elif path is not None:
-            result[path] |= _hunk_lines(line)
+        elif line.startswith("--- "):
+            continue
+        elif path is not None and line.startswith("@@"):
+            deletion = _DELETION_HUNK.match(line)
+            pending = (
+                int(deletion.group(3)), int(deletion.group(1)),
+                int(deletion.group(2) or 1),
+            ) if deletion else None
+            if pending is None:
+                result[path] |= _hunk_lines(line)
+        elif path is not None and pending is not None and line.startswith("-"):
+            before, old_line, remaining = pending
+            result[path] |= _deletion_lines(line[1:], before)
+            if deleted_base_lines is not None:
+                deleted_base_lines.setdefault(path, set()).add(old_line)
+            pending = (before, old_line + 1, remaining - 1) if remaining > 1 else None
     return result
+
+
+_DELETION_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+),0 @@")
+
+
+def _deletion_lines(removed: str, before: int) -> set[int]:
+    """Head lines selected by one removed line. `before` is the head line it was removed after.
+
+    An indented line lies inside the function that contains it, so the line before selects it. A
+    removed decorator sits above its `def`, so the head line that now follows it selects the
+    decorated function (this also covers a top-level decorator, which has no indentation). Any
+    other top-level line sits outside every function, even right after one, so it selects nothing.
+    """
+    lines: set[int] = set()
+    if removed[:1] in (" ", "\t") and before > 0:
+        lines.add(before)
+    if removed.lstrip().startswith("@"):
+        lines.add(before + 1)
+    return lines
 
 
 def _show(repo: str, rev: str, path: str) -> str | None:
@@ -994,6 +1053,23 @@ def _limit_findings(path: str, unit: Unit, base_units: list[Unit] | None) -> lis
     return findings
 
 
+def _q4_counts(unit: Unit, base_units: list[Unit] | None) -> list[tuple[str, int, int]]:
+    """(rule, head count, base count). Unused parameters compare by name; unused locals and dead
+    stores by rule total, so renaming a pre-existing unused local is not a new finding."""
+    totals: dict[str, list[int]] = {}
+    counted = []
+    for (rule, name), new in sorted(unit.q4.items()):
+        if rule == "S1172":
+            counted.append((rule, new, _base_max(base_units, lambda b, k=(rule, name): b.q4.get(k, 0))))
+        else:
+            totals.setdefault(rule, [0, 0])[0] += new
+    for rule in {r for r in totals}:
+        totals[rule][1] = _base_max(
+            base_units, lambda b, r=rule: sum(v for (rr, _), v in b.q4.items() if rr == r))
+    counted.extend((rule, new, old) for rule, (new, old) in sorted(totals.items()))
+    return counted
+
+
 def check_unit(path: str, unit: Unit, base_units: list[Unit] | None) -> list[Finding]:
     """Ratchet one changed function. `base_units` is None for a NEW function."""
     findings = _limit_findings(path, unit, base_units)
@@ -1003,8 +1079,7 @@ def check_unit(path: str, unit: Unit, base_units: list[Unit] | None) -> list[Fin
         _match_renamed_assignments(unit, base_units, added_q2, old_q2 - unit.q2)
         added_q2 += Counter()  # Drop zero counts after matching.
     counted = [("S3358", sum(unit.q2.values()), sum(old_q2.values()))] if added_q2 else []
-    for (rule, name), new in sorted(unit.q4.items()):
-        counted.append((rule, new, _base_max(base_units, lambda b, k=(rule, name): b.q4.get(k, 0))))
+    counted.extend(_q4_counts(unit, base_units))
     findings.extend(
         Finding(path, unit.node.lineno, unit.qualname, rule, str(old), str(new))
         for rule, new, old in counted if rule == "S3358" or new > old
@@ -1023,14 +1098,28 @@ def _analyze_or_none(source: str | None, path: str, warn) -> list[Unit] | None:
         return None
 
 
-def _check_file(repo: str, merge_base: str, head: str, path: str, lines: set[int], warn) -> list[Finding]:
+def _check_file(repo: str, merge_base: str, head: str, path: str, lines: set[int], warn,
+                base_path: str | None = None,
+                deleted_base_lines: set[int] | None = None) -> list[Finding]:
     head_units = _analyze_or_none(_show(repo, head, path), path, warn)
     if not head_units:
         return []
-    touched = [u for u in head_units if any(_body_line(u, n) for n in lines)]
+    base_units = None
+    deleted_qualnames = set()
+    if deleted_base_lines:
+        base_units = _analyze_or_none(_show(repo, merge_base, base_path or path), path, None)
+        deleted_qualnames = {
+            unit.qualname for unit in base_units or []
+            if any(unit.first_line <= line <= unit.end_line for line in deleted_base_lines)
+        }
+    touched = [
+        u for u in head_units
+        if u.qualname in deleted_qualnames or any(_selected(u, n) for n in lines)
+    ]
     if not touched:
         return []
-    base_units = _analyze_or_none(_show(repo, merge_base, path), path, None)
+    if base_units is None:
+        base_units = _analyze_or_none(_show(repo, merge_base, base_path or path), path, None)
     base_index = _base_index(base_units or [])
     findings: list[Finding] = []
     for unit in touched:
@@ -1044,12 +1133,19 @@ def check_diff(repo: str, base: str, head: str = "HEAD", warn=None) -> list[Find
         raise GitError(f"no merge-base between {base} and {head}")
     findings: list[Finding] = []
     scope = load_scope(repo)
+    renames: dict[str, str] = {}
+    deleted_base_lines: dict[str, set[int]] = {}
     candidates = {
-        path: lines for path, lines in changed_lines(repo, merge_base, head).items()
-        if scope.is_main(path) and lines
+        path: lines for path, lines in changed_lines(
+            repo, merge_base, head, renames, deleted_base_lines,
+        ).items()
+        if scope.is_main(path) and (lines or deleted_base_lines.get(path))
     }
     ignored = git_ignored(repo, sorted(candidates))
     for path, lines in sorted(candidates.items()):
         if path not in ignored:
-            findings.extend(_check_file(repo, merge_base, head, path, lines, warn))
+            findings.extend(_check_file(
+                repo, merge_base, head, path, lines, warn, renames.get(path),
+                deleted_base_lines.get(path),
+            ))
     return findings
