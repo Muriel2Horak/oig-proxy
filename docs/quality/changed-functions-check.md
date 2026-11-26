@@ -7,8 +7,9 @@ Status: ACCEPTED. Parent design: agent-ops
 - A fast local check that mirrors active Sonar rules BLOCKS a PR, but only for Python functions the PR
   adds or modifies. Untouched functions are never checked.
 - Semantics = ratchet (operator form 2026-11-21): a NEW function must pass Q1-Q4; a MODIFIED function
-  must not get worse (complexity and parameter count may not rise above the merge-base value, no new
-  Q2/Q4 finding inside it).
+  must not get worse (complexity and parameter count may not rise above the merge-base value, and the
+  per-function count of findings of each other rule key may not rise; a replaced finding, one removed
+  and one added in the same function, passes; decided 2026-11-23).
 - Rules (profile "Sonar agentic AI", thresholds equal Sonar's, never stricter):
   - Q1 python:S3776 cognitive complexity <= 15
   - Q2 python:S3358 nested conditional expression

@@ -436,6 +436,17 @@ def test_unchanged_unused_local_rename_is_not_a_new_finding(repo):
     assert_clean(repo)
 
 
+@pytest.mark.parametrize("base, head", [
+    ("def f(b):\n\n    print(b)\n    return 1\n", "def f(b):\n    return 1\n"),
+    ("def f(b):\n# note\n    print(b)\n    return 1\n", "def f(b):\n    return 1\n"),
+])
+def test_every_deleted_line_selects_its_base_function(repo, base, head):
+    scenario(repo, base, head)
+    code, findings, res = repo.check()
+    assert code == 1, (res.stdout, res.stderr)
+    assert_finding(repo, findings, "f", 4)
+
+
 def test_ratchet_compares_against_merge_base_when_base_tip_is_higher(repo):
     repo.write("pkg/mod.py", branchy("f", 16) + "\n\nOTHER = 1\n")
     repo.commit("base", "pkg/mod.py")
@@ -896,6 +907,35 @@ def test_modified_function_body_edit_leaving_param_unused_fails(repo):
 def test_modified_function_using_previously_unused_param_passes(repo):
     scenario(repo, "def f(a, b):\n    return a\n", "def f(a, b):\n    return a + b\n")
     assert_clean(repo)
+
+
+@pytest.mark.parametrize("base, head", [
+    (
+        'def outer(a, b):\n    def inner():\n        """b docs"""\n        return 0\n    return a\n',
+        'def outer(a, b):\n    def inner():\n        """docs"""\n        return 0\n    return a\n',
+    ),
+    ('def f(a, b):\n    print("b")\n    return a\n', 'def f(a, b):\n    print("changed")\n    return a\n'),
+    ('def f(a, b):\n    return a + b\n', 'def f(a, b):\n    return a * b\n'),
+])
+def test_string_text_is_not_a_parameter_use_but_ast_loads_are(repo, base, head):
+    scenario(repo, base, head)
+    assert_clean(repo)
+
+
+def test_replaced_unused_local_finding_with_same_rule_count_passes(repo):
+    base = "def f(a):\n    old = 1\n    return a\n"
+    head = "def f(a):\n    old = 1\n    new = 2\n    return a + old\n"
+    scenario(repo, base, head)
+    assert_clean(repo)
+
+
+def test_per_function_rule_count_increase_fails(repo):
+    base = "def f(a):\n    old = 1\n    return a\n"
+    head = "def f(a):\n    old = 1\n    new = 2\n    return a\n"
+    scenario(repo, base, head)
+    code, findings, res = repo.check()
+    assert code == 1, (res.stdout, res.stderr)
+    assert_finding(repo, findings, "f", 4, old=1, new=2)
 
 
 def test_modified_function_replacing_unused_param_with_another_fails(repo):
