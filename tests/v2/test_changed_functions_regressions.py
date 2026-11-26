@@ -34,6 +34,32 @@ class Regressions(unittest.TestCase):
             text,
         )
 
+    @staticmethod
+    def _rules(old_src, new_src, new_function=False):
+        new = check.analyze_module(new_src)[0]
+        base = None if new_function else [check.analyze_module(old_src)[0]]
+        return [f.rule for f in check.check_unit('x.py', new, base)]
+
+    def test_replaced_unused_parameter_passes_but_rise_blocks(self):
+        self.assertNotIn('S1172', self._rules(
+            'def f(a, b):\n    return a\n', 'def f(a, b):\n    return b\n'))
+        self.assertIn('S1172', self._rules(
+            'def f(a, b):\n    return a\n', 'def f(a, b):\n    return 0\n'))
+        self.assertIn('S1172', self._rules(
+            'def f(a, b):\n    return 0\n', 'def f(a, b, c):\n    return 0\n'))
+
+    def test_replaced_nested_conditional_passes_but_rise_blocks(self):
+        base = 'def f(a, b):\n    x = 1 if a else (2 if b else 3)\n    return x\n'
+        self.assertNotIn('S3358', self._rules(
+            base, 'def f(a, b):\n    x = 0\n    return 1 if a else (2 if b else x)\n'))
+        self.assertIn('S3358', self._rules(
+            base, base + '    y = 1 if a else (2 if b else 3)\n    return y\n'))
+
+    def test_new_function_must_have_zero_findings(self):
+        self.assertIn('S1172', self._rules('', 'def f(a):\n    return 0\n', True))
+        self.assertIn('S3358', self._rules(
+            '', 'def f(a, b):\n    return 1 if a else (2 if b else 3)\n', True))
+
     def test_else_if_is_not_elif(self):
         node = ast.parse('def f(x):\n    if x:\n        pass\n    else:\n        if x:\n            pass\n').body[0]
         self.assertEqual(check.cognitive_complexity(node), 4)
@@ -104,10 +130,10 @@ class Regressions(unittest.TestCase):
         self.assertTrue(all(check._selected(unit, n) for n in (1, 2, 3, 4, 5, 6)))
 
 class ConditionalRegressions(unittest.TestCase):
-    def test_replacing_a_nested_conditional_is_a_new_finding(self):
+    def test_replacing_a_nested_conditional_with_another_passes(self):
         old = check.analyze_module('def f(a,b):\n    x = a if b else (2 if a else 3)\n    y = a if b else 0\n    return x + y\n')[0]
         new = check.analyze_module('def f(a,b):\n    x = a if b else 2\n    y = a if b else (b if a else 0)\n    return x + y\n')[0]
-        self.assertIn('S3358', {f.rule for f in check.check_unit('x.py', new, [old])})
+        self.assertNotIn('S3358', {f.rule for f in check.check_unit('x.py', new, [old])})
 
     def test_nested_finding_belongs_to_inner_function(self):
         units = check.analyze_module('def outer(a,b):\n    def inner(x,y):\n        return x if y else (y if x else 0)\n    return inner(a,b)\n')
@@ -137,10 +163,10 @@ class ConditionalIdentityRegressions(unittest.TestCase):
         new = check.analyze_module('def f(a,b):\n    y = a if b else (b if a else 0)\n    w = a if b else (b if a else 0)\n    x = 1\n    y = 2\n    return x + y + w\n')[0]
         self.assertNotIn('S3358', {f.rule for f in check.check_unit('x.py', new, [old])})
 
-    def test_moving_existing_expression_to_another_assignment_is_new(self):
+    def test_moving_existing_expression_to_another_assignment_passes(self):
         old = check.analyze_module('def f(a,b):\n    x = a if b else (b if a else 0)\n    y = 0\n    return x + y\n')[0]
         new = check.analyze_module('def f(a,b):\n    x = 0\n    y = a if b else (b if a else 0)\n    return x + y\n')[0]
-        self.assertIn('S3358', {f.rule for f in check.check_unit('x.py', new, [old])})
+        self.assertNotIn('S3358', {f.rule for f in check.check_unit('x.py', new, [old])})
 
     def test_new_nested_conditional_after_rename_is_reported(self):
         old = check.analyze_module('def f(a,b):\n    x = a if b else 0\n    return x\n')[0]

@@ -1054,20 +1054,16 @@ def _limit_findings(path: str, unit: Unit, base_units: list[Unit] | None) -> lis
 
 
 def _q4_counts(unit: Unit, base_units: list[Unit] | None) -> list[tuple[str, int, int]]:
-    """(rule, head count, base count). Unused parameters compare by name; unused locals and dead
-    stores by rule total, so renaming a pre-existing unused local is not a new finding."""
-    totals: dict[str, list[int]] = {}
-    counted = []
-    for (rule, name), new in sorted(unit.q4.items()):
-        if rule == "S1172":
-            counted.append((rule, new, _base_max(base_units, lambda b, k=(rule, name): b.q4.get(k, 0))))
-        else:
-            totals.setdefault(rule, [0, 0])[0] += new
-    for rule in {r for r in totals}:
-        totals[rule][1] = _base_max(
-            base_units, lambda b, r=rule: sum(v for (rr, _), v in b.q4.items() if rr == r))
-    counted.extend((rule, new, old) for rule, (new, old) in sorted(totals.items()))
-    return counted
+    """(rule, head count, base count), per function and rule. Findings are compared by count, not
+    by name, so renaming a pre-existing unused parameter or local is not a new finding."""
+    totals: dict[str, int] = {}
+    for (rule, _name), new in unit.q4.items():
+        totals[rule] = totals.get(rule, 0) + new
+    return [
+        (rule, new, _base_max(
+            base_units, lambda b, r=rule: sum(v for (rr, _), v in b.q4.items() if rr == r)))
+        for rule, new in sorted(totals.items())
+    ]
 
 
 def check_unit(path: str, unit: Unit, base_units: list[Unit] | None) -> list[Finding]:
@@ -1082,7 +1078,7 @@ def check_unit(path: str, unit: Unit, base_units: list[Unit] | None) -> list[Fin
     counted.extend(_q4_counts(unit, base_units))
     findings.extend(
         Finding(path, unit.node.lineno, unit.qualname, rule, str(old), str(new))
-        for rule, new, old in counted if rule == "S3358" or new > old
+        for rule, new, old in counted if new > old
     )
     return findings
 
