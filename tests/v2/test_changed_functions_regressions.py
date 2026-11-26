@@ -25,15 +25,14 @@ class Regressions(unittest.TestCase):
         new = check.analyze_module('def f(a,b):\n    if a:\n        return b\n    return 0\n')[0]
         self.assertEqual({f.rule for f in check.check_unit('x.py', new, [old])}, {'S3776', 'S107'})
 
-    def test_deletion_has_no_head_lines(self):
-        self.assertEqual(check._hunk_lines('@@ -2,1 +1,0 @@'), set())
+    def test_deletion_is_recorded_at_preceding_head_line(self):
+        self.assertEqual(check._hunk_lines('@@ -2,1 +1,0 @@'), {1})
+        self.assertEqual(check._hunk_lines('@@ -1,1 +0,0 @@'), set())
 
-    def test_declaration_excluded_but_body_selected(self):
+    def test_decorator_header_and_body_all_select(self):
         source = '@decorator\ndef f(\n    a,\n):\n    # comment\n    return a\n'
         unit = check.analyze_module(source)[0]
-        self.assertFalse(any(check._body_line(unit, n) for n in (1, 2, 3, 4)))
-        self.assertTrue(check._body_line(unit, 5))
-        self.assertTrue(check._body_line(unit, 6))
+        self.assertTrue(all(check._selected(unit, n) for n in (1, 2, 3, 4, 5, 6)))
 
 class ConditionalRegressions(unittest.TestCase):
     def test_replacing_a_nested_conditional_is_a_new_finding(self):

@@ -360,7 +360,13 @@ def _conditional_children(node: ast.AST, path: tuple[str, ...]):
 
 def _visit_conditional_node(node: ast.AST, inside: bool, statement: ast.stmt | None,
                             path: tuple[str, ...], findings: Counter[str]) -> None:
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, *_COMPREHENSIONS)):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        # Decorators and default values are evaluated in the enclosing scope.
+        exprs = [*node.decorator_list, *node.args.defaults, *[d for d in node.args.kw_defaults if d]]
+        for index, expr in enumerate(exprs):
+            _visit_conditional_node(expr, False, node, (f"header[{index}]",), findings)
+        return
+    if isinstance(node, (ast.ClassDef, *_COMPREHENSIONS)):
         return
     if isinstance(node, ast.stmt):
         statement, path = node, ()
@@ -758,6 +764,19 @@ def _mentions(source_lines: list[str], func: FuncNode) -> dict[str, int]:
     return counts
 
 
+def _without_comments(source: str) -> list[str]:
+    """Source lines with comment text blanked, so editing a comment never changes a name count."""
+    lines = source.splitlines()
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT:
+                row, col = token.start
+                lines[row - 1] = lines[row - 1][:col]
+    except (tokenize.TokenError, IndentationError):
+        pass
+    return lines
+
+
 def _function_headers(source: str) -> dict[int, int]:
     headers: dict[int, int] = {}
     tokens = iter(tokenize.generate_tokens(io.StringIO(source).readline))
@@ -777,6 +796,12 @@ def _function_headers(source: str) -> dict[int, int]:
     return headers
 
 
+def _selected(unit: Unit, line: int) -> bool:
+    """A changed line selects the function it lies in: decorators, header (signature), body, and
+    nested headers. A deletion is recorded at the head line before it (see `_hunk_lines`)."""
+    return unit.first_line <= line <= unit.end_line
+
+
 def _body_line(unit: Unit, line: int) -> bool:
     return (unit.header_end <= line <= unit.end_line
             and (line > unit.header_end or unit.body_same_line)
@@ -787,7 +812,7 @@ class _Walker:
     def __init__(self, source: str) -> None:
         self.tree = ast.parse(source)
         mark_split_sequences(self.tree, source)
-        self.lines = source.splitlines()
+        self.lines = _without_comments(source)
         self.headers = _function_headers(source)
         self.referenced = _referenced_function_names(self.tree)
         self.units: list[Unit] = []
@@ -869,6 +894,8 @@ def _hunk_lines(header: str) -> set[int]:
         return set()
     start = int(m.group(1))
     count = 1 if m.group(2) is None else int(m.group(2))
+    if count == 0:  # deletion-only hunk: `start` is the head line before the removed text
+        return {start} if start > 0 else set()
     return set(range(start, start + count))
 
 
@@ -929,19 +956,47 @@ def _header_path(header: str) -> str | None:
     return path[2:] if path.startswith("b/") else None
 
 
-def changed_lines(repo: str, merge_base: str, head: str) -> dict[str, set[int]]:
-    """Head-side line numbers added or modified per path."""
-    out = git(repo, "diff", "-U0", "--no-renames", "--no-color", "--diff-filter=AM",
+def _rename_path(line: str, prefix: str) -> str:
+    return _unquote_git_path(line[len(prefix):].rstrip("\t"))
+
+
+def changed_lines(repo: str, merge_base: str, head: str,
+                  renames: dict[str, str] | None = None) -> dict[str, set[int]]:
+    """Head-side line numbers added, modified or (as the preceding line) deleted per path.
+
+    `renames`, when given, is filled with head path -> base path for renamed files."""
+    out = git(repo, "diff", "-U0", "-M", "--no-color", "--diff-filter=AMR",
               merge_base, head, "--", "*.py")
     result: dict[str, set[int]] = {}
     path = None
+    rename_from = None
+    pending: set[int] | None = None
     for line in out.splitlines():
-        if line.startswith("+++ "):
+        if line.startswith("diff --git "):
+            path = rename_from = None
+        elif line.startswith("rename from "):
+            rename_from = _rename_path(line, "rename from ")
+        elif line.startswith("rename to "):
+            path = _rename_path(line, "rename to ")
+            result.setdefault(path, set())
+            if renames is not None and rename_from is not None:
+                renames[path] = rename_from
+        elif line.startswith("+++ "):
             path = _header_path(line)
             if path is not None:
                 result.setdefault(path, set())
-        elif path is not None:
-            result[path] |= _hunk_lines(line)
+        elif line.startswith("--- "):
+            continue
+        elif path is not None and line.startswith("@@"):
+            lines = _hunk_lines(line)
+            pending = lines if re.search(r"\+\d+,0 @@", line) else None
+            if pending is None:
+                result[path] |= lines
+        elif path is not None and pending is not None and line.startswith("-"):
+            # A deleted top-level (unindented) line sits outside any function, even right after one.
+            if line[1:2] in (" ", "\t"):
+                result[path] |= pending
+            pending = None
     return result
 
 
@@ -994,6 +1049,23 @@ def _limit_findings(path: str, unit: Unit, base_units: list[Unit] | None) -> lis
     return findings
 
 
+def _q4_counts(unit: Unit, base_units: list[Unit] | None) -> list[tuple[str, int, int]]:
+    """(rule, head count, base count). Unused parameters compare by name; unused locals and dead
+    stores by rule total, so renaming a pre-existing unused local is not a new finding."""
+    totals: dict[str, list[int]] = {}
+    counted = []
+    for (rule, name), new in sorted(unit.q4.items()):
+        if rule == "S1172":
+            counted.append((rule, new, _base_max(base_units, lambda b, k=(rule, name): b.q4.get(k, 0))))
+        else:
+            totals.setdefault(rule, [0, 0])[0] += new
+    for rule in {r for r in totals}:
+        totals[rule][1] = _base_max(
+            base_units, lambda b, r=rule: sum(v for (rr, _), v in b.q4.items() if rr == r))
+    counted.extend((rule, new, old) for rule, (new, old) in sorted(totals.items()))
+    return counted
+
+
 def check_unit(path: str, unit: Unit, base_units: list[Unit] | None) -> list[Finding]:
     """Ratchet one changed function. `base_units` is None for a NEW function."""
     findings = _limit_findings(path, unit, base_units)
@@ -1003,8 +1075,7 @@ def check_unit(path: str, unit: Unit, base_units: list[Unit] | None) -> list[Fin
         _match_renamed_assignments(unit, base_units, added_q2, old_q2 - unit.q2)
         added_q2 += Counter()  # Drop zero counts after matching.
     counted = [("S3358", sum(unit.q2.values()), sum(old_q2.values()))] if added_q2 else []
-    for (rule, name), new in sorted(unit.q4.items()):
-        counted.append((rule, new, _base_max(base_units, lambda b, k=(rule, name): b.q4.get(k, 0))))
+    counted.extend(_q4_counts(unit, base_units))
     findings.extend(
         Finding(path, unit.node.lineno, unit.qualname, rule, str(old), str(new))
         for rule, new, old in counted if rule == "S3358" or new > old
@@ -1023,14 +1094,15 @@ def _analyze_or_none(source: str | None, path: str, warn) -> list[Unit] | None:
         return None
 
 
-def _check_file(repo: str, merge_base: str, head: str, path: str, lines: set[int], warn) -> list[Finding]:
+def _check_file(repo: str, merge_base: str, head: str, path: str, lines: set[int], warn,
+                base_path: str | None = None) -> list[Finding]:
     head_units = _analyze_or_none(_show(repo, head, path), path, warn)
     if not head_units:
         return []
-    touched = [u for u in head_units if any(_body_line(u, n) for n in lines)]
+    touched = [u for u in head_units if any(_selected(u, n) for n in lines)]
     if not touched:
         return []
-    base_units = _analyze_or_none(_show(repo, merge_base, path), path, None)
+    base_units = _analyze_or_none(_show(repo, merge_base, base_path or path), path, None)
     base_index = _base_index(base_units or [])
     findings: list[Finding] = []
     for unit in touched:
@@ -1044,12 +1116,13 @@ def check_diff(repo: str, base: str, head: str = "HEAD", warn=None) -> list[Find
         raise GitError(f"no merge-base between {base} and {head}")
     findings: list[Finding] = []
     scope = load_scope(repo)
+    renames: dict[str, str] = {}
     candidates = {
-        path: lines for path, lines in changed_lines(repo, merge_base, head).items()
+        path: lines for path, lines in changed_lines(repo, merge_base, head, renames).items()
         if scope.is_main(path) and lines
     }
     ignored = git_ignored(repo, sorted(candidates))
     for path, lines in sorted(candidates.items()):
         if path not in ignored:
-            findings.extend(_check_file(repo, merge_base, head, path, lines, warn))
+            findings.extend(_check_file(repo, merge_base, head, path, lines, warn, renames.get(path)))
     return findings

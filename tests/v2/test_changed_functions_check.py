@@ -7,8 +7,9 @@ PARSED finding fields (`path:line qualname rule old->new`). Thresholds are Sonar
 complexity <= 15 (S3776), parameters <= 13 (S107), no nested conditional expression (S3358),
 no unused parameter/local/dead store (S1172/S1481/S1854).
 Ratchet: NEW function must pass; MODIFIED function may not worsen Q1/Q3 nor add a Q2/Q4
-finding; untouched functions are never checked. "Modified" = an added or modified BODY line
-(a signature-only edit does not select the function).
+finding; untouched functions are never checked. "Modified" = a changed line anywhere in the
+function: decorator, signature, body, nested header, or a deletion inside it. Renamed files are
+compared against their base path.
 
 Isolation: git and the checker run with a scrubbed environment (no inherited GIT_*, XDG_*,
 config overrides), a private HOME outside the repository, no templates/hooks, bounded timeouts.
@@ -328,29 +329,83 @@ def test_deleting_adjacent_top_level_line_does_not_select_function(repo):
     assert_clean(repo)
 
 
-def test_deleting_body_line_without_additions_does_not_select_function(repo):
+def test_deleting_body_line_that_orphans_a_parameter_is_flagged(repo):  # F3
     scenario(repo, "def f(b):\n    print(b)\n    return 1\n",
              "def f(b):\n    return 1\n")
-    assert_clean(repo)
+    code, findings, _ = repo.check()
+    assert code == 1 and [f.raw for f in findings] and "S1172" in findings[0].raw
 
 
-def test_decorator_only_change_does_not_select_method(repo):
+def test_decorator_only_change_selects_method(repo):  # F2
     base = method_with_params(13, decorator="@classmethod", first="cls")
     scenario(repo, base, base.replace("@classmethod", "@staticmethod"))
-    assert_clean(repo)
+    code, findings, _ = repo.check()
+    assert code == 1 and "S107" in findings[0].raw
 
 
-def test_signature_only_change_does_not_select_function(repo):
-    # Only the `def` line changes (extra param unused): not an added/modified BODY line.
+def test_signature_only_change_selects_function(repo):  # F1
     scenario(repo, "def f(a):\n    return a\n", "def f(a, extra):\n    return a\n")
+    code, findings, _ = repo.check()
+    assert code == 1 and any("S107" in f.raw and "1->2" in f.raw for f in findings)
+
+
+def test_signature_only_param_growth_beyond_limit_fails(repo):  # F1
+    p13 = ", ".join(f"p{i}" for i in range(13))
+    p14 = ", ".join(f"p{i}" for i in range(14))
+    body = "    return " + " + ".join(f"p{i}" for i in range(14)) + "\n"
+    scenario(repo, f"def many({p13}):\n{body}", f"def many({p14}):\n{body}")  # body untouched
+    code, findings, _ = repo.check()
+    assert code == 1 and any("S107" in f.raw and "13->14" in f.raw for f in findings)
+
+
+def test_nested_header_edit_selects_outer_when_findings_rise(repo):  # F4
+    base = "def outer(a):\n    def inner(x=1):\n        return x\n    return inner(a)\n"
+    head = ("def outer(a):\n    def inner(x=(1 if a else (2 if a else 3))):\n        return x\n"
+            "    return inner(a)\n")
+    scenario(repo, base, head)
+    code, findings, _ = repo.check()
+    assert code == 1 and any("outer" in f.raw and "S3358" in f.raw for f in findings)
+
+
+def test_pure_rename_of_complex_function_passes(repo):  # F5
+    src = branchy("old", 28) + "\n\ndef g():\n    unused = 1\n    return 2\n"
+    repo.write("pkg/a.py", src)
+    repo.commit("base", "pkg/a.py")
+    repo.git("checkout", "-q", "-b", "feature")
+    repo.git("mv", "pkg/a.py", "pkg/b.py")
+    repo.git("commit", "-q", "-m", "mv")
     assert_clean(repo)
 
 
-def test_signature_only_param_growth_beyond_limit_is_not_checked(repo):
-    p14 = ", ".join(f"p{i}" for i in range(14))
-    p15 = ", ".join(f"p{i}" for i in range(15))
-    body = "    return " + " + ".join(f"p{i}" for i in range(14)) + "\n"
-    scenario(repo, f"def many({p14}):\n{body}", f"def many({p15}):\n{body}")
+def test_rename_plus_complexity_rise_fails(repo):  # F5
+    repo.write("pkg/a.py", branchy("f", 1) + "\n\nX = 1\n")
+    repo.commit("base", "pkg/a.py")
+    repo.git("checkout", "-q", "-b", "feature")
+    repo.git("mv", "pkg/a.py", "pkg/b.py")
+    repo.write("pkg/b.py", branchy("f", 3) + "\n\nX = 1\n")
+    repo.git("add", "pkg/b.py")
+    repo.git("commit", "-q", "-m", "mv+edit")
+    code, findings, _ = repo.check()
+    assert code == 1 and any(f.raw.startswith("pkg/b.py") and "S3776" in f.raw and "1->3" in f.raw
+                             for f in findings)
+
+
+def test_comment_only_signature_change_adds_no_unused_param(repo):
+    scenario(repo, "def f(a, b):  # uses b\n    return a + b\n", "def f(a, b):  # uses\n    return a + b\n")
+    assert_clean(repo)
+    scenario_name = "def g(a,\n      b):  # b: spare\n    return a\n"
+    repo.git("checkout", "-q", "main")
+    repo.write("pkg/g.py", scenario_name)
+    repo.commit("g", "pkg/g.py")
+    repo.git("checkout", "-q", "feature")
+    repo.git("merge", "-q", "main")
+    repo.write("pkg/g.py", scenario_name.replace("spare", "kept"))
+    repo.commit("g2", "pkg/g.py")
+    assert_clean(repo)
+
+
+def test_unchanged_unused_local_rename_is_not_a_new_finding(repo):
+    scenario(repo, "def f(a):\n    u = 1\n    return a\n", "def f(a):\n    v = 1\n    return a\n")
     assert_clean(repo)
 
 
